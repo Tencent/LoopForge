@@ -2,6 +2,8 @@ package engine
 
 import (
 	"errors"
+	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path"
@@ -13,8 +15,10 @@ import (
 )
 
 var (
-	errOutputNotRegular = errors.New("is not a regular file")
-	errOutputTooLarge   = errors.New("exceeds artifact size limit")
+	errOutputNotRegular     = errors.New("is not a regular file")
+	errOutputTooLarge       = fmt.Errorf("超过产物大小上限 %d MiB", domain.MaxSOPArtifactBytes>>20)
+	errLegacyOutputTooLarge = fmt.Errorf("超过旧版执行机器的 %d MiB 单文件回传限制，请将执行机器升级到 %s", domain.MaxInlineRunnerArtifactBytes>>20, domain.RunnerVersionArtifactTransfer)
+	errArtifactTransfer     = errors.New("产物交接失败")
 )
 
 // nodeOutputs is where the engine reads what a node produced: the
@@ -28,18 +32,92 @@ type nodeOutputs interface {
 type workspaceOutputs string
 
 func (w workspaceOutputs) readFile(rel string) ([]byte, error) {
-	full := filepath.Join(string(w), filepath.FromSlash(rel))
-	info, err := os.Stat(full)
+	file, _, err := w.openFile(rel)
 	if err != nil {
 		return nil, err
 	}
-	if !info.Mode().IsRegular() {
-		return nil, errOutputNotRegular
+	defer file.Close()
+	return readWorkspaceOutput(file)
+}
+
+func (w workspaceOutputs) openFile(rel string) (*os.File, int64, error) {
+	root, err := os.OpenRoot(string(w))
+	if err != nil {
+		return nil, 0, err
 	}
-	if info.Size() > maxArtifactBytes {
+	defer root.Close()
+	info, err := root.Stat(rel)
+	if err != nil {
+		return nil, 0, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, 0, errOutputNotRegular
+	}
+	if info.Size() > domain.MaxSOPArtifactBytes {
+		return nil, 0, errOutputTooLarge
+	}
+	file, err := root.Open(rel)
+	return file, info.Size(), err
+}
+
+func readWorkspaceOutput(file io.Reader) ([]byte, error) {
+	content, err := io.ReadAll(io.LimitReader(file, domain.MaxSOPArtifactBytes+1))
+	if len(content) > domain.MaxSOPArtifactBytes {
 		return nil, errOutputTooLarge
 	}
-	return os.ReadFile(full)
+	return content, err
+}
+
+type archivedWorkspaceOutputs struct {
+	workspaceOutputs
+	save func(string, io.Reader) (domain.ArtifactBlob, error)
+}
+
+func (w archivedWorkspaceOutputs) archiveFile(rel, id string) ([]byte, domain.ArtifactBlob, error) {
+	file, size, err := w.openFile(rel)
+	if err != nil {
+		return nil, domain.ArtifactBlob{}, err
+	}
+	defer file.Close()
+	if size <= domain.MaxInlineRunnerArtifactBytes {
+		content, err := readWorkspaceOutput(file)
+		return content, domain.ArtifactBlob{}, err
+	}
+	blob, err := w.save(id, file)
+	if errors.Is(err, domain.ErrArtifactTooLarge) {
+		return nil, blob, errOutputTooLarge
+	}
+	if err != nil {
+		return nil, blob, fmt.Errorf("%w：%w", errArtifactTransfer, err)
+	}
+	return nil, blob, nil
+}
+
+func checkArtifactOutput(outputs nodeOutputs, rel string) error {
+	if _, ok := reportedArtifactBlob(outputs, rel); ok {
+		return nil
+	}
+	if local, ok := outputs.(archivedWorkspaceOutputs); ok {
+		file, _, err := local.openFile(rel)
+		if err != nil {
+			return err
+		}
+		return file.Close()
+	}
+	_, err := outputs.readFile(rel)
+	return err
+}
+
+func collectOutputFile(outputs nodeOutputs, rel, id string) ([]byte, domain.ArtifactBlob, error) {
+	if local, ok := outputs.(archivedWorkspaceOutputs); ok {
+		return local.archiveFile(rel, id)
+	}
+	// Preserve legacy readers of small inline metadata such as MR information.
+	if blob, ok := reportedArtifactBlob(outputs, rel); ok && blob.Size > domain.MaxInlineRunnerArtifactBytes {
+		return nil, blob, nil
+	}
+	content, err := outputs.readFile(rel)
+	return content, domain.ArtifactBlob{}, err
 }
 
 func (w workspaceOutputs) repositoryPatch(dir string) ([]byte, error) {
@@ -50,10 +128,14 @@ func (w workspaceOutputs) repositoryPatch(dir string) ([]byte, error) {
 // invocation of one node. It replaces the control-plane copy of the
 // workspace for artifact validation, registration, and the gate result.
 type reportedOutputs struct {
-	inputs []domain.RunnerInputFile
+	inputs   []domain.RunnerInputFile
+	transfer bool
+	openBlob func(string) (io.ReadCloser, error)
 
 	mu        sync.Mutex
 	files     map[string]string
+	blobs     map[string]domain.ArtifactBlob
+	errors    map[string]string
 	tooLarge  map[string]bool
 	patches   map[string]string
 	recovered []string
@@ -71,6 +153,8 @@ func (r *reportedOutputs) reset() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.files = map[string]string{}
+	r.blobs = map[string]domain.ArtifactBlob{}
+	r.errors = map[string]string{}
 	r.tooLarge = map[string]bool{}
 	r.patches = map[string]string{}
 	r.recovered = nil
@@ -85,17 +169,39 @@ func (r *reportedOutputs) absorb(outputs *domain.RunnerTaskOutputs) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	for rel, content := range outputs.Files {
+		r.clearFile(rel)
 		r.files[rel] = content
-		delete(r.tooLarge, rel)
+	}
+	for rel, blob := range outputs.FileBlobs {
+		r.clearFile(rel)
+		r.blobs[rel] = blob
+	}
+	for rel, message := range outputs.FileErrors {
+		r.clearFile(rel)
+		r.errors[rel] = message
 	}
 	for _, rel := range outputs.TooLarge {
+		r.clearFile(rel)
 		r.tooLarge[rel] = true
-		delete(r.files, rel)
 	}
 	for dir, patch := range outputs.Patches {
 		r.patches[dir] = patch
 	}
 	r.recovered = append(r.recovered, outputs.Recovered...)
+}
+
+func (r *reportedOutputs) clearFile(rel string) {
+	delete(r.files, rel)
+	delete(r.blobs, rel)
+	delete(r.errors, rel)
+	delete(r.tooLarge, rel)
+}
+
+func (r *reportedOutputs) artifactBlob(rel string) (domain.ArtifactBlob, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	blob, ok := r.blobs[rel]
+	return blob, ok
 }
 
 func (r *reportedOutputs) takeRecovered() []string {
@@ -108,15 +214,33 @@ func (r *reportedOutputs) takeRecovered() []string {
 
 func (r *reportedOutputs) readFile(rel string) ([]byte, error) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.tooLarge[rel] {
+	tooLarge, message := r.tooLarge[rel], r.errors[rel]
+	content, inline := r.files[rel]
+	blob, staged := r.blobs[rel]
+	r.mu.Unlock()
+	switch {
+	case tooLarge && !r.transfer:
+		return nil, errLegacyOutputTooLarge
+	case tooLarge:
 		return nil, errOutputTooLarge
-	}
-	content, ok := r.files[rel]
-	if !ok {
+	case message != "":
+		return nil, fmt.Errorf("%w：%s", errArtifactTransfer, message)
+	case inline:
+		return []byte(content), nil
+	case staged && r.openBlob != nil:
+		body, err := r.openBlob(blob.ID)
+		if err != nil {
+			return nil, fmt.Errorf("%w：%w", errArtifactTransfer, err)
+		}
+		defer body.Close()
+		content, err := io.ReadAll(body)
+		if err != nil {
+			return nil, fmt.Errorf("%w：%w", errArtifactTransfer, err)
+		}
+		return content, nil
+	default:
 		return nil, &fs.PathError{Op: "read", Path: rel, Err: fs.ErrNotExist}
 	}
-	return []byte(content), nil
 }
 
 func (r *reportedOutputs) repositoryPatch(dir string) ([]byte, error) {
@@ -164,7 +288,8 @@ func artifactOutputFiles(run domain.Run, node domain.WorkflowNode) []string {
 // same selection and prompt manifest, returned as files for the runner to
 // write instead of being written into a control-plane workspace. Repository
 // patches are never applied; the runner's checkout is the source of truth.
-func runnerArtifactInputs(wf domain.WorkflowDefinition, node domain.WorkflowNode, run domain.Run) (string, []domain.RunnerInputFile) {
+func runnerArtifactInputs(wf domain.WorkflowDefinition, node domain.WorkflowNode, run domain.Run, stream ...bool) (string, []domain.RunnerInputFile) {
+	transfer := len(stream) != 0 && stream[0]
 	sources := map[string]bool{}
 	for _, edge := range wf.Edges {
 		if edge.Target == node.ID {
@@ -182,11 +307,18 @@ func runnerArtifactInputs(wf domain.WorkflowDefinition, node domain.WorkflowNode
 			continue
 		}
 		rel := artifactInputRelPath(run, artifact)
-		files = append(files, domain.RunnerInputFile{Path: rel, Content: artifact.Content})
+		files = append(files, runnerInputFile(artifact, rel, transfer))
 		writeInputManifestEntry(&manifest, artifact, rel)
 	}
-	handoffManifest, handoffFiles := sopHandoffInputs(run)
+	handoffManifest, handoffFiles := sopHandoffInputs(run, transfer)
 	manifest.WriteString(handoffManifest)
 	files = append(files, handoffFiles...)
 	return strings.TrimSpace(manifest.String()), files
+}
+
+func runnerInputFile(artifact domain.Artifact, rel string, stream bool) domain.RunnerInputFile {
+	if stream {
+		return domain.RunnerInputFile{Path: rel, ArtifactID: artifact.ID, SHA256: artifact.SHA256}
+	}
+	return domain.RunnerInputFile{Path: rel, Content: artifact.Content}
 }

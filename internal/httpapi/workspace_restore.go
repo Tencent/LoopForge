@@ -40,7 +40,7 @@ func (h *runsHandlers) workspaceRestore(c *gin.Context) {
 			c.JSON(409, gin.H{"error": "没有已保存的工作区快照，无法恢复"})
 			return
 		}
-		if h.prepareRunActivationWorkspace(c, owner.ID) {
+		if h.prepareWorkspaceRestore(c, owner.ID) {
 			return
 		}
 		c.JSON(200, gin.H{"restored": true, "idleTimeoutSeconds": 3600})
@@ -63,9 +63,16 @@ func (h *runsHandlers) workspaceRestore(c *gin.Context) {
 	c.JSON(200, gin.H{"restored": true, "idleTimeoutSeconds": 3600})
 }
 
+func (h *runsHandlers) prepareRunActivationWorkspace(c *gin.Context, id string) bool {
+	if run, ok := h.repo.RunState(id); ok && h.engine.ShouldDeferRestoreUntilAdmitted(run) {
+		return false
+	}
+	return h.prepareWorkspaceRestore(c, id)
+}
+
 // Async callers poll the durable restore separately, then repeat their control
 // decision once ready. A 202 acknowledges restoration, never SOP execution.
-func (h *runsHandlers) prepareRunActivationWorkspace(c *gin.Context, id string) bool {
+func (h *runsHandlers) prepareWorkspaceRestore(c *gin.Context, id string) bool {
 	if !strings.Contains(c.GetHeader("Prefer"), "respond-async") {
 		if err := h.engine.RestoreConversationWorkspaceIfNeeded(c.Request.Context(), id); err != nil {
 			respond(c, err)

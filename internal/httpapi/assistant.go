@@ -1700,6 +1700,10 @@ func runAssistantCLI(ctx context.Context, req assistantCLIRequest, user domain.U
 	missingText := "No conversation found with session ID: " + inv.sessionRef
 	var handle func(string)
 	sink := func(event domain.TelemetryEvent) {
+		if event.Name == runtime.CodeBuddyBackgroundTimeoutEvent {
+			assistantDiagnosticsFrom(ctx).platform(event.Name, event.Message, user)
+			return
+		}
 		attempt.process(event)
 		if event.Name == "process.stderr" {
 			attempt.stderr(event.Message)
@@ -1759,6 +1763,9 @@ func runAssistantCLI(ctx context.Context, req assistantCLIRequest, user domain.U
 		if json.Unmarshal([]byte(line), &result) == nil {
 			switch result.Type {
 			case "result":
+				if engine == assistantEngineCodeBuddy && result.ParentToolUseID != "" {
+					break
+				}
 				final, resultError = result.Result, result.IsError
 				claudeResultText = ""
 				if captureClaudeText && result.ParentToolUseID == "" {
@@ -1795,14 +1802,26 @@ func runAssistantCLI(ctx context.Context, req assistantCLIRequest, user domain.U
 		}
 	}
 	execute := req.Execute
+	acp, _ := command.Stdin.(*assistantACP)
 	if execute == nil {
 		execute = runtime.ExecuteLocalCommand
+		if acp != nil {
+			// Pass the fd directly so os/exec has no stdin copier waiting
+			// for another frame if the CLI exits before its ACP response.
+			command.Stdin = acp.input
+		}
 		if attempt != nil {
 			defer runtime.ObserveCLIVersion(ctx, nil, engine, bin, attempt.recordCLIVersion)()
 		}
 	}
 	attempt.phase("execution")
-	_, err = execute(ctx, workspace, command, inv.credentials, sink)
+	if acp != nil {
+		_, err = acp.execute(ctx, func(execCtx context.Context) (string, error) {
+			return execute(execCtx, workspace, command, inv.credentials, sink)
+		})
+	} else {
+		_, err = execute(ctx, workspace, command, inv.credentials, sink)
+	}
 	attempt.exited(err)
 	if err == nil {
 		attempt.phase("protocol")
@@ -1978,6 +1997,10 @@ func prepareAssistantCommand(opts assistantCommandOpts) (runtime.CommandSpec, er
 	if sys == "" {
 		sys = assistantSystemPromptText()
 	}
+	workspace := opts.Workspace && !opts.ReviewOnly && !opts.ReportOnly
+	if workspace {
+		sys += "\n\n" + runtime.CodeBuddyBackgroundAgentInstructions
+	}
 	// Use the CLI's unlimited value; omitting the flag retains a finite default.
 	// A turn has no deadline; explicit cancellation still stops execution.
 	args := []string{"-p", "--max-turns", nativeAssistantUnlimitedTurns, "--system-prompt", sys, "--output-format", "stream-json", "--include-partial-messages", "--mcp-config", opts.Config}
@@ -2007,7 +2030,7 @@ func prepareAssistantCommand(opts assistantCommandOpts) (runtime.CommandSpec, er
 		command.Argv = replaceArgValue(command.Argv, "--disallowedTools", nativeDisallowedTools+",Read,Grep,Glob,Skill,TodoWrite,AskUserQuestion,EnterPlanMode,ExitPlanMode")
 		command.Argv = replaceArgValue(command.Argv, "--setting-sources", "")
 		command.Argv = appendNativeArgs(command.Argv, "--no-session-persistence")
-	} else if !opts.Workspace {
+	} else if !workspace {
 		command.Argv = applyNativeToolSafety(command.Argv, AgentToolAssistant)
 	} else {
 		command.Argv = replaceArgValue(command.Argv, "--setting-sources", "user")
@@ -2015,9 +2038,9 @@ func prepareAssistantCommand(opts assistantCommandOpts) (runtime.CommandSpec, er
 	}
 	command.CredentialBindings = []runtime.CredentialBinding{runtime.BindCodeBuddy}
 	command.Telemetry = nil
-	if len(opts.ImagePaths) > 0 {
+	if workspace || len(opts.ImagePaths) > 0 {
 		command.Argv = appendNativeArgs(command.Argv, "--verbose")
-		command, err = withAssistantStreamImageInput(command, opts.Prompt, opts.ImagePaths, 0)
+		command, err = withAssistantStreamInput(command, opts.Prompt, opts.ImagePaths, 0)
 		if err != nil {
 			return runtime.CommandSpec{}, err
 		}

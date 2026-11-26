@@ -60,3 +60,26 @@ test('skill upload validation handles empty, new, foreign, and invalid markdown 
   });
   assert.ok(app.document.querySelector('#toastContainer').textContent.length > 0);
 });
+
+test('single SKILL.md upload accepts 10 MiB and rejects larger files', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  const skill = { id: 'markdown-skill', projectId: 'project-1', name: 'Markdown Skill', fileRefs: [] };
+  app.evaluate(`
+    state.data.skills=[${JSON.stringify(skill)}];
+    state.assetType='skills';state.selectedAsset='markdown-skill';renderAssets();
+    afConfirm=async()=>true;
+  `);
+  const path = '/api/skills/markdown-skill/files';
+  const maxBytes = 10 * 1024 * 1024;
+  app.router.post(path, { ...skill, fileRefs: [{ path: 'SKILL.md', size: maxBytes }] });
+  const uploadMarkdown = app.evaluate('uploadSkillMd');
+  const file = app.evaluate(`new File([new Uint8Array(${maxBytes})], 'SKILL.md')`);
+  await uploadMarkdown({ files: [file], value: 'selected' });
+  assert.equal(app.evaluate('state.data.skills[0].fileRefs[0]?.size'), maxBytes);
+
+  app.evaluate('skillMdUploadLastStart=0');
+  await uploadMarkdown({ files: [{ name: 'SKILL.md', size: maxBytes + 1 }], value: 'selected' });
+  assert.equal(app.router.calls.filter((call) => call.method === 'POST' && call.path === path).length, 1);
+  assert.match(app.document.querySelector('#toastContainer').textContent, /SKILL\.md 超过 10MB/);
+});

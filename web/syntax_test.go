@@ -844,11 +844,15 @@ global.state = {data: {executors: [
   {id: 'zcode', name: 'ZCode'},
   {id: 'mock', name: '演示执行器'}
 ]}};
+global.window = {AgentFlowExecutorModels: Object.fromEntries(
+  state.data.executors.slice(1, -1).map(({id}) => [id, {configured: true}])
+)};
 eval(code.slice(code.indexOf('function executorOptions('), code.indexOf('function selectAgent(')));
 for (const id of ['opencode', 'cursor', 'agy', 'kimi', 'pi', 'dsh', 'zcode']) {
   assert.ok(executorOptions(id).includes('value="' + id + '" selected'), id);
 }
 assert.ok(!executorOptions('codex').includes('value="mock"'));
+assert.ok(!executorOptions('codex').includes('value="codebuddy"'));
 const legacy = executorOptions('legacy-codex');
 assert.ok(legacy.includes('历史执行器 legacy-codex'));
 assert.ok(legacy.includes('value="legacy-codex" selected disabled'));
@@ -1109,8 +1113,17 @@ func TestRequirementDirectCreateUI(t *testing.T) {
 			t.Fatalf("requirement composer behavior is missing %q", want)
 		}
 	}
+	composerJS, err := os.ReadFile("app/composer.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, gone := range []string{`查看完整度详情`, `准入线`, `没有固定轮数`} {
+		if strings.Contains(composer, gone) || strings.Contains(string(composerJS), gone) {
+			t.Fatalf("requirement composer must not keep %q", gone)
+		}
+	}
 	for _, gone := range []string{
-		`查看完整度详情`, `准入线`, `composerAssessmentView`, `invalidateRequirementAnalysis`, `没有固定轮数`, `composerCreateReady`, `setComposerRetryMode`, `composerClarifyRetry`, `state.reqCreateMode`, `createIssueDirect`, `setChatCreateEnabled`, `syncReqComposerLayout`,
+		`composerAssessmentView`, `invalidateRequirementAnalysis`, `composerCreateReady`, `setComposerRetryMode`, `composerClarifyRetry`, `state.reqCreateMode`, `createIssueDirect`, `setChatCreateEnabled`, `syncReqComposerLayout`,
 		`function goReqStep(`, `function startReqClarify(`, `function sendChatClarify(`, `function pickReqOption(`, `function submitReqAnswers(`, `function reclarifyRequirement(`, `'/api/chat-clarify'`,
 	} {
 		if strings.Contains(code, gone) {
@@ -1971,10 +1984,15 @@ func TestGenericTemplateEditorUsesBundledRoles(t *testing.T) {
 	if strings.Contains(app, "const foreign=catalogForeign((state.data.agents.find(x=>x.id===state.selectedAgent)||state.agentDraft||{}).projectId)") {
 		t.Fatal("agent wizard still treats a same-id project clone as a foreign generic role")
 	}
-	for _, want := range []string{"renderPlatformAdminPanel", "platformAdminPanel", "谁可以改通用模板"} {
+	for _, want := range []string{"renderPlatformAdminPanel", "platformAdminPanel", "谁可以改通用模板", "platformPublicURLHTML", "loadPlatformPublicURL", "外部访问地址"} {
 		if !strings.Contains(app, want) {
 			t.Fatalf("app.js is missing platform admin panel wiring %q", want)
 		}
+	}
+	// The suggested value must come from the admin's own browser, never from a
+	// Host header the platform received: it is pasted into binding links.
+	if !strings.Contains(app, "field.value = location.origin") {
+		t.Fatal("the public address page no longer suggests location.origin")
 	}
 	if strings.Contains(app, `id="platformAdminCard"`) {
 		t.Fatal("platform admin management is still embedded in personal settings")

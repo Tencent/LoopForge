@@ -3,6 +3,7 @@ package engine
 import (
 	"agentflow/internal/domain"
 	"agentflow/internal/observability"
+	"context"
 	"fmt"
 	"strings"
 	"time"
@@ -19,7 +20,7 @@ func (e *Engine) event(r *domain.Run, nodeID, t, msg string) {
 }
 
 func (e *Engine) observe(runID, nodeID string, observation domain.TelemetryEvent) {
-	if current, ok := e.repo.RunState(runID); ok && domain.TerminalRunStatus(current.Status) && observation.Name != "sandbox.closed" {
+	if status, ok, _ := e.repo.ReadRunStatus(context.Background(), runID); ok && domain.TerminalRunStatus(status) && observation.Name != "sandbox.closed" {
 		return
 	}
 	e.enqueueObservation(runID, nodeID, observation)
@@ -35,7 +36,7 @@ func (e *Engine) IngestOTLPTraces(events []domain.TelemetryEvent) int {
 		if runID == "" {
 			continue
 		}
-		run, ok := e.repo.RunState(runID)
+		run, ok := e.repo.RunProgress(runID)
 		if !ok {
 			continue
 		}
@@ -59,7 +60,7 @@ func (e *Engine) IngestWorkerEnvelope(runID string, envelope domain.WorkerEnvelo
 	if envelope.SpecVersion != domain.ObservabilitySpecVersion {
 		return fmt.Errorf("unsupported observability spec %q", envelope.SpecVersion)
 	}
-	run, ok := e.repo.RunState(runID)
+	run, ok := e.repo.RunProgress(runID)
 	if !ok {
 		return fmt.Errorf("run not found")
 	}

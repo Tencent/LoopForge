@@ -45,6 +45,7 @@ type Engine struct {
 	leaseTTL       time.Duration
 	executeRuns    bool
 	draining       bool
+	claimKick      chan struct{}
 
 	// MergeIntoBranch creates or reuses a Gongfeng MR from source→target and
 	// merges it (merge commit, source branch kept). Scheduled SOP uses this
@@ -94,6 +95,7 @@ type Engine struct {
 	WorkspaceActive              func(domain.Run) bool
 	WorkspaceCheckpointTransport func(context.Context, domain.Run, domain.RunnerWorkspaceRequest) (domain.RunnerWorkspaceResponse, error)
 	SelectSOPSandbox             func(context.Context, SOPSandboxSelection) string
+	GenerateSOPWorkBranch        func(context.Context, SOPWorkBranchRequest) (string, error)
 	maintenanceOnce              sync.Once
 }
 
@@ -101,7 +103,7 @@ var ErrExecutionDisabled = errors.New("run execution is disabled on this instanc
 
 func New(s *repo.Store, sm *runtime.Manager) *Engine {
 	host, _ := os.Hostname()
-	e := &Engine{repo: s, sandboxes: sm, runner: runtime.NewExecutorRunner(), running: map[string]context.CancelFunc{}, runEnvs: map[string]*runEnvironment{}, workspaceFacts: map[string]domain.RunnerWorkspaceFacts{}, subs: map[string]map[chan domain.Run]struct{}{}, runnerTaskSubs: map[string]map[chan struct{}]struct{}{}, instanceID: fmt.Sprintf("%s-%d", host, os.Getpid()), workspaceHost: host, leaseTTL: 30 * time.Second, executeRuns: true, obsKick: make(chan struct{}, 1)}
+	e := &Engine{repo: s, sandboxes: sm, runner: runtime.NewExecutorRunner(), running: map[string]context.CancelFunc{}, runEnvs: map[string]*runEnvironment{}, workspaceFacts: map[string]domain.RunnerWorkspaceFacts{}, subs: map[string]map[chan domain.Run]struct{}{}, runnerTaskSubs: map[string]map[chan struct{}]struct{}{}, instanceID: fmt.Sprintf("%s-%d", host, os.Getpid()), workspaceHost: host, leaseTTL: 30 * time.Second, executeRuns: true, claimKick: make(chan struct{}, 1), obsKick: make(chan struct{}, 1)}
 	return e
 }
 

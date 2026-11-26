@@ -42,6 +42,11 @@ function fillPreviewModelSelect(sel, selected, executorId){
     sel.disabled=true;
     return '';
   }
+  if(!executorConfigured(executorId)){
+    sel.replaceChildren(new Option(selected||'暂无可选模型',selected));
+    sel.disabled=true;
+    return selected;
+  }
   const items=previewModelOptions(executorId);
   const model=selected||defaultPreviewModel(executorId,items);
   if(model&&!items.some(m=>m.id===model))items.push({id:model,name:model});
@@ -1061,17 +1066,24 @@ function flowFold(id,title,sub,body,defaultOpen){
 }
 function renderPreviewBuildProperties(host,n){
   const spa=state.workflow.preview?.spaFallback!==false;
+  const refreshModels=loadExecutorModelCatalogs();
+  const modelUser=state.currentUser?.id;
   host.innerHTML=`${flowDrawerHead(n,'preview','系统步骤 · 前端预览')}
     <div class="fd-db">
       <section class="fd-sec"><div class="fd-sec-h"><span class="fd-sec-t">主配置</span></div><div class="fd-sec-b">
         <p class="prop-hint">运行到该节点时用所选模型构建静态站点，不必再手写脚本节点；Run 成功后平台归档预览。它只有成功出口。</p>
-        <div class="fd-field"><label for="previewNodeExecutor">执行器</label><select class="select" id="previewNodeExecutor">${executorOptions(workflowPreviewExecutor(state.workflow))}</select></div>
+        <div class="fd-field">
+          <label for="previewNodeExecutor">执行器</label>
+          <select class="select" id="previewNodeExecutor" aria-describedby="previewNodeExecutorStatus"></select>
+          <p class="prop-hint" id="previewNodeExecutorStatus" hidden></p>
+        </div>
         <div class="fd-field"><label for="previewNodeModel">模型</label><select class="select" id="previewNodeModel"></select></div>
         <label class="fd-check"><input type="checkbox" id="previewNodeSpa" ${spa?'checked':''}><span>单页应用回退（找不到路径时返回入口 HTML）</span></label>
       </div></section>
     </div>
     <div class="fd-df"><span class="fd-df-hint">从左侧「成功」出口连到下一步；预览节点没有失败出口</span></div>`;
   const executor=$('#previewNodeExecutor'),sel=$('#previewNodeModel');
+  paintExecutorSelect(executor,workflowPreviewExecutor(state.workflow),flowReadOnly());
   const fill=()=>{
     const model=fillPreviewModelSelect(sel,workflowPreviewModel(state.workflow),executor.value);
     if(!sel.disabled&&model&&state.workflow.preview?.model===''){
@@ -1080,7 +1092,11 @@ function renderPreviewBuildProperties(host,n){
     }
   };
   fill();
-  loadExecutorModelCatalogs().then(()=>{if(executor.isConnected)fill()});
+  refreshModels.then(()=>{
+    if(!executor.isConnected||modelUser!==state.currentUser?.id)return;
+    paintExecutorSelect(executor,workflowPreviewExecutor(state.workflow),flowReadOnly());
+    fill();
+  });
   executor.onchange=()=>{
     flowHistory.record();
     updatePreviewContract({executorId:executor.value,model:''});
@@ -1286,11 +1302,15 @@ async function saveWorkflow(){
     const workflow=state.workflow;
     await loadExecutorModelCatalogs();
     if(state.workflow!==workflow)throw new Error('SOP 已切换，请重新保存');
-    if(!workflow.preview.model)workflow.preview.model=defaultPreviewModel(workflowPreviewExecutor(workflow));
-    if(!workflow.preview.model){
-      const message='请选择构建静态站点的模型';
-      toast(message);
-      throw new Error(message);
+    const executorId=workflowPreviewExecutor(workflow);
+    if(executorConfigured(executorId)&&!workflow.preview.model){
+      const model=defaultPreviewModel(executorId);
+      if(!model){
+        const message='请选择构建静态站点的模型';
+        toast(message);
+        throw new Error(message);
+      }
+      workflow.preview.model=model;
     }
   }
   try{const saved=await api('/api/workflows',{method:'PUT',body:JSON.stringify(state.workflow)});state.workflow=clone(saved);const i=state.data.workflows.findIndex(w=>w.id===saved.id);if(i>=0)state.data.workflows[i]=clone(saved);else state.data.workflows.unshift(clone(saved));markWorkflowClean();renderWorkflowMeta();renderSOPCatalog();renderCanvas();renderProperties();toast('SOP 草稿已保存');return saved}catch(e){if(e.message.includes('revision conflict')){toast('保存冲突：其他人已更新该 SOP，请重新选择后合并')}else if(e.message!=='shared sop is read-only'&&e.message!=='generic sop is read-only')toast(e.message);throw e}}

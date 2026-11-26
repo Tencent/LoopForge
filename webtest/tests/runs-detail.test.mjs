@@ -42,8 +42,8 @@ test('run detail loads logs, telemetry, preview, workspace, evaluation, and chil
     changes: [{ path: 'web/app.js', index: 'M', worktree: 'M' }],
   });
   app.router.get('/api/runs/run-1/eval', {
-    id: 'eval-1', status: 'completed', score: 88, summary: 'Strong result',
-    recommendations: [{ id: 'rec-1', title: 'Add regression test', type: 'workflow', applied: false }],
+    id: 'eval-1', status: 'succeeded', score: 88, passed: true,
+    result: { summary: 'Strong result', recommendations: [{ id: 'rec-1', title: 'Add regression test' }] },
   });
 
   app.evaluate(`state.data.runs=[${JSON.stringify(run)}];state.selectedRun='run-1';state.activeRun=state.data.runs[0]`);
@@ -61,6 +61,40 @@ test('run detail loads logs, telemetry, preview, workspace, evaluation, and chil
   }
   assert.match(app.document.querySelector('#runsView').textContent, /Implemented|Strong result|Report|2400|2\.4k/i);
 });
+
+for (const entry of ['showRunDetail', 'applyRunPayload']) {
+  test(`${entry} shows the failure reason for an unbound auto-assigned run`, async (t) => {
+    const app = await loadApp();
+    t.after(app.close);
+    const workflow = app.evaluate('structuredClone(state.data.workflows[0])');
+    const reason = '兼容的项目执行机器已离线超过 2 分钟，请启动执行机器后重试';
+    const run = {
+      id: 'run-1', workflowId: workflow.id, workflowSnapshot: workflow,
+      status: 'failed', admissionState: 'unstarted', revision: 2,
+      createdAt: '2026-11-25T10:00:00Z', queueEnteredAt: '2026-11-25T10:00:00Z', updatedAt: '2026-11-25T10:03:01Z',
+      // The API omits executionMode when the run is unbound.
+      executionContext: { projectId: workflow.projectId, executionPool: 'project-auto' },
+      nodes: Object.fromEntries(workflow.nodes.map(({ id }) => [id, { nodeId: id, status: 'pending', attempt: 0 }])),
+      events: [{ id: 'adm-2', runId: 'run-1', type: 'run.failed', message: reason, timestamp: '2026-11-25T10:03:01Z' }],
+    };
+    const live = entry === 'applyRunPayload';
+    const initial = live ? { ...run, status: 'queued', admissionState: 'queued', revision: 1, events: null } : run;
+    const summary = { ...initial, workflowSnapshot: { id: workflow.id, name: workflow.name, nodes: null }, events: null };
+    app.router.get('/api/runs/run-1', initial);
+    app.evaluate(`state.data.runs=[${JSON.stringify(summary)}];switchView('runs');showRunDetail('run-1')`);
+    await settle(8);
+
+    if (live) {
+      const stream = app.evaluate('state.runStream');
+      const update = { ...run, executionContext: { ...run.executionContext, executionMode: '' } };
+      stream.emit({ run: update, telemetryDelta: [], logDelta: [] }, 'run');
+    }
+    const callout = app.document.querySelector('#runDetail .run-detail-header + .approval-callout');
+    assert.equal(callout?.querySelector('b')?.textContent, '自动分配失败');
+    assert.equal(callout.querySelector('p').textContent, reason);
+    assert.equal(callout.closest('[hidden]'), null);
+  });
+}
 
 test('live run redraws keep the current IDE document until the workspace is recycled', async (t) => {
   const app = await loadApp();

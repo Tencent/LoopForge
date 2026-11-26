@@ -6,17 +6,19 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"path/filepath"
 	"slices"
 	"sort"
 	"strings"
+	"unicode/utf8"
 )
 
 // Archived outputs can refill a legacy checkout; patch inventories are not
 // source files. Choose the newest version per physical path, independent of DB
 // iteration order. During execution never resurrect the current/downstream
 // outputs: that would make a missing new deliverable look successful.
-func archivedWorkspaceFiles(run domain.Run, executingNode string) []domain.WorkspaceArtifactFile {
+func archivedWorkspaceArtifacts(run domain.Run, executingNode string) map[string]domain.Artifact {
 	excluded := map[string]bool{}
 	if executingNode != "" {
 		excluded = descendants(run.WorkflowSnapshot, executingNode)
@@ -63,14 +65,27 @@ func archivedWorkspaceFiles(run domain.Run, executingNode string) []domain.Works
 			latest[rel] = a
 		}
 	}
-	paths := make([]string, 0, len(latest))
-	for p := range latest {
+	return latest
+}
+
+func archivedWorkspacePaths(artifacts map[string]domain.Artifact) []string {
+	paths := make([]string, 0, len(artifacts))
+	for p := range artifacts {
 		paths = append(paths, p)
 	}
 	sort.Strings(paths)
+	return paths
+}
+
+func archivedWorkspaceFiles(run domain.Run, executingNode string) []domain.WorkspaceArtifactFile {
+	latest := archivedWorkspaceArtifacts(run, executingNode)
+	paths := archivedWorkspacePaths(latest)
 	files := make([]domain.WorkspaceArtifactFile, 0, len(paths))
 	for _, p := range paths {
 		a := latest[p]
+		if len(a.Content) > domain.MaxInlineRunnerArtifactBytes || !utf8.ValidString(a.Content) || strings.ContainsRune(a.Content, 0) {
+			continue
+		}
 		sha := a.SHA256
 		if sha == "" {
 			sha = runtime.WorkspaceContentSHA(a.Content)
@@ -78,6 +93,24 @@ func archivedWorkspaceFiles(run domain.Run, executingNode string) []domain.Works
 		files = append(files, domain.WorkspaceArtifactFile{Path: p, Content: a.Content, SHA256: sha})
 	}
 	return files
+}
+
+func (e *Engine) restoreLocalArchivedOutputs(ctx context.Context, workspace string, run domain.Run, nodeID string) error {
+	if e.hasSavedWorkspace(run) {
+		return nil
+	}
+	artifacts := archivedWorkspaceArtifacts(run, nodeID)
+	for _, path := range archivedWorkspacePaths(artifacts) {
+		artifact := artifacts[path]
+		_, err := runtime.RestoreMissingWorkspaceArtifact(workspace, path, artifact.SHA256, func() (io.ReadCloser, error) {
+			_, body, err := e.repo.OpenArtifactContent(ctx, run.ID, artifact.ID)
+			return body, err
+		})
+		if err != nil {
+			return fmt.Errorf("%s: %w", path, err)
+		}
+	}
+	return nil
 }
 
 // hasHiddenPathSegment reports whether any slash-separated segment of rel
@@ -125,8 +158,27 @@ func (e *Engine) restoreWorkspaceFiles(ctx context.Context, run domain.Run, file
 }
 
 func (e *Engine) legacyArchivedWorkspaceFiles(run domain.Run, nodeID string) []domain.WorkspaceArtifactFile {
-	if meta, ok := e.repo.WorkspaceCheckpoint(workspaceRunID(run)); ok && meta.SavedAt != nil {
+	if e.hasSavedWorkspace(run) {
 		return nil
 	}
 	return archivedWorkspaceFiles(run, nodeID)
+}
+
+func (e *Engine) hasSavedWorkspace(run domain.Run) bool {
+	meta, ok := e.repo.WorkspaceCheckpoint(workspaceRunID(run))
+	return ok && meta.SavedAt != nil
+}
+
+func (e *Engine) runnerArchivedInputs(run domain.Run, nodeID string) []domain.RunnerInputFile {
+	if e.hasSavedWorkspace(run) {
+		return nil
+	}
+	artifacts := archivedWorkspaceArtifacts(run, nodeID)
+	files := make([]domain.RunnerInputFile, 0, len(artifacts))
+	for _, path := range archivedWorkspacePaths(artifacts) {
+		file := runnerInputFile(artifacts[path], path, true)
+		file.Restore = true
+		files = append(files, file)
+	}
+	return files
 }

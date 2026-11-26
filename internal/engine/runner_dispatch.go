@@ -149,6 +149,17 @@ func runnerRepositoryCapabilityError(runner domain.Runner, repositories []domain
 	return nil
 }
 
+func (e *Engine) requireRunnerSandboxVersion(runnerID string, profile domain.SandboxProfile) error {
+	if runnerID == "" || !profile.Privileged && !profile.HasResourceLimits() {
+		return nil
+	}
+	runner, _ := e.repo.Runner(runnerID)
+	if profile.HasResourceLimits() && !runner.SupportsDockerSandboxLimits() {
+		return errors.New(domain.RunnerDockerSandboxLimitsUpgradeMessage)
+	}
+	return runner.ValidatePrivilegedSandboxVersion(profile)
+}
+
 func (e *Engine) runnerSandboxSpec(run domain.Run) (*domain.RunnerSandboxSpec, error) {
 	runnerID := e.defaultExecutionRunner(run)
 	if runnerID != "" && run.UsesConversationWorkspace() && len(run.RepositoryContexts()) > 0 {
@@ -162,6 +173,9 @@ func (e *Engine) runnerSandboxSpec(run domain.Run) (*domain.RunnerSandboxSpec, e
 	}
 	profile, resources, err := e.workspaceSandboxProfile(run)
 	if err != nil {
+		return nil, err
+	}
+	if err := e.requireRunnerSandboxVersion(runnerID, profile); err != nil {
 		return nil, err
 	}
 	spec := resolvedSandboxSnapshot(profile, resources)
@@ -203,7 +217,6 @@ func (e *Engine) dispatchRunnerTask(ctx context.Context, runnerID string, run do
 	projectShare := runner.OwnerUserID > 0 && runner.OwnerUserID != run.ExecutionContext.ResponsibleUserID
 	resumeSessionID := resolveRunnerResumeSessionID(run, node.ID, options)
 	invocation := &domain.RunnerInvocation{
-		ArchivedFiles:                 e.legacyArchivedWorkspaceFiles(run, node.ID),
 		RunID:                         run.ID,
 		NodeID:                        node.ID,
 		InvocationID:                  invocationID,
@@ -266,10 +279,10 @@ func (e *Engine) dispatchRunnerTask(ctx context.Context, runnerID string, run do
 	}
 	bindRunnerRepositories(invocation, run, sb.credentialSnapshot().GitUserName, sb.credentialSnapshot().GitUserEmail)
 	reported := sb.reportedOutputs(node.ID)
+	e.setRunnerArtifactInputs(run, node.ID, invocation, reported)
 	if reported != nil {
 		invocation.Artifacts = nil
 		invocation.ReportOutputs = true
-		invocation.Inputs = reported.inputs
 		invocation.OutputFiles = artifactOutputFiles(run, node)
 		if path := strings.TrimSpace(options.GateResultPath); path != "" {
 			invocation.OutputFiles = append(invocation.OutputFiles, path)
@@ -295,7 +308,7 @@ func (e *Engine) dispatchRunnerTask(ctx context.Context, runnerID string, run do
 	}
 	task.ProjectCredentialIDs = run.WorkflowSnapshot.ProjectCredentialIDs
 	task.Sandbox = sandboxSpec
-	if err := validateSOPHandoffRunnerPayload(run, task); err != nil {
+	if err := validateRunnerArtifactPayload(run, task); err != nil {
 		return "", err
 	}
 	if err := e.repo.PutRunnerTask(task); err != nil {
@@ -334,6 +347,9 @@ func (e *Engine) dispatchRunnerTask(ctx context.Context, runnerID string, run do
 		return final.Result, nil
 	case domain.RunnerTaskFailed:
 		msg := strings.TrimSpace(final.Error)
+		if strings.HasPrefix(msg, domain.RunnerResultReportError+"：") {
+			return final.Result, fmt.Errorf("%w：%s", errArtifactTransfer, msg)
+		}
 		if msg == "" {
 			msg = "runner task failed"
 		}
@@ -434,15 +450,14 @@ func (e *Engine) dispatchRunnerScript(ctx context.Context, runnerID string, run 
 		command = "python3 -c " + shellSingleQuote(script)
 	}
 	invocation := &domain.RunnerInvocation{
-		ArchivedFiles: e.legacyArchivedWorkspaceFiles(run, nodeID),
-		RunID:         run.ID, NodeID: nodeID, Artifacts: artifacts, ArtifactDirectory: artifactDirectory, Assets: assets, MCPCallServers: assets.MCPServers, HumanContext: run.HumanContext}
+		RunID: run.ID, NodeID: nodeID, Artifacts: artifacts, ArtifactDirectory: artifactDirectory, Assets: assets, MCPCallServers: assets.MCPServers, HumanContext: run.HumanContext}
 	bindRunnerRepositories(invocation, run, gitUserName, gitUserEmail)
 	reported := sb.reportedOutputs(nodeID)
+	e.setRunnerArtifactInputs(run, nodeID, invocation, reported)
 	if reported != nil {
 		invocation.Artifacts = nil
 		invocation.ArtifactDirectory = ""
 		invocation.ReportOutputs = true
-		invocation.Inputs = reported.inputs
 		for _, contract := range artifacts {
 			if rel, ok := artifactRelPath(artifactDirectory, contract.Path); ok {
 				invocation.OutputFiles = append(invocation.OutputFiles, rel)
@@ -468,7 +483,7 @@ func (e *Engine) dispatchRunnerScript(ctx context.Context, runnerID string, run 
 		return "", err
 	}
 	task.ProjectCredentialIDs = run.WorkflowSnapshot.ProjectCredentialIDs
-	if err := validateSOPHandoffRunnerPayload(run, task); err != nil {
+	if err := validateRunnerArtifactPayload(run, task); err != nil {
 		return "", err
 	}
 	if err := e.repo.PutRunnerTask(task); err != nil {
@@ -502,6 +517,9 @@ func (e *Engine) dispatchRunnerScript(ctx context.Context, runnerID string, run 
 		return final.Result, errors.New("runner script canceled")
 	default:
 		message := strings.TrimSpace(final.Error)
+		if strings.HasPrefix(message, domain.RunnerResultReportError+"：") {
+			return final.Result, fmt.Errorf("%w：%s", errArtifactTransfer, message)
+		}
 		if message == "" {
 			message = strings.TrimSpace(final.Result)
 		}
@@ -509,6 +527,18 @@ func (e *Engine) dispatchRunnerScript(ctx context.Context, runnerID string, run 
 			message = "script failed on runner"
 		}
 		return final.Result, errors.New(message)
+	}
+}
+
+func (e *Engine) setRunnerArtifactInputs(run domain.Run, nodeID string, inv *domain.RunnerInvocation, reported *reportedOutputs) {
+	if reported != nil {
+		inv.ArtifactTransfer = reported.transfer
+		inv.Inputs = reported.inputs
+	}
+	if inv.ArtifactTransfer {
+		inv.Inputs = append(e.runnerArchivedInputs(run, nodeID), inv.Inputs...)
+	} else {
+		inv.ArchivedFiles = e.legacyArchivedWorkspaceFiles(run, nodeID)
 	}
 }
 
@@ -520,6 +550,9 @@ func (e *Engine) defaultExecutionRunner(run domain.Run) string {
 		return ""
 	case domain.ExecutionModeRunner:
 		return strings.TrimSpace(run.ExecutionContext.ExecutionRunnerID)
+	}
+	if run.ExecutionContext.ExecutionPool == domain.ExecutionPoolProjectAuto {
+		return ""
 	}
 	// Legacy runs predate target snapshots; retain their historical behavior.
 	return e.repo.DefaultRunner(run.ExecutionContext.ResponsibleUserID)
@@ -533,6 +566,11 @@ func (e *Engine) validateExecutionReconnect(run domain.Run, nodeID string) error
 	if runnerID == "" || isPoolRun(run) {
 		// A pool run is rebound to another pool runner when its node starts.
 		return nil
+	}
+	if run.ExecutionContext.ExecutionPool == domain.ExecutionPoolProjectAuto {
+		if err := e.validateAutoAssignBinding(run); err != nil {
+			return err
+		}
 	}
 	runner, ok := e.repo.Runner(runnerID)
 	if !ok {
