@@ -117,6 +117,17 @@ type RunnerMaintenanceRequest struct {
 	StatusOnly bool   `json:"statusOnly,omitempty"`
 }
 
+func (r RunnerWorkspaceRequest) IsGitBrowse() bool {
+	switch r.Operation {
+	case RunnerWorkspaceOperationInfo, RunnerWorkspaceOperationLog, RunnerWorkspaceOperationCommit, RunnerWorkspaceOperationDiff:
+		return true
+	case RunnerWorkspaceOperationFile:
+		return r.Ref != ""
+	default:
+		return false
+	}
+}
+
 type RunnerMaintenanceResult struct {
 	Status    string `json:"status"`
 	Current   string `json:"current,omitempty"`

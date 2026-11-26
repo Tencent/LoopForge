@@ -11,7 +11,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -20,6 +19,7 @@ import (
 
 	"agentflow/internal/domain"
 	"agentflow/internal/engine"
+	"agentflow/internal/gitwork"
 	"agentflow/internal/runtime"
 
 	"github.com/gin-gonic/gin"
@@ -193,12 +193,22 @@ func (h *runsHandlers) runWorkspace(c *gin.Context) {
 	if c.FullPath() != "/api/runs/:id/workspace" {
 		h.touchWorkspaceBrowse(c, owner)
 	}
+	ctx := c.Request.Context()
+	switch c.FullPath() {
+	case "/api/runs/:id/workspace", "/api/runs/:id/workspace/log", "/api/runs/:id/workspace/commit", "/api/runs/:id/workspace/diff", "/api/runs/:id/workspace/file":
+		if owner.IsWorkspace() && len(run.RepositoryContexts()) == 0 && (c.FullPath() != "/api/runs/:id/workspace/file" || c.Query("ref") != "") {
+			if repositories := gitwork.DiscoverBrowserRepositories(ctx, root); len(repositories) > 0 {
+				ctx = gitwork.WithBrowserRepositories(ctx, repositories)
+				ctx = h.engine.WorkspaceBrowseGit(ctx, owner)
+			}
+		}
+	}
 	switch c.FullPath() {
 	case "/api/runs/:id/workspace":
-		changes, warning := collectWorkspaceChanges(c.Request.Context(), root, run)
+		changes, warning := collectWorkspaceChanges(ctx, root, run)
 		payload := gin.H{
 			"available": true, "readOnly": !h.workspaceWritable(c, run), "runStatus": run.Status, "pauseRequested": run.PauseRequested,
-			"changes": changes, "repositories": collectWorkspaceGitRepositories(root, run), "warning": warning,
+			"changes": changes, "repositories": collectWorkspaceGitRepositories(ctx, root, run), "warning": warning,
 			"repositoryDetails": workspaceRepositoryDetails(run),
 		}
 		h.workspaceLifecycleInfo(c, owner, payload, true)
@@ -217,7 +227,7 @@ func (h *runsHandlers) runWorkspace(c *gin.Context) {
 			return
 		}
 		if ref := strings.TrimSpace(c.Query("ref")); ref != "" {
-			content, size, err := readWorkspaceGitBlob(c.Request.Context(), root, run, path, ref)
+			content, size, err := readWorkspaceGitBlob(ctx, root, run, path, ref)
 			if err != nil {
 				respondWorkspaceError(c, err)
 				return
@@ -232,14 +242,14 @@ func (h *runsHandlers) runWorkspace(c *gin.Context) {
 		}
 		c.JSON(http.StatusOK, gin.H{"path": filepath.ToSlash(path), "content": content, "size": size, "sha256": runtime.WorkspaceContentSHA(content)})
 	case "/api/runs/:id/workspace/log":
-		log, err := collectWorkspaceLog(c.Request.Context(), root, run, c.Query("repository"))
+		log, err := collectWorkspaceLog(ctx, root, run, c.Query("repository"))
 		if err != nil {
 			respondWorkspaceError(c, err)
 			return
 		}
 		c.JSON(http.StatusOK, log)
 	case "/api/runs/:id/workspace/commit":
-		files, err := collectWorkspaceCommitFiles(c.Request.Context(), root, run, c.Query("repository"), c.Query("id"))
+		files, err := collectWorkspaceCommitFiles(ctx, root, run, c.Query("repository"), c.Query("id"))
 		if err != nil {
 			respondWorkspaceError(c, err)
 			return
@@ -247,7 +257,7 @@ func (h *runsHandlers) runWorkspace(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"id": strings.TrimSpace(c.Query("id")), "files": files})
 	case "/api/runs/:id/workspace/diff":
 		path := strings.TrimSpace(c.Query("path"))
-		diff, truncated, err := readWorkspaceDiff(c.Request.Context(), root, run, path)
+		diff, truncated, err := readWorkspaceDiff(ctx, root, run, path)
 		if err != nil {
 			respondWorkspaceError(c, err)
 			return
@@ -256,7 +266,7 @@ func (h *runsHandlers) runWorkspace(c *gin.Context) {
 			c.JSON(http.StatusOK, gin.H{"diff": diff, "truncated": truncated})
 			return
 		}
-		original, originalTruncated, err := readWorkspaceBaseFile(c.Request.Context(), root, run, path)
+		original, originalTruncated, err := readWorkspaceBaseFile(ctx, root, run, path)
 		if err != nil {
 			respondWorkspaceError(c, err)
 			return
@@ -377,6 +387,9 @@ func (h *runsHandlers) proxyRunnerWorkspace(c *gin.Context, run, owner domain.Ru
 	request := domain.RunnerWorkspaceRequest{
 		RunID: runnerWorkspaceRunID(run), RunStatus: run.Status, WorkspaceLayout: run.ExecutionContext.RunnerWorkspaceLayout, Operation: operation,
 		Path: path, Query: c.Query("q"), Ref: ref, Repositories: run.RepositoryContexts(),
+	}
+	if len(request.Repositories) == 0 && request.IsGitBrowse() {
+		request = h.engine.RunnerWorkspaceBrowseRequest(owner, request)
 	}
 	response, status, reason := h.requestRunnerWorkspace(c.Request.Context(), runnerID, request)
 	if status == http.StatusServiceUnavailable {
@@ -657,22 +670,14 @@ func workspaceGitRepositoryName(label string) string {
 	return label
 }
 
-func workspaceGitRepositoryQuery(name string) string {
-	name = strings.TrimSpace(name)
-	if name == "" || name == "." || name == "workspace" {
-		return ""
-	}
-	return name
-}
-
-func collectWorkspaceGitRepositories(root string, run domain.Run) []string {
+func collectWorkspaceGitRepositories(ctx context.Context, root string, run domain.Run) []string {
 	names := make([]string, 0, 4)
 	seen := map[string]bool{}
-	for _, repository := range workspaceRepositoryRoots(root, run) {
-		if _, err := os.Stat(filepath.Join(repository.path, ".git")); err != nil {
+	for _, repository := range workspaceRepositoryRoots(ctx, root, run) {
+		if _, err := os.Stat(filepath.Join(repository.Path, ".git")); err != nil {
 			continue
 		}
-		name := workspaceGitRepositoryName(repository.label)
+		name := workspaceGitRepositoryName(repository.Label)
 		if seen[name] {
 			continue
 		}
@@ -682,34 +687,22 @@ func collectWorkspaceGitRepositories(root string, run domain.Run) []string {
 	return names
 }
 
-func workspaceRepositoryRoots(root string, run domain.Run) []struct{ path, label string } {
-	repositories := run.RepositoryContexts()
-	if len(repositories) == 0 {
-		return []struct{ path, label string }{{root, ""}}
-	}
-	result := make([]struct{ path, label string }, 0, len(repositories))
-	for _, repository := range repositories {
-		dir := filepath.Clean(filepath.FromSlash(repository.WorkspaceDir))
-		if dir == "." {
-			dir = ""
-		}
-		if dir == ".." || strings.HasPrefix(dir, ".."+string(filepath.Separator)) {
-			continue
-		}
-		result = append(result, struct{ path, label string }{filepath.Join(root, dir), filepath.ToSlash(dir)})
-	}
-	return result
+func workspaceRepositoryRoots(ctx context.Context, root string, run domain.Run) []gitwork.BrowserRepository {
+	return gitwork.BrowserRepositoryRoots(ctx, root, run.RepositoryContexts())
 }
 
 func collectWorkspaceChanges(ctx context.Context, root string, run domain.Run) ([]workspaceChange, string) {
 	ctx, cancel := context.WithTimeout(ctx, 4*time.Second)
 	defer cancel()
 	changes := []workspaceChange{}
-	for _, repository := range workspaceRepositoryRoots(root, run) {
-		if _, err := os.Stat(filepath.Join(repository.path, ".git")); err != nil {
+	for _, repository := range workspaceRepositoryRoots(ctx, root, run) {
+		if _, err := os.Stat(filepath.Join(repository.Path, ".git")); err != nil {
 			continue
 		}
-		out, err := exec.CommandContext(ctx, "git", "--no-optional-locks", "-C", repository.path, "status", "--porcelain=v1", "-z", "--untracked-files=all").Output()
+		out, err := gitwork.BrowserGitOutput(ctx, repository, "status", "--porcelain=v1", "-z", "--untracked-files=all")
+		if errors.Is(err, gitwork.ErrBrowserGitUnavailable) {
+			return changes, err.Error()
+		}
 		if err != nil {
 			return changes, "Git 状态读取失败"
 		}
@@ -720,10 +713,10 @@ func collectWorkspaceChanges(ctx context.Context, root string, run domain.Run) (
 				continue
 			}
 			path := string(item[3:])
-			if workspacePathSensitive(filepath.ToSlash(filepath.Join(repository.label, path))) {
+			if workspacePathSensitive(filepath.ToSlash(filepath.Join(repository.Label, path))) {
 				continue
 			}
-			changes = append(changes, workspaceChange{Path: filepath.ToSlash(filepath.Join(repository.label, path)), Repository: workspaceGitRepositoryName(repository.label), Index: string(item[0]), Worktree: string(item[1])})
+			changes = append(changes, workspaceChange{Path: filepath.ToSlash(filepath.Join(repository.Label, path)), Repository: workspaceGitRepositoryName(repository.Label), Index: string(item[0]), Worktree: string(item[1])})
 			if item[0] == 'R' || item[0] == 'C' || item[1] == 'R' || item[1] == 'C' {
 				i++ // porcelain -z follows a rename/copy with the original path
 			}
@@ -743,25 +736,19 @@ func readWorkspaceDiff(ctx context.Context, root string, run domain.Run, raw str
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	var combined bytes.Buffer
-	for _, repository := range workspaceRepositoryRoots(root, run) {
-		if _, err := os.Stat(filepath.Join(repository.path, ".git")); err != nil {
+	for _, repository := range workspaceRepositoryRoots(ctx, root, run) {
+		if _, err := os.Stat(filepath.Join(repository.Path, ".git")); err != nil {
 			continue
 		}
-		rel := raw
-		if repository.label != "" {
-			prefix := strings.TrimSuffix(repository.label, "/") + "/"
-			if raw != "" && !strings.HasPrefix(raw, prefix) {
+		rel := ""
+		if raw != "" {
+			var ok bool
+			rel, ok = gitwork.BrowserRepositoryRelativePath(repository, raw)
+			if !ok {
 				continue
 			}
-			rel = strings.TrimPrefix(raw, prefix)
 		}
-		// Browsing must never take .git/index.lock: a concurrent preparation
-		// or commit would otherwise fail with "index.lock: File exists".
-		args := []string{"--no-optional-locks", "-C", repository.path, "diff", "--no-ext-diff", "--no-color", "HEAD", "--"}
-		if rel != "" {
-			args = append(args, filepath.FromSlash(rel))
-		}
-		out, err := exec.CommandContext(ctx, "git", args...).Output()
+		out, err := gitwork.BrowserGitOutput(ctx, repository, gitwork.BrowserDiffArgs(repository, rel)...)
 		if err != nil {
 			return "", false, fmt.Errorf("read git diff: %w", err)
 		}
@@ -780,25 +767,23 @@ func readWorkspaceBaseFile(ctx context.Context, root string, run domain.Run, raw
 	}
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	for _, repository := range workspaceRepositoryRoots(root, run) {
-		rel := workspaceRel
-		if repository.label != "" {
-			prefix := strings.TrimSuffix(repository.label, "/") + "/"
-			if !strings.HasPrefix(filepath.ToSlash(workspaceRel), prefix) {
-				continue
-			}
-			rel = strings.TrimPrefix(filepath.ToSlash(workspaceRel), prefix)
+	for _, repository := range workspaceRepositoryRoots(ctx, root, run) {
+		rel, ok := gitwork.BrowserRepositoryRelativePath(repository, filepath.ToSlash(workspaceRel))
+		if !ok {
+			continue
 		}
-		if _, err := os.Stat(filepath.Join(repository.path, ".git")); err != nil {
+		if _, err := os.Stat(filepath.Join(repository.Path, ".git")); err != nil {
 			continue
 		}
 		// The base is HEAD's blob. A path HEAD never had (untracked, or
 		// registered with `git add -N` by a node) has an empty base.
-		inHead := exec.CommandContext(ctx, "git", "-C", repository.path, "cat-file", "-e", "HEAD:"+filepath.ToSlash(rel))
-		if err := inHead.Run(); err != nil {
+		if _, err := gitwork.BrowserGitOutput(ctx, repository, "cat-file", "-e", "HEAD:"+rel); err != nil {
+			if errors.Is(err, gitwork.ErrBrowserGitUnavailable) {
+				return "", false, err
+			}
 			return "", false, nil
 		}
-		out, err := exec.CommandContext(ctx, "git", "-C", repository.path, "show", "HEAD:"+filepath.ToSlash(rel)).Output()
+		out, err := gitwork.BrowserGitOutput(ctx, repository, "show", "HEAD:"+filepath.ToSlash(rel))
 		if err != nil {
 			return "", false, fmt.Errorf("read base file: %w", err)
 		}
@@ -842,43 +827,24 @@ func workspaceLogicalPath(raw string) (string, error) {
 	return filepath.ToSlash(rel), nil
 }
 
-func findWorkspaceRepository(root string, run domain.Run, name string) (path, label string, ok bool) {
-	name = workspaceGitRepositoryQuery(name)
-	roots := workspaceRepositoryRoots(root, run)
-	if name == "" {
-		for _, repository := range roots {
-			if repository.label == "" {
-				return repository.path, repository.label, true
-			}
-		}
-		if len(roots) == 1 {
-			return roots[0].path, roots[0].label, true
-		}
-		return "", "", false
-	}
-	for _, repository := range roots {
-		if repository.label == name {
-			return repository.path, repository.label, true
-		}
-	}
-	return "", "", false
-}
-
 func collectWorkspaceLog(ctx context.Context, root string, run domain.Run, name string) (gin.H, error) {
-	path, label, ok := findWorkspaceRepository(root, run, name)
+	repository, ok := gitwork.FindBrowserRepository(ctx, root, run.RepositoryContexts(), name)
 	if !ok {
 		return nil, fmt.Errorf("repository not found")
 	}
-	if _, err := os.Stat(filepath.Join(path, ".git")); err != nil {
-		return gin.H{"repository": label, "branch": "", "head": "", "commits": []workspaceCommit{}}, nil
+	if _, err := os.Stat(filepath.Join(repository.Path, ".git")); err != nil {
+		return gin.H{"repository": repository.Label, "branch": "", "head": "", "commits": []workspaceCommit{}}, nil
 	}
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	branchOut, _ := exec.CommandContext(ctx, "git", "-C", path, "rev-parse", "--abbrev-ref", "HEAD").Output()
-	headOut, _ := exec.CommandContext(ctx, "git", "-C", path, "rev-parse", "HEAD").Output()
-	out, err := exec.CommandContext(ctx, "git", "-C", path, "log", "-n", strconv.Itoa(workspaceLogLimit), "--format=%H%x1f%P%x1f%s%x1f%an%x1f%at").Output()
+	branchOut, _ := gitwork.BrowserGitOutput(ctx, repository, "rev-parse", "--abbrev-ref", "HEAD")
+	headOut, _ := gitwork.BrowserGitOutput(ctx, repository, "rev-parse", "HEAD")
+	out, err := gitwork.BrowserGitOutput(ctx, repository, "log", "-n", strconv.Itoa(workspaceLogLimit), "--format=%H%x1f%P%x1f%s%x1f%an%x1f%at")
+	if errors.Is(err, gitwork.ErrBrowserGitUnavailable) {
+		return nil, err
+	}
 	if err != nil {
-		return gin.H{"repository": label, "branch": strings.TrimSpace(string(branchOut)), "head": strings.TrimSpace(string(headOut)), "commits": []workspaceCommit{}}, nil
+		return gin.H{"repository": repository.Label, "branch": strings.TrimSpace(string(branchOut)), "head": strings.TrimSpace(string(headOut)), "commits": []workspaceCommit{}}, nil
 	}
 	commits := []workspaceCommit{}
 	for _, line := range strings.Split(string(out), "\n") {
@@ -904,7 +870,7 @@ func collectWorkspaceLog(ctx context.Context, root string, run domain.Run, name 
 			Timestamp: unix * 1000,
 		})
 	}
-	return gin.H{"repository": label, "branch": strings.TrimSpace(string(branchOut)), "head": strings.TrimSpace(string(headOut)), "commits": commits}, nil
+	return gin.H{"repository": repository.Label, "branch": strings.TrimSpace(string(branchOut)), "head": strings.TrimSpace(string(headOut)), "commits": commits}, nil
 }
 
 func collectWorkspaceCommitFiles(ctx context.Context, root string, run domain.Run, name, id string) ([]workspaceCommitFile, error) {
@@ -912,16 +878,16 @@ func collectWorkspaceCommitFiles(ctx context.Context, root string, run domain.Ru
 	if !ok {
 		return nil, fmt.Errorf("invalid commit id")
 	}
-	path, label, found := findWorkspaceRepository(root, run, name)
+	repository, found := gitwork.FindBrowserRepository(ctx, root, run.RepositoryContexts(), name)
 	if !found {
 		return nil, fmt.Errorf("repository not found")
 	}
-	if _, err := os.Stat(filepath.Join(path, ".git")); err != nil {
+	if _, err := os.Stat(filepath.Join(repository.Path, ".git")); err != nil {
 		return []workspaceCommitFile{}, nil
 	}
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, "git", "-C", path, "diff-tree", "--no-commit-id", "--name-status", "-r", "--root", "--no-renames", "-z", commit).Output()
+	out, err := gitwork.BrowserGitOutput(ctx, repository, "diff-tree", "--no-commit-id", "--name-status", "-r", "--root", "--no-renames", "-z", commit)
 	if err != nil {
 		return nil, fmt.Errorf("read commit files: %w", err)
 	}
@@ -933,7 +899,7 @@ func collectWorkspaceCommitFiles(ctx context.Context, root string, run domain.Ru
 		if status == "" || rel == "" {
 			continue
 		}
-		full := filepath.ToSlash(filepath.Join(label, rel))
+		full := filepath.ToSlash(filepath.Join(repository.Label, rel))
 		if workspacePathSensitive(full) {
 			continue
 		}
@@ -953,19 +919,18 @@ func readWorkspaceGitBlob(ctx context.Context, root string, run domain.Run, raw,
 	}
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	for _, repository := range workspaceRepositoryRoots(root, run) {
-		fileRel := rel
-		if repository.label != "" {
-			prefix := strings.TrimSuffix(repository.label, "/") + "/"
-			if !strings.HasPrefix(rel, prefix) && rel != repository.label {
-				continue
-			}
-			fileRel = strings.TrimPrefix(rel, prefix)
-		}
-		if _, err := os.Stat(filepath.Join(repository.path, ".git")); err != nil {
+	for _, repository := range workspaceRepositoryRoots(ctx, root, run) {
+		fileRel, ok := gitwork.BrowserRepositoryRelativePath(repository, rel)
+		if !ok {
 			continue
 		}
-		out, err := exec.CommandContext(ctx, "git", "-C", repository.path, "show", object+":"+fileRel).Output()
+		if _, err := os.Stat(filepath.Join(repository.Path, ".git")); err != nil {
+			continue
+		}
+		out, err := gitwork.BrowserGitOutput(ctx, repository, "show", object+":"+fileRel)
+		if errors.Is(err, gitwork.ErrBrowserGitUnavailable) {
+			return "", 0, err
+		}
 		if err != nil {
 			return "", 0, nil
 		}

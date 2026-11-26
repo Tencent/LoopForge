@@ -73,7 +73,6 @@ func TestWorkspaceFilesystemAndGitBranches(t *testing.T) {
 		t.Fatal("safe path marked sensitive")
 	}
 	for _, raw := range []string{"", ".", "workspace", " repo "} {
-		_ = workspaceGitRepositoryQuery(raw)
 		_ = workspaceGitRepositoryName(raw)
 	}
 	for _, raw := range []string{"abcdef0", strings.Repeat("a", 64)} {

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/gitwork"
 	flowruntime "agentflow/internal/runtime"
 )
 
@@ -196,7 +197,7 @@ func TestWorkspaceGitViews(t *testing.T) {
 	_ = os.WriteFile(filepath.Join(repoDir, "a.txt"), []byte("two\n"), 0o644)
 	_ = os.WriteFile(filepath.Join(repoDir, "new.txt"), []byte("new\n"), 0o644)
 	repositories := []domain.RepositoryContext{{WorkspaceDir: "repo"}}
-	if got := runnerCollectWorkspaceGitRepositories(root, repositories); len(got) != 1 || got[0] != "repo" {
+	if got := runnerCollectWorkspaceGitRepositories(context.Background(), root, repositories); len(got) != 1 || got[0] != "repo" {
 		t.Fatalf("repositories=%v", got)
 	}
 	changes, warning := runnerCollectWorkspaceChanges(context.Background(), root, repositories)
@@ -229,7 +230,7 @@ func TestWorkspaceGitViews(t *testing.T) {
 	if object, ok := runnerSafeGitObjectID(head); !ok || object != head {
 		t.Fatal("valid object rejected")
 	}
-	if _, _, ok := runnerFindWorkspaceRepository(root, repositories, "missing"); ok {
+	if _, ok := gitwork.FindBrowserRepository(context.Background(), root, repositories, "missing"); ok {
 		t.Fatal("missing repository found")
 	}
 }

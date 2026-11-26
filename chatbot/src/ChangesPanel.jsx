@@ -261,7 +261,7 @@ export default function ChangesPanel({ changes }) {
             />
           ))}
         </div>
-      ) : (
+      ) : changes?.warning ? null : (
         <EmptyChanges repository={repository} />
       )}
       {changes?.truncated ? (

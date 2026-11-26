@@ -11,6 +11,36 @@ import {
   statusLabel,
 } from "../src/changes.js";
 
+test("keeps same-named patches and renames in their own repositories", () => {
+  const patches = parseUnifiedDiff([
+    "diff --git a/api/README.md b/api/README.md",
+    "@@ -1 +1 @@",
+    "-original",
+    "+api",
+    "diff --git a/worker/README.md b/worker/START.md",
+    "rename from README.md",
+    "rename to START.md",
+    "@@ -1 +1 @@",
+    "-original",
+    "+worker",
+    "diff --git a/worker/README.md b/worker/README.md",
+    "@@ -1 +1 @@",
+    "-original",
+    "+new-worker-readme",
+  ].join("\n"));
+  const files = mergeChanges([
+    { path: "api/README.md", worktree: "M" },
+    { path: "worker/START.md", index: "R" },
+    { path: "worker/README.md", index: "A" },
+  ], patches);
+  assert.deepEqual(files.map((file) => [file.path, file.patch.hunks[0].lines[1].text]), [
+    ["api/README.md", "api"],
+    ["worker/README.md", "new-worker-readme"],
+    ["worker/START.md", "worker"],
+  ]);
+  assert.equal(files[2].patch.oldPath, "worker/README.md");
+});
+
 const PATCH = [
   "diff --git a/web/app/approvals.js b/web/app/approvals.js",
   "index 1111111..2222222 100644",

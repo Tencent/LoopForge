@@ -19,10 +19,17 @@ import (
 // cross this boundary. Refuse old incomplete requests rather than falling back
 // to a shell with the runner daemon's host environment.
 func (d *Daemon) workspaceSandboxTask(root string, request domain.RunnerWorkspaceRequest) (domain.RunnerTask, error) {
+	if request.Workflow == nil {
+		return domain.RunnerTask{}, fmt.Errorf("frozen run sandbox and workflow are required; upgrade the control plane before opening this workspace")
+	}
+	return d.workspaceSandboxTaskFromProfile(root, request)
+}
+
+func (d *Daemon) workspaceSandboxTaskFromProfile(root string, request domain.RunnerWorkspaceRequest) (domain.RunnerTask, error) {
 	if request.WorkspaceLayout != domain.RunnerWorkspaceLayoutShared {
 		return domain.RunnerTask{}, fmt.Errorf("legacy per-node workspace layout does not support environment preparation or sandbox terminals; file browsing remains available")
 	}
-	if request.Sandbox == nil || request.Workflow == nil {
+	if request.Sandbox == nil {
 		return domain.RunnerTask{}, fmt.Errorf("frozen run sandbox and workflow are required; upgrade the control plane before opening this workspace")
 	}
 	relative, err := filepath.Rel(d.cfg.DefaultWorkspaceRoot, root)
