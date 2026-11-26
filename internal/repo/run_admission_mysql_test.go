@@ -224,7 +224,7 @@ func TestMySQLProjectRunAdmissionStartedOutcomesAndFIFO(t *testing.T) {
 		t.Fatal(err)
 	}
 	if released, err := stores[0].ReleaseCleanedRunAdmission(run.ID, "archived"); err != nil || !released {
-		t.Fatalf("release failed SOP after cleanup: %v, %v", released, err)
+		t.Fatalf("release failed LOOP after cleanup: %v, %v", released, err)
 	}
 	if run = admissionMySQLState(t, stores[1], run.ID, "failed"); run.AdmissionState != "released" || len(run.Events) != 1 || run.Events[0].Type != "workspace.reclaimed" {
 		t.Fatalf("cleaned run release was not visible across stores: admission=%s, events=%+v", run.AdmissionState, run.Events)

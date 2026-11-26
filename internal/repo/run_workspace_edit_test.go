@@ -43,9 +43,9 @@ func TestWorkspaceEditorEditsWithoutPausing(t *testing.T) {
 	if err = st.WithWorkspaceEditor(run.ID, 10, func(domain.Run) error { return nil }); err != nil {
 		t.Fatalf("running run refused write: %v", err)
 	}
-	// Main Bot still needs a borrowed SOP stopped first.
+	// Main Bot still needs a borrowed LOOP stopped first.
 	if err = st.WithMainBotWorkspace(run.ID, 10, func(domain.Run) error { return nil }); err == nil {
-		t.Fatal("Main Bot wrote into a running SOP")
+		t.Fatal("Main Bot wrote into a running LOOP")
 	}
 }
 

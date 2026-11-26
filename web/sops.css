@@ -1,4 +1,4 @@
-/* SOP 流程库 —— 深色 */
+/* LOOP 流程库 —— 深色 */
 
 .sop-page{width:100%;display:flex;flex-direction:column;gap:12px}
 .sop-stats{margin:0}
@@ -45,7 +45,7 @@
 .sop-status.draft{color:var(--amber);background:rgba(251,191,36,.16)}
 .sop-status.archived{color:var(--muted-2);background:var(--panel-2)}
 
-/* SOP 创建向导起点选择 */
+/* LOOP 创建向导起点选择 */
 .template-choice-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:10px}
 .sop-sandbox-settings{margin-top:20px}
 .sop-sandbox-settings>.wide{grid-column:1/-1}
@@ -71,7 +71,7 @@
 @media(max-width:1050px){.sop-overview{grid-template-columns:repeat(3,minmax(0,1fr))}.sop-catalog{grid-template-columns:repeat(auto-fill,minmax(280px,1fr))}.sop-card{max-width:none}}
 @media(max-width:720px){.sop-overview{grid-template-columns:1fr 1fr}.sop-toolbar{align-items:flex-start;gap:10px;flex-direction:column}.sop-toolbar-filters{width:100%;margin-left:0}.sop-toolbar .select{min-width:0;flex:1}}
 
-/* 通用模板：平台提供的只读 SOP 蓝图 */
+/* 通用模板：平台提供的只读 LOOP 蓝图 */
 .sop-card.generic{border-color:color-mix(in srgb,var(--blue) 26%,var(--line));background:linear-gradient(180deg,color-mix(in srgb,var(--blue) 4%,var(--panel)),var(--panel) 46%)}
 .sop-status.generic{color:var(--blue);background:var(--blue-soft)}
 .sop-card .sop-requirements{display:flex;flex-wrap:wrap;gap:6px;margin-top:12px}

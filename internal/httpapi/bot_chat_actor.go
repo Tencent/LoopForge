@@ -59,7 +59,7 @@ func botChatActorFrom(ctx context.Context) (botChatActor, bool) {
 // reported is the name carried by the message being handled; DingTalk is the
 // only channel that sends one. It is cached on the binding so later actions
 // of the same sender that carry no name - card clicks, confirmations on the
-// platform page, a SOP started right after a clarification - can still be
+// platform page, a LOOP started right after a clarification - can still be
 // attributed to a person. WeCom and Feishu bot callbacks carry the sender ID
 // alone, so this stays empty for them and the sender keeps being named by the
 // platform account it is bound to.

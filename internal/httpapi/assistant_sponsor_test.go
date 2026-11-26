@@ -246,7 +246,7 @@ func TestOwnKeyKeepsFreeModelChoice(t *testing.T) {
 	}
 }
 
-// The setup guides read bootstrap to tell new users that chat and SOP runs
+// The setup guides read bootstrap to tell new users that chat and LOOP runs
 // work on the shared model before they configure a key.
 func TestBootstrapAdvertisesSponsoredModel(t *testing.T) {
 	st, _ := sponsorFixture(t)

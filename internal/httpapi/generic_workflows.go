@@ -59,7 +59,7 @@ func (h *catalogHandlers) adoptGenericWorkflow(template domain.WorkflowDefinitio
 		// Deliberately no compensation deletes here. The cloned roles, rules
 		// and skills may already be referenced by a concurrent adoption that
 		// succeeded (or is still running), and deleting them would break that
-		// SOP. They are idempotently reused on the next attempt, so a failed
+		// LOOP. They are idempotently reused on the next attempt, so a failed
 		// adopt just leaves pre-created assets behind — self-healing on retry
 		// and manually removable in the catalog if never retried.
 		return domain.WorkflowDefinition{}, err

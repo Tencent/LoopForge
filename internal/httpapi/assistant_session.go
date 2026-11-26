@@ -165,7 +165,7 @@ func (h *assistantHandlers) archiveSession(c *gin.Context) {
 		return
 	}
 	if _, ok := h.repo.SharedAssistantSession(c.Param("id")); ok {
-		c.JSON(403, gin.H{"error": "共享 SOP 会话不能个人归档"})
+		c.JSON(403, gin.H{"error": "共享 LOOP 会话不能个人归档"})
 		return
 	}
 	var body struct {
@@ -507,7 +507,7 @@ func (h *assistantHandlers) session(c *gin.Context) {
 		if shared {
 			_, project := h.repo.ProjectAssistantSession(id)
 			if !project {
-				c.JSON(403, gin.H{"error": "共享 SOP 会话随运行保留，不能个人删除"})
+				c.JSON(403, gin.H{"error": "共享 LOOP 会话随运行保留，不能个人删除"})
 				return
 			}
 		}

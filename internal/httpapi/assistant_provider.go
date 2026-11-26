@@ -1,6 +1,6 @@
 package httpapi
 
-// Main Bot uses the same user-scoped credentials as SOP roles. Its native
+// Main Bot uses the same user-scoped credentials as LOOP roles. Its native
 // tools are deliberately restricted: all platform operations still pass
 // through the authenticated tool gateway and its approval policy.
 import (

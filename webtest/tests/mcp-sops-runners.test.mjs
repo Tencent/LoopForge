@@ -32,7 +32,7 @@ test('MCP import accepts common formats, validates bad input, and saves HTTP con
   assert.equal(call.body.projectId, 'project-1');
 });
 
-test('generic SOP requirements reflect credentials and installed MCPs, then clone through API', async (t) => {
+test('generic LOOP requirements reflect credentials and installed MCPs, then clone through API', async (t) => {
   const app = await loadApp();
   t.after(app.close);
   const generic = {
@@ -276,7 +276,7 @@ test('platform runner card and auto assignment respect project and admin permiss
   await settle(8);
   assert.equal(toggle.getAttribute('aria-pressed'), 'true');
   assert.equal(dispatchBar.classList.contains('is-auto'), true);
-  assert.match(poolStatus.textContent, /此项目 SOP 自动分配 · 2 台在线机器可用/);
+  assert.match(poolStatus.textContent, /此项目 LOOP 自动分配 · 2 台在线机器可用/);
   toggle.click();
   await settle(8);
   assert.equal(toggle.getAttribute('aria-pressed'), 'false');

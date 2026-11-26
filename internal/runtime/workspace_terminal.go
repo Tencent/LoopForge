@@ -62,7 +62,7 @@ func (p *TerminalPool) Handle(root, scope string, req domain.WorkspaceTerminalRe
 }
 
 // HandleSandbox opens a PTY through the same driver and environment overlay as
-// the SOP sandbox. ctx covers opening/driver preparation only; after a successful
+// the LOOP sandbox. ctx covers opening/driver preparation only; after a successful
 // open the pool's expiry/close owns the shell lifetime, not an HTTP request.
 // A successful open transfers release to the pool (called exactly once on close).
 // On a failed open release is NOT called; the caller still owns that cleanup.

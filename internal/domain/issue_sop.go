@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-// IssueSOPBinding is one step in a requirement's SOP chain.
+// IssueSOPBinding is one step in a requirement's LOOP chain.
 type IssueSOPBinding struct {
 	ID             string   `json:"id,omitempty"`
 	WorkflowID     string   `json:"workflowId"`
@@ -25,7 +25,7 @@ func (i Issue) EffectiveSOPBindings() []IssueSOPBinding {
 	return bindingsFromWorkflow(i.WorkflowID, i.AssigneeUserID)
 }
 
-// SOPPlaybook is a named, reusable SOP combo for requirements in a project.
+// SOPPlaybook is a named, reusable LOOP combo for requirements in a project.
 type SOPPlaybook struct {
 	ID       string            `json:"id"`
 	Name     string            `json:"name"`

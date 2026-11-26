@@ -39,7 +39,7 @@ func TestSOPScriptUsesProjectCredentials(t *testing.T) {
 		t.Fatal(err)
 	}
 	wf := domain.WorkflowDefinition{
-		ID: "credential-sop", Name: "Credential SOP", ProjectID: project.ID, SandboxProfileID: repo.TestNativeSandboxID,
+		ID: "credential-sop", Name: "Credential LOOP", ProjectID: project.ID, SandboxProfileID: repo.TestNativeSandboxID,
 		ProjectCredentialIDs: []string{credentialID},
 		Nodes: []domain.WorkflowNode{{ID: "script", Name: "Script", Type: "script", MaxAttempts: 1,
 			Script: `test -n "$PROJECT_TEST_TOKEN" && printf '%s\n' "$PROJECT_TEST_TOKEN"`}},
@@ -61,7 +61,7 @@ func TestSOPScriptUsesProjectCredentials(t *testing.T) {
 	}
 	scope.ProjectID = "different-project"
 	if _, err := eng.StartWithExecutionContext(wf.ID, "", domain.RepositoryContext{}, scope); err == nil {
-		t.Fatal("a SOP resolved credentials outside its project")
+		t.Fatal("a LOOP resolved credentials outside its project")
 	}
 	scope.ProjectID = project.ID
 	if err := st.DeleteProjectCredential(t.Context(), project.ID, credentialID); err != nil {

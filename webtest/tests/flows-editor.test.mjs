@@ -50,7 +50,7 @@ test('flow editor handles artifact/list editors and saves workflow changes', asy
   t.after(app.close);
   app.evaluate(`switchView('flow');state.workflow={id:'save-flow',projectId:'project-1',name:'Save me',
     status:'draft',version:1,revision:0,sandboxProfileId:'sandbox-1',nodes:[
-      {id:'sub',name:'Sub SOP',type:'sop',sopWorkflowId:'flow-1',position:{x:10,y:10},
+      {id:'sub',name:'Sub LOOP',type:'sop',sopWorkflowId:'flow-1',position:{x:10,y:10},
        artifactOutputs:[{name:'report',path:'report.md',mediaType:'text/markdown',required:true}]}
     ],edges:[]};state.selectedNode='sub';state.workflowDirty=true;renderAll();renderProperties()`);
   const name = app.document.querySelector('#properties [data-ak="name"]');
@@ -124,7 +124,7 @@ test('flow preview properties persist the CLI, model and SPA fallback', async (t
   assert.equal(app.evaluate('state.workflow.preview.executorId'), '');
 });
 
-test('SOP wizard creates a workflow and publish/delete actions send expected requests', async (t) => {
+test('LOOP wizard creates a workflow and publish/delete actions send expected requests', async (t) => {
   const app = await loadApp();
   t.after(app.close);
   app.evaluate(`afConfirm=async()=>true;openSOPWizard()`);

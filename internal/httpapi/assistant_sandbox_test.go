@@ -278,7 +278,7 @@ func TestHistoricalGroupIsOrdinaryTaskConversationWithoutSOPControl(t *testing.T
 	runs := &runsHandlers{deps: h.deps}
 	c, rec := workbenchContext(user, "POST", "/", bytes.NewBuffer(nil))
 	if !runs.rejectNonSOPControl(c, run.ID) || rec.Code != 409 {
-		t.Fatalf("historical group accepted SOP control: %d", rec.Code)
+		t.Fatalf("historical group accepted LOOP control: %d", rec.Code)
 	}
 }
 
@@ -428,7 +428,7 @@ func TestTurnContextOffersWorkspacesAndLinksIssue(t *testing.T) {
 	}
 
 	note := h.workspaceTurnContext(req, user)
-	for _, want := range []string{"idle-issue「idle-issue」：没跑过 SOP", "old-running-sop（running）", "new-done-sop（succeeded）", "sandboxProfileId", "git clone"} {
+	for _, want := range []string{"idle-issue「idle-issue」：没跑过 LOOP", "old-running-sop（running）", "new-done-sop（succeeded）", "sandboxProfileId", "git clone"} {
 		if !strings.Contains(note, want) {
 			t.Fatalf("turn context lacks %q: %s", want, note)
 		}
@@ -511,10 +511,10 @@ func TestOpeningSOPWorkspaceOnlyHandsOffWhenStopped(t *testing.T) {
 			}
 			var result struct{ Handoff bool }
 			if err := json.Unmarshal([]byte(out), &result); err != nil || result.Handoff != stopped {
-				t.Fatalf("SOP handoff = %s %v", out, err)
+				t.Fatalf("LOOP handoff = %s %v", out, err)
 			}
 			if (s.requestedMode() == domain.AssistantModeWorkspace) != stopped || strings.Contains(out, assistantHandoffNotice) != stopped {
-				t.Fatalf("SOP handoff notice and pending mode disagree: %s", out)
+				t.Fatalf("LOOP handoff notice and pending mode disagree: %s", out)
 			}
 		})
 	}

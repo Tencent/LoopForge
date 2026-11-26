@@ -75,7 +75,7 @@ func TestSharedWorkspaceFlaggedChildDoesNotRepeatParentScript(t *testing.T) {
 	child := domain.WorkflowDefinition{ID: "child-rebuild-script", Name: "Child", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{ID: "prepare", Name: "Child prepare", Type: "script", ScriptLanguage: "shell", RunOnWorkspaceRebuild: true, MaxAttempts: 1, Script: "test -f parent.txt && printf 'child\\n' >> .agentflow/shared-flow-order && printf child > child.txt"}}}
 	parent := domain.WorkflowDefinition{ID: "parent-rebuild-script", Name: "Parent", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{
 		{ID: "prepare", Name: "Parent prepare", Type: "script", ScriptLanguage: "shell", RunOnWorkspaceRebuild: true, MaxAttempts: 1, Script: "mkdir -p .agentflow; printf 'parent\\n' >> .agentflow/shared-flow-order; printf parent > parent.txt"},
-		{ID: "sub", Name: "Child SOP", Type: "sop", SOPWorkflowID: child.ID, MaxAttempts: 1},
+		{ID: "sub", Name: "Child LOOP", Type: "sop", SOPWorkflowID: child.ID, MaxAttempts: 1},
 		{ID: "after", Name: "Parent resumes", Type: "script", ScriptLanguage: "shell", MaxAttempts: 1, Script: "test -f child.txt && test \"$(grep -c '^parent$' .agentflow/shared-flow-order)\" = 1 && test \"$(grep -c '^child$' .agentflow/shared-flow-order)\" = 1 && printf 'after\\n' >> .agentflow/shared-flow-order"},
 		{ID: "pause", Name: "Retain checkout", Type: "approval", MaxAttempts: 1},
 	}, Edges: []domain.WorkflowEdge{{Source: "prepare", Target: "sub", When: "success"}, {Source: "sub", Target: "after", When: "success"}, {Source: "after", Target: "pause", When: "success"}}}

@@ -117,7 +117,7 @@ func resolveCommitSHA(ctx context.Context, workspace, ref string) (string, error
 // baseline (usually origin/integrate or origin/<base>). A run shares one git
 // workspace across nodes, so the next node reads the files there; the
 // inventory is only a filename list for the prompt. Executor-local secrets
-// and SOP deliverable markdown are excluded. Untracked source files are
+// and LOOP deliverable markdown are excluded. Untracked source files are
 // intent-added so they appear in the list. No recorded baseline yields nil.
 func PatchInventory(workspace string) ([]byte, error) {
 	// Parallel branches finishing together inventory the same checkout;
@@ -175,7 +175,7 @@ func diffAgainstBaseline(workspace, sha string, extra ...string) ([]byte, error)
 
 // nearestPatchBaseline picks the closest origin ref that is an ancestor of
 // HEAD, so a later merge of integrate/main does not turn the handoff patch
-// into "everything since SOP checkout". The recorded checkout SHA is the
+// into "everything since LOOP checkout". The recorded checkout SHA is the
 // fallback when no nearer upstream exists. The current branch tip is skipped
 // so a pushed work branch does not collapse the patch to empty.
 func nearestPatchBaseline(workspace, recorded string) string {

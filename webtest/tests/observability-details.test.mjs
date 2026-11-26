@@ -162,7 +162,7 @@ test('conversation workspaces and costs appear once in the compact overview and 
       workflowName: '对话改代码', runStatus: 'idle', sopSucceeded: false, directDelivery: true, delivered: true, mrState: 'merged',
       runCount: 0, userId: 1, tokens: 1000, costCny: .3, costKnown: true,
       mrs: [{ project: 'team/app', iid: 7, url: 'https://git.example.com/team/app/-/merge_requests/7', state: 'merged' }] },
-    { issueId: 'issue-sop', title: 'SOP 需求', source: 'local', workflowId: 'flow-1', workflowName: 'Delivery', runStatus: 'succeeded',
+    { issueId: 'issue-sop', title: 'LOOP 需求', source: 'local', workflowId: 'flow-1', workflowName: 'Delivery', runStatus: 'succeeded',
       sopSucceeded: true, delivered: false, runCount: 1, userId: 1, tokens: 2400, costCny: .5, costKnown: true },
   ];
   const full = { ...analytics, summary, trend, delivery, deliveries };
@@ -177,13 +177,13 @@ test('conversation workspaces and costs appear once in the compact overview and 
   const value = key => app.document.querySelector(`[data-obs-stat="${key}"] .num`).textContent;
   assert.equal(value('workspaces'),'3');assert.equal(value('tokens'),'7.4k');assert.equal(value('cost'),'¥1.55');
   assert.equal(app.document.querySelectorAll('[data-obs-stat="cost"]').length,1);
-  assert.doesNotMatch(app.document.querySelector('#obsBody').textContent,/不走 SOP|Loop 自动化|仅含已记录部分/);
+  assert.doesNotMatch(app.document.querySelector('#obsBody').textContent,/不走 LOOP|Loop 自动化|仅含已记录部分/);
   // The Token ring adds up to the Token card.
   const rows = JSON.parse(app.evaluate(`JSON.stringify(obsBreakdownRows('sop','tokens'))`));
   assert.equal(rows.reduce((n, r) => n + r.tokens, 0), 7400);
   assert.equal(rows.find(r => r.conversation).name, '对话改代码');
   assert.equal(JSON.parse(app.evaluate(`JSON.stringify(obsBreakdownRows('src','tokens'))`)).some(r => r.conversation), false, 'sources already carry linked conversations');
-  // A small conversation slice is never folded into 其他, even with many SOPs.
+  // A small conversation slice is never folded into 其他, even with many LOOPs.
   const crowded = JSON.parse(app.evaluate(`
     (()=>{const saved=state.analytics.workflows;
       state.analytics.workflows=Array.from({length:9},(_,i)=>({key:'w'+i,name:'W'+i,tokens:100000-i,costCny:1}));
@@ -208,7 +208,7 @@ test('conversation workspaces and costs appear once in the compact overview and 
   assert.equal(body.querySelector('[data-edit-issue="issue-sop"]'), null);
   const row = body.querySelector('[data-edit-issue="issue-chat"]');
   assert.match(row.textContent, /对话直接交付/);
-  assert.doesNotMatch(row.textContent, /SOP 成功|idle/);
+  assert.doesNotMatch(row.textContent, /LOOP 成功|idle/);
   // The label follows the MRs, and never reads as delivered when it is not.
   const label = (mrs, delivered) => app.evaluate(`obsDirectDeliveryText(${JSON.stringify({ directDelivery: true, delivered, mrs })})`);
   const url = 'https://git.example.com/team/app/-/merge_requests/';
@@ -220,7 +220,7 @@ test('conversation workspaces and costs appear once in the compact overview and 
   assert.equal(label([{ project: 'team/app', iid: 6, url: url + 6, state: 'merged' }], true), '对话直接交付');
   // The funnel counts conversation work as executed once it has a PR.
   const stages = JSON.parse(app.evaluate(`JSON.stringify(obsDeliveryStages())`));
-  assert.deepEqual(stages.slice(0, 2).map(s => [s.name, s.value]), [['有执行的单', 2], ['SOP 成功 / 对话已提 PR', 2]]);
+  assert.deepEqual(stages.slice(0, 2).map(s => [s.name, s.value]), [['有执行的单', 2], ['LOOP 成功 / 对话已提 PR', 2]]);
   assert.equal(app.evaluate(`state.analytics.deliveries.filter(it=>obsDeliveryMatches(it,'done')).length`), 2);
   assert.equal(app.evaluate(`obsOwnerRows()[0].delivered`), 1);
   const report = app.evaluate(`buildObsReportHTML()`);
@@ -228,7 +228,7 @@ test('conversation workspaces and costs appear once in the compact overview and 
   assert.match(report, /1 个需求/);
   // Without conversation data the group is not shown.
   app.evaluate(`state.analytics=${JSON.stringify(analytics)};state.obsTab='overview';renderObservability()`);
-  assert.doesNotMatch(app.document.querySelector('#obsBody').textContent, /不走 SOP/);
+  assert.doesNotMatch(app.document.querySelector('#obsBody').textContent, /不走 LOOP/);
 });
 
 test('conversation activity cards show counts, collaboration share, periods without runs, and report data', async (t) => {
@@ -254,7 +254,7 @@ test('conversation activity cards show counts, collaboration share, periods with
   assert.match(app.evaluate('obsActivityUsageCard(state.analytics.activity,false).value'), /6\.0k/);
   assert.match(app.evaluate('obsActivityUsageCard(state.analytics.activity,true).value'), /4\.5k/);
   const report = app.evaluate('buildObsReportHTML()');
-  assert.match(report, /会话数|创建需求|需求 SOP|多人协作会话/);
+  assert.match(report, /会话数|创建需求|需求 LOOP|多人协作会话/);
   assert.match(report, /66\.7%/);
   assert.match(report, /协作会话 Token/);
   assert.match(report, /4\.5k/);

@@ -119,7 +119,7 @@ async function loadProjectCredentialsPage() {
       host.innerHTML = pcNoticeHTML({
         icon: 'key',
         title: '当前项目还没有凭据',
-        body: '可将第三方服务账号、API Token 或 AK/SK 加密保存在项目内；在 SOP 中选用后，凭据会作为环境变量注入沙箱执行进程。',
+        body: '可将第三方服务账号、API Token 或 AK/SK 加密保存在项目内；在 LOOP 中选用后，凭据会作为环境变量注入沙箱执行进程。',
         steps: [
           ['加密存储', '保存后仅可替换，不回显明文'],
           ['按需绑定', '在「流程设计 → 流程设置 → 项目凭据」中勾选选用'],
@@ -137,7 +137,7 @@ async function loadProjectCredentialsPage() {
       <div class="project-credential-panel-head">
         <h2>项目凭据 <span class="project-credential-count">${credentials.length}</span></h2>
         <div class="project-credential-panel-meta">
-          <span class="project-credential-panel-hint">${pcIcon('info', 14)}<span>作为环境变量注入已绑定 SOP 的沙箱进程，日志自动脱敏</span></span>
+          <span class="project-credential-panel-hint">${pcIcon('info', 14)}<span>作为环境变量注入已绑定 LOOP 的沙箱进程，日志自动脱敏</span></span>
           ${!canManage ? '<span class="hui-badge" data-size="sm" data-tone="neutral"><span class="hui-badge-label">只读查看</span></span>' : ''}
         </div>
       </div>
@@ -259,7 +259,7 @@ function editProjectCredential(host, projectID, item, onClose) {
             <div class="project-credential-field-group">
               <label class="project-credential-label" for="${nameId}"><span>名称</span><span class="project-credential-req" aria-hidden="true">*</span></label>
               <input id="${nameId}" class="input" name="name" maxlength="80" required placeholder="例如 制品库访问令牌" value="${escapeHTML(item?.name || '')}" aria-invalid="false">
-              <small class="project-credential-hint">用于在 SOP 流程配置中识别此凭据（1–80 个字符）。</small>
+              <small class="project-credential-hint">用于在 LOOP 配置中识别此凭据（1–80 个字符）。</small>
             </div>
             <div class="project-credential-field-group">
               <label class="project-credential-label" for="${kindId}"><span>类型</span></label>
@@ -280,7 +280,7 @@ function editProjectCredential(host, projectID, item, onClose) {
           <label class="project-credential-disabled" for="${disabledId}">
             <span class="project-credential-disabled-copy">
               <b>停用凭据</b>
-              <small>停用后新启动的 SOP 沙箱将不可选用此凭据，已加密保存的值仍保留。</small>
+              <small>停用后新启动的 LOOP 沙箱将不可选用此凭据，已加密保存的值仍保留。</small>
             </span>
             <input id="${disabledId}" type="checkbox" name="disabled" role="switch" ${item?.disabled ? 'checked' : ''}>
           </label>

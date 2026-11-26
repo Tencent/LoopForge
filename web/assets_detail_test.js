@@ -69,7 +69,7 @@ assert.ok(own.includes('class="asset-card" role="link" tabindex="0" data-asset-i
 assert.ok(own.includes('<span class="asset-status "><i></i>未共享</span>'), own);
 assert.ok(own.includes('编辑<i data-icon="chevron-right">'), own);
 assert.ok(own.includes('data-icon="gate"'), 'rules use the gate icon');
-assert.ok(own.includes('优先级 110') && own.includes('全局 · 2 个 SOP') && own.includes('1 个角色引用'), own);
+assert.ok(own.includes('优先级 110') && own.includes('全局 · 2 个 LOOP') && own.includes('1 个角色引用'), own);
 const shared = ctx.assetCardHTML(ctx.state.data.rules[1]);
 assert.ok(shared.includes('<span class="asset-status is-on"><i></i>已共享</span>'), shared);
 assert.ok(shared.includes('暂无说明') && shared.includes('未被引用'), shared);

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"slices"
 	"testing"
+	"time"
 
 	"agentflow/internal/domain"
 )
@@ -155,5 +156,93 @@ func TestCodeBuddyModelDiscoveryPerEnvironment(t *testing.T) {
 	}
 	if intl := loadAssistantModels("", ""); assistantAllowedModel("gpt-5.5", intl) != "gpt-5.5" {
 		t.Fatalf("international catalog: %+v", intl)
+	}
+}
+
+func TestCodeBuddyModelDiscoveryDuringInstall(t *testing.T) {
+	stubCLIModelDiscovery(t)
+	started, resume, finished := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	calls := 0
+	discoverCLIModels = func(context.Context, string, string) []string {
+		calls++
+		if calls == 1 {
+			close(started)
+			<-resume
+			return nil
+		}
+		return []string{"deepseek-v4.1-flash"}
+	}
+	go func() {
+		defer close(finished)
+		refreshCLIModels(context.Background(), "ioa", "key")
+	}()
+	<-started
+	forgetCLIModels()
+	close(resume)
+	<-finished
+
+	refreshCLIModels(context.Background(), "ioa", "key")
+	if got := cachedCLIModels("ioa", "key"); !slices.Equal(got, []string{"deepseek-v4.1-flash"}) {
+		t.Fatalf("a discovery started before CLI installation kept the catalog empty: %v", got)
+	}
+}
+
+func TestCodeBuddyModelDiscoveryRetriesFailuresSoon(t *testing.T) {
+	stubCLIModelDiscovery(t)
+	available, calls := false, 0
+	discoverCLIModels = func(context.Context, string, string) []string {
+		calls++
+		if !available {
+			return nil
+		}
+		return []string{"deepseek-v4.1-flash"}
+	}
+	key := cliModelCacheKey("ioa", "key")
+	expire := func() {
+		cliModelMu.Lock()
+		defer cliModelMu.Unlock()
+		entry := cliModelCache[key]
+		entry.expires = time.Now().Add(-time.Second)
+		cliModelCache[key] = entry
+	}
+	cachedFor := func() time.Duration {
+		cliModelMu.Lock()
+		defer cliModelMu.Unlock()
+		return time.Until(cliModelCache[key].expires)
+	}
+	listed := func() bool { return assistantCatalogLists(loadAssistantModels("ioa", "key"), "deepseek-v4.1-flash") }
+
+	// The CLI is not installed yet: remember the failure briefly instead of
+	// probing on every read, but not for the full TTL.
+	refreshCLIModels(context.Background(), "ioa", "key")
+	refreshCLIModels(context.Background(), "ioa", "key")
+	if calls != 1 {
+		t.Fatalf("a failed discovery must not be retried on every read: %d calls", calls)
+	}
+	if window := cachedFor(); window <= 0 || window > cliModelRetryTTL {
+		t.Fatalf("failed discovery is cached for %s, want at most %s", window, cliModelRetryTTL)
+	}
+
+	// Once the retry window passes, the installed CLI's models are listed.
+	available = true
+	expire()
+	refreshCLIModels(context.Background(), "ioa", "key")
+	if calls != 2 || !listed() {
+		t.Fatalf("models after the retry window: calls=%d listed=%v", calls, listed())
+	}
+	if window := cachedFor(); window <= cliModelRetryTTL {
+		t.Fatalf("successful discovery is cached for %s, want the full TTL", window)
+	}
+
+	// A later failure keeps the last good list and retries soon.
+	available = false
+	expire()
+	refreshCLIModels(context.Background(), "ioa", "key")
+	refreshCLIModels(context.Background(), "ioa", "key")
+	if calls != 3 || !listed() {
+		t.Fatalf("a failed refresh must keep the last good list: calls=%d listed=%v", calls, listed())
+	}
+	if window := cachedFor(); window <= 0 || window > cliModelRetryTTL {
+		t.Fatalf("failed refresh is cached for %s, want at most %s", window, cliModelRetryTTL)
 	}
 }

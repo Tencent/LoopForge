@@ -82,7 +82,7 @@ func TestMaterializeUploadedSkillMdGetsFrontmatterWhenMissing(t *testing.T) {
 	workspace := t.TempDir()
 	assets := domain.AgentAssetBundle{
 		Skills: []domain.SkillDefinition{{
-			ID: "sop", Name: "SOP", Description: "Issue 修复 SOP", Content: "payload should not win",
+			ID: "sop", Name: "LOOP", Description: "Issue 修复 LOOP", Content: "payload should not win",
 			FileRefs: []domain.SkillFileRef{{Path: "SKILL.md", Size: 12, Mode: 0o644}},
 		}},
 		SkillFiles: map[string]map[string][]byte{"sop": {"SKILL.md": []byte("# DemoDNS Issue 修复\n")}},
@@ -106,7 +106,7 @@ func TestMaterializeSelectedSkillsListsInvocationNameAndRoot(t *testing.T) {
 	assets := domain.AgentAssetBundle{
 		Skills: []domain.SkillDefinition{
 			{ID: "unit-test-gen", Name: "单元测试生成", Description: "单元测试生成", Content: "unused"},
-			{ID: "demodns-issue-fix", Name: "Issue 修复", Description: "SOP overview", Content: "# SOP\n"},
+			{ID: "demodns-issue-fix", Name: "Issue 修复", Description: "LOOP overview", Content: "# LOOP\n"},
 		},
 		SkillFiles: map[string]map[string][]byte{
 			"unit-test-gen": {"SKILL.md": []byte("---\nname: unit-test\ndescription: 单测治理总线（迁移增强版）\n---\n\n# Unit Test\n")},

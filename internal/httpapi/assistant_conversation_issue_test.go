@@ -101,7 +101,7 @@ func TestConversationRequirementCreatedAndLinked(t *testing.T) {
 	if states[domain.MRDeliveryKey{Project: "team/web", IID: 7}].IssueID != issue.ID {
 		t.Fatalf("MR not registered for polling: %+v", states)
 	}
-	// Once the MR merges, polling completes the requirement like an SOP delivery.
+	// Once the MR merges, polling completes the requirement like a LOOP delivery.
 	if err := st.UpdateMRDeliveryState("team/web", 7, "merged", "master", time.Now().UTC(), time.Now().UTC()); err != nil {
 		t.Fatal(err)
 	}
@@ -180,13 +180,13 @@ func TestConversationRequirementPrefersSessionIssue(t *testing.T) {
 		t.Fatalf("an already linked conversation keeps its link: %q", conv.IssueID)
 	}
 
-	// SOP runs are never relinked from a conversation.
+	// LOOP runs are never relinked from a conversation.
 	sop, _ := st.RunState("sop-1")
 	if issue, created, err := h.linkConversationRequirement(s, sop, conversationRequirement{Title: "x"}, false); err != nil || created || issue.ID != "" {
-		t.Fatalf("SOP run relinked: %+v %v %v", issue, created, err)
+		t.Fatalf("LOOP run relinked: %+v %v %v", issue, created, err)
 	}
 	if got, _ := st.RunState("sop-1"); got.ExecutionContext.IssueID != "" {
-		t.Fatalf("SOP run issue = %q", got.ExecutionContext.IssueID)
+		t.Fatalf("LOOP run issue = %q", got.ExecutionContext.IssueID)
 	}
 	// Another project's workspace is out of scope.
 	other := &AgentToolSession{Mode: AgentToolAssistant, ProjectID: "q", UserID: s.UserID, User: s.User, ChatSessionID: "chat-1", ChatOwnerID: s.UserID}
