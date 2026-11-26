@@ -724,6 +724,9 @@ describe("App", () => {
     expect(screen.getByText("快速接入")).toBeInTheDocument();
     expect(screen.getByRole("note")).toHaveTextContent("个人对话，未绑定项目");
     expect(screen.getByRole("note")).toHaveTextContent("选择项目");
+    expect(screen.getByRole("note")).toHaveTextContent("LOOP");
+    expect(screen.getByRole("note")).not.toHaveTextContent("SOP");
+    expect(screen.getByRole("note")).toHaveTextContent("「快速接入」不受影响");
     const settings = screen.queryByLabelText("设置");
     if (settings) await user.click(settings);
     fireEvent.keyDown(document, { key: "k", ctrlKey: true });

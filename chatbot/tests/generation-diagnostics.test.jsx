@@ -228,8 +228,33 @@ describe("generation diagnostics", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: "查看详情" }));
     expect(await screen.findByText("历史调用：已完成")).toBeInTheDocument();
-    expect(screen.getByText(/未记录到进程信息/)).toBeInTheDocument();
+    expect(screen.getByText(/进程：状态未回写（本次调用已结束）/)).toBeInTheDocument();
+    expect(screen.getByText(/输出 3\/0 行/)).toBeInTheDocument();
+    expect(screen.queryByText(/未记录到进程信息/)).toBeNull();
     expect(screen.queryByText(/进程：未启动/)).toBeNull();
+  });
+  test("a finished call with no process data does not report output lines", async () => {
+    read.mockResolvedValueOnce({
+      ...report,
+      attempts: [
+        {
+          ...report.attempts[0],
+          status: "completed",
+          exitCode: 0,
+          process: { state: "not_started", stdoutLines: 0, stderrLines: 0 },
+        },
+      ],
+    });
+    render(
+      <GenerationDiagnostics
+        sessionId="session-done-empty"
+        generationId="turn-done-empty"
+        failure={failure}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "查看详情" }));
+    expect(await screen.findByText(/未记录到进程信息/)).toBeInTheDocument();
+    expect(screen.queryByText(/输出 0\/0 行/)).toBeNull();
   });
   test("read-only viewers see the failure without detail actions", () => {
     const { container, rerender } = render(
