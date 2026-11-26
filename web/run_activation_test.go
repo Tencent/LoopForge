@@ -81,7 +81,7 @@ const calls=[],timers=[],restoreButton={};
 const controlButton={dataset:{},disabled:false};
 let notice=null;
 const header={after:element=>{notice=element}};
-const makeTab=runTab=>({dataset:{runTab},classList:{toggle(_,active){this.active=active}}});
+const makeTab=runTab=>({dataset:{runTab},classList:{toggle(_,active){this.active=active},contains(active){return this.active===active}},setAttribute(){},focus(){}});
 const overviewTab=makeTab('overview'),workspaceTab=makeTab('workspace');
 const overviewPane={dataset:{runPane:'overview'},hidden:false};
 const pane={
@@ -97,7 +97,8 @@ const host={
  querySelector(selector){
   return {
    '[data-workspace-restore]':restoreButton,'[data-run-pane="workspace"]':pane,
-   '[data-run-activation-status]':notice,'.run-detail-header':header
+   '[data-run-activation-status]':notice,'.run-detail-header':header,
+   '.run-detail-main':{scrollTop:0}
   }[selector]||null;
  },
  querySelectorAll(selector){
