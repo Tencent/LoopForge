@@ -35,9 +35,12 @@ func pinNativeExecutorCLI(ctx context.Context, driver, runID string, executor do
 	if binary := strings.TrimSpace(executor.Binary); binary != "" && binary != conversationBinary(kind) {
 		return "", nil, nil
 	}
+	// Claude Code, Codex and CodeBuddy are agent CLIs too: Claude Code is not
+	// in the platform image and is installed on demand like the others.
+	hostCLI := managedcli.Supports(kind) || IsAgentCLI(kind)
 	root := strings.TrimSpace(os.Getenv("AGENTFLOW_MANAGED_CLI_ROOT"))
 	managed := root != "" && managedcli.Supports(kind)
-	if path := explicitNativeCLIPath(kind); path != "" && (managed || IsAgentCLI(kind)) {
+	if path := explicitNativeCLIPath(kind); path != "" && hostCLI {
 		return path, nil, nil
 	}
 	if managed {
@@ -46,10 +49,10 @@ func pinNativeExecutorCLI(ctx context.Context, driver, runID string, executor do
 			return binary, lease, err
 		}
 	}
-	// An agent CLI the managed root does not provide may still be installed on
-	// this machine, for example on demand from a chat. Run the executable a
-	// native conversation would, instead of a bare name PATH may not resolve.
-	if IsAgentCLI(kind) {
+	// A CLI the managed root does not provide may still be installed on this
+	// machine, for example on demand from a chat. Run the executable a native
+	// conversation would, instead of a bare name PATH may not resolve.
+	if hostCLI {
 		if path, err := hostCLIPath(kind, conversationBinary(kind)); err == nil {
 			return path, nil, nil
 		}

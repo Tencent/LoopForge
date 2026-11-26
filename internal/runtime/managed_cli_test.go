@@ -128,6 +128,45 @@ func TestExecutorRunnerFindsHostAgentCLIOutsideManagedRoot(t *testing.T) {
 	check("bwrap", "", local)
 }
 
+// Claude Code is not in the platform image either; a chat installs it on
+// demand. A native LOOP node must run that installation, not a bare "claude".
+func TestExecutorRunnerFindsOnDemandClaudeCode(t *testing.T) {
+	cliDir := t.TempDir()
+	t.Setenv("AGENTFLOW_RUNTIME_CLI_DIR", cliDir)
+	t.Setenv("AGENTFLOW_CLAUDE_BIN", "")
+	t.Setenv("AGENTFLOW_MANAGED_CLI_ROOT", "")
+	t.Setenv("PATH", t.TempDir())
+	t.Setenv("HOME", t.TempDir())
+	runner := NewExecutorRunner()
+	check := func(driver, binary, want string) {
+		t.Helper()
+		sandbox := &capturingSandbox{workspace: t.TempDir(), driver: driver}
+		executor := domain.ExecutorDefinition{Kind: "claude-code", Binary: binary, Args: []string{"-p", "--output-format", "stream-json"}}
+		if _, err := runner.Run(context.Background(), sandbox, "invocation", executor, domain.AgentDefinition{ID: "agent"}, domain.AgentAssetBundle{}, "hello", InvocationOptions{RunID: "run"}, nil); err != nil {
+			t.Fatal(err)
+		}
+		if len(sandbox.argv) == 0 || sandbox.argv[0] != want {
+			t.Fatalf("%s got %v, want %s", driver, sandbox.argv, want)
+		}
+	}
+	check("bwrap", "claude", "claude")
+	onDemand := claudeCodeBinary(cliDir)
+	if err := os.MkdirAll(filepath.Dir(onDemand), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(onDemand, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, driver := range []string{"local", "seatbelt", "bwrap"} {
+		check(driver, "claude", onDemand)
+	}
+	// A managed root without Claude Code falls back to the same installation.
+	t.Setenv("AGENTFLOW_MANAGED_CLI_ROOT", t.TempDir())
+	check("bwrap", "claude", onDemand)
+	check("docker", "claude", "claude")
+	check("bwrap", "/custom/bin/claude", "/custom/bin/claude")
+}
+
 func TestBwrapMountsManagedInstallationUnderPrivateTmp(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("bwrap is available on Linux")
