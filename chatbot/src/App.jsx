@@ -262,8 +262,6 @@ function AssistantTurn({ message, steps, assets, projectId, sessionId, local, re
     setHighlightedCite(citeIndex);
     window.clearTimeout(highlightTimer.current);
     highlightTimer.current = window.setTimeout(() => setHighlightedCite(null), 2000);
-    const row = sourcesRef.current?.querySelector?.(`[data-cite-index="${citeIndex}"]`);
-    row?.scrollIntoView?.({ behavior: "smooth", block: "nearest" });
   }, []);
   return (
     <>

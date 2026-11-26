@@ -321,13 +321,17 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 		if saved, ok := h.repo.AssistantSession(ownerID, req.SessionID); ok {
 			sess.SandboxProfileID = saved.SandboxProfileID
 			effectiveRefs, changed := h.resolveMentionedKnowledgeRefs(user.ID, req.ProjectID, saved, req.Messages)
-			if changed {
+			if changed && ownerID == user.ID {
 				if err := h.repo.SetAssistantSessionKnowledge(ownerID, req.SessionID, effectiveRefs); err != nil {
 					effectiveRefs = saved.KnowledgeRefs
 				}
 			}
-			sess.KnowledgeRefs = effectiveRefs
-			for _, ref := range effectiveRefs {
+			if ownerID == user.ID {
+				sess.KnowledgeRefs = effectiveRefs
+			} else {
+				sess.KnowledgeRefs = nil
+			}
+			for _, ref := range sess.KnowledgeRefs {
 				sess.MCPServers = slices.DeleteFunc(sess.MCPServers, func(s domain.MCPServerDefinition) bool {
 					return s.ID == ref.ConnectorID || s.ID == domain.KnowledgeMCPServerID+"-"+ref.ConnectorID
 				})

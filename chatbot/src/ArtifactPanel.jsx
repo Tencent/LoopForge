@@ -666,8 +666,17 @@ export default function ArtifactPanel({
                   knowledgeReads={
                     selected.knowledgeReads ||
                     (selected.nodeId
-                      ? runs?.find((r) => r.nodes?.[selected.nodeId]?.knowledgeReads?.length)
-                          ?.nodes?.[selected.nodeId]?.knowledgeReads || []
+                      ? (
+                          (selected.runId &&
+                            runs?.find(
+                              (r) =>
+                                r.id === selected.runId &&
+                                r.nodes?.[selected.nodeId]?.knowledgeReads?.length,
+                            )) ||
+                          runs?.find(
+                            (r) => r.nodes?.[selected.nodeId]?.knowledgeReads?.length,
+                          )
+                        )?.nodes?.[selected.nodeId]?.knowledgeReads || []
                       : [])
                   }
                   attempt={selected.attempt}

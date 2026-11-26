@@ -530,11 +530,6 @@
   color: var(--hui-accent);
 }
 
-#knowledgeView .kb-vendor-icon[data-brand="tencent_docs"] {
-  background: var(--hui-accent-soft);
-  color: var(--hui-accent);
-}
-
 #kbDrawer .kb-vendor-guide {
   padding: 10px 12px;
   border-radius: 8px;

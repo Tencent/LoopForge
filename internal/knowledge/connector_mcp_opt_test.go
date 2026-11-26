@@ -131,12 +131,16 @@ func TestIsKnowledgeToolMayWriteAndClientReuseByConnectorID(t *testing.T) {
 		t.Fatalf("expected get_content to be read-only")
 	}
 
-	c1 := getOrCreateMCPClient("conn_reuse", "http://example.invalid/mcp", map[string]string{"Authorization": "Bearer tok1"}, CallTimeout)
-	c2 := getOrCreateMCPClient("conn_reuse", "http://example.invalid/mcp", map[string]string{"Authorization": "Bearer tok2"}, CallTimeout)
+	c1 := getOrCreateMCPClient(1, "conn_reuse", "http://example.invalid/mcp", map[string]string{"Authorization": "Bearer tok1"}, CallTimeout)
+	c2 := getOrCreateMCPClient(1, "conn_reuse", "http://example.invalid/mcp", map[string]string{"Authorization": "Bearer tok2"}, CallTimeout)
 	if c1 != c2 {
 		t.Fatalf("expected same *mcpclient.Client reused across token refresh for same connectorID")
 	}
 	if got := c2.Header("Authorization"); got != "Bearer tok2" {
 		t.Fatalf("expected updated Authorization header, got %q", got)
+	}
+	cOtherUser := getOrCreateMCPClient(2, "conn_reuse", "http://example.invalid/mcp", map[string]string{"Authorization": "Bearer tok_user2"}, CallTimeout)
+	if cOtherUser == c1 {
+		t.Fatalf("expected different users to have isolated *mcpclient.Client instances")
 	}
 }

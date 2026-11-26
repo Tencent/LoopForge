@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import HarnessIcon from "./HarnessIcon";
 import { buildKnowledgeSummary } from "./knowledge-citations.js";
 
@@ -58,16 +58,33 @@ export default function KnowledgeSources({
 }) {
   const [open, setOpen] = useState(defaultOpen);
   const [expandedRefs, setExpandedRefs] = useState(false);
+  const localRef = useRef(null);
+  const setSectionRef = (node) => {
+    localRef.current = node;
+    if (typeof containerRef === "function") {
+      containerRef(node);
+    } else if (containerRef && typeof containerRef === "object") {
+      containerRef.current = node;
+    }
+  };
   const summary = useMemo(
     () => precomputedSummary || buildKnowledgeSummary(knowledgeReads, [text]),
     [precomputedSummary, knowledgeReads, text],
   );
 
-  React.useEffect(() => {
+  useEffect(() => {
     if (highlightedIndex != null) {
       setOpen(true);
     }
   }, [highlightedIndex]);
+
+  useEffect(() => {
+    if (!open || highlightedIndex == null) return;
+    const row = localRef.current?.querySelector?.(
+      `[data-cite-index="${highlightedIndex}"]`,
+    );
+    row?.scrollIntoView?.({ behavior: "smooth", block: "nearest" });
+  }, [open, highlightedIndex]);
 
   if (!Array.isArray(knowledgeReads) || knowledgeReads.length === 0) {
     return null;
@@ -89,7 +106,7 @@ export default function KnowledgeSources({
     <section
       className={`knowledge-sources ${open ? "is-open" : "is-collapsed"}`}
       aria-label={title}
-      ref={containerRef}
+      ref={setSectionRef}
     >
       <button
         type="button"

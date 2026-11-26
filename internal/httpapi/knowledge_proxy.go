@@ -66,13 +66,15 @@ func (h *knowledgeHandlers) proxyMCP(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid knowledge token"})
 		return
 	}
-	if claims.RunID != "" && claims.NodeID != "" {
-		run, ok := h.repo.RunState(claims.RunID)
-		nr := run.Nodes[claims.NodeID]
-		if !ok || nr == nil || nr.Status != "running" || nr.Attempt != claims.Attempt || run.ExecutionContext.ProjectID != claims.ProjectID || run.ExecutionContext.ResponsibleUserID != claims.UserID {
-			c.JSON(http.StatusForbidden, gin.H{"error": "节点执行身份已失效"})
-			return
-		}
+	if strings.TrimSpace(claims.RunID) == "" || strings.TrimSpace(claims.NodeID) == "" {
+		c.JSON(http.StatusForbidden, gin.H{"error": "节点执行身份已失效"})
+		return
+	}
+	run, ok := h.repo.RunState(claims.RunID)
+	nr := run.Nodes[claims.NodeID]
+	if !ok || nr == nil || nr.Status != "running" || nr.Attempt != claims.Attempt || run.ExecutionContext.ProjectID != claims.ProjectID || run.ExecutionContext.ResponsibleUserID != claims.UserID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "节点执行身份已失效"})
+		return
 	}
 	if c.Request.Method != http.MethodPost {
 		c.Header("Allow", "POST")

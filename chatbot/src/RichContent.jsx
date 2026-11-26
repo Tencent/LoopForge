@@ -722,10 +722,6 @@ export function ArtifactPreview({ artifact, knowledgeReads = [], attempt }) {
       () => setHighlightedCite(null),
       2000,
     );
-    const row = sourcesRef.current?.querySelector?.(
-      `[data-cite-index="${citeIndex}"]`,
-    );
-    row?.scrollIntoView?.({ behavior: "smooth", block: "nearest" });
   };
   const readable =
     !artifact?.mimeType ||

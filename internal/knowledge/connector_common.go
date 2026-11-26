@@ -1,6 +1,7 @@
 package knowledge
 
 import (
+	"context"
 	"crypto/tls"
 	"encoding/json"
 	"errors"
@@ -107,7 +108,124 @@ func validateNativeBaseURL(raw, defaultURL, label string) (string, error) {
 	if s == "" {
 		return "", apperr.New(apperr.Invalid, label+"服务地址不能为空")
 	}
+	if err := validateConnectorEndpointIP(s, true, label); err != nil {
+		return "", err
+	}
 	return s, nil
+}
+
+var (
+	// cgnatRange is RFC 6598 Shared Address Space (100.64.0.0/10), which also
+	// covers Alibaba Cloud metadata service (100.100.100.200).
+	_, cgnatRange, _ = net.ParseCIDR("100.64.0.0/10")
+	// benchmarkRange is RFC 2544 benchmarking (198.18.0.0/15).
+	_, benchmarkRange, _ = net.ParseCIDR("198.18.0.0/15")
+	// nat64Range is RFC 6052 IPv6 well-known prefix (64:ff9b::/96).
+	_, nat64Range, _ = net.ParseCIDR("64:ff9b::/96")
+	// currentNetRange is RFC 1122 "this network" (0.0.0.0/8).
+	_, currentNetRange, _ = net.ParseCIDR("0.0.0.0/8")
+)
+
+// isAlwaysBlockedIP rejects cloud metadata, link-local, CGNAT, unspecified,
+// multicast, benchmarking and NAT64 prefixes for all outbound connectors.
+func isAlwaysBlockedIP(ip net.IP) bool {
+	if ip == nil {
+		return true
+	}
+	if v4 := ip.To4(); v4 != nil {
+		ip = v4
+	}
+	if ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified() || ip.IsMulticast() {
+		return true
+	}
+	if (cgnatRange != nil && cgnatRange.Contains(ip)) ||
+		(benchmarkRange != nil && benchmarkRange.Contains(ip)) ||
+		(nat64Range != nil && nat64Range.Contains(ip)) ||
+		(currentNetRange != nil && currentNetRange.Contains(ip)) {
+		return true
+	}
+	return false
+}
+
+// isBlockedConnectorIP enforces the SSRF IP boundary. When allowLocalOrPrivate
+// is false, RFC1918/ULA private ranges are blocked, and loopback is only
+// permitted when tests or LOOPFORGE_KNOWLEDGE_OAUTH_INSECURE opt in.
+func isBlockedConnectorIP(ip net.IP, allowLocalOrPrivate bool) bool {
+	if isAlwaysBlockedIP(ip) {
+		return true
+	}
+	if v4 := ip.To4(); v4 != nil {
+		ip = v4
+	}
+	if allowLocalOrPrivate {
+		return false
+	}
+	if ip.IsLoopback() {
+		return !oauthInsecureAllowed()
+	}
+	return ip.IsPrivate()
+}
+
+// validateConnectorEndpointIP rejects literals in forbidden IP ranges at
+// validation time so invalid metadata/link-local addresses fail fast.
+func validateConnectorEndpointIP(rawURL string, allowLocalOrPrivate bool, label string) error {
+	u, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil || u.Host == "" {
+		return apperr.New(apperr.Invalid, label+"地址格式无效")
+	}
+	host := strings.Trim(u.Hostname(), "[]")
+	if ip := net.ParseIP(host); ip != nil {
+		if isBlockedConnectorIP(ip, allowLocalOrPrivate) {
+			return apperr.New(apperr.Invalid, label+"地址不允许访问受保护的网络网段")
+		}
+	}
+	return nil
+}
+
+func newSSRFGuardedDialContext(timeout time.Duration, allowLocalOrPrivate bool, label string) func(ctx context.Context, network, addr string) (net.Conn, error) {
+	if timeout <= 0 {
+		timeout = 15 * time.Second
+	}
+	dialer := &net.Dialer{Timeout: timeout, KeepAlive: 30 * time.Second}
+	return func(ctx context.Context, network, addr string) (net.Conn, error) {
+		host, port, err := net.SplitHostPort(addr)
+		if err != nil {
+			return nil, fmt.Errorf("%s地址无效", label)
+		}
+		host = strings.Trim(host, "[]")
+		if ip := net.ParseIP(host); ip != nil {
+			if isBlockedConnectorIP(ip, allowLocalOrPrivate) {
+				return nil, fmt.Errorf("%s地址不允许访问", label)
+			}
+			return dialer.DialContext(ctx, network, net.JoinHostPort(ip.String(), port))
+		}
+		ips, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+		if err != nil {
+			return nil, fmt.Errorf("%s地址无法解析", label)
+		}
+		for _, candidate := range ips {
+			if isBlockedConnectorIP(candidate.IP, allowLocalOrPrivate) {
+				continue
+			}
+			return dialer.DialContext(ctx, network, net.JoinHostPort(candidate.IP.String(), port))
+		}
+		return nil, fmt.Errorf("%s地址不允许访问", label)
+	}
+}
+
+func newGuardedHTTPTransport(allowLocalOrPrivate bool, label string) *http.Transport {
+	return &http.Transport{
+		// Do not use ProxyFromEnvironment: outbound connections must always pass
+		// through the SSRF-guarded DialContext above.
+		Proxy:                 nil,
+		DialContext:           newSSRFGuardedDialContext(15*time.Second, allowLocalOrPrivate, label),
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          100,
+		MaxIdleConnsPerHost:   16,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+	}
 }
 
 func isLocalOrPrivateHost(host string) bool {
@@ -124,13 +242,17 @@ func isLocalOrPrivateHost(host string) bool {
 		return true
 	}
 	ip := net.ParseIP(h)
-	if ip == nil {
+	if ip == nil || isAlwaysBlockedIP(ip) {
 		return false
 	}
-	return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast()
+	return ip.IsLoopback() || ip.IsPrivate()
 }
 
 func newNativeHTTPClient(timeout time.Duration, endpoint string, allowLocalInsecureTLS bool) (*http.Client, error) {
+	return newNativeHTTPClientWithPolicy(timeout, endpoint, allowLocalInsecureTLS, true)
+}
+
+func newNativeHTTPClientWithPolicy(timeout time.Duration, endpoint string, allowLocalInsecureTLS, allowLocalOrPrivate bool) (*http.Client, error) {
 	if timeout <= 0 {
 		timeout = nativeDefaultTimeout
 	}
@@ -138,16 +260,10 @@ func newNativeHTTPClient(timeout time.Duration, endpoint string, allowLocalInsec
 	if err != nil || u.Host == "" {
 		return nil, apperr.New(apperr.Invalid, "连接器服务地址格式无效")
 	}
-	transport := &http.Transport{
-		Proxy:                 http.ProxyFromEnvironment,
-		DialContext:           (&net.Dialer{Timeout: 15 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
-		ForceAttemptHTTP2:     true,
-		MaxIdleConns:          100,
-		MaxIdleConnsPerHost:   16,
-		IdleConnTimeout:       90 * time.Second,
-		TLSHandshakeTimeout:   10 * time.Second,
-		ExpectContinueTimeout: 1 * time.Second,
+	if err := validateConnectorEndpointIP(endpoint, allowLocalOrPrivate, "连接器"); err != nil {
+		return nil, err
 	}
+	transport := newGuardedHTTPTransport(allowLocalOrPrivate, "连接器")
 	if allowLocalInsecureTLS {
 		if !isLocalOrPrivateHost(u.Hostname()) {
 			return nil, apperr.New(apperr.Invalid, "仅允许对本地或内网地址跳过自签名证书校验")
@@ -188,7 +304,7 @@ func isConnectionRefusedErr(err error) bool {
 
 func isLoopbackHostname(host string) bool {
 	low := strings.ToLower(strings.Trim(strings.TrimSpace(host), "[]"))
-	return low == "127.0.0.1" || low == "localhost"
+	return low == "127.0.0.1" || low == "localhost" || low == "::1"
 }
 
 func doRequestWithDockerFallback(client *http.Client, req *http.Request) (*http.Response, error) {
@@ -568,26 +684,28 @@ func extractKeywordSnippet(content, query string, maxRunes int) string {
 	if content == "" {
 		return ""
 	}
-	q := strings.ToLower(strings.TrimSpace(query))
+	q := strings.TrimSpace(query)
 	if q == "" {
 		return clipText(content, maxRunes)
 	}
 	words := strings.Fields(q)
-	low := strings.ToLower(content)
-	bestByteIdx := -1
+	all := []rune(content)
+	bestRuneIdx := -1
 	for _, w := range words {
-		if idx := strings.Index(low, w); idx >= 0 {
-			if bestByteIdx < 0 || idx < bestByteIdx {
-				bestByteIdx = idx
+		wRunes := []rune(w)
+		if len(wRunes) == 0 {
+			continue
+		}
+		if idx := indexRunesFold(all, wRunes); idx >= 0 {
+			if bestRuneIdx < 0 || idx < bestRuneIdx {
+				bestRuneIdx = idx
 			}
 		}
 	}
-	if bestByteIdx < 0 {
+	if bestRuneIdx < 0 {
 		return clipText(content, maxRunes)
 	}
-	prefixRunes := len([]rune(content[:bestByteIdx]))
-	all := []rune(content)
-	start := prefixRunes - maxRunes/4
+	start := bestRuneIdx - maxRunes/4
 	if start < 0 {
 		start = 0
 	}
@@ -603,4 +721,18 @@ func extractKeywordSnippet(content, query string, maxRunes int) string {
 		snippet += "…"
 	}
 	return snippet
+}
+
+func indexRunesFold(haystack, needle []rune) int {
+	n := len(needle)
+	if n == 0 || len(haystack) < n {
+		return -1
+	}
+	limit := len(haystack) - n
+	for i := 0; i <= limit; i++ {
+		if strings.EqualFold(string(haystack[i:i+n]), string(needle)) {
+			return i
+		}
+	}
+	return -1
 }

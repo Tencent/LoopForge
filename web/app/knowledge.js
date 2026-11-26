@@ -1287,8 +1287,10 @@
   }
 
   let usageSearchTimer = null;
+  let usageEventsReqSeq = 0;
 
   async function loadUsageEvents(append = false) {
+    const reqSeq = ++usageEventsReqSeq;
     const f = kbState.usageFilters;
     const offset = append ? (kbState.usageEvents?.items?.length || 0) : 0;
     const params = new URLSearchParams();
@@ -1303,6 +1305,7 @@
     renderKnowledgeView();
     try {
       const page = await kbAPI(`/api/knowledge/usage/events?${params.toString()}`);
+      if (reqSeq !== usageEventsReqSeq) return;
       const nextItems = Array.isArray(page?.items) ? page.items : [];
       kbState.usageEvents = {
         items: append ? [...(kbState.usageEvents?.items || []), ...nextItems] : nextItems,
@@ -1311,10 +1314,13 @@
       };
       kbState.usageEventsLoaded = true;
     } catch (err) {
+      if (reqSeq !== usageEventsReqSeq) return;
       kbToast(err.message || '加载调用明细失败', true);
     } finally {
-      kbState.usageEventsLoading = false;
-      renderKnowledgeView();
+      if (reqSeq === usageEventsReqSeq) {
+        kbState.usageEventsLoading = false;
+        renderKnowledgeView();
+      }
     }
   }
 

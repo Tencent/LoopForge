@@ -129,7 +129,9 @@ func (h *knowledgeHandlers) createConnector(c *gin.Context) {
 	if !decode(c, &payload) {
 		return
 	}
-	created, err := h.service().CreateConnector(c.Request.Context(), uid, payload.toInput())
+	in := payload.toInput()
+	in.ID = ""
+	created, err := h.service().CreateConnector(c.Request.Context(), uid, in)
 	if err != nil {
 		respond(c, err)
 		return

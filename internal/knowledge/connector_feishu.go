@@ -169,13 +169,17 @@ func (c *feishuConnector) Tools(_ context.Context) ([]mcpclient.Tool, error) {
 }
 
 func (c *feishuConnector) redact(text string) string {
+	c.tatMu.Lock()
+	tat := c.tat
+	c.tatMu.Unlock()
+	return c.redactWithTAT(text, tat)
+}
+
+func (c *feishuConnector) redactWithTAT(text, tat string) string {
 	text = RedactSecrets(text, c.spec.Secret)
 	if c.appSecret != "" {
 		text = strings.ReplaceAll(text, c.appSecret, "***")
 	}
-	c.tatMu.Lock()
-	tat := c.tat
-	c.tatMu.Unlock()
 	if tat != "" {
 		text = strings.ReplaceAll(text, tat, "***")
 	}
@@ -184,11 +188,13 @@ func (c *feishuConnector) redact(text string) string {
 
 func (c *feishuConnector) getTAT(ctx context.Context, forceRefresh bool) (string, error) {
 	c.tatMu.Lock()
-	defer c.tatMu.Unlock()
-
 	if !forceRefresh && c.tat != "" && time.Until(c.tatExpiresAt) > feishuTATRefreshLead {
-		return c.tat, nil
+		tok := c.tat
+		c.tatMu.Unlock()
+		return tok, nil
 	}
+	prevTAT := c.tat
+	c.tatMu.Unlock()
 
 	bodyBytes, err := json.Marshal(map[string]string{
 		"app_id":     c.appID,
@@ -206,16 +212,16 @@ func (c *feishuConnector) getTAT(ctx context.Context, forceRefresh bool) (string
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("飞书换取 tenant_access_token 失败：%s", c.redact(err.Error()))
+		return "", fmt.Errorf("飞书换取 tenant_access_token 失败：%s", c.redactWithTAT(err.Error(), prevTAT))
 	}
 	defer resp.Body.Close()
 
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, nativeMaxErrorBytes))
 	if err != nil {
-		return "", fmt.Errorf("飞书令牌响应读取失败：%s", c.redact(err.Error()))
+		return "", fmt.Errorf("飞书令牌响应读取失败：%s", c.redactWithTAT(err.Error(), prevTAT))
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", fmt.Errorf("飞书换取令牌 HTTP %d: %s", resp.StatusCode, c.redact(clipText(strings.TrimSpace(string(raw)), 240)))
+		return "", fmt.Errorf("飞书换取令牌 HTTP %d: %s", resp.StatusCode, c.redactWithTAT(clipText(strings.TrimSpace(string(raw)), 240), prevTAT))
 	}
 	var env struct {
 		Code              int    `json:"code"`
@@ -224,18 +230,21 @@ func (c *feishuConnector) getTAT(ctx context.Context, forceRefresh bool) (string
 		Expire            int    `json:"expire"`
 	}
 	if err := json.Unmarshal(raw, &env); err != nil {
-		return "", fmt.Errorf("飞书令牌响应无法解析：%s", c.redact(clipText(string(raw), 200)))
+		return "", fmt.Errorf("飞书令牌响应无法解析：%s", c.redactWithTAT(clipText(string(raw), 200), prevTAT))
 	}
 	if env.Code != 0 || strings.TrimSpace(env.TenantAccessToken) == "" {
-		return "", fmt.Errorf("飞书自建应用鉴权失败（code=%d）：%s", env.Code, c.redact(firstNonEmpty(env.Msg, "请核对 App ID 与 App Secret")))
+		return "", fmt.Errorf("飞书自建应用鉴权失败（code=%d）：%s", env.Code, c.redactWithTAT(firstNonEmpty(env.Msg, "请核对 App ID 与 App Secret"), prevTAT))
 	}
 	expireSec := env.Expire
 	if expireSec <= 0 {
 		expireSec = feishuDefaultTATExpire
 	}
-	c.tat = strings.TrimSpace(env.TenantAccessToken)
+	newTAT := strings.TrimSpace(env.TenantAccessToken)
+	c.tatMu.Lock()
+	c.tat = newTAT
 	c.tatExpiresAt = time.Now().Add(time.Duration(expireSec) * time.Second)
-	return c.tat, nil
+	c.tatMu.Unlock()
+	return newTAT, nil
 }
 
 func (c *feishuConnector) doAPI(ctx context.Context, method, pathStr string, out any) error {
@@ -787,6 +796,29 @@ func (c *feishuConnector) execReadDoc(ctx context.Context, docID string, offset,
 	if s, t, ok := strings.Cut(docID, "/"); ok && strings.TrimSpace(s) != "" && strings.TrimSpace(t) != "" {
 		spaceID = strings.TrimSpace(s)
 		objToken = strings.TrimSpace(t)
+		if strings.TrimSpace(scope.Mode) == "allowlist" {
+			if !scope.Allows(spaceID) {
+				return CallResult{Status: domain.KnowledgeStatusUnavailable}, apperr.New(apperr.Forbidden, fmt.Sprintf("文档 %q 所属飞书知识空间 %q 不在当前授权范围内", docID, spaceID))
+			}
+			nodes, err := c.listSpaceNodesCached(cctx, spaceID, "")
+			if err != nil {
+				return CallResult{Status: domain.KnowledgeStatusUnavailable, LatencyMs: time.Since(started).Milliseconds()}, err
+			}
+			matched := false
+			for _, n := range nodes {
+				if n.ObjToken == objToken || n.NodeToken == objToken {
+					matched = true
+					spaceName = firstNonEmpty(n.SpaceName, spaceName)
+					objToken = firstNonEmpty(n.ObjToken, objToken)
+					title = firstNonEmpty(n.PathTitle, n.Title)
+					resolvedDocID = firstNonEmpty(n.NodeToken, docID)
+					break
+				}
+			}
+			if !matched {
+				return CallResult{Status: domain.KnowledgeStatusUnavailable}, apperr.New(apperr.Forbidden, fmt.Sprintf("文档 %q 不属于已授权的飞书知识空间 %q", objToken, spaceID))
+			}
+		}
 	} else if cached, ok := c.lookupCachedNode(docID); ok {
 		spaceID = cached.SpaceID
 		spaceName = cached.SpaceName

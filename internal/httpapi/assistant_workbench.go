@@ -460,7 +460,7 @@ func (h *assistantHandlers) prepareWorkbenchContext(c *gin.Context, req *assista
 //      if an explicitly @-mentioned role (or an @-mentioned SOP's node role) has
 //      KnowledgeBase == true.
 func (h *assistantHandlers) resolveMentionedKnowledgeRefs(userID int64, projectID string, saved assistantConversation, messages []assistantMessage) ([]domain.KnowledgeRef, bool) {
-	if saved.RunID != "" || saved.Shared || userID <= 0 || h.deps == nil || h.deps.knowledgeSvc == nil || len(messages) == 0 {
+	if saved.RunID != "" || saved.Shared || userID <= 0 || (saved.UserID > 0 && saved.UserID != userID) || h.deps == nil || h.deps.knowledgeSvc == nil || len(messages) == 0 {
 		return saved.KnowledgeRefs, false
 	}
 	var lastRefs []domain.AssistantReference

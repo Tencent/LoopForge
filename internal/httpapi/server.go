@@ -517,7 +517,6 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.DELETE("/api/knowledge/usage", api.know.resetUsage)
 	g.GET("/api/knowledge/oauth/presets", api.know.oauthPresets)
 	g.POST("/api/knowledge/oauth/:type/authorize", api.know.oauthAuthorize)
-	g.GET("/api/knowledge/oauth/:type/authorize", api.know.oauthAuthorize)
 	g.GET("/api/knowledge/oauth/callback", api.know.oauthCallback)
 	g.GET("/api/knowledge/oauth/:type/callback", api.know.oauthCallback)
 

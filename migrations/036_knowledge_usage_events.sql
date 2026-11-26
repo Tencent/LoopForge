@@ -5,8 +5,14 @@
 -- - 新建 knowledge_usage_events，按「调用方 × 文档」粒度记录每次命中/读取文档的调用上下文（SOP/节点/角色/Chat/检索词/是否已引用）。
 -- - 单用户自动保留最近 30 天且最多 2000 条记录；gorm 增量迁移（autoMigrateIncremental）同样会补建本表与列。
 
-ALTER TABLE knowledge_document_usage_counts
-  ADD COLUMN cited_count BIGINT NOT NULL DEFAULT 0 AFTER read_count;
+SET @kb_doc_usage_cited_ddl = IF(
+ (SELECT COUNT(*) FROM information_schema.columns
+  WHERE table_schema=DATABASE() AND table_name='knowledge_document_usage_counts' AND column_name='cited_count')=0,
+ 'ALTER TABLE knowledge_document_usage_counts ADD COLUMN cited_count BIGINT NOT NULL DEFAULT 0 AFTER read_count',
+ 'SELECT 1');
+PREPARE kb_doc_usage_cited_stmt FROM @kb_doc_usage_cited_ddl;
+EXECUTE kb_doc_usage_cited_stmt;
+DEALLOCATE PREPARE kb_doc_usage_cited_stmt;
 
 CREATE TABLE IF NOT EXISTS knowledge_usage_events (
   id             BIGINT NOT NULL AUTO_INCREMENT,

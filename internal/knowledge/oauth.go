@@ -181,7 +181,12 @@ type oauthStatePayload struct {
 }
 
 func oauthStateSecret() (string, error) {
-	return platformSecretMaterial()
+	material, err := platformSecretMaterial()
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256([]byte("loopforge/knowledge/oauth-state/v1\x00" + material))
+	return hex.EncodeToString(sum[:]), nil
 }
 
 // signState returns "<nonce>.<exp-base36>.<hmac-hex>".
@@ -194,6 +199,10 @@ func signState(secret string, payload oauthStatePayload) string {
 
 // verifyState checks the signature and expiry of a state value.
 func verifyState(secret, state string) (oauthStatePayload, error) {
+	return verifyStateAt(secret, state, time.Now())
+}
+
+func verifyStateAt(secret, state string, now time.Time) (oauthStatePayload, error) {
 	parts := strings.Split(strings.TrimSpace(state), ".")
 	if len(parts) != 3 || parts[0] == "" || parts[1] == "" || parts[2] == "" {
 		return oauthStatePayload{}, errors.New("授权状态格式无效")
@@ -209,10 +218,23 @@ func verifyState(secret, state string) (oauthStatePayload, error) {
 	if err != nil {
 		return oauthStatePayload{}, errors.New("授权状态格式无效")
 	}
-	if time.Now().Unix() > exp {
+	if now.Unix() > exp {
 		return oauthStatePayload{}, errors.New("授权状态已过期")
 	}
 	return oauthStatePayload{Nonce: parts[0], Exp: exp}, nil
+}
+
+// VerifyOAuthStateNonce validates a signed OAuth state token and returns its nonce.
+func VerifyOAuthStateNonce(state string) (string, error) {
+	secret, err := oauthStateSecret()
+	if err != nil {
+		return "", err
+	}
+	payload, err := verifyState(secret, state)
+	if err != nil {
+		return "", err
+	}
+	return payload.Nonce, nil
 }
 
 // validateAuthURL accepts only absolute http(s) URLs, blocking javascript:,
@@ -247,19 +269,10 @@ func oauthInsecureAllowed() bool {
 }
 
 // blockedOAuthIP rejects loopback, private, link-local (169.254.0.0/16),
-// unspecified and multicast addresses unless the test hook is enabled.
+// CGNAT (100.64.0.0/10), unspecified, multicast, benchmarking and NAT64
+// addresses unless the test hook is enabled.
 func blockedOAuthIP(ip net.IP) bool {
-	if ip == nil {
-		return true
-	}
-	if v4 := ip.To4(); v4 != nil {
-		ip = v4
-	}
-	if ip.IsLoopback() {
-		return !oauthInsecureAllowed()
-	}
-	return ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() ||
-		ip.IsUnspecified() || ip.IsMulticast()
+	return isBlockedConnectorIP(ip, false)
 }
 
 var (
@@ -269,7 +282,7 @@ var (
 
 // oauthHTTPClient returns the shared hardened client for OAuth discovery,
 // registration and token calls (15s timeout, 64KB bodies, SSRF-guarded dial,
-// same-scheme redirects only).
+// same-origin redirects only).
 func oauthHTTPClient() *http.Client {
 	oauthHTTPOnce.Do(func() {
 		dialer := &net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}
@@ -279,8 +292,11 @@ func oauthHTTPClient() *http.Client {
 				if len(via) >= 5 {
 					return errors.New("OAuth 请求重定向次数过多")
 				}
-				if len(via) > 0 && !strings.EqualFold(req.URL.Scheme, via[0].URL.Scheme) {
-					return errors.New("OAuth 请求禁止跨协议重定向")
+				if len(via) > 0 {
+					origin := via[0].URL
+					if origin == nil || !strings.EqualFold(req.URL.Scheme, origin.Scheme) || !strings.EqualFold(req.URL.Host, origin.Host) {
+						return errors.New("OAuth 请求禁止跨源重定向")
+					}
 				}
 				return validateAuthURL(req.URL.String())
 			},

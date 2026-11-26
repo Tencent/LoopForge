@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"net/url"
 	"os"
 	"strings"
 	"sync"
@@ -267,6 +268,9 @@ func (s *Service) UpdateConnector(_ context.Context, ownerUserID int64, id strin
 	if err != nil {
 		return domain.KnowledgeConnector{}, err
 	}
+	if keepExistingSecret && strings.TrimSpace(existing.Endpoint) != "" && !sameConnectorEndpointOrigin(existing.Endpoint, endpoint) {
+		return domain.KnowledgeConnector{}, apperr.New(apperr.Invalid, "修改连接器地址时必须重新填写凭据或清空旧凭据")
+	}
 
 	var sealed string
 	switch {
@@ -378,6 +382,9 @@ func (s *Service) CheckConnector(ctx context.Context, ownerUserID int64, id stri
 		normEndpoint, normCfg, normSecret, err := factory.ValidateAndNormalize(endpoint, cfg, secret, hasSavedSecret && useSavedSecret)
 		if err != nil {
 			return CheckResult{ConnectorID: id, OK: false, Error: err.Error()}
+		}
+		if useSavedSecret && strings.TrimSpace(saved.Endpoint) != "" && !sameConnectorEndpointOrigin(saved.Endpoint, normEndpoint) {
+			return CheckResult{ConnectorID: id, OK: false, Error: "修改连接器地址进行测试时必须重新填写凭据"}
 		}
 		if useSavedSecret {
 			normSecret = secret
@@ -514,6 +521,19 @@ func (s *Service) evictInstance(ownerUserID int64, id string) {
 
 func instanceKey(ownerUserID int64, id string) string {
 	return fmt.Sprintf("%d:%s", ownerUserID, strings.TrimSpace(id))
+}
+
+func sameConnectorEndpointOrigin(a, b string) bool {
+	a, b = strings.TrimSpace(a), strings.TrimSpace(b)
+	if a == b {
+		return true
+	}
+	ua, errA := url.Parse(a)
+	ub, errB := url.Parse(b)
+	if errA != nil || errB != nil || ua.Scheme == "" || ub.Scheme == "" || ua.Host == "" || ub.Host == "" {
+		return false
+	}
+	return strings.EqualFold(ua.Scheme, ub.Scheme) && strings.EqualFold(ua.Host, ub.Host)
 }
 
 func (s *Service) generateID(typ string) string {

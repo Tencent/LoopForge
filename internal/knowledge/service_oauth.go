@@ -717,7 +717,7 @@ func (s *Service) CompleteOAuthCallback(ctx context.Context, connectorType, stat
 	if err != nil {
 		return "", oauthCallbackError(OAuthCallbackCodeFailed, apperr.New(apperr.Unavailable, "OAuth 签名密钥未配置"))
 	}
-	payload, err := verifyState(signingKey, state)
+	payload, err := verifyStateAt(signingKey, state, s.now())
 	if err != nil {
 		return "", oauthCallbackError(OAuthCallbackCodeStateInvalid, apperr.New(apperr.Invalid, "OAuth 授权状态无效或已过期"))
 	}

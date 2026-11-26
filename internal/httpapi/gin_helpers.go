@@ -80,9 +80,7 @@ func decode(c *gin.Context, v any) bool {
 // decodeLimit binds the JSON request body with an explicit size limit.
 func decodeLimit(c *gin.Context, v any, limit int64) bool {
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, limit)
-	dec := json.NewDecoder(c.Request.Body)
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(v); err != nil {
+	if err := json.NewDecoder(c.Request.Body).Decode(v); err != nil {
 		c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return false
 	}
@@ -92,9 +90,7 @@ func decodeLimit(c *gin.Context, v any, limit int64) bool {
 // decodeOptional behaves like decode but tolerates an empty body.
 func decodeOptional(c *gin.Context, v any) bool {
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 2<<20)
-	dec := json.NewDecoder(c.Request.Body)
-	dec.DisallowUnknownFields()
-	err := dec.Decode(v)
+	err := json.NewDecoder(c.Request.Body).Decode(v)
 	if err == nil || err == io.EOF {
 		return true
 	}
@@ -109,24 +105,15 @@ func cors() gin.HandlerFunc {
 		origin := c.GetHeader("Origin")
 		if origin != "" {
 			u, err := url.Parse(origin)
-			// 一次性票据兑换由 WeKnora 控制台源（:18081）上的桥接页发起，
-			// 跨源是设计的一部分：票据单次有效、60 秒过期且绑定签发来源，
-			// 其余路径的跨源请求仍然一律拒绝。
-			crossOriginSSO := c.Request.URL.Path == "/api/knowledge/weknora/console-sso/redeem"
-			if err != nil || (!strings.EqualFold(u.Host, c.Request.Host) && !crossOriginSSO) {
+			if err != nil || !strings.EqualFold(u.Host, c.Request.Host) {
 				c.JSON(http.StatusForbidden, map[string]string{"error": "cross-origin request denied"})
 				c.Abort()
 				return
 			}
-			methods := "GET,PUT,POST,PATCH,DELETE,OPTIONS"
-			if crossOriginSSO {
-				// 桥接页只做一次 JSON POST，收窄方法列表，减少该路径的跨源暴露面。
-				methods = "POST, OPTIONS"
-			}
 			c.Header("Vary", "Origin")
 			c.Header("Access-Control-Allow-Origin", origin)
 			c.Header("Access-Control-Allow-Headers", "Content-Type")
-			c.Header("Access-Control-Allow-Methods", methods)
+			c.Header("Access-Control-Allow-Methods", "GET,PUT,POST,PATCH,DELETE,OPTIONS")
 		}
 		if c.Request.Method == http.MethodOptions {
 			c.Writer.WriteHeader(204)

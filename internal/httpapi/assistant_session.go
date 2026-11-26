@@ -302,7 +302,11 @@ func (h *assistantHandlers) session(c *gin.Context) {
 		if existing.ID != "" {
 			conv.KnowledgeRefs = existing.KnowledgeRefs
 		}
-		if err := h.validateUserKnowledgeRefs(current.ID, conv.KnowledgeRefs); err != nil {
+		refOwnerID := current.ID
+		if existing.ID != "" && ownerID > 0 {
+			refOwnerID = ownerID
+		}
+		if err := h.validateUserKnowledgeRefs(refOwnerID, conv.KnowledgeRefs); err != nil {
 			c.JSON(400, gin.H{"error": err.Error()})
 			return
 		}
@@ -635,6 +639,10 @@ func (h *assistantHandlers) sessionKnowledge(c *gin.Context) {
 		c.JSON(400, gin.H{"error": "请选择普通对话"})
 		return
 	}
+	if owner != user.ID {
+		c.JSON(403, gin.H{"error": "仅会话创建者可修改个人知识库引用"})
+		return
+	}
 	var body struct {
 		Refs *[]domain.KnowledgeRef `json:"knowledgeRefs"`
 	}
@@ -657,12 +665,23 @@ func (h *assistantHandlers) sessionKnowledge(c *gin.Context) {
 	c.JSON(200, saved)
 }
 
-func (d *deps) validateUserKnowledgeRefs(uid int64, refs []domain.KnowledgeRef) error {
+func (h *assistantHandlers) validateUserKnowledgeRefs(uid int64, refs []domain.KnowledgeRef) error {
+	return validateUserKnowledgeRefsWithDeps(h.deps, uid, refs)
+}
+
+func (h *runsHandlers) validateUserKnowledgeRefs(uid int64, refs []domain.KnowledgeRef) error {
+	return validateUserKnowledgeRefsWithDeps(h.deps, uid, refs)
+}
+
+func validateUserKnowledgeRefsWithDeps(d *deps, uid int64, refs []domain.KnowledgeRef) error {
 	if len(refs) == 0 {
 		return nil
 	}
 	if err := domain.ValidateKnowledgeRefs(refs); err != nil {
 		return err
+	}
+	if d == nil {
+		return nil
 	}
 	svc := d.knowledgeService()
 	if svc == nil {

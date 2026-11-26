@@ -1,4 +1,4 @@
-name: loopforge-kmcp
+name: loopforge
 services:
   mysql:
     image: mysql:8.4

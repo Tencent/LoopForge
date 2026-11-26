@@ -33,13 +33,17 @@ func TestKnowledgeOAuthRoutesCoexist(t *testing.T) {
 	for _, want := range []string{
 		"GET /api/knowledge/oauth/presets",
 		"POST /api/knowledge/oauth/:type/authorize",
-		"GET /api/knowledge/oauth/:type/authorize",
 		"GET /api/knowledge/oauth/callback",
 		"GET /api/knowledge/oauth/:type/callback",
 	} {
 		if !registered[want] {
 			t.Fatalf("route %q is not registered; routes=%v", want, engine.Routes())
 		}
+	}
+	// authorize is a state-changing operation (pending row + DCR): POST only,
+	// never reachable via cross-site GET.
+	if registered["GET /api/knowledge/oauth/:type/authorize"] {
+		t.Fatal("GET /api/knowledge/oauth/:type/authorize must not be registered")
 	}
 
 	// Both callback shapes must reach the handler (303 to the completion page),
@@ -216,10 +220,29 @@ func TestKnowledgeOAuthCallbackLocationIsCodeOnly(t *testing.T) {
 	if state == "" {
 		t.Fatal("authorize url misses state")
 	}
+	var nonceCookie *http.Cookie
+	for _, ck := range rec.Result().Cookies() {
+		if ck.Name == "loopforge_kb_oauth_nonce" {
+			nonceCookie = ck
+		}
+	}
+	if nonceCookie == nil || nonceCookie.Value == "" {
+		t.Fatal("authorize response misses browser binding cookie")
+	}
 
 	callbackPath := "/api/knowledge/oauth/mcp/callback?state=" + url.QueryEscape(state) + "&code=code-echo-123"
+	// Without the browser binding cookie the callback must be rejected
+	// (Login-CSRF), even with a valid signed state.
 	rec = httptest.NewRecorder()
 	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, callbackPath, nil))
+	if loc := rec.Header().Get("Location"); loc != "/knowledge-oauth-done.html?status=error&code=state_invalid" {
+		t.Fatalf("cookie-less callback location = %q", loc)
+	}
+
+	rec = httptest.NewRecorder()
+	callbackReq := httptest.NewRequest(http.MethodGet, callbackPath, nil)
+	callbackReq.AddCookie(nonceCookie)
+	handler.ServeHTTP(rec, callbackReq)
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("callback = %d: %s", rec.Code, rec.Body.String())
 	}

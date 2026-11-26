@@ -279,6 +279,10 @@ func (c *obsidianConnector) callToolInner(ctx context.Context, tool string, args
 }
 
 func cleanVaultRelPath(raw string) (relPath string, topSource string, err error) {
+	return cleanVaultPath(raw, true)
+}
+
+func cleanVaultPath(raw string, requireMarkdown bool) (relPath string, topSource string, err error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return "", "", apperr.New(apperr.Invalid, "文档路径不能为空")
@@ -296,12 +300,18 @@ func cleanVaultRelPath(raw string) (relPath string, topSource string, err error)
 		if seg == ".." {
 			return "", "", apperr.New(apperr.Invalid, "文档路径不允许包含 .. 穿越")
 		}
+		if strings.HasPrefix(seg, ".") {
+			return "", "", apperr.New(apperr.Invalid, "文档路径不允许访问隐藏目录或文件")
+		}
 		cleaned = append(cleaned, seg)
 	}
 	if len(cleaned) == 0 {
 		return "", "", apperr.New(apperr.Invalid, "文档路径不能为空")
 	}
 	relPath = strings.Join(cleaned, "/")
+	if requireMarkdown && !strings.HasSuffix(strings.ToLower(relPath), ".md") {
+		return "", "", apperr.New(apperr.Invalid, "Obsidian 连接器仅允许读取 .md 文档")
+	}
 	if len(cleaned) == 1 {
 		topSource = obsidianRootSourceID
 	} else {
@@ -358,7 +368,7 @@ func (c *obsidianConnector) execListDocs(ctx context.Context, kbID, keyword stri
 			}
 		}
 	} else {
-		cleanDir, _, err := cleanVaultRelPath(kbID)
+		cleanDir, _, err := cleanVaultPath(kbID, false)
 		if err != nil {
 			return CallResult{Status: domain.KnowledgeStatusUnavailable}, err
 		}

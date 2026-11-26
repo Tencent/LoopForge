@@ -1015,6 +1015,7 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 				markKnowledgeReadsCited(nr.KnowledgeReads, executionAttempt, output, frozen)
 				e.event(r, node.ID, "agent.turns.exhausted", "对话轮次已用尽，请确认是否重试本节点")
 			})
+			e.persistCitedKnowledgeReads(runID, node.ID, executionAttempt)
 			return
 		}
 		if failedAction == "human" {
@@ -1033,6 +1034,7 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 				}
 				e.event(r, node.ID, "gate.waiting", message)
 			})
+			e.persistCitedKnowledgeReads(runID, node.ID, executionAttempt)
 			return
 		}
 		if maxIterations > 1 && loopOnExhausted == "human" {
@@ -1045,6 +1047,7 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 				markKnowledgeReadsCited(nr.KnowledgeReads, executionAttempt, output, frozen)
 				e.event(r, node.ID, "agent.loop.exhausted", "Agent 自修正次数已耗尽，转人工判断："+err.Error())
 			})
+			e.persistCitedKnowledgeReads(runID, node.ID, executionAttempt)
 			return
 		}
 		e.markNodeKnowledgeReads(runID, node.ID, executionGeneration, executionAttempt, output, frozen)
@@ -1090,6 +1093,7 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 			e.event(r, node.ID, "node.succeeded", node.Name+" 已完成")
 		}
 	})
+	e.persistCitedKnowledgeReads(runID, node.ID, executionAttempt)
 	for _, artifact := range artifacts {
 		e.observe(runID, node.ID, domain.TelemetryEvent{Category: "artifact", Name: "artifact.published", Phase: "finish", Message: artifact.Name, Attributes: map[string]any{"artifactId": artifact.ID, "path": artifact.Path, "mediaType": artifact.MediaType, "size": artifact.Size, "sha256": artifact.SHA256}})
 	}
@@ -1195,8 +1199,6 @@ func lostCLISession(output string, err error) bool {
 }
 
 func (e *Engine) markNodeKnowledgeReads(runID, nodeID string, generation, attempt int, output string, artifacts []domain.Artifact) {
-	var ownerUserID int64
-	var citedReads []domain.KnowledgeRead
 	e.updateRun(runID, func(r *domain.Run) {
 		nr := r.Nodes[nodeID]
 		if !shouldCommitNodeOutcome(*r, nr, generation, attempt, false) {
@@ -1206,15 +1208,30 @@ func (e *Engine) markNodeKnowledgeReads(runID, nodeID string, generation, attemp
 			nr.Output = output
 		}
 		markKnowledgeReadsCited(nr.KnowledgeReads, attempt, output, artifacts)
-		ownerUserID = r.ExecutionContext.ResponsibleUserID
-		for _, read := range nr.KnowledgeReads {
-			if read.Attempt == attempt {
-				citedReads = append(citedReads, read)
-			}
-		}
 	})
-	if len(citedReads) > 0 && e.repo != nil {
-		_ = knowledge.NewUsageCounter(e.repo).MarkCited(context.Background(), ownerUserID, citedReads)
+	e.persistCitedKnowledgeReads(runID, nodeID, attempt)
+}
+
+func (e *Engine) persistCitedKnowledgeReads(runID, nodeID string, attempt int) {
+	if e.repo == nil {
+		return
+	}
+	run, ok := e.repo.RunState(runID)
+	if !ok {
+		return
+	}
+	nr := run.Nodes[nodeID]
+	if nr == nil {
+		return
+	}
+	var citedReads []domain.KnowledgeRead
+	for _, read := range nr.KnowledgeReads {
+		if read.Attempt == attempt {
+			citedReads = append(citedReads, read)
+		}
+	}
+	if len(citedReads) > 0 {
+		_ = knowledge.NewUsageCounter(e.repo).MarkCited(context.Background(), run.ExecutionContext.ResponsibleUserID, citedReads)
 	}
 }
 

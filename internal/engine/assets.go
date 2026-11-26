@@ -269,13 +269,20 @@ func mergeNodeAndRoleKnowledgeRefs(
 }
 
 func fallbackSOPKnowledgeCatalog(servers []domain.MCPServerDefinition) string {
+	xmlReplacer := strings.NewReplacer(
+		"&", "&amp;",
+		"<", "&lt;",
+		">", "&gt;",
+		`"`, "&quot;",
+		"'", "&apos;",
+	)
+	esc := func(s string) string { return xmlReplacer.Replace(s) }
 	var b strings.Builder
 	b.WriteString("<bound_knowledge_bases>\n")
 	for _, s := range servers {
-		fmt.Fprintf(&b, "  <kb id=%q name=%q", s.ID, s.Name)
-		fmt.Fprintf(&b, " tools=\"mcp__%s__*\">\n", s.ID)
+		fmt.Fprintf(&b, "  <kb id=\"%s\" name=\"%s\" tools=\"mcp__%s__*\">\n", esc(s.ID), esc(s.Name), esc(s.ID))
 		if desc := strings.TrimSpace(s.Description); desc != "" {
-			fmt.Fprintf(&b, "    <description>%s</description>\n", desc)
+			fmt.Fprintf(&b, "    <description>%s</description>\n", esc(desc))
 		}
 		b.WriteString("  </kb>\n")
 	}

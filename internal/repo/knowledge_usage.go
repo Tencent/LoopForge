@@ -7,6 +7,7 @@ import (
 	"errors"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"agentflow/internal/domain"
@@ -19,7 +20,32 @@ const (
 	knowledgeUsageEventRetentionDays = 30
 	knowledgeUsageEventMaxPerUser    = 2000
 	knowledgeTopCallersPerDoc        = 3
+	knowledgeUsagePruneMinInterval   = 5 * time.Minute
 )
+
+var knowledgeUsagePruneAt sync.Map
+
+type preparedKnowledgeDocDelta struct {
+	docKey      string
+	sourceID    string
+	sourceName  string
+	docID       string
+	title       string
+	fileName    string
+	callCount   int64
+	searchHit   int64
+	readCount   int64
+}
+
+func shouldPruneKnowledgeUsageEvents(ownerUserID int64, now time.Time) bool {
+	if prev, ok := knowledgeUsagePruneAt.Load(ownerUserID); ok {
+		if last, ok := prev.(time.Time); ok && now.Sub(last) < knowledgeUsagePruneMinInterval {
+			return false
+		}
+	}
+	knowledgeUsagePruneAt.Store(ownerUserID, now)
+	return true
+}
 
 // RecordKnowledgeUsage atomically increments connector and document invocation
 // counters and appends per-document caller events for ownerUserID.
@@ -35,13 +61,64 @@ func (r *KnowledgeRepo) RecordKnowledgeUsage(ctx context.Context, ownerUserID in
 	if now.IsZero() {
 		now = time.Now().UTC()
 	}
-	docHits := int64(len(delta.Documents))
+
+	docMap := make(map[string]*preparedKnowledgeDocDelta, len(delta.Documents))
+	var docHits int64
+	for _, doc := range delta.Documents {
+		docID := strings.TrimSpace(doc.DocumentID)
+		if docID == "" {
+			continue
+		}
+		docHits++
+		sourceID := clipUsageField(doc.SourceID, 191)
+		sourceName := clipUsageField(doc.SourceName, 255)
+		title := clipUsageField(doc.Title, 255)
+		fileName := clipUsageField(doc.FileName, 255)
+		clippedDocID := clipUsageField(docID, 512)
+		docKey := buildKnowledgeDocumentKey(sourceID, docID)
+
+		if existing, ok := docMap[docKey]; ok {
+			existing.callCount++
+			existing.searchHit += doc.SearchHit
+			existing.readCount += doc.Read
+			if existing.sourceName == "" && sourceName != "" {
+				existing.sourceName = sourceName
+			}
+			if existing.title == "" && title != "" {
+				existing.title = title
+			}
+			if existing.fileName == "" && fileName != "" {
+				existing.fileName = fileName
+			}
+			continue
+		}
+		docMap[docKey] = &preparedKnowledgeDocDelta{
+			docKey:     docKey,
+			sourceID:   sourceID,
+			sourceName: sourceName,
+			docID:      clippedDocID,
+			title:      title,
+			fileName:   fileName,
+			callCount:  1,
+			searchHit:  doc.SearchHit,
+			readCount:  doc.Read,
+		}
+	}
+
+	sortedDocs := make([]preparedKnowledgeDocDelta, 0, len(docMap))
+	for _, item := range docMap {
+		sortedDocs = append(sortedDocs, *item)
+	}
+	sort.Slice(sortedDocs, func(i, j int) bool {
+		return sortedDocs[i].docKey < sortedDocs[j].docKey
+	})
+
 	readID := clipUsageField(delta.ReadID, 64)
 	tool := clipUsageField(delta.Tool, 128)
 	query := clipUsageField(delta.Query, 255)
 	caller := normalizeUsageCaller(delta.Caller)
 
-	return r.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	err := r.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		connRow := knowledgeConnectorUsageRow{
 			OwnerUserID:      ownerUserID,
 			ConnectorID:      connID,
@@ -69,51 +146,40 @@ func (r *KnowledgeRepo) RecordKnowledgeUsage(ctx context.Context, ownerUserID in
 			return err
 		}
 
-		events := make([]knowledgeUsageEventRow, 0, len(delta.Documents))
-		for _, doc := range delta.Documents {
-			docID := strings.TrimSpace(doc.DocumentID)
-			if docID == "" {
-				continue
-			}
-			sourceID := clipUsageField(doc.SourceID, 191)
-			sourceName := clipUsageField(doc.SourceName, 255)
-			title := clipUsageField(doc.Title, 255)
-			fileName := clipUsageField(doc.FileName, 255)
-			clippedDocID := clipUsageField(docID, 512)
-			docKey := buildKnowledgeDocumentKey(sourceID, docID)
-
+		events := make([]knowledgeUsageEventRow, 0, len(sortedDocs))
+		for _, doc := range sortedDocs {
 			docRow := knowledgeDocumentUsageRow{
 				OwnerUserID:    ownerUserID,
 				ConnectorID:    connID,
-				DocumentKey:    docKey,
-				SourceID:       sourceID,
-				SourceName:     sourceName,
-				DocumentID:     clippedDocID,
-				Title:          title,
-				FileName:       fileName,
-				CallCount:      1,
-				SearchHitCount: doc.SearchHit,
-				ReadCount:      doc.Read,
+				DocumentKey:    doc.docKey,
+				SourceID:       doc.sourceID,
+				SourceName:     doc.sourceName,
+				DocumentID:     doc.docID,
+				Title:          doc.title,
+				FileName:       doc.fileName,
+				CallCount:      doc.callCount,
+				SearchHitCount: doc.searchHit,
+				ReadCount:      doc.readCount,
 				CitedCount:     0,
 				LastCalledAt:   &now,
 				CreatedAt:      &now,
 				UpdatedAt:      &now,
 			}
 			updates := map[string]any{
-				"call_count":       gorm.Expr("call_count + 1"),
-				"search_hit_count": gorm.Expr("search_hit_count + ?", doc.SearchHit),
-				"read_count":       gorm.Expr("read_count + ?", doc.Read),
+				"call_count":       gorm.Expr("call_count + ?", doc.callCount),
+				"search_hit_count": gorm.Expr("search_hit_count + ?", doc.searchHit),
+				"read_count":       gorm.Expr("read_count + ?", doc.readCount),
 				"last_called_at":   &now,
 				"updated_at":       &now,
 			}
-			if sourceName != "" {
-				updates["source_name"] = sourceName
+			if doc.sourceName != "" {
+				updates["source_name"] = doc.sourceName
 			}
-			if title != "" {
-				updates["title"] = title
+			if doc.title != "" {
+				updates["title"] = doc.title
 			}
-			if fileName != "" {
-				updates["file_name"] = fileName
+			if doc.fileName != "" {
+				updates["file_name"] = doc.fileName
 			}
 			if err := tx.Clauses(clause.OnConflict{
 				Columns:   []clause.Column{{Name: "owner_user_id"}, {Name: "connector_id"}, {Name: "document_key"}},
@@ -123,19 +189,19 @@ func (r *KnowledgeRepo) RecordKnowledgeUsage(ctx context.Context, ownerUserID in
 			}
 
 			action := domain.KnowledgeUsageActionSearchHit
-			if doc.Read > 0 {
+			if doc.readCount > 0 {
 				action = domain.KnowledgeUsageActionRead
 			}
 			events = append(events, knowledgeUsageEventRow{
 				OwnerUserID:  ownerUserID,
 				ReadID:       readID,
 				ConnectorID:  connID,
-				DocumentKey:  docKey,
-				SourceID:     sourceID,
-				SourceName:   sourceName,
-				DocumentID:   clippedDocID,
-				Title:        title,
-				FileName:     fileName,
+				DocumentKey:  doc.docKey,
+				SourceID:     doc.sourceID,
+				SourceName:   doc.sourceName,
+				DocumentID:   doc.docID,
+				Title:        doc.title,
+				FileName:     doc.fileName,
 				Action:       action,
 				Tool:         tool,
 				Query:        query,
@@ -164,12 +230,16 @@ func (r *KnowledgeRepo) RecordKnowledgeUsage(ctx context.Context, ownerUserID in
 			if err := tx.Create(&events).Error; err != nil {
 				return err
 			}
-			if err := pruneKnowledgeUsageEventsTx(tx, ownerUserID, now, knowledgeUsageEventRetentionDays, knowledgeUsageEventMaxPerUser); err != nil {
-				return err
-			}
 		}
 		return nil
 	})
+	if err != nil {
+		return err
+	}
+	if len(sortedDocs) > 0 && shouldPruneKnowledgeUsageEvents(ownerUserID, now) {
+		_ = pruneKnowledgeUsageEventsTx(r.DB.WithContext(ctx), ownerUserID, now, knowledgeUsageEventRetentionDays, knowledgeUsageEventMaxPerUser)
+	}
+	return nil
 }
 
 func pruneKnowledgeUsageEventsTx(tx *gorm.DB, ownerUserID int64, now time.Time, retentionDays, maxRows int) error {
@@ -467,9 +537,9 @@ func (r *KnowledgeRepo) ListKnowledgeUsageEvents(ownerUserID int64, filter domai
 		q = q.Where("caller_kind = ?", strings.ToLower(strings.TrimSpace(filter.CallerKind)))
 	}
 	if kw := strings.TrimSpace(filter.Query); kw != "" {
-		like := "%" + kw + "%"
+		like := "%" + escapeSQLLike(kw) + "%"
 		q = q.Where(
-			"title LIKE ? OR file_name LIKE ? OR document_id LIKE ? OR source_name LIKE ? OR query LIKE ? OR workflow_name LIKE ? OR agent_name LIKE ? OR node_name LIKE ? OR session_title LIKE ? OR space_title LIKE ? OR issue_title LIKE ?",
+			"title LIKE ? ESCAPE '!' OR file_name LIKE ? ESCAPE '!' OR document_id LIKE ? ESCAPE '!' OR source_name LIKE ? ESCAPE '!' OR query LIKE ? ESCAPE '!' OR workflow_name LIKE ? ESCAPE '!' OR agent_name LIKE ? ESCAPE '!' OR node_name LIKE ? ESCAPE '!' OR session_title LIKE ? ESCAPE '!' OR space_title LIKE ? ESCAPE '!' OR issue_title LIKE ? ESCAPE '!'",
 			like, like, like, like, like, like, like, like, like, like, like,
 		)
 	}
@@ -662,4 +732,16 @@ func clipUsageField(s string, maxBytes int) string {
 		out = append(out, string(r)...)
 	}
 	return string(out)
+}
+
+func escapeSQLLike(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		if r == '!' || r == '%' || r == '_' {
+			b.WriteByte('!')
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
 }

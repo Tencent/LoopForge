@@ -318,7 +318,7 @@ func (e *Executor) BuildCatalogXML(
 	e.inflight[key] = flight
 	e.mu.Unlock()
 
-	probeCtx, cancel := context.WithTimeout(ctx, catalogProbeWait)
+	probeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), catalogProbeWait)
 	defer cancel()
 
 	var b strings.Builder

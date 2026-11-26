@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -13,6 +14,11 @@ import (
 	"strings"
 	"sync"
 	"time"
+)
+
+const (
+	maxResponseBytes = 16 * 1024 * 1024
+	maxRedirects     = 5
 )
 
 // HTTPError is returned when the MCP gateway answers with a non-2xx status.
@@ -65,6 +71,7 @@ type Client struct {
 	hdrs   map[string]string
 	http   *http.Client
 	mu     sync.Mutex
+	initMu sync.Mutex
 	nextID int64
 	init   bool
 	// sessionID is the Mcp-Session-Id handed out by initialize; it is echoed
@@ -79,8 +86,33 @@ func New(url string, headers map[string]string) *Client {
 	return &Client{
 		url:  normalizeEndpointURL(url),
 		hdrs: headers,
-		http: &http.Client{Timeout: 60 * time.Second},
+		http: &http.Client{
+			Timeout:       60 * time.Second,
+			CheckRedirect: checkSameOriginRedirect,
+		},
 	}
+}
+
+func checkSameOriginRedirect(req *http.Request, via []*http.Request) error {
+	if len(via) == 0 {
+		return nil
+	}
+	if len(via) > maxRedirects {
+		return fmt.Errorf("mcp redirect limit (%d) exceeded", maxRedirects)
+	}
+	origin := via[0].URL
+	if origin == nil || !strings.EqualFold(req.URL.Scheme, origin.Scheme) || !strings.EqualFold(req.URL.Host, origin.Host) {
+		return errors.New("mcp refuses cross-origin redirect")
+	}
+	return nil
+}
+
+// WithTransport sets a custom HTTP RoundTripper on this client and returns it.
+func (c *Client) WithTransport(rt http.RoundTripper) *Client {
+	if c != nil && rt != nil {
+		c.http.Transport = rt
+	}
+	return c
 }
 
 // normalizeEndpointURL trims a trailing slash on the path only: query
@@ -128,7 +160,7 @@ func (c *Client) Clone(timeout time.Duration) *Client {
 	if c == nil {
 		return nil
 	}
-	return New(c.url, cloneHeaders(c.HeaderSnapshot())).WithTimeout(timeout)
+	return New(c.url, cloneHeaders(c.HeaderSnapshot())).WithTransport(c.http.Transport).WithTimeout(timeout)
 }
 
 // HeaderSnapshot returns a copy of the current request headers.
@@ -211,8 +243,11 @@ func (c *Client) CallToolStructuredContext(ctx context.Context, name string, arg
 	if err := json.Unmarshal(raw, &result); err != nil {
 		return strings.TrimSpace(string(raw)), nil, nil
 	}
-	if result.IsError && len(result.Content) > 0 {
-		return "", nil, fmt.Errorf("mcp tool %s: %s", name, result.Content[0].Text)
+	if result.IsError {
+		if len(result.Content) > 0 && strings.TrimSpace(result.Content[0].Text) != "" {
+			return "", nil, fmt.Errorf("mcp tool %s: %s", name, result.Content[0].Text)
+		}
+		return "", nil, fmt.Errorf("mcp tool %s returned isError", name)
 	}
 	var textBlocks []string
 	for _, block := range result.Content {
@@ -263,7 +298,7 @@ func (c *Client) callRPC(ctx context.Context, method string, params any, label s
 		ctx = context.Background()
 	}
 	for attempt := 0; attempt < 2; attempt++ {
-		if err := c.ensureInit(); err != nil {
+		if err := c.ensureInit(ctx); err != nil {
 			return nil, fmt.Errorf("mcp init: %w", err)
 		}
 		session, generation := c.snapshotSession()
@@ -400,16 +435,30 @@ func (c *Client) newHTTPRequest(ctx context.Context, body []byte, session string
 	return httpReq, nil
 }
 
-func (c *Client) ensureInit() error {
+func (c *Client) ensureInit(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	if c.init {
+		c.mu.Unlock()
 		return nil
 	}
-	for idx, version := range []string{"2025-06-18", "2024-11-05"} {
-		c.nextID++
-		id := c.nextID
+	c.mu.Unlock()
 
+	c.initMu.Lock()
+	defer c.initMu.Unlock()
+
+	c.mu.Lock()
+	if c.init {
+		c.mu.Unlock()
+		return nil
+	}
+	c.mu.Unlock()
+
+	var latestSession string
+	for idx, version := range []string{"2025-06-18", "2024-11-05"} {
+		id := c.nextRequestID()
 		req := rpcRequest{
 			JSONRPC: "2.0",
 			ID:      id,
@@ -424,14 +473,13 @@ func (c *Client) ensureInit() error {
 			},
 		}
 		body, _ := json.Marshal(req)
-		httpReq, err := c.newRequestLocked(body, "")
+		httpReq, err := c.newHTTPRequest(ctx, body, "")
 		if err != nil {
 			return err
 		}
 		resp, err := c.http.Do(httpReq)
 		if err != nil {
-			c.init = true
-			return nil
+			return err
 		}
 		// Authentication failures must reach the caller so an OAuth connector can
 		// refresh and retry; other initialize failures stay non-fatal as before.
@@ -446,15 +494,13 @@ func (c *Client) ensureInit() error {
 			}
 		}
 		if sid := strings.TrimSpace(resp.Header.Get("Mcp-Session-Id")); sid != "" {
-			c.sessionID = sid
-			c.sessionGen++
+			latestSession = sid
 		}
 		raw, readErr := c.readResponse(resp)
 		statusCode := resp.StatusCode
 		resp.Body.Close()
 		if readErr != nil {
-			c.init = true
-			return nil
+			break
 		}
 		var rpcResp rpcResponse
 		hasRPCError := json.Unmarshal(raw, &rpcResp) == nil && rpcResp.Error != nil
@@ -465,46 +511,44 @@ func (c *Client) ensureInit() error {
 		break
 	}
 
+	c.mu.Lock()
+	if latestSession != "" {
+		c.sessionID = latestSession
+		c.sessionGen++
+	}
 	c.nextID++
+	session := c.sessionID
+	c.init = true
+	c.mu.Unlock()
+
 	notifReq := rpcRequest{
 		JSONRPC: "2.0",
 		ID:      0,
 		Method:  "notifications/initialized",
 	}
 	notifBody, _ := json.Marshal(notifReq)
-	notifHTTP, _ := c.newRequestLocked(notifBody, c.sessionID)
+	notifHTTP, _ := c.newHTTPRequest(ctx, notifBody, session)
 	if notifHTTP != nil {
 		if notifResp, err := c.http.Do(notifHTTP); err == nil {
 			notifResp.Body.Close()
 		}
 	}
-	c.init = true
 	return nil
-}
-
-// newRequestLocked is newHTTPRequest for callers already holding c.mu.
-func (c *Client) newRequestLocked(body []byte, session string) (*http.Request, error) {
-	httpReq, err := http.NewRequest("POST", c.url, bytes.NewReader(body))
-	if err != nil {
-		return nil, err
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Accept", "application/json, text/event-stream")
-	for k, v := range c.hdrs {
-		httpReq.Header.Set(k, v)
-	}
-	if session != "" {
-		httpReq.Header.Set("Mcp-Session-Id", session)
-	}
-	return httpReq, nil
 }
 
 func (c *Client) readResponse(resp *http.Response) ([]byte, error) {
 	ct := resp.Header.Get("Content-Type")
 	if strings.Contains(ct, "text/event-stream") {
-		return c.readSSE(resp.Body)
+		return c.readSSE(io.LimitReader(resp.Body, maxResponseBytes))
 	}
-	return io.ReadAll(resp.Body)
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(raw) > maxResponseBytes {
+		return nil, fmt.Errorf("mcp response exceeds %d bytes", maxResponseBytes)
+	}
+	return raw, nil
 }
 
 func (c *Client) readSSE(body io.Reader) ([]byte, error) {
@@ -532,6 +576,9 @@ func (c *Client) readSSE(body io.Reader) ([]byte, error) {
 		if strings.HasPrefix(line, "data: ") {
 			dataLines = append(dataLines, strings.TrimPrefix(line, "data: "))
 		}
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("SSE read error: %w", err)
 	}
 	if len(dataLines) > 0 {
 		return []byte(strings.Join(dataLines, "\n")), nil

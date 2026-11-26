@@ -56,8 +56,12 @@ func (r *KnowledgeRepo) PutKnowledgeConnector(conn domain.KnowledgeConnector) er
 		return errors.New("knowledge connector id is required")
 	}
 	return r.DB.Transaction(func(tx *gorm.DB) error {
+		query := tx
+		if query.Dialector.Name() != "sqlite" {
+			query = query.Clauses(clause.Locking{Strength: "UPDATE"})
+		}
 		var existing knowledgeConnectorRow
-		err := tx.Where("id = ?", conn.ID).Take(&existing).Error
+		err := query.Where("id = ?", conn.ID).Take(&existing).Error
 		switch {
 		case err == nil:
 			if existing.OwnerUserID != conn.OwnerUserID {
@@ -174,6 +178,9 @@ func (r *KnowledgeRepo) UpdateKnowledgeConnectorConfig(ctx context.Context, owne
 		if !connectorConfigEqual(row.ConfigJSON, expectedConfigJSON) {
 			return nil
 		}
+		if strings.TrimSpace(configJSON) == "" {
+			configJSON = "{}"
+		}
 		now := time.Now().UTC()
 		res := tx.Model(&knowledgeConnectorRow{}).
 			Where("id = ? AND owner_user_id = ?", id, ownerUserID).
@@ -181,7 +188,7 @@ func (r *KnowledgeRepo) UpdateKnowledgeConnectorConfig(ctx context.Context, owne
 		if res.Error != nil {
 			return res.Error
 		}
-		updated = res.RowsAffected == 1
+		updated = true
 		return nil
 	})
 	return updated, err
@@ -213,6 +220,9 @@ func normalizeConnectorConfig(cfg *domain.KnowledgeConnectorConfig) {
 	}
 	if len(cfg.DefaultSources) == 0 {
 		cfg.DefaultSources = nil
+	}
+	if len(cfg.AllowedTools) == 0 {
+		cfg.AllowedTools = nil
 	}
 	if len(cfg.Extra) == 0 {
 		cfg.Extra = nil

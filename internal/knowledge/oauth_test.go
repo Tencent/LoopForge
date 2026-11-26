@@ -1585,7 +1585,9 @@ func TestOAuthDiscoveryCacheFollowsEndpointChange(t *testing.T) {
 	aHits, aRegs := providerA.resourceMetaHits, providerA.registerCalls
 	providerA.mu.Unlock()
 
-	if _, err := svc.UpdateConnector(ctx, 34, connector.ID, ConnectorInput{Endpoint: srvB.URL + "/mcp"}); err != nil {
+	// Endpoint changes must re-supply or clear credentials (P1-3); OAuth auto
+	// mode has no static secret, so clear the old sealed credential explicitly.
+	if _, err := svc.UpdateConnector(ctx, 34, connector.ID, ConnectorInput{Endpoint: srvB.URL + "/mcp", ClearSecret: true}); err != nil {
 		t.Fatalf("update endpoint: %v", err)
 	}
 	secondURL, _, err := svc.StartOAuth(ctx, 34, connector.ID, "http://platform.example.com")

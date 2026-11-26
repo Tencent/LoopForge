@@ -291,9 +291,21 @@ func TestKnowledgeProxyIsReadOnlyAndUserConnectorScoped(t *testing.T) {
 	}
 
 	ref := domain.KnowledgeRef{ConnectorID: conn.ID, Mode: "allowlist", Sources: []string{"a"}}
-	token, err := knowledge.SignProxyToken(knowledge.ProxyClaims{ProjectID: "p1", UserID: 42, AgentID: "dev", Ref: &ref}, time.Now())
+	// Proxy tokens are only valid while the claimed run node is executing.
+	_ = s.PutRun(domain.Run{
+		ID:               "run-proxy-iso",
+		Status:           "running",
+		ExecutionContext: domain.TelemetryContext{ProjectID: "p1", ResponsibleUserID: 42},
+		Nodes:            map[string]*domain.NodeRun{"n1": {NodeID: "n1", Status: "running", Attempt: 1}},
+	})
+	token, err := knowledge.SignProxyToken(knowledge.ProxyClaims{RunID: "run-proxy-iso", NodeID: "n1", Attempt: 1, ProjectID: "p1", UserID: 42, AgentID: "dev", Ref: &ref}, time.Now())
 	if err != nil {
 		t.Fatal(err)
+	}
+	// A token without run/node identity must be rejected outright.
+	bareToken, _ := knowledge.SignProxyToken(knowledge.ProxyClaims{ProjectID: "p1", UserID: 42, AgentID: "dev", Ref: &ref}, time.Now())
+	if rec := call(bareToken, `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`); rec.Code != http.StatusForbidden {
+		t.Fatalf("proxy token without run/node identity = %d, want 403", rec.Code)
 	}
 
 	rec := call(token, `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`)
@@ -314,11 +326,10 @@ func TestKnowledgeProxyIsReadOnlyAndUserConnectorScoped(t *testing.T) {
 		t.Fatalf("expected allowlist sources injected into kb_search args, got %+v", kb.lastCall("kb_search"))
 	}
 
-	// Token forged for another userId cannot invoke connector 42's resource.
-	wrongUserToken, _ := knowledge.SignProxyToken(knowledge.ProxyClaims{ProjectID: "p1", UserID: 99, AgentID: "dev", Ref: &ref}, time.Now())
-	wrongText, wrongIsErr, _ := rpcText(t, call(wrongUserToken, `{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"kb_search","arguments":{"query":"dns"}}}`))
-	if !wrongIsErr || !strings.Contains(wrongText, knowledge.ErrConnectorNotFound.Error()) {
-		t.Fatalf("cross-user proxy token should fail: isErr=%v text=%s", wrongIsErr, wrongText)
+	// Token forged for another userId cannot pass the run-ownership guard.
+	wrongUserToken, _ := knowledge.SignProxyToken(knowledge.ProxyClaims{RunID: "run-proxy-iso", NodeID: "n1", Attempt: 1, ProjectID: "p1", UserID: 99, AgentID: "dev", Ref: &ref}, time.Now())
+	if wrongRec := call(wrongUserToken, `{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"kb_search","arguments":{"query":"dns"}}}`); wrongRec.Code != http.StatusForbidden {
+		t.Fatalf("cross-user proxy token = %d, want 403 (%s)", wrongRec.Code, wrongRec.Body.String())
 	}
 
 	// Verify usage counters recorded the successful proxy call (and ignored the failed cross-user lookup).

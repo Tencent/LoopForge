@@ -2,8 +2,6 @@ package knowledge
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -115,6 +113,9 @@ func (mcpFactory) ValidateAndNormalize(endpoint string, cfg domain.KnowledgeConn
 	if u.User != nil {
 		return "", cfg, secret, apperr.New(apperr.Invalid, "MCP 服务地址不能内嵌账号密码")
 	}
+	if err := validateConnectorEndpointIP(endpoint, true, "MCP "); err != nil {
+		return "", cfg, secret, err
+	}
 	if cfg.TimeoutSec < 0 || cfg.TimeoutSec > 300 {
 		return "", cfg, secret, apperr.New(apperr.Invalid, "超时时间须在 0~300 秒之间")
 	}
@@ -164,7 +165,7 @@ func (mcpFactory) New(spec ConnectorSpec) (Connector, error) {
 	if spec.Config.TimeoutSec > 0 {
 		timeout = time.Duration(spec.Config.TimeoutSec) * time.Second
 	}
-	client := getOrCreateMCPClient(strings.TrimSpace(spec.ID), strings.TrimSpace(spec.Endpoint), headers, timeout)
+	client := getOrCreateMCPClient(spec.OwnerUserID, strings.TrimSpace(spec.ID), strings.TrimSpace(spec.Endpoint), headers, timeout)
 	return &mcpConnector{
 		spec:    spec,
 		client:  client,
@@ -231,41 +232,39 @@ func ResetMCPToolsCacheForTest() {
 	mcpToolsCacheMu.Unlock()
 }
 
-func getOrCreateMCPClient(connectorID, endpoint string, headers map[string]string, timeout time.Duration) *mcpclient.Client {
-	var cacheKey string
-	if connectorID != "" {
-		cacheKey = fmt.Sprintf("id:%s|%s|%d", connectorID, endpoint, timeout)
-	} else {
-		keys := make([]string, 0, len(headers))
-		for k := range headers {
-			keys = append(keys, k)
-		}
-		sort.Strings(keys)
-		h := sha256.New()
-		for _, k := range keys {
-			h.Write([]byte(strings.ToLower(k) + ":" + headers[k] + "\n"))
-		}
-		cacheKey = fmt.Sprintf("ep:%s|%s|%d", endpoint, hex.EncodeToString(h.Sum(nil)), timeout)
+func isReusableMCPConnectorID(connectorID string) bool {
+	connectorID = strings.TrimSpace(connectorID)
+	return connectorID != "" && connectorID != "probe"
+}
+
+func getOrCreateMCPClient(ownerUserID int64, connectorID, endpoint string, headers map[string]string, timeout time.Duration) *mcpclient.Client {
+	connectorID = strings.TrimSpace(connectorID)
+	newGuardedClient := func() *mcpclient.Client {
+		return mcpclient.New(endpoint, headers).
+			WithTransport(newGuardedHTTPTransport(true, "MCP ")).
+			WithTimeout(timeout)
 	}
+	if !isReusableMCPConnectorID(connectorID) {
+		return newGuardedClient()
+	}
+	cacheKey := fmt.Sprintf("u:%d|id:%s|%s|%d", ownerUserID, connectorID, endpoint, timeout)
 
 	mcpClientsMu.Lock()
 	defer mcpClientsMu.Unlock()
 	if c, ok := mcpClients[cacheKey]; ok {
-		if connectorID != "" {
-			c.SetHeaders(headers)
-		}
+		c.SetHeaders(headers)
 		return c
 	}
 	if len(mcpClients) >= 256 {
 		mcpClients = map[string]*mcpclient.Client{}
 	}
-	c := mcpclient.New(endpoint, headers).WithTimeout(timeout)
+	c := newGuardedClient()
 	mcpClients[cacheKey] = c
 	return c
 }
 
-func acquireConnectorSlot(ctx context.Context, connectorID string, maxConcur int) (func(), error) {
-	if connectorID == "" {
+func acquireConnectorSlot(ctx context.Context, ownerUserID int64, connectorID string, maxConcur int) (func(), error) {
+	if !isReusableMCPConnectorID(connectorID) {
 		return func() {}, nil
 	}
 	if maxConcur <= 0 {
@@ -274,13 +273,10 @@ func acquireConnectorSlot(ctx context.Context, connectorID string, maxConcur int
 	if maxConcur > 16 {
 		maxConcur = 16
 	}
-	key := fmt.Sprintf("%s|%d", connectorID, maxConcur)
+	key := fmt.Sprintf("u:%d|%s|%d", ownerUserID, connectorID, maxConcur)
 	mcpSemaphoresMu.Lock()
 	sem, ok := mcpSemaphores[key]
 	if !ok {
-		if len(mcpSemaphores) >= 512 {
-			mcpSemaphores = map[string]chan struct{}{}
-		}
 		sem = make(chan struct{}, maxConcur)
 		mcpSemaphores[key] = sem
 	}
@@ -348,7 +344,8 @@ func (c *mcpConnector) Check(ctx context.Context) CheckResult {
 func (c *mcpConnector) toolsCacheKey() string {
 	allowed := append([]string(nil), c.spec.Config.AllowedTools...)
 	sort.Strings(allowed)
-	return fmt.Sprintf("%s|%s|%d|%s",
+	return fmt.Sprintf("u:%d|%s|%s|%d|%s",
+		c.spec.OwnerUserID,
 		strings.TrimSpace(c.spec.ID),
 		strings.TrimSpace(c.spec.Endpoint),
 		c.spec.UpdatedAt.UTC().UnixNano(),
@@ -362,7 +359,7 @@ func (c *mcpConnector) Tools(ctx context.Context) ([]mcpclient.Tool, error) {
 
 func (c *mcpConnector) tools(ctx context.Context, forceRefresh bool) ([]mcpclient.Tool, error) {
 	key := c.toolsCacheKey()
-	useCache := strings.TrimSpace(c.spec.ID) != ""
+	useCache := isReusableMCPConnectorID(c.spec.ID)
 	if useCache && !forceRefresh {
 		now := time.Now()
 		mcpToolsCacheMu.Lock()
@@ -384,7 +381,9 @@ func (c *mcpConnector) tools(ctx context.Context, forceRefresh bool) ([]mcpclien
 		mcpToolsInflight[key] = flight
 		mcpToolsCacheMu.Unlock()
 
-		tools, err := c.fetchToolsUpstream(ctx)
+		fetchCtx, fetchCancel := context.WithTimeout(context.WithoutCancel(ctx), CallTimeout)
+		tools, err := c.fetchToolsUpstream(fetchCtx)
+		fetchCancel()
 		mcpToolsCacheMu.Lock()
 		delete(mcpToolsInflight, key)
 		if err == nil {
@@ -426,7 +425,7 @@ func evictExpiredMCPToolsLocked(now time.Time) {
 }
 
 func (c *mcpConnector) fetchToolsUpstream(ctx context.Context) ([]mcpclient.Tool, error) {
-	release, slotErr := acquireConnectorSlot(ctx, c.spec.ID, connectorMaxConcurrency(c.spec.Config))
+	release, slotErr := acquireConnectorSlot(ctx, c.spec.OwnerUserID, c.spec.ID, connectorMaxConcurrency(c.spec.Config))
 	if slotErr != nil {
 		return nil, c.safeError(slotErr)
 	}
@@ -829,7 +828,7 @@ func (c *mcpConnector) canRefresh() bool {
 // retrying once on OAuth 401 refresh and (for read-only tools) up to 2 times
 // on 429/5xx/EOF transient errors with backoff.
 func (c *mcpConnector) callTool(ctx context.Context, name string, args map[string]any, retryable bool) (string, json.RawMessage, error) {
-	release, slotErr := acquireConnectorSlot(ctx, c.spec.ID, connectorMaxConcurrency(c.spec.Config))
+	release, slotErr := acquireConnectorSlot(ctx, c.spec.OwnerUserID, c.spec.ID, connectorMaxConcurrency(c.spec.Config))
 	if slotErr != nil {
 		return "", nil, c.safeError(slotErr)
 	}
@@ -839,15 +838,18 @@ func (c *mcpConnector) callTool(ctx context.Context, name string, args map[strin
 	if err != nil {
 		return "", nil, c.authError(err)
 	}
+	lastToken := used.Token
 	var text string
 	var structured json.RawMessage
 	invoke := func() error {
 		var callErr error
 		text, structured, callErr = c.client.CallToolStructuredContext(ctx, name, args)
 		if callErr != nil && c.canRefresh() && isUnauthorized(callErr) {
-			if _, refreshErr := c.syncSecret(ctx, true, used.Token); refreshErr != nil {
+			refreshed, refreshErr := c.syncSecret(ctx, true, lastToken)
+			if refreshErr != nil {
 				return refreshErr
 			}
+			lastToken = refreshed.Token
 			text, structured, callErr = c.client.CallToolStructuredContext(ctx, name, args)
 		}
 		return callErr
@@ -975,6 +977,9 @@ var knowledgeWriteVerbs = map[string]bool{
 	"move": true, "rename": true, "copy": true, "upload": true, "share": true,
 	"grant": true, "revoke": true, "publish": true, "archive": true,
 	"restore": true, "clear": true,
+	"post": true, "send": true, "submit": true, "exec": true, "execute": true,
+	"modify": true, "replace": true, "merge": true, "destroy": true, "purge": true,
+	"upsert": true,
 }
 
 // IsKnowledgeToolMayWrite reports whether an MCP tool may mutate external data
@@ -1009,13 +1014,19 @@ func splitToolNameTokens(name string) []string {
 			cur = cur[:0]
 		}
 	}
-	for _, r := range name {
+	runes := []rune(name)
+	for i, r := range runes {
 		if r == '.' || r == '_' || r == '-' || r == '/' || r == ':' || unicode.IsSpace(r) {
 			flush()
 			continue
 		}
-		if unicode.IsUpper(r) && len(cur) > 0 && unicode.IsLower(cur[len(cur)-1]) {
-			flush()
+		if unicode.IsUpper(r) && len(cur) > 0 {
+			prev := cur[len(cur)-1]
+			if unicode.IsLower(prev) || unicode.IsDigit(prev) {
+				flush()
+			} else if unicode.IsUpper(prev) && i+1 < len(runes) && unicode.IsLower(runes[i+1]) {
+				flush()
+			}
 		}
 		cur = append(cur, r)
 	}

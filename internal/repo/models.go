@@ -705,7 +705,7 @@ type knowledgeConnectorUsageRow struct {
 func (knowledgeConnectorUsageRow) TableName() string { return "knowledge_connector_usage_counts" }
 
 type knowledgeDocumentUsageRow struct {
-	OwnerUserID    int64      `gorm:"column:owner_user_id;primaryKey;not null;default:0"`
+	OwnerUserID    int64      `gorm:"column:owner_user_id;primaryKey;not null;default:0;index:idx_knowledge_doc_usage_owner_calls,priority:1"`
 	ConnectorID    string     `gorm:"column:connector_id;primaryKey;size:64"`
 	DocumentKey    string     `gorm:"column:document_key;primaryKey;size:255"`
 	SourceID       string     `gorm:"column:source_id;size:191;not null;default:''"`
@@ -713,7 +713,7 @@ type knowledgeDocumentUsageRow struct {
 	DocumentID     string     `gorm:"column:document_id;size:512;not null;default:''"`
 	Title          string     `gorm:"column:title;size:255;not null;default:''"`
 	FileName       string     `gorm:"column:file_name;size:255;not null;default:''"`
-	CallCount      int64      `gorm:"column:call_count;index:idx_knowledge_doc_usage_owner_calls;not null;default:0"`
+	CallCount      int64      `gorm:"column:call_count;index:idx_knowledge_doc_usage_owner_calls,priority:2;not null;default:0"`
 	SearchHitCount int64      `gorm:"column:search_hit_count;not null;default:0"`
 	ReadCount      int64      `gorm:"column:read_count;not null;default:0"`
 	CitedCount     int64      `gorm:"column:cited_count;not null;default:0"`

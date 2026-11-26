@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/url"
 	"sort"
@@ -149,20 +148,14 @@ func ValidateOutboundWeKnoraURL(raw string) (string, error) {
 	if s == "" {
 		return "", apperr.New(apperr.Invalid, "WeKnora 服务地址不能为空")
 	}
+	if err := validateConnectorEndpointIP(s, true, "WeKnora "); err != nil {
+		return "", err
+	}
 	return s, nil
 }
 
 func newWeKnoraTransport() *http.Transport {
-	return &http.Transport{
-		Proxy:                 http.ProxyFromEnvironment,
-		DialContext:           (&net.Dialer{Timeout: 15 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
-		ForceAttemptHTTP2:     true,
-		MaxIdleConns:          100,
-		MaxIdleConnsPerHost:   16,
-		IdleConnTimeout:       90 * time.Second,
-		TLSHandshakeTimeout:   10 * time.Second,
-		ExpectContinueTimeout: 1 * time.Second,
-	}
+	return newGuardedHTTPTransport(true, "WeKnora ")
 }
 
 func checkWeKnoraRedirect(req *http.Request, via []*http.Request) error {
@@ -685,7 +678,7 @@ func (c *weknoraConnector) execReadDoc(ctx context.Context, docID string, offset
 	defer cancel()
 
 	docMeta, metaErr := c.getDocMeta(cctx, docID)
-	if len(scope.Allowlist()) > 0 {
+	if strings.TrimSpace(scope.Mode) == "allowlist" {
 		if metaErr != nil {
 			return CallResult{Status: domain.KnowledgeStatusUnavailable, LatencyMs: time.Since(started).Milliseconds()}, metaErr
 		}
@@ -935,7 +928,7 @@ func (c *weknoraConnector) doJSON(ctx context.Context, method, pathStr string, p
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		raw, _ := io.ReadAll(io.LimitReader(resp.Body, weknoraMaxErrorBytes))
-		_, _ = io.Copy(io.Discard, resp.Body)
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
 		return fmt.Errorf("WeKnora HTTP %d: %s", resp.StatusCode, RedactSecrets(parseWeKnoraErrorMessage(resp.StatusCode, raw), c.spec.Secret))
 	}
 	if out == nil {

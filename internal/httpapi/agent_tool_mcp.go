@@ -294,7 +294,10 @@ func (h *agentToolGateway) callTool(ctx context.Context, session *AgentToolSessi
 		}
 		for _, ref := range session.KnowledgeRefs {
 			if ref.ConnectorID == tool.ServerID {
-				if session.Mode == AgentToolAssistant && exec.ToolMayWrite(ctx, session.UserID, ref, tool.UpstreamName) {
+				if exec.ToolMayWrite(ctx, session.UserID, ref, tool.UpstreamName) {
+					if session.Mode != AgentToolAssistant {
+						return mcpToolTextResult("当前运行模式不允许调用知识库写入工具："+tool.Name, true), nil
+					}
 					if reason, allowed := h.approveKnowledgeWrite(ctx, session, tool.Name, params.Arguments); !allowed {
 						return mcpToolTextResult(reason, true), nil
 					}

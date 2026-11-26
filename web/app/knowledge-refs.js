@@ -221,7 +221,14 @@ window.editKnowledgeRefs = async function editKnowledgeRefs(project, refs, save)
             }
           } catch (e) {
             loaded = false;
-            choices.innerHTML = `<div class="kr-source-row"><span class="kr-source-meta">${e.message}</span></div>`;
+            choices.innerHTML = '';
+            const errRow = document.createElement('div');
+            errRow.className = 'kr-source-row';
+            const errMeta = document.createElement('span');
+            errMeta.className = 'kr-source-meta';
+            errMeta.textContent = e?.message || '子知识库列表加载失败';
+            errRow.append(errMeta);
+            choices.append(errRow);
           }
         }
         syncChoiceUI();
@@ -257,8 +264,13 @@ window.editKnowledgeRefs = async function editKnowledgeRefs(project, refs, save)
       goBtn.textContent = '去「我的知识库」添加连接器';
       goBtn.onclick = () => {
         dialog.close();
-        if (typeof window.switchView === 'function') window.switchView('knowledge');
-        else window.location.assign('/#knowledge');
+        if (typeof window.switchView === 'function') {
+          window.switchView('knowledge');
+        } else if (window.parent && window.parent !== window) {
+          window.parent.postMessage({ type: 'agentflow-chat-open-view', view: 'knowledge' }, window.location.origin);
+        } else {
+          window.location.assign('/#knowledge');
+        }
       };
       list.append(goBtn);
     }
@@ -276,7 +288,10 @@ window.editKnowledgeRefs = async function editKnowledgeRefs(project, refs, save)
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ knowledgeRefs: nextRefs }),
         });
-        if (!response.ok) throw new Error((await response.json()).error || '引用校验失败');
+        if (!response.ok) {
+          const errPayload = await response.json().catch(() => ({}));
+          throw new Error(errPayload.error || '引用校验失败');
+        }
         await save(nextRefs);
         dialog.close();
       } catch (e) {
