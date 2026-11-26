@@ -953,6 +953,7 @@ textarea.pa-input{height:auto;min-height:76px;padding:9px 11px;resize:vertical;l
 .pa-fs h5{margin:0 0 10px;color:var(--muted-2);font-size:11px;font-weight:600;letter-spacing:.04em}
 .pa-field{display:block}
 .pa-field+.pa-field,.pa-detect+.pa-field{margin-top:12px}
+.pa-repo-branch-naming{margin-top:12px}
 .pa-field-l{display:block;margin-bottom:6px;color:var(--muted);font-size:12px;font-weight:500}
 .pa-field-l i{color:var(--muted-2);font-style:normal;font-weight:400}
 .pa-field-h,.pa-fs-hint{display:block;margin:6px 0 0;color:var(--muted-2);font-size:12px;line-height:1.5}
@@ -1767,7 +1768,7 @@ textarea.pa-input{height:auto;min-height:76px;padding:9px 11px;resize:vertical;l
 .clarification-feedback b{color:var(--amber)}
 .requirement-modal-card .modal-actions{padding:14px 26px 20px}
 
-/* ================= Agent / SOP 向导 ================= */
+/* ================= Agent / LOOP 向导 ================= */
 .definition-wizard-card{width:min(900px,94vw);max-height:90vh;overflow:auto;padding:0;border-radius:17px}
 .wizard-head{min-height:96px;padding:20px 26px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--line);background:linear-gradient(135deg,var(--panel),var(--panel-2))}
 .wizard-head h2{margin:3px 0 4px;font-size:20px}

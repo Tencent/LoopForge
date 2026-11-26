@@ -62,7 +62,7 @@ type botPendingDraftRow struct {
 	// BodyPurgedAt: the retention cleanup removed the drafts, summary and
 	// result (stage H).
 	BodyPurgedAt *time.Time
-	// SOPOptions (JSON domain.BotDraftSOP) and SOPChoice: the SOP picked on
+	// SOPOptions (JSON domain.BotDraftSOP) and SOPChoice: the LOOP picked on
 	// the chat card for the draft's new requirement.
 	SOPOptions string `gorm:"type:text"`
 	SOPChoice  string `gorm:"size:191"`
@@ -83,9 +83,9 @@ func (row botPendingDraftRow) draft() domain.BotPendingDraft {
 	return d
 }
 
-// SetBotPendingDraftChoice records the SOP the requester picked on the chat
+// SetBotPendingDraftChoice records the LOOP the requester picked on the chat
 // card. Only a pending draft of that sender and configuration, and only an
-// offered SOP, is accepted.
+// offered LOOP, is accepted.
 func (r *AssistantRepo) SetBotPendingDraftChoice(id, configID, sender, choice string, now time.Time) (domain.BotPendingDraft, error) {
 	var row botPendingDraftRow
 	if err := r.DB.First(&row, "id = ?", id).Error; err != nil {

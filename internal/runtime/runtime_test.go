@@ -1763,8 +1763,8 @@ func TestCodeBuddyDropsToolsAllowlistWhenHTTPMCPPresent(t *testing.T) {
 	if !containsArgPair(sb.argv, "--mcp-config", ".agentflow/config/closer/mcp.json") {
 		t.Fatalf("mcp-config must point at the real config file, got %v", sb.argv)
 	}
-	if sb.argv[len(sb.argv)-1] != "probe" {
-		t.Fatalf("short prompt must stay on argv, got %v", sb.argv)
+	if !containsArgPair(sb.argv, "--input-format", "stream-json") || containsArg(sb.argv, "probe") {
+		t.Fatalf("CodeBuddy SOP prompt must use the JSON input stream, got %v", sb.argv)
 	}
 }
 

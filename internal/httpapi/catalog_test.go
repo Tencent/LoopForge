@@ -187,6 +187,46 @@ func TestWorkflowAgentsAreFilteredAndValidatedByProject(t *testing.T) {
 	}
 }
 
+// The sandbox editor sends a description like every other catalog asset; it
+// must survive the save, a reload of the list and a share toggle that PUTs the
+// listed item back.
+func TestSandboxDescriptionRoundTrips(t *testing.T) {
+	s, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.Close() })
+	if err := s.PutProject(domain.Project{ID: "alpha", Key: "ALPHA", Name: "Alpha"}); err != nil {
+		t.Fatal(err)
+	}
+	h := New(s, engine.New(s, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
+	requestJSON[map[string]bool](t, h, http.MethodPut, "/api/sandboxes", map[string]any{
+		"id": "alpha-native", "name": "Alpha native", "description": "前端构建用，含 Node 22", "projectId": "alpha", "driver": "native",
+	}, http.StatusOK)
+	find := func() domain.SandboxProfile {
+		t.Helper()
+		for _, item := range requestEmptyJSON[[]domain.SandboxProfile](t, h, http.MethodGet, "/api/sandboxes?projectId=alpha", http.StatusOK) {
+			if item.ID == "alpha-native" {
+				return item
+			}
+		}
+		t.Fatal("saved sandbox is missing from the list")
+		return domain.SandboxProfile{}
+	}
+	listed := find()
+	if listed.Description != "前端构建用，含 Node 22" {
+		t.Fatalf("description lost on save: %+v", listed)
+	}
+	listed.Shared = true
+	requestJSON[map[string]bool](t, h, http.MethodPut, "/api/sandboxes", listed, http.StatusOK)
+	if shared := find(); !shared.Shared || shared.Description != "前端构建用，含 Node 22" {
+		t.Fatalf("description lost on share toggle: %+v", shared)
+	}
+	if spec := domain.RunnerSandbox(find()); spec.Profile.Description != "" {
+		t.Fatalf("runner spec carries the description: %+v", spec.Profile)
+	}
+}
+
 func TestSharedWorkflowRequiresSharedSandbox(t *testing.T) {
 	s, err := repo.OpenTest()
 	if err != nil {
@@ -626,13 +666,13 @@ func TestNewProjectDefaultsToGenericBackendDeliverySOP(t *testing.T) {
 	h := New(s, engine.New(s, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
 	created := requestJSON[domain.Project](t, h, http.MethodPost, "/api/projects", domain.Project{ID: "fresh", Key: "FRESH", Name: "Fresh"}, http.StatusOK)
 	if created.WorkflowID != repo.GenericBackendDeliveryWorkflowID {
-		t.Fatalf("new project should default to the LoopForge SOP, got %q", created.WorkflowID)
+		t.Fatalf("new project should default to the LoopForge LOOP, got %q", created.WorkflowID)
 	}
 	assertProjectHasDefaultTrackerMCPs(t, s, "fresh")
-	// 显式指定或修改 SOP 不被覆盖。
+	// 显式指定或修改 LOOP 不被覆盖。
 	updated := requestJSON[domain.Project](t, h, http.MethodPut, "/api/projects", domain.Project{ID: "fresh", Name: "Fresh 2", WorkflowID: "custom-sop"}, http.StatusOK)
 	if updated.WorkflowID != "custom-sop" {
-		t.Fatalf("explicit SOP must be kept, got %q", updated.WorkflowID)
+		t.Fatalf("explicit LOOP must be kept, got %q", updated.WorkflowID)
 	}
 }
 
@@ -742,7 +782,7 @@ func TestGlobalRuleWorkflowBinding(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := s.PutWorkflow(domain.WorkflowDefinition{
-		ID: "alpha-sop", Name: "Alpha SOP", ProjectID: "alpha", SandboxProfileID: "test-native",
+		ID: "alpha-sop", Name: "Alpha LOOP", ProjectID: "alpha", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{{ID: "dev", Name: "实现", Type: "agent", AgentID: "developer"}},
 	}); err != nil {
 		t.Fatal(err)
@@ -767,14 +807,14 @@ func TestGlobalRuleWorkflowBinding(t *testing.T) {
 		Global: true, WorkflowIDs: []string{"missing-sop"},
 	}, http.StatusBadRequest)
 	if missing["error"] == "" {
-		t.Fatal("expected missing SOP error")
+		t.Fatal("expected missing LOOP error")
 	}
 	foreign := requestJSON[map[string]string](t, h, http.MethodPut, "/api/rules", domain.RuleDefinition{
 		ID: "alpha-global", Name: "全局约束", ProjectID: "alpha", Content: "所有节点都要遵守",
 		Global: true, WorkflowIDs: []string{"beta-private"},
 	}, http.StatusBadRequest)
 	if foreign["error"] == "" {
-		t.Fatal("expected foreign SOP error")
+		t.Fatal("expected foreign LOOP error")
 	}
 	requestJSON[map[string]bool](t, h, http.MethodPut, "/api/rules", domain.RuleDefinition{
 		ID: "alpha-global", Name: "全局约束", ProjectID: "alpha", Content: "所有节点都要遵守",
@@ -782,7 +822,7 @@ func TestGlobalRuleWorkflowBinding(t *testing.T) {
 	}, http.StatusOK)
 	cleared, _ := s.Rule("alpha-global")
 	if cleared.Global || len(cleared.WorkflowIDs) != 0 {
-		t.Fatalf("turning the switch off must drop SOP bindings: %#v", cleared)
+		t.Fatalf("turning the switch off must drop LOOP bindings: %#v", cleared)
 	}
 }
 

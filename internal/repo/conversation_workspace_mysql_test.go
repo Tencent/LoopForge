@@ -86,7 +86,7 @@ waitForDispatches:
 		t.Fatalf("admitted %d runs into one conversation workspace", admitted)
 	}
 	if _, err := stores[0].BeginWorkspaceUse(owner.ID, time.Now()); !errors.Is(err, ErrWorkspaceInUse) {
-		t.Fatalf("conversation obtained a lease during SOP execution: %v", err)
+		t.Fatalf("conversation obtained a lease during LOOP execution: %v", err)
 	}
 }
 

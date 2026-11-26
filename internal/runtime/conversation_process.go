@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/mcpserver"
 )
 
 // Only a confirmed preparation failure carries this marker. A lost start RPC
@@ -158,23 +159,24 @@ func (p *ConversationProcessPool) lockAssets(ctx context.Context, root string) (
 }
 
 type conversationProcess struct {
-	mu            sync.Mutex
-	cancel        context.CancelFunc
-	input         *os.File
-	events        []domain.TelemetryEvent
-	base          int64
-	done          bool
-	err           string
-	errorCode     string
-	wake          chan struct{}
-	lastPoll      time.Time
-	closeRelay    func()
-	finished      chan struct{}
-	root          string
-	bytes         int
-	notStarted    bool
-	cliVersion    string
-	versionSource string
+	mu              sync.Mutex
+	cancel          context.CancelFunc
+	input           *os.File
+	codeBuddyStream *codeBuddyBackgroundStream
+	events          []domain.TelemetryEvent
+	base            int64
+	done            bool
+	err             string
+	errorCode       string
+	wake            chan struct{}
+	lastPoll        time.Time
+	closeRelay      func()
+	finished        chan struct{}
+	root            string
+	bytes           int
+	notStarted      bool
+	cliVersion      string
+	versionSource   string
 	// workspace replaces <root>/ws in stdin under seatbelt, which has no mount
 	// namespace to map that path onto the run workspace.
 	workspace     string
@@ -299,7 +301,11 @@ func (p *ConversationProcessPool) Handle(ctx context.Context, root, workspace st
 	case "write":
 		proc.mu.Lock()
 		input, workspace := proc.input, proc.workspace
+		background := proc.codeBuddyStream
 		proc.mu.Unlock()
+		if background != nil && (req.EOF || background.isDrained()) {
+			return ConversationProcessResult{}, nil
+		}
 		if input == nil {
 			return ConversationProcessResult{}, fmt.Errorf("process has no stdin")
 		}
@@ -317,6 +323,11 @@ func (p *ConversationProcessPool) Handle(ctx context.Context, root, workspace st
 		} else {
 			data := remapConversationStdin(req.Data, req.SourceRoot, root, workspace, proc.stdinProvider)
 			_, err = io.WriteString(input, data)
+			if err != nil && background != nil && background.isDrained() {
+				// A terminal error can race the first prompt write. The
+				// caller needs the buffered error frame to recover.
+				err = nil
+			}
 		}
 		return ConversationProcessResult{}, err
 	case "stop":
@@ -492,11 +503,17 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 	var release func()
 	var stdin io.Closer
 	var cleanupLogin func() error
+	var background *codeBuddyBackgroundStream
 	// Set once a terminal result line has been followed by the drain window
 	// and this process is stopped so a lingering CLI cannot pin the turn.
 	var stopAfterTerminalResult atomic.Bool
 	finish := func(runErr error, notStarted bool) {
 		cancel()
+		var backgroundWarning domain.TelemetryEvent
+		if background != nil {
+			background.stop()
+			backgroundWarning = background.timeoutEvent()
+		}
 		if req.SourceRoot != "" && req.SourceRoot != root {
 			_ = os.RemoveAll(filepath.Join(root, conversationPromptInputDir))
 		}
@@ -522,6 +539,10 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 		proc.mu.Lock()
 		if proc.input != nil {
 			_ = proc.input.Close()
+		}
+		if backgroundWarning.Name != "" {
+			proc.events = append(proc.events, backgroundWarning)
+			proc.bytes += len(backgroundWarning.Message)
 		}
 		if credentialCleanupErr != nil {
 			proc.err = "清理 CLI 临时凭证失败"
@@ -744,8 +765,16 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 		if err != nil {
 			return ConversationProcessResult{}, err
 		}
+		// The API relays one user frame. CodeBuddy needs this pipe to stay
+		// open through asynchronous Agents even after that frame reaches EOF.
+		if spec != nil && command.Provider == "codebuddy" &&
+			valueAfter(nativeArgv, "--input-format") == "stream-json" &&
+			valueAfter(nativeArgv, "--output-format") == "stream-json" {
+			background = newCodeBuddyBackgroundStream(writer)
+		}
 		proc.mu.Lock()
 		proc.input = writer
+		proc.codeBuddyStream = background
 		proc.mu.Unlock()
 		stdin = input
 		command.Stdin = input
@@ -783,22 +812,16 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 		// it has already emitted its terminal result. Same drain as
 		// ExecutorRunner: let the trailing output land, then stop the process
 		// so the turn can be marked finished and a queued follow-up can send.
+		// For CodeBuddy background work, wait for stdin to close before draining.
 		terminalResult := make(chan struct{})
+		if background != nil {
+			terminalResult = background.drained
+		}
 		var terminalOnce sync.Once
 		go func() {
-			select {
-			case <-terminalResult:
-				timer := time.NewTimer(ConversationTerminalResultDrain)
-				defer timer.Stop()
-				select {
-				case <-timer.C:
-					stopAfterTerminalResult.Store(true)
-					cancel()
-				case <-watchDone:
-				case <-procCtx.Done():
-				}
-			case <-watchDone:
-			case <-procCtx.Done():
+			if waitForProcessTerminalDrain(procCtx, terminalResult, watchDone) {
+				stopAfterTerminalResult.Store(true)
+				cancel()
 			}
 		}()
 		sink := func(ev domain.TelemetryEvent) {
@@ -814,8 +837,12 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 				cancel()
 			}
 			proc.mu.Unlock()
-			if ev.Name == "process.stdout" && conversationStdoutTerminal(ev.Message) {
-				terminalOnce.Do(func() { close(terminalResult) })
+			if ev.Name == "process.stdout" {
+				if background != nil {
+					background.observeStdout(ev.Message)
+				} else if conversationStdoutTerminal(ev.Message) {
+					terminalOnce.Do(func() { close(terminalResult) })
+				}
 			}
 			select {
 			case proc.wake <- struct{}{}:
@@ -928,6 +955,19 @@ func startConversationRelay(ctx context.Context, token string, forward Conversat
 		if err != nil || len(data) > 4<<20 {
 			http.Error(w, "invalid request", 400)
 			return
+		}
+		if mcpserver.AcceptsEventStream(r) {
+			var request struct {
+				Method string          `json:"method"`
+				ID     json.RawMessage `json:"id"`
+			}
+			if json.Unmarshal(data, &request) == nil && request.Method == "tools/call" &&
+				len(request.ID) > 0 && string(request.ID) != "null" {
+				mcpserver.WriteToolResponse(w, r, request.ID, func() (json.RawMessage, error) {
+					return forward(r.Context(), token, data)
+				})
+				return
+			}
 		}
 		result, err := forward(r.Context(), token, data)
 		if err != nil {

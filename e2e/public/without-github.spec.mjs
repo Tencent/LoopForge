@@ -61,7 +61,7 @@ test('a script and human approval run without a model key, GitHub repository or 
   }finally{await removeRun(page,runId)}
 });
 
-test('all generic SOPs can start without a GitHub repository or token',async({page})=>{
+test('all generic LOOPs can start without a GitHub repository or token',async({page})=>{
   const {projectId}=await setup(page);
   const workflowId=`e2e-product-documents-${Date.now().toString(36)}`;
   let runId='',copied=false;

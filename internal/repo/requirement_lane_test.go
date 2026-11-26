@@ -66,7 +66,7 @@ func TestBuildRequirementLanesNamesUnknownBindingByID(t *testing.T) {
 // frozen snapshot rather than being dropped.
 func TestBuildRequirementLanesKeepsRunSnapshotName(t *testing.T) {
 	now := time.Now().UTC()
-	frozen := domain.WorkflowDefinition{ID: "wf-frozen", Name: "冻结 SOP", Nodes: []domain.WorkflowNode{{ID: "code", Name: "实现"}}}
+	frozen := domain.WorkflowDefinition{ID: "wf-frozen", Name: "冻结 LOOP", Nodes: []domain.WorkflowNode{{ID: "code", Name: "实现"}}}
 	runs := []domain.Run{{
 		ID: "run-frozen", WorkflowID: frozen.ID, WorkflowSnapshot: frozen, Status: "succeeded",
 		CreatedAt: now, UpdatedAt: now,
@@ -75,7 +75,7 @@ func TestBuildRequirementLanesKeepsRunSnapshotName(t *testing.T) {
 	if len(lanes) != 1 {
 		t.Fatalf("lanes=%#v", lanes)
 	}
-	if got := lanes[0]; got.WorkflowName != "冻结 SOP" || got.Label != "冻结 SOP" || !got.Started {
+	if got := lanes[0]; got.WorkflowName != "冻结 LOOP" || got.Label != "冻结 LOOP" || !got.Started {
 		t.Fatalf("lane=%#v", got)
 	}
 }

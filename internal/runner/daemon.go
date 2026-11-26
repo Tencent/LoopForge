@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"os/exec"
 	"path"
@@ -617,6 +618,7 @@ func (d *Daemon) executeTask(ctx context.Context, task domain.RunnerTask) {
 		}
 	}
 
+	d.uploadTaskOutputs(ctx, task, result.outputs)
 	releaseGate()
 	completeCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -625,10 +627,34 @@ func (d *Daemon) executeTask(ctx context.Context, task domain.RunnerTask) {
 		exit := result.exitCode
 		req.ExitCode = &exit
 	}
-	if err := d.client.Complete(completeCtx, task.ID, req); err != nil {
+	if err := d.reportTaskCompletion(completeCtx, task.ID, req); err != nil {
 		log.Printf("task %s complete report: %v", task.ID, err)
+		if !errors.Is(err, ErrTaskLeaseLost) && !errors.Is(err, ErrUnauthorized) {
+			reportCtx, stop := context.WithTimeout(context.Background(), 10*time.Second)
+			defer stop()
+			report := CompleteRequest{Status: domain.RunnerTaskFailed, Error: fmt.Sprintf("%s：%.512s", domain.RunnerResultReportError, err.Error())}
+			if reportErr := retryTaskTransfer(reportCtx, func() error { return d.client.Complete(reportCtx, task.ID, report) }); reportErr != nil && !errors.Is(reportErr, ErrTaskLeaseLost) {
+				log.Printf("task %s report completion failure: %v", task.ID, reportErr)
+			}
+		}
 	}
 	log.Printf("task %s finished (%s)", task.ID, result.status)
+}
+
+func (d *Daemon) reportTaskCompletion(ctx context.Context, taskID string, req CompleteRequest) error {
+	err := retryTaskTransfer(ctx, func() error { return d.client.Complete(ctx, taskID, req) })
+	var response *runnerHTTPError
+	if req.Outputs == nil || len(req.Outputs.Patches)+len(req.Outputs.Recovered) == 0 ||
+		!errors.As(err, &response) || (response.status != http.StatusBadRequest && response.status != http.StatusRequestEntityTooLarge) {
+		return err
+	}
+	// Repository inventories and recovery notes are optional diagnostics.
+	// Preserve the terminal status and declared files if their report is too large.
+	log.Printf("task %s retrying completion without optional diagnostics: %v", taskID, err)
+	outputs := *req.Outputs
+	outputs.Patches, outputs.Recovered = nil, nil
+	req.Outputs = &outputs
+	return retryTaskTransfer(ctx, func() error { return d.client.Complete(ctx, taskID, req) })
 }
 
 func (d *Daemon) executeRunCleanup(ctx context.Context, task domain.RunnerTask) execResult {
@@ -654,7 +680,7 @@ func (d *Daemon) executeRunCleanup(ctx context.Context, task domain.RunnerTask) 
 			return execResult{status: domain.RunnerTaskFailed, errMsg: fmt.Sprintf("cleanup docker sandbox: %v", err)}
 		}
 	}
-	if err := os.RemoveAll(target); err != nil {
+	if err := runtime.RemoveWorkspaceTree(target); err != nil {
 		return execResult{status: domain.RunnerTaskFailed, errMsg: fmt.Sprintf("remove runner workspace: %v", err)}
 	}
 	_ = d.client.SendEvents(ctx, task.ID, []domain.RunnerTaskEvent{{Seq: 1, Type: "system", Data: "run sandbox and workspace removed", Ts: time.Now().UTC()}})
@@ -768,7 +794,7 @@ func (d *Daemon) executeTerminal(ctx context.Context, task domain.RunnerTask) ex
 		if err := writeRunnerHumanContext(workspace, task.Invocation.HumanContext); err != nil {
 			return execResult{status: domain.RunnerTaskFailed, errMsg: fmt.Sprintf("write human context: %v", err)}
 		}
-		if err := prepareInvocationWorkspace(workspace, task.Invocation); err != nil {
+		if err := d.prepareTaskInvocation(ctx, workspace, task); err != nil {
 			return execResult{status: domain.RunnerTaskFailed, errMsg: err.Error()}
 		}
 	}
@@ -840,7 +866,7 @@ func (d *Daemon) executeInvocation(ctx context.Context, task domain.RunnerTask) 
 	defer release()
 	checkoutCtx := taskRepositoryContext(ctx, task, sandbox, inv)
 	checkoutErr := checkoutInvocationRepositories(checkoutCtx, workspace, inv)
-	repositoryFallback := checkoutErr != nil && inv.RepositoryPreparationFallback && ctx.Err() == nil
+	repositoryFallback := checkoutErr != nil && !errors.Is(checkoutErr, gitwork.ErrWorkBranchExists) && inv.RepositoryPreparationFallback && ctx.Err() == nil
 	if checkoutErr != nil {
 		if !repositoryFallback {
 			return execResult{status: domain.RunnerTaskFailed, errMsg: fmt.Sprintf("repository checkout: %v", checkoutErr)}, nil
@@ -850,7 +876,7 @@ func (d *Daemon) executeInvocation(ctx context.Context, task domain.RunnerTask) 
 	if err := writeRunnerHumanContext(workspace, inv.HumanContext); err != nil {
 		return execResult{status: domain.RunnerTaskFailed, errMsg: fmt.Sprintf("write human context: %v", err)}, nil
 	}
-	if err := prepareInvocationWorkspace(workspace, inv); err != nil {
+	if err := d.prepareTaskInvocation(ctx, workspace, task); err != nil {
 		return execResult{status: domain.RunnerTaskFailed, errMsg: err.Error()}, nil
 	}
 	driver := "runner"
@@ -993,13 +1019,13 @@ func (d *Daemon) executeInvocation(ctx context.Context, task domain.RunnerTask) 
 		argv = runtime.BindMCPCallArgv(sandbox, argv)
 	}
 	var result execResult
+	command := prepared.Command
+	command.Argv = argv
 	if sandbox != nil {
-		command := prepared.Command
-		command.Argv = argv
 		command = runtime.WithCommandEnvironment(command, commandEnv)
 		result = d.executeSandboxProcess(ctx, task, sandbox, command)
 	} else {
-		result = d.executeProcess(ctx, task, argv, commandEnv)
+		result = d.executeHostCommand(ctx, task, command, commandEnv)
 	}
 	result.outputs = collectTaskOutputs(workspace, inv)
 	if result.status != domain.RunnerTaskSuccess {
@@ -1075,6 +1101,7 @@ func invocationRepositoryContexts(inv *domain.RunnerInvocation) []domain.Reposit
 			BaseBranch:                repository.Ref,
 			WorkBranch:                repository.WorkBranch,
 			RequireExistingWorkBranch: repository.RequireExistingWorkBranch,
+			CreateNewWorkBranch:       repository.CreateNewWorkBranch,
 		})
 	}
 	return out
@@ -1348,15 +1375,8 @@ func createNewRepositoryBranch(ctx context.Context, workspace string, repo *doma
 		return fmt.Errorf("新建分支时必须指定工作分支")
 	}
 	repoCtx := repositoryGitContext(ctx, *repo)
-	out, err := gitwork.C(repoCtx, workspace, "ls-remote", "--heads", "origin", "refs/heads/"+branch)
-	if err != nil {
-		return fmt.Errorf("无法确认远端分支 %s 是否存在: %w", branch, err)
-	}
-	for _, line := range strings.Split(out, "\n") {
-		_, ref, ok := strings.Cut(strings.TrimSpace(line), "\t")
-		if ok && ref == "refs/heads/"+branch {
-			return fmt.Errorf("远端已存在分支 %s，不能按新建分支处理；继续该分支请用 branchMode=continue", branch)
-		}
+	if err := gitwork.RequireNewRemoteWorkBranch(repoCtx, workspace, branch); err != nil {
+		return err
 	}
 	if _, err := gitwork.C(ctx, workspace, "checkout", "--quiet", "-b", branch); err != nil {
 		return fmt.Errorf("git create work branch %s: %w", branch, err)
@@ -1380,6 +1400,9 @@ func checkoutCreatedRepositoryBranch(ctx context.Context, workspace string, repo
 			return fmt.Errorf("检出工作分支 %s: %w", branch, err)
 		}
 		return nil
+	}
+	if err := gitwork.RequireNewRemoteWorkBranch(repoCtx, workspace, branch); err != nil {
+		return err
 	}
 	base := strings.TrimSpace(repo.Ref)
 	if base == "" {
@@ -1452,7 +1475,7 @@ func (d *Daemon) defaultWorkspace(taskID string) string {
 }
 
 // runnerVersion is reported at registration; it matches the module build.
-var runnerVersion = domain.RunnerVersionDockerSandboxLimits
+var runnerVersion = domain.RunnerVersionArtifactTransfer
 
 // Version returns the runner build version reported at registration.
 func Version() string { return runnerVersion }

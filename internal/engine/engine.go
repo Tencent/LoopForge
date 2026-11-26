@@ -48,7 +48,7 @@ type Engine struct {
 	claimKick      chan struct{}
 
 	// MergeIntoBranch creates or reuses a Gongfeng MR from source→target and
-	// merges it (merge commit, source branch kept). Scheduled SOP uses this
+	// merges it (merge commit, source branch kept). Scheduled LOOP uses this
 	// to land each issue work branch on the integrate baseline. Nil means
 	// the engine falls back to a direct push (local/dev without Gongfeng).
 	// The default branch is never an automatic merge target.
@@ -95,6 +95,7 @@ type Engine struct {
 	WorkspaceActive              func(domain.Run) bool
 	WorkspaceCheckpointTransport func(context.Context, domain.Run, domain.RunnerWorkspaceRequest) (domain.RunnerWorkspaceResponse, error)
 	SelectSOPSandbox             func(context.Context, SOPSandboxSelection) string
+	GenerateSOPWorkBranch        func(context.Context, SOPWorkBranchRequest) (string, error)
 	maintenanceOnce              sync.Once
 }
 

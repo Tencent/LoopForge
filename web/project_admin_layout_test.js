@@ -96,6 +96,7 @@ const gitParsers = fs.readFileSync(require("node:path").join(__dirname, "app", "
 vm.runInContext(gitParsers, ctx);
 
 for (const name of ["parseGongfengRepoURL","repoDisplayPath","repoProviderLabel"]) vm.runInContext(extract(fs.readFileSync(issuesPath,"utf8"),name),ctx);
+vm.runInContext(extract(fs.readFileSync(require("node:path").join(__dirname, "app.js"),"utf8"),"resourceIdProblem"),ctx);
 vm.runInContext(fs.readFileSync(projectsPath,"utf8"),ctx);
 vm.runInContext(fs.readFileSync(drawerPath,"utf8"),ctx);
 vm.runInContext("projectAdminFail=(form,name,message)=>{globalThis.__fail={name,message};return false}",ctx);
@@ -311,7 +312,11 @@ assert.equal(ctx.projectDraftDirty({...draft,tapdClear:true},base),true);
   dom["#repoDrawer"]=el({classes:["open"]});
   dom["#repoDrawerScrim"]=el({classes:["open"]});
   dom["#repoDrawerUrlError"]=el();
-  const form={elements:{repoUrl:el({value:"git@git.example.com:group/new-repo.git"}),webUrl:el(),name:el({value:""}),defaultBranch:el({value:""}),integrateBranch:el({value:"agentflow/integration"}),localPath:el({value:""})}};
+  const form={elements:{
+    repoUrl:el({value:"git@git.example.com:group/new-repo.git"}),webUrl:el(),name:el(),
+    defaultBranch:el(),integrateBranch:el({value:"agentflow/integration"}),localPath:el(),
+    workBranchNamingMode:el({value:"prefix"}),workBranchPrefix:el({value:"feature/"}),
+  }};
   await ctx.saveRepoDrawer({preventDefault(){},currentTarget:form});
   assert.equal(requests[0].url,"/api/repositories");
   assert.equal(requests[0].method,"POST");
@@ -319,6 +324,7 @@ assert.equal(ctx.projectDraftDirty({...draft,tapdClear:true},base),true);
   assert.equal(requests[0].body.gongfengProjectId,"");
   assert.equal(requests[0].body.name,"new-repo");
   assert.equal(requests[0].body.defaultBranch,"main");
+  same(requests[0].body.workBranchNaming,{mode:"prefix",prefix:"feature/"});
   assert.equal(requests[0].body.cloneUrl,"git@git.example.com:group/new-repo.git");
   assert.equal(requests[1].url,"/api/projects");
   assert.equal(requests[1].body.defaultRepositoryId,"r9");

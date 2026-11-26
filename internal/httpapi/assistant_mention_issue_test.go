@@ -14,16 +14,16 @@ import (
 // the requirement. The browser saves the empty conversation first, so the
 // turn links the mentioned issue to it while starting; that link must not be
 // mistaken for a concurrent rebinding and reject the turn. The link does not
-// depend on how the requirement is delivered, so every SOP choice of the
+// depend on how the requirement is delivered, so every LOOP choice of the
 // new-requirement dialog is covered.
 func TestFirstTurnMentioningAnIssueLinksItAndStarts(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
 		issue domain.Issue
 	}{
-		{"bound SOP", domain.Issue{WorkflowID: "generic-backend-delivery"}},
-		{"SOP chosen later", domain.Issue{}},
-		{"no SOP", domain.Issue{SOPMode: domain.IssueSOPNone}},
+		{"bound LOOP", domain.Issue{WorkflowID: "generic-backend-delivery"}},
+		{"LOOP chosen later", domain.Issue{}},
+		{"no LOOP", domain.Issue{SOPMode: domain.IssueSOPNone}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			h, u := workbenchFixture(t)
@@ -153,8 +153,8 @@ func TestIssueReferenceAndTurnContextIncludeBoundSOPAndDeliveryMode(t *testing.T
 		`"workflowId":"wf-fe"`,
 		`"boundSops":[{"name":"前端交付","workflowId":"wf-fe"}]`,
 		`"baseBranch":"release/v1"`,
-		"已绑定 SOP：前端交付（wf-fe）",
-		"不要再反问用户「直接改代码还是走 SOP」",
+		"已绑定 LOOP：前端交付（wf-fe）",
+		"不要再反问用户「直接改代码还是走 LOOP」",
 	} {
 		if !strings.Contains(req.contextText, want) {
 			t.Fatalf("single-SOP context missing %q:\n%s", want, req.contextText)
@@ -172,7 +172,7 @@ func TestIssueReferenceAndTurnContextIncludeBoundSOPAndDeliveryMode(t *testing.T
 	}
 	for _, want := range []string{
 		`"boundSops":[{"name":"前端交付","workflowId":"wf-fe"}]`,
-		"已绑定 SOP：前端交付（wf-fe）",
+		"已绑定 LOOP：前端交付（wf-fe）",
 	} {
 		if !strings.Contains(followUp.contextText, want) {
 			t.Fatalf("follow-up context missing %q:\n%s", want, followUp.contextText)
@@ -191,7 +191,7 @@ func TestIssueReferenceAndTurnContextIncludeBoundSOPAndDeliveryMode(t *testing.T
 	if err := h.prepareWorkbenchContext(c, &chainReq, u); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(chainReq.contextText, "已绑定 SOP：前端交付（wf-fe） → 后端交付（wf-be）") {
+	if !strings.Contains(chainReq.contextText, "已绑定 LOOP：前端交付（wf-fe） → 后端交付（wf-be）") {
 		t.Fatalf("chain SOP context missing bound chain:\n%s", chainReq.contextText)
 	}
 
@@ -207,7 +207,7 @@ func TestIssueReferenceAndTurnContextIncludeBoundSOPAndDeliveryMode(t *testing.T
 	if err := h.prepareWorkbenchContext(c, &noSOPReq, u); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(noSOPReq.contextText, `"sopMode":"none"`) || strings.Contains(noSOPReq.contextText, `"boundSops"`) || !strings.Contains(noSOPReq.contextText, "交付方式：不使用 SOP") {
+	if !strings.Contains(noSOPReq.contextText, `"sopMode":"none"`) || strings.Contains(noSOPReq.contextText, `"boundSops"`) || !strings.Contains(noSOPReq.contextText, "交付方式：不使用 LOOP") {
 		t.Fatalf("no-SOP context unexpected:\n%s", noSOPReq.contextText)
 	}
 }

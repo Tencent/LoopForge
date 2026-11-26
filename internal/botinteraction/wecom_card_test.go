@@ -31,17 +31,17 @@ func wecomTestBot(t *testing.T, store *repo.Store) domain.NotificationBot {
 	return bot
 }
 
-// The WeCom confirmation card: drop-downs for the repository, the SOP and
+// The WeCom confirmation card: drop-downs for the repository, the LOOP and
 // the operation in one multiple_interaction card (at most ten options, the
 // default and the current pick kept); without drop-downs a button card.
 func TestWeComDraftCardRendering(t *testing.T) {
-	sop := &PushCardSelect{Key: DraftActionSOP, Label: "SOP", Initial: "wf-12"}
-	sop.Options = append(sop.Options, PushCardOption{Value: domain.BotDraftDefaultSOP, Text: "项目默认 SOP（研发交付）"})
+	sop := &PushCardSelect{Key: DraftActionSOP, Label: "LOOP", Initial: "wf-12"}
+	sop.Options = append(sop.Options, PushCardOption{Value: domain.BotDraftDefaultSOP, Text: "项目默认 LOOP（研发交付）"})
 	for i := 1; i <= 14; i++ {
-		sop.Options = append(sop.Options, PushCardOption{Value: fmt.Sprintf("wf-%d", i), Text: fmt.Sprintf("SOP %d", i)})
+		sop.Options = append(sop.Options, PushCardOption{Value: fmt.Sprintf("wf-%d", i), Text: fmt.Sprintf("LOOP %d", i)})
 	}
 	repoSel := &PushCardSelect{Key: DraftActionRepo, Label: "仓库", Initial: domain.BotDraftDefaultSOP, Options: []PushCardOption{{Value: domain.BotDraftDefaultSOP, Text: "项目默认仓库（main）"}, {Value: "repo-web", Text: "web"}}}
-	card := &PushCard{DraftID: "d1", Tag: "待你确认", Title: "1 项操作", Selects: []*PushCardSelect{repoSel, sop}, Actions: []PushCardAction{{Key: DraftActionConfirm, Text: "确认执行"}, {Key: DraftActionConfirmStart, Text: "确认并启动 SOP"}, {Key: DraftActionCancel, Text: "取消", Danger: true}}, DetailsURL: "https://platform.example/bot-approve.html#draft=d1"}
+	card := &PushCard{DraftID: "d1", Tag: "待你确认", Title: "1 项操作", Selects: []*PushCardSelect{repoSel, sop}, Actions: []PushCardAction{{Key: DraftActionConfirm, Text: "确认执行"}, {Key: DraftActionConfirmStart, Text: "确认并启动 LOOP"}, {Key: DraftActionCancel, Text: "取消", Danger: true}}, DetailsURL: "https://platform.example/bot-approve.html#draft=d1"}
 	task := wecomCardTaskID(card)
 	if !strings.HasPrefix(task, "d1_") || len(task) > 128 {
 		t.Fatalf("task = %q", task)
@@ -95,7 +95,7 @@ func wecomCardFrame(t *testing.T, id, sender, chatType, chatID, key, task string
 	return f
 }
 
-// A submitted WeCom confirmation card stores the picked repository and SOP
+// A submitted WeCom confirmation card stores the picked repository and LOOP
 // and queues the operation in the conversation of the request; only the
 // requester's submission counts.
 func TestWeComDraftCardSubmit(t *testing.T) {
@@ -109,7 +109,7 @@ func TestWeComDraftCardSubmit(t *testing.T) {
 	store.EnqueueBotInteraction(origin, "group", "wr_group")
 	sop := &domain.BotDraftSOP{DefaultName: "研发交付", Workflows: []domain.BotDraftSOPOption{{ID: "wf-fix", Name: "缺陷修复"}}, DefaultRepositoryName: "main", Repositories: []domain.BotDraftSOPOption{{ID: "repo-main", Name: "main"}, {ID: "repo-web", Name: "web"}}}
 	now := time.Now().UTC()
-	draft, err := store.CreateBotPendingDraft(domain.BotPendingDraft{ConfigID: bot.ID, SenderID: "zhangsan", UserID: 43, InteractionID: origin.ID, Summary: "1. 保存需求：登录优化（仓库：项目默认 · main）（SOP：项目默认 · 研发交付）", Drafts: "[]", SOP: sop}, now)
+	draft, err := store.CreateBotPendingDraft(domain.BotPendingDraft{ConfigID: bot.ID, SenderID: "zhangsan", UserID: 43, InteractionID: origin.ID, Summary: "1. 保存需求：登录优化（仓库：项目默认 · main）（LOOP：项目默认 · 研发交付）", Drafts: "[]", SOP: sop}, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -248,7 +248,7 @@ func TestWeComDraftCardOverTheConnection(t *testing.T) {
 	draftID := make(chan string, 1)
 	svc.Generate = func(ctx context.Context, b domain.NotificationBot, conv domain.BotConversation, _ []domain.BotInteraction, item domain.BotInteraction) (string, error) {
 		sop := &domain.BotDraftSOP{DefaultName: "研发交付", Workflows: []domain.BotDraftSOPOption{{ID: "wf-fix", Name: "缺陷修复"}}}
-		d, err := store.CreateBotPendingDraft(domain.BotPendingDraft{ConfigID: b.ID, SenderID: item.SenderID, UserID: 43, InteractionID: item.ID, Summary: "1. 保存需求：登录优化（SOP：项目默认 · 研发交付）", Drafts: "[]", SOP: sop}, time.Now().UTC())
+		d, err := store.CreateBotPendingDraft(domain.BotPendingDraft{ConfigID: b.ID, SenderID: item.SenderID, UserID: 43, InteractionID: item.ID, Summary: "1. 保存需求：登录优化（LOOP：项目默认 · 研发交付）", Drafts: "[]", SOP: sop}, time.Now().UTC())
 		draftID <- d.ID
 		return "我会创建这个需求。", err
 	}

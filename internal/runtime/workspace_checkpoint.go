@@ -507,15 +507,50 @@ func RestoreWorkspaceCheckpointFrom(root string, source io.Reader) error {
 		return err
 	}
 	defer base.Close()
+	directories, err := unpackWorkspaceCheckpoint(base, source)
+	if err != nil {
+		return err
+	}
+	// Restore descendants before their parents can lose search permission.
+	slices.SortFunc(directories, func(a, b checkpointDirectory) int {
+		return strings.Compare(b.path, a.path)
+	})
+	applied := 0
+	defer func() {
+		// If publishing fails, make the private staging tree removable again.
+		for _, directory := range slices.Backward(directories[:applied]) {
+			_ = base.Chmod(directory.path, 0700)
+		}
+	}()
+	for _, directory := range directories {
+		if err := base.Chmod(directory.path, directory.mode); err != nil {
+			return err
+		}
+		applied++
+	}
+	if err := replaceRestoredWorkspace(stage, root); err != nil {
+		return err
+	}
+	applied = 0
+	return nil
+}
+
+type checkpointDirectory struct {
+	path string
+	mode fs.FileMode
+}
+
+func unpackWorkspaceCheckpoint(base *os.Root, source io.Reader) ([]checkpointDirectory, error) {
 	compressed := &io.LimitedReader{R: source, N: WorkspaceCheckpointArchiveMaxBytes + 1}
 	zipped, err := gzip.NewReader(compressed)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer zipped.Close()
 	limited := &io.LimitedReader{R: zipped, N: workspaceCheckpointExpandedMax + 1}
 	reader := tar.NewReader(limited)
 	var expanded int64
+	var directories []checkpointDirectory
 	seen := map[string]bool{}
 	for {
 		header, err := reader.Next()
@@ -523,35 +558,38 @@ func RestoreWorkspaceCheckpointFrom(root string, source io.Reader) error {
 			break
 		}
 		if err != nil {
-			return err
+			return nil, err
 		}
 		path, err := checkpointPath(header.Name)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		if checkpointRestoreExcluded(path) || seen[path] {
-			return fmt.Errorf("invalid checkpoint entry: %s", path)
+			return nil, fmt.Errorf("invalid checkpoint entry: %s", path)
 		}
 		if len(seen) >= 100000 {
-			return fmt.Errorf("checkpoint exceeds file count limit")
+			return nil, fmt.Errorf("checkpoint exceeds file count limit")
 		}
 		seen[path] = true
 		expanded += header.Size
 		if header.Size < 0 || expanded > workspaceCheckpointExpandedMax {
-			return fmt.Errorf("checkpoint expanded size exceeds limit")
+			return nil, fmt.Errorf("checkpoint expanded size exceeds limit")
 		}
 		if err = restoreCheckpointEntry(base, path, header, reader); err != nil {
-			return err
+			return nil, err
+		}
+		if header.Typeflag == tar.TypeDir {
+			directories = append(directories, checkpointDirectory{path: path, mode: fs.FileMode(header.Mode) & 0777})
 		}
 	}
 	// Finish validating the gzip checksum before exposing any restored files.
 	if _, err = io.Copy(io.Discard, limited); err != nil {
-		return err
+		return nil, err
 	}
 	if limited.N == 0 || compressed.N == 0 {
-		return fmt.Errorf("checkpoint expanded size exceeds limit")
+		return nil, fmt.Errorf("checkpoint expanded size exceeds limit")
 	}
-	return replaceRestoredWorkspace(stage, root)
+	return directories, nil
 }
 
 // restoreCheckpointEntry materializes one validated tar entry at path inside
@@ -564,7 +602,8 @@ func restoreCheckpointEntry(base *os.Root, path string, header *tar.Header, read
 	mode := os.FileMode(header.Mode) & 0777
 	switch header.Typeflag {
 	case tar.TypeDir:
-		return base.MkdirAll(path, mode)
+		// Keep staging writable until every child has been extracted.
+		return base.MkdirAll(path, 0700)
 	case tar.TypeReg:
 		file, err := base.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
 		if err != nil {
@@ -610,7 +649,15 @@ func ValidateWorkspaceCheckpointFrom(source io.Reader) error {
 		return err
 	}
 	defer os.RemoveAll(temp)
-	return RestoreWorkspaceCheckpointFrom(filepath.Join(temp, "files"), source)
+	base, err := os.OpenRoot(temp)
+	if err != nil {
+		return err
+	}
+	defer base.Close()
+	// Validation does not publish the tree, so leave its directories writable
+	// for temporary-file cleanup.
+	_, err = unpackWorkspaceCheckpoint(base, source)
+	return err
 }
 
 // Bound both compressed bytes in memory and the complete tar stream, including

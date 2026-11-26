@@ -56,18 +56,27 @@ func prefetchAssistantModels() {}
 // CodeBuddy publishes the models available in each network environment in its
 // --help output; the list differs between international, internal and iOA.
 var (
-	cliModelPattern   = regexp.MustCompile(`Currently supported: \(([^)]*)\)`)
-	cliModelMu        sync.Mutex
-	cliModelCache     = map[string]cliModelEntry{}
-	discoverCLIModels = discoverCodeBuddyModels
+	cliModelPattern    = regexp.MustCompile(`Currently supported: \(([^)]*)\)`)
+	cliModelMu         sync.Mutex
+	cliModelCache      = map[string]cliModelEntry{}
+	cliModelGeneration uint64
+	discoverCLIModels  = discoverCodeBuddyModels
 )
 
-const cliModelTTL = time.Hour
+const (
+	cliModelTTL = time.Hour
+	// cliModelRetryTTL bounds how long a failed discovery is remembered. The
+	// CLI may be installed a moment later, or the network may recover, and the
+	// pickers must not stay empty for a whole cliModelTTL.
+	cliModelRetryTTL = time.Minute
+)
 
 type cliModelEntry struct {
 	environment string
 	models      []string
-	at          time.Time
+	// expires is when the next read runs discovery again: cliModelTTL after a
+	// successful discovery, cliModelRetryTTL after a failed one.
+	expires time.Time
 }
 
 // cliModelCacheKey separates accounts within one environment: without a key
@@ -124,20 +133,46 @@ func parseCodeBuddyModels(help string) []string {
 }
 
 // refreshCLIModels runs discovery when the cached list is missing or stale.
+// A failed discovery keeps the last good list and is retried after
+// cliModelRetryTTL, so neither a CLI installed later nor a transient failure
+// hides the catalog for a full cliModelTTL.
 func refreshCLIModels(ctx context.Context, environment, apiKey string) {
 	environment = strings.TrimSpace(environment)
 	cacheKey := cliModelCacheKey(environment, apiKey)
 	cliModelMu.Lock()
 	entry, ok := cliModelCache[cacheKey]
+	generation := cliModelGeneration
 	cliModelMu.Unlock()
-	if ok && time.Since(entry.at) < cliModelTTL {
+	if ok && time.Now().Before(entry.expires) {
 		return
 	}
 	models := discoverCLIModels(ctx, environment, apiKey)
 	cliModelMu.Lock()
-	if models != nil || !ok {
-		cliModelCache[cacheKey] = cliModelEntry{environment: environment, models: models, at: time.Now()}
+	defer cliModelMu.Unlock()
+	if generation != cliModelGeneration {
+		return
 	}
+	entry = cliModelCache[cacheKey]
+	now := time.Now()
+	entry.environment = environment
+	if models != nil {
+		entry.models = models
+		entry.expires = now.Add(cliModelTTL)
+	} else if now.Before(entry.expires) {
+		return
+	} else {
+		entry.expires = now.Add(cliModelRetryTTL)
+	}
+	cliModelCache[cacheKey] = entry
+}
+
+// forgetCLIModels drops every discovered CodeBuddy catalog so the next read
+// asks the CLI again, e.g. right after the CLI was installed on this server.
+func forgetCLIModels() {
+	cliModelMu.Lock()
+	// An in-flight discovery from before installation must not refill the cache.
+	cliModelGeneration++
+	clear(cliModelCache)
 	cliModelMu.Unlock()
 }
 
@@ -148,7 +183,7 @@ func refreshOfficialCodeBuddyModels(ctx context.Context, user domain.User) {
 }
 
 // assistantKnownCatalog validates settings that are not tied to one user's
-// environment, such as SOP roles and notification bots.
+// environment, such as LOOP roles and notification bots.
 func assistantKnownCatalog() assistantModelCatalog {
 	catalog := assistantFixedCatalog()
 	seen := map[string]bool{}

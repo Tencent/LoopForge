@@ -177,7 +177,7 @@ func (e *Engine) MaterializeConversationWorkspace(ctx context.Context, id string
 	}
 	env.nodeMu.Lock()
 	defer env.nodeMu.Unlock()
-	// Same checkout as an SOP node: the responsible user's Git Token, the
+	// Same checkout as a LOOP node: the responsible user's Git Token, the
 	// frozen base branch, and a fresh work branch.
 	credentials := env.credentialSnapshot()
 	ctx = e.withPreparationProgress(ctx, run.ID)
@@ -253,7 +253,7 @@ func (e *Engine) prepareConversationWorkspace(ctx context.Context, id, token str
 
 func (e *Engine) ensureConversationWorkspace(ctx context.Context, id, token string) error {
 	if run, ok := e.repo.RunState(id); ok && sharesWorkspace(run) {
-		return fmt.Errorf("子 SOP 共享父任务工作区，请从父任务操作")
+		return fmt.Errorf("子 LOOP 共享父任务工作区，请从父任务操作")
 	}
 	meta, ok := e.repo.WorkspaceCheckpoint(id)
 	if !ok || meta.LeaseToken != token || meta.LeaseUntil == nil || meta.LeaseUntil.Before(time.Now()) {
@@ -310,7 +310,7 @@ func (e *Engine) ensureConversationWorkspace(ctx context.Context, id, token stri
 		if err = e.restoreOrReuseRemoteConversationCheckpoint(ctx, run); err != nil {
 			return err
 		}
-		// The Runner owns the checkout. A reclaimed SOP can rebuild its
+		// The Runner owns the checkout. A reclaimed LOOP can rebuild its
 		// control-plane staging directory on the worker executing it now.
 		host, root := run.WorkspaceHost, run.WorkspaceRoot
 		if e.ownsRun(run) {
@@ -446,6 +446,10 @@ func (e *Engine) claimIdleConversationWorkspace(run domain.Run, now time.Time) (
 	if !e.conversationWorkspaceIdle(run) || e.conversationGenerationRunning(run) {
 		return true, false, nil, nil
 	}
+	cleanupHeld := now.Before(run.WorkspaceCleanupNotBefore)
+	if cleanupHeld && !heldWorkspaceCheckpointNeedsSave(meta, idleSinceBeforeLease, now) {
+		return true, false, nil, nil
+	}
 	token, err := e.repo.BeginWorkspaceCheckpointSave(run.ID, now)
 	if err != nil {
 		return true, false, nil, nil
@@ -487,7 +491,12 @@ func (e *Engine) claimIdleConversationWorkspace(run domain.Run, now time.Time) (
 			return true, false, nil, nil
 		}
 	}
-	if retryDue || released || meta.SavedAt == nil || run.UpdatedAt.After(*meta.SavedAt) || meta.Error != "" || !now.Before(idleSince.Add(ConversationWorkspaceIdleTTL)) {
+	readyToReclaim := !cleanupHeld && (!meta.FollowUp || released || !now.Before(idleSince.Add(ConversationWorkspaceIdleTTL)))
+	needsSave := readyToReclaim || workspaceCheckpointNeedsSave(meta, run.UpdatedAt, now)
+	if cleanupHeld {
+		needsSave = heldWorkspaceCheckpointNeedsSave(meta, idleSince, now)
+	}
+	if needsSave {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer cancel()
 		ctx = WithConversationWorkspaceToken(ctx, token, run.ID)
@@ -497,18 +506,36 @@ func (e *Engine) claimIdleConversationWorkspace(run domain.Run, now time.Time) (
 			return true, false, nil, captureErr
 		}
 	}
-	if meta.FollowUp && !released && now.Before(idleSince.Add(ConversationWorkspaceIdleTTL)) {
+	if !readyToReclaim {
 		return true, false, nil, nil
 	}
 	if sopIdleReclaim && !e.conversationWorkspaceIdle(run) {
 		return true, false, nil, nil
 	}
-	// Revision and node checks serialize the deletion claim against SOP or group dispatch.
+	// Revision and node checks serialize the deletion claim against LOOP or group dispatch.
 	claimed, err = e.repo.ClaimCheckpointWorkspaceCleanup(run.ID, token, run.Revision, now)
 	if claimed {
 		release = finish
 	}
 	return true, claimed, release, err
+}
+
+// Preserve the first checkpoint after release or idle expiry, even while
+// reclamation is held. Subsequent sweeps can reuse that checkpoint.
+func heldWorkspaceCheckpointNeedsSave(meta repo.WorkspaceCheckpoint, idleSince, now time.Time) bool {
+	if meta.Released() {
+		if meta.ReleasedAt.After(idleSince) {
+			idleSince = *meta.ReleasedAt
+		}
+	} else if deadline := idleSince.Add(ConversationWorkspaceIdleTTL); !now.Before(deadline) {
+		idleSince = deadline
+	}
+	return workspaceCheckpointNeedsSave(meta, idleSince, now)
+}
+
+func workspaceCheckpointNeedsSave(meta repo.WorkspaceCheckpoint, changedAt, now time.Time) bool {
+	return meta.SavedAt == nil || meta.SHA256 == "" || meta.Error != "" ||
+		changedAt.After(*meta.SavedAt) || meta.SaveRetryAt != nil && !now.Before(*meta.SaveRetryAt)
 }
 
 func idleSOPStatus(run domain.Run) bool {

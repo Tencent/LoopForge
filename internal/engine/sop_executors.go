@@ -90,7 +90,7 @@ func sopRunnerAuthMode(ec domain.TelemetryContext, runner domain.Runner, provide
 		return domain.RuntimeAuthPersonal
 	}
 	// A conversation allocated to a platform runner keeps using the
-	// responsible user's credentials when it hands off to an SOP.
+	// responsible user's credentials when it hands off to a LOOP.
 	if ec.ExecutionPinned && ec.WorkspaceRunID != "" && runner.OwnerUserID == 0 && ec.ResponsibleUserID > 0 {
 		return domain.RuntimeAuthPersonal
 	}

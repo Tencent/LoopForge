@@ -776,7 +776,7 @@ func TestAutoAssignAdmissionBatchKeepsFIFOWhenLimitIsCleared(t *testing.T) {
 	}
 }
 
-// Chat workspaces never use SOP slots. An independently started child SOP does.
+// Chat workspaces never use LOOP slots. An independently started child LOOP does.
 func TestConversationWorkspacesDoNotHoldSOPSlots(t *testing.T) {
 	s, err := OpenTest()
 	if err != nil {
@@ -812,19 +812,19 @@ func checkConversationWorkspaces(t *testing.T, s *Store, project, prefix string)
 			t.Fatal(err)
 		}
 		if got := status(fmt.Sprintf("sop-%d", i)); got != "running" {
-			t.Fatalf("SOP %d queued behind idle free collaborations: %s", i, got)
+			t.Fatalf("LOOP %d queued behind idle free collaborations: %s", i, got)
 		}
 	}
 	child := run("child-sop")
 	if err := s.PutRun(child); err != nil {
 		t.Fatal(err)
 	}
-	// Nine SOPs plus the independent child fill the ten slots.
+	// Nine LOOPs plus the independent child fill the ten slots.
 	if err := s.PutRun(run("over-limit")); err != nil {
 		t.Fatal(err)
 	}
 	if got := status("over-limit"); got != "queued" {
-		t.Fatalf("an independent child SOP must keep its own slot: %s", got)
+		t.Fatalf("an independent child LOOP must keep its own slot: %s", got)
 	}
 	c, _ := s.RunState(prefix + "child-sop")
 	c.Status = "succeeded"

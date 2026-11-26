@@ -39,7 +39,7 @@ func TestFinalizeAnalyticsDeliveryRequiresMainline(t *testing.T) {
 	merged := AnalyticsDelivery{SOPSucceeded: true, MRURL: "http://x", MRState: "merged"}
 	FinalizeAnalyticsDelivery(&merged)
 	if !merged.Delivered {
-		t.Fatal("mainline merged + SOP success must be delivered")
+		t.Fatal("mainline merged + LOOP success must be delivered")
 	}
 	integrated := AnalyticsDelivery{SOPSucceeded: true, MRURL: "http://x", MRState: "integrated"}
 	FinalizeAnalyticsDelivery(&integrated)

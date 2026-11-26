@@ -23,7 +23,7 @@ func (h *agentToolGateway) callWorkspacePreviewService(ctx context.Context, s *A
 		return "", errAgentToolForbidden
 	}
 	if !run.IsWorkspace() && !sopStopped(run) {
-		return "", errors.New("SOP 正在执行，请先暂停后接管工作区")
+		return "", errors.New("LOOP 正在执行，请先暂停后接管工作区")
 	}
 	for key, value := range args {
 		if key != "operation" && key != "name" && key != "command" {

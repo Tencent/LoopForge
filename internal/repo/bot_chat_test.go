@@ -9,7 +9,7 @@ import (
 )
 
 // A run started from a Feishu/DingTalk chat reports back to that
-// conversation without any SOP notification binding: failed and waiting
+// conversation without any LOOP notification binding: failed and waiting
 // nodes and the end of the run, to the group itself for group chats.
 func TestRunStartedFromChatReportsBackToThatConversation(t *testing.T) {
 	s, err := OpenTest()
@@ -105,7 +105,7 @@ func testRunOrigins(t *testing.T, s *Store) {
 			done = &items[i]
 		}
 	}
-	if done == nil || done.TargetType != "single" || done.TargetID != "ou_starter" || done.EventType != "succeeded" || !strings.Contains(done.Content, "SOP 已完成") {
+	if done == nil || done.TargetType != "single" || done.TargetID != "ou_starter" || done.EventType != "succeeded" || !strings.Contains(done.Content, "LOOP 已完成") {
 		t.Fatalf("finished run = %+v", done)
 	}
 

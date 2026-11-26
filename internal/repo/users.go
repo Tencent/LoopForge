@@ -519,7 +519,6 @@ func encodeAgentCLICredentials(creds map[string]domain.AgentCLICredential) any {
 
 const (
 	maxCLIModels        = 100
-	maxCLIModelIDLen    = 128
 	maxCLIModelNameRune = 64
 )
 
@@ -553,7 +552,7 @@ func normalizeCLIModels(models []domain.CLIModel) ([]domain.CLIModel, error) {
 	seen := map[string]bool{}
 	for _, model := range models {
 		id, name := strings.TrimSpace(model.ID), strings.TrimSpace(model.Name)
-		if err := validCLIModelID(id); err != nil {
+		if err := domain.ValidateCLIModelID(id); err != nil {
 			return nil, err
 		}
 		if seen[id] {
@@ -615,21 +614,6 @@ func normalizeCLIReasoningEfforts(raw *[]string) (*[]string, error) {
 	return &levels, nil
 }
 
-func validCLIModelID(id string) error {
-	if id == "" {
-		return errors.New("模型 ID 不能为空")
-	}
-	if len(id) > maxCLIModelIDLen {
-		return fmt.Errorf("模型 ID 长度不能超过 %d 个字符", maxCLIModelIDLen)
-	}
-	for _, r := range id {
-		if r <= ' ' || r == 0x7f || r == '"' || r == '\'' || r == '`' || r == '\\' {
-			return fmt.Errorf("模型 ID %q 不能包含空格、引号、反斜杠或控制字符", id)
-		}
-	}
-	return nil
-}
-
 // normalizeCLIModelEfforts checks the effort→model ID mapping of a Cursor
 // model family: efforts are Cursor's levels and every target is a valid
 // model ID. A default outside the mapping is dropped.
@@ -644,7 +628,7 @@ func normalizeCLIModelEfforts(efforts map[string]string, defaultEffort string) (
 		if !slices.Contains(levels, effort) {
 			return nil, "", fmt.Errorf("不支持思考强度 %q", effort)
 		}
-		if err := validCLIModelID(raw); err != nil {
+		if err := domain.ValidateCLIModelID(raw); err != nil {
 			return nil, "", err
 		}
 		out[effort] = raw

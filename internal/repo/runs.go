@@ -6,10 +6,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"sort"
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"agentflow/internal/domain"
 	"agentflow/internal/observability"
@@ -167,7 +169,7 @@ func (r *RunsRepo) runSummariesFor(filter domain.AnalyticsFilter, issueID string
 	// 与 master 的 runSummaryHeaderColumns 一致：列表携带控制位与
 	// human_context、多仓 repositories，且 input 在 SQL 层截断到 500 字符
 	//（master 用 LEFT(input, 500)，使 handler 的 clip 不再追加省略号）。
-	// List rows only need the frozen SOP identity and whether it is a free
+	// List rows only need the frozen LOOP identity and whether it is a free
 	// collaboration task (待我确认 and status badges depend on it). The graph,
 	// scripts, and commands stay in the snapshot column and are not transferred.
 	snapshotExpr := "json_object('id', json_extract(snapshot, '$.id'), 'name', json_extract(snapshot, '$.name'), 'collaborationMode', json_extract(snapshot, '$.collaborationMode')) AS snapshot"
@@ -353,13 +355,23 @@ func (r *RunsRepo) RunWithNodes(id string) (domain.Run, error) {
 // loading the entire log history on every state transition only makes long
 // runs progressively slower.
 func (r *RunsRepo) RunState(id string) (domain.Run, bool) {
+	return r.runState(id, true)
+}
+
+// RunProgress is the execution state without artifact bodies. Polling and
+// observation writes use it, while consumers of files can still load them.
+func (r *RunsRepo) RunProgress(id string) (domain.Run, bool) {
+	return r.runState(id, false)
+}
+
+func (r *RunsRepo) runState(id string, withArtifactContents bool) (domain.Run, bool) {
 	run, err := r.RunWithNodes(id)
 	if err != nil || run.ID == "" {
 		return domain.Run{}, false
 	}
 	// Engine decisions only need nodes, events and artifacts. Loading thousands
 	// of historical telemetry rows on every lease/heartbeat-adjacent state read
-	// made long SOP runs miss their 30s lease: finishAt then refused to persist
+	// made long LOOP runs miss their 30s lease: finishAt then refused to persist
 	// succeeded, and ResumeInterruptedRuns parked a completed graph forever.
 	// Live telemetry still lands through the observation queue (sequence comes
 	// from the header); the paginated API keeps the history.
@@ -373,13 +385,13 @@ func (r *RunsRepo) RunState(id string) (domain.Run, bool) {
 			run.Events = append(run.Events, ev)
 		}
 	}
-	var artifactRows []runArtifactRow
-	if err := r.DB.Where("run_id = ?", run.ID).Find(&artifactRows).Error; err != nil {
-		return domain.Run{}, false
+	if withArtifactContents {
+		err = r.loadArtifactContents(&run)
+	} else {
+		err = r.loadArtifactMeta(&run)
 	}
-	for _, row := range artifactRows {
-		art := artifactFromRow(row, true)
-		run.Artifacts = append(run.Artifacts, art)
+	if err != nil {
+		return domain.Run{}, false
 	}
 	return run, true
 }
@@ -588,7 +600,7 @@ func isTopLevelSOP(run domain.Run) bool {
 	return run.ExecutionContext.ParentRunID == "" && !run.IsWorkspace() && run.WorkflowID != domain.FreeCollaborationWorkflowID
 }
 
-// IdleReclaimableSOPRuns lists stopped SOPs old enough for checkpoint cleanup.
+// IdleReclaimableSOPRuns lists stopped LOOPs old enough for checkpoint cleanup.
 // The engine checks workspace use and active descendants before saving.
 func (r *RunsRepo) IdleReclaimableSOPRuns(idleBefore time.Time) []domain.Run {
 	return r.topLevelSOPCleanupRuns(r.DB.Where("status IN ? AND workspace_cleaned_at IS NULL AND updated_at <= ? AND (workspace_cleanup_not_before IS NULL OR workspace_cleanup_not_before <= ?)",
@@ -792,19 +804,12 @@ func (r *RunsRepo) loadRunHeavy(run *domain.Run) error {
 			run.Logs = append(run.Logs, rec)
 		}
 	}
-	var artifactRows []runArtifactRow
-	if err := r.DB.Where("run_id = ?", run.ID).Find(&artifactRows).Error; err != nil {
-		return err
-	}
-	for _, row := range artifactRows {
-		run.Artifacts = append(run.Artifacts, artifactFromRow(row, true))
-	}
-	return nil
+	return r.loadArtifactContents(run)
 }
 
 func (r *RunsRepo) loadArtifactMeta(run *domain.Run) error {
 	var rows []runArtifactRow
-	if err := r.DB.Select("id", "run_id", "node_id", "attempt", "name", "path", "media_type", "size_bytes", "sha256", "created_at").
+	if err := r.DB.Select("id", "run_id", "node_id", "attempt", "name", "path", "media_type", "size_bytes", "sha256", "repository_dir", "blob_id", "created_at").
 		Where("run_id = ?", run.ID).Find(&rows).Error; err != nil {
 		return err
 	}
@@ -812,6 +817,21 @@ func (r *RunsRepo) loadArtifactMeta(run *domain.Run) error {
 		run.Artifacts = append(run.Artifacts, artifactFromRow(row, false))
 	}
 	run.ArtifactCount = len(run.Artifacts)
+	return nil
+}
+
+func (r *RunsRepo) loadArtifactContents(run *domain.Run) error {
+	var rows []runArtifactRow
+	if err := r.DB.Where("run_id = ?", run.ID).Find(&rows).Error; err != nil {
+		return err
+	}
+	for _, row := range rows {
+		art := artifactFromRow(row, true)
+		if err := r.hydrateArtifact(&art); err != nil {
+			return fmt.Errorf("read artifact %s: %w", art.ID, err)
+		}
+		run.Artifacts = append(run.Artifacts, art)
+	}
 	return nil
 }
 
@@ -902,7 +922,7 @@ func artifactFromRow(row runArtifactRow, withContent bool) domain.Artifact {
 	art := domain.Artifact{
 		ID: row.ID, RunID: row.RunID, NodeID: row.NodeID, Attempt: row.Attempt,
 		Name: row.Name, Path: row.Path, MediaType: row.MediaType, Size: row.SizeBytes,
-		SHA256: row.SHA256, RepositoryDir: row.RepositoryDir,
+		SHA256: row.SHA256, RepositoryDir: row.RepositoryDir, BlobID: row.BlobID,
 	}
 	if withContent {
 		art.Content = row.Content
@@ -918,7 +938,44 @@ func (r *RunsRepo) Artifact(runID, artifactID string) (domain.Artifact, bool) {
 	if err := r.DB.Where("run_id = ? AND id = ?", runID, artifactID).Take(&row).Error; err != nil {
 		return domain.Artifact{}, false
 	}
-	return artifactFromRow(row, true), true
+	art := artifactFromRow(row, true)
+	if err := r.hydrateArtifact(&art); err != nil {
+		return domain.Artifact{}, false
+	}
+	return art, true
+}
+
+func (r *RunsRepo) hydrateArtifact(art *domain.Artifact) error {
+	if art.BlobID == "" {
+		return nil
+	}
+	_, body, err := r.OpenArtifactBlob(context.Background(), art.RunID, art.BlobID)
+	if err != nil {
+		return err
+	}
+	defer body.Close()
+	data, err := io.ReadAll(body)
+	if err != nil {
+		return err
+	}
+	// A hydrated snapshot can be copied into another run and archived there.
+	art.Content, art.BlobID = string(data), ""
+	return nil
+}
+
+func (r *RunsRepo) OpenArtifactContent(ctx context.Context, runID, artifactID string) (domain.Artifact, io.ReadCloser, error) {
+	var row runArtifactRow
+	if err := r.DB.WithContext(ctx).Where("run_id = ? AND id = ?", runID, artifactID).Take(&row).Error; err != nil {
+		return domain.Artifact{}, nil, err
+	}
+	art := artifactFromRow(row, false)
+	if art.BlobID != "" {
+		blob, body, err := r.OpenArtifactBlob(ctx, runID, art.BlobID)
+		art.Size = blob.Size
+		return art, body, err
+	}
+	art.Size = int64(len(row.Content))
+	return art, io.NopCloser(strings.NewReader(row.Content)), nil
 }
 
 // FilterRunsByProject keeps runs stamped with projectID, or legacy runs whose
@@ -1191,19 +1248,48 @@ func (r *RunsRepo) persistRun(tx *gorm.DB, run domain.Run, current runRow) error
 			return err
 		}
 	}
+	return writeRunArtifacts(tx, run)
+}
+
+func writeRunArtifacts(tx *gorm.DB, run domain.Run) error {
+	if len(run.Artifacts) == 0 {
+		return nil
+	}
+	var ids []string
+	if err := tx.Table("run_artifacts").Where("run_id = ?", run.ID).Pluck("id", &ids).Error; err != nil {
+		return err
+	}
+	stored := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		stored[id] = true
+	}
 	for _, art := range run.Artifacts {
 		id := art.ID
 		if id == "" {
 			id = fmt.Sprintf("%s-%s-%d-%s", run.ID, art.NodeID, art.Attempt, art.Name)
 		}
+		if stored[id] {
+			continue
+		}
+		if art.BlobID == "" && (len(art.Content) > domain.MaxInlineRunnerArtifactBytes || !utf8.ValidString(art.Content)) {
+			blob, err := saveArtifactBlob(tx, run.ID, id, strings.NewReader(art.Content))
+			if err != nil {
+				return fmt.Errorf("save artifact %s: %w", art.Name, err)
+			}
+			art.BlobID, art.Size, art.SHA256 = blob.ID, blob.Size, blob.SHA256
+		}
+		if art.BlobID != "" {
+			art.Content = ""
+		}
 		if err := upsert(tx, "run_artifacts", map[string]any{
 			"id": id, "run_id": run.ID, "node_id": art.NodeID, "attempt": art.Attempt,
 			"name": art.Name, "path": art.Path, "media_type": art.MediaType,
 			"size_bytes": art.Size, "sha256": art.SHA256, "repository_dir": art.RepositoryDir,
-			"content": art.Content, "created_at": timePtr(art.CreatedAt),
+			"content": art.Content, "blob_id": art.BlobID, "created_at": timePtr(art.CreatedAt),
 		}); err != nil {
 			return err
 		}
+		stored[id] = true
 	}
 	return nil
 }
@@ -1228,10 +1314,10 @@ func (r *RunsRepo) DeleteRun(id string) error {
 				return err
 			}
 			if inUse {
-				return fmt.Errorf("工作区仍有关联的 SOP 运行：%w", ErrWorkspaceInUse)
+				return fmt.Errorf("工作区仍有关联的 LOOP 运行：%w", ErrWorkspaceInUse)
 			}
 		}
-		for _, table := range []string{"run_nodes", "run_events", "run_telemetry", "run_logs", "run_artifacts", "run_evals", "run_workspace_checkpoint_chunks", "run_workspace_checkpoints"} {
+		for _, table := range []string{"run_nodes", "run_events", "run_telemetry", "run_logs", "run_artifacts", "run_artifact_blob_chunks", "run_artifact_blobs", "run_evals", "run_workspace_checkpoint_chunks", "run_workspace_checkpoints"} {
 			if err := tx.Table(table).Where("run_id = ?", id).Delete(nil).Error; err != nil {
 				return fmt.Errorf("runs delete %s: %w", id, err)
 			}
@@ -1571,7 +1657,7 @@ func runDuration(run domain.Run, now time.Time) int64 {
 	return end.Sub(run.CreatedAt).Milliseconds()
 }
 
-// runExecutionDuration 统计 SOP 节点真实执行耗时之和：Σ(节点 FinishedAt − StartedAt)。
+// runExecutionDuration 统计 LOOP 节点真实执行耗时之和：Σ(节点 FinishedAt − StartedAt)。
 // 与 runDuration（Run 创建 → 最后结束的墙钟差）不同，它不含审批、排队、恢复等待，
 // 因此执行耗时 ≤ 端到端墙钟。起止时间缺失或倒挂的节点跳过。
 // 纯聚合层只读计算，不触碰执行链路；既有的 runDuration/runEndedAt 语义保持不变。

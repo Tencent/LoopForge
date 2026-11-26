@@ -8,7 +8,7 @@ import (
 
 // BotChatOrigin records the chat a requirement or run was started from
 // (Feishu and DingTalk write confirmations, chat clarification). Events of
-// the run are sent back to that conversation, whatever the SOP's own
+// the run are sent back to that conversation, whatever the LOOP's own
 // notification settings are. One row per started run, plus one per created
 // requirement (RunID empty) so "澄清这个需求" can find it.
 type BotChatOrigin struct {

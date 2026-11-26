@@ -32,7 +32,7 @@ test('MCP import accepts common formats, validates bad input, and saves HTTP con
   assert.equal(call.body.projectId, 'project-1');
 });
 
-test('generic SOP requirements reflect credentials and installed MCPs, then clone through API', async (t) => {
+test('generic LOOP requirements reflect credentials and installed MCPs, then clone through API', async (t) => {
   const app = await loadApp();
   t.after(app.close);
   const generic = {
@@ -180,6 +180,7 @@ test('runner sharing saves multiple projects and offers project defaults for eli
   await app.evaluate(`saveRunnerRunLimit('desktop','25')`);
   const ownerChoice = app.document.querySelector('[data-set-project-default="desktop"]');
   assert.ok(ownerChoice, 'an eligible owned machine offers the project default action');
+  assert.equal(ownerChoice.textContent, '设为项目默认');
   ownerChoice.click();
   await settle();
   assert.equal(projectRunnerId, desktop.id);
@@ -237,14 +238,21 @@ test('platform runner card and auto assignment respect project and admin permiss
     state.runnerBindCode={code:'fixture',expiresAt:'2099-01-01T00:00:00Z'};
   `);
   await app.evaluate('refreshRunners()');
+  const section = app.document.querySelector('#platformRunnerSection');
+  const platformHost = app.document.querySelector('#platformRunnerHost');
   const list = app.document.querySelector('#runnersList');
-  const card = () => list.firstElementChild;
+  const card = () => platformHost.firstElementChild;
+  assert.equal(section.hidden, false);
+  assert.match(section.querySelector('h2').textContent, /平台机器/);
   assert.equal(card().classList.contains('runner-platform-card'), true);
+  assert.equal(card().querySelector('.harness-icon[data-icon="server"]') !== null, true);
   assert.match(card().textContent, /平台执行机器（云端）平台自带/);
   assert.match(card().textContent, /运行中 2 · 已占 4 \/ 10 · 排队 1 · 云端池 3 台在线/);
   assert.equal(card().querySelector('.runner-status').textContent, '在线');
   assert.equal(card().querySelector('.runner-runtime-list, [data-runner-share], [data-remove-runner], [data-runner-check-update]'), null);
-  assert.match(list.children[1].textContent, /运行中 1 · 已占 2 \/ 5/);
+  assert.equal(list.querySelector('.runner-platform-card'), null);
+  assert.equal(app.document.querySelector('#runnerCount').textContent, String(shared.length));
+  assert.match(list.children[0].textContent, /运行中 1 · 已占 2 \/ 5/);
   const limit = card().querySelector('[data-platform-run-limit]');
   assert.equal(limit.value, '10');
   limit.value = '';
@@ -260,18 +268,22 @@ test('platform runner card and auto assignment respect project and admin permiss
   toggle.click();
   await settle(8);
   assert.equal(toggle.getAttribute('aria-pressed'), 'true');
-  assert.match(poolStatus.textContent, /此项目 SOP 自动分配 · 2 台在线机器可用/);
+  assert.match(poolStatus.textContent, /此项目 LOOP 自动分配 · 2 台在线机器可用/);
   toggle.click();
   await settle(8);
   assert.equal(toggle.getAttribute('aria-pressed'), 'false');
 
-  card().querySelector('[data-runner-platform-default]').click();
+  const platformDefaultBtn = () => card().querySelector('[data-runner-platform-default]');
+  assert.equal(platformDefaultBtn().textContent, '设为项目默认');
+  platformDefaultBtn().click();
   await settle(8);
   assert.match(card().textContent, /此项目默认/);
+  assert.equal(platformDefaultBtn().textContent, '清除项目默认');
   assert.equal(poolStatus.textContent, '此项目默认 · 平台执行机器（云端）');
-  card().querySelector('[data-runner-platform-default]').click();
+  platformDefaultBtn().click();
   await settle(8);
   assert.doesNotMatch(card().textContent, /此项目默认/);
+  assert.equal(platformDefaultBtn().textContent, '设为项目默认');
   const preferences = app.router.calls.filter(c => c.method === 'PUT' && c.path === '/api/runners/default');
   assert.deepEqual(preferences.map(c => c.body), [{ mode: 'auto' }, { mode: '', runnerId: '' }, { mode: 'platform' }, { mode: '', runnerId: '' }]);
   assert.ok(preferences.every(c => c.search === '?projectId=write'));

@@ -45,7 +45,7 @@ func TestWorkflowGetReturnsFullDefinition(t *testing.T) {
 	user.CodeBuddyAPIKey = secret
 	script := strings.Repeat("env-prep phpstan\n", 800)
 	wf := domain.WorkflowDefinition{
-		ID: "wf-large", Name: "大 SOP", ProjectID: "platform", SandboxProfileID: "test-native",
+		ID: "wf-large", Name: "大 LOOP", ProjectID: "platform", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{
 			{ID: "zg-index", Name: "索引", Type: "script", ScriptLanguage: "shell", Script: script},
 			{ID: "design", Name: "设计", Type: "script", ScriptLanguage: "shell", Script: script},
@@ -76,7 +76,7 @@ func TestWorkflowGetReturnsFullDefinition(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !strings.Contains(listed, marker) || strings.Contains(listed, secret) {
-		t.Fatal("workflows_list lost the full SOP")
+		t.Fatal("workflows_list lost the full LOOP")
 	}
 	var listedFlows []domain.WorkflowDefinition
 	if err := json.Unmarshal([]byte(listed), &listedFlows); err != nil {
@@ -90,7 +90,7 @@ func TestWorkflowGetReturnsFullDefinition(t *testing.T) {
 	if !ok {
 		t.Fatal("stored workflow missing")
 	}
-	stored.Name = "大 SOP 第二版"
+	stored.Name = "大 LOOP 第二版"
 	if err := st.PutWorkflow(stored); err != nil {
 		t.Fatal(err)
 	}

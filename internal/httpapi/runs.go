@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"path"
 	"strconv"
 	"strings"
 	"time"
@@ -264,15 +265,19 @@ func (h *runsHandlers) run(c *gin.Context) {
 		}
 		c.JSON(202, map[string]bool{"accepted": true})
 	case "/api/runs/:id/artifacts/:name":
-		artifact, ok := h.repo.Artifact(id, c.Param("name"))
-		if !ok {
+		artifact, body, err := h.repo.OpenArtifactContent(c.Request.Context(), id, c.Param("name"))
+		if err != nil {
 			c.JSON(404, map[string]string{"error": "artifact not found"})
 			return
 		}
-		c.Header("Content-Type", artifact.MediaType+"; charset=utf-8")
-		c.Header("Content-Disposition", fmt.Sprintf("inline; filename=%q", artifact.Name+artifactExtension(artifact.MediaType)))
+		defer body.Close()
+		mediaType := artifact.MediaType
+		if strings.HasPrefix(mediaType, "text/") {
+			mediaType += "; charset=utf-8"
+		}
+		c.Header("Content-Disposition", fmt.Sprintf("inline; filename=%q", artifactFileName(artifact)))
 		c.Header("ETag", `"`+artifact.SHA256+`"`)
-		_, _ = c.Writer.Write([]byte(artifact.Content))
+		c.DataFromReader(http.StatusOK, artifact.Size, mediaType, body, nil)
 	case "/api/runs/:id/approve":
 		var req domain.HumanDecision
 		if decode(c, &req) {
@@ -335,6 +340,15 @@ func (h *runsHandlers) run(c *gin.Context) {
 	default:
 		c.Status(http.StatusNotFound)
 	}
+}
+
+// artifactFileName names a downloaded deliverable after the file it came from,
+// so a binary artifact keeps its extension instead of becoming a .txt file.
+func artifactFileName(artifact domain.Artifact) string {
+	if base := path.Base(artifact.Path); path.Ext(base) != "" && base != "." && base != "/" {
+		return base
+	}
+	return artifact.Name + artifactExtension(artifact.MediaType)
 }
 
 func artifactExtension(mediaType string) string {

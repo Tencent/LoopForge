@@ -62,18 +62,18 @@ test('approval page shows invalidation and login requirements', async () => {
   assert.match(bad.text(), /确认链接无效/);
 });
 
-test('approval page lets the user pick the SOP of a new requirement and start it', async () => {
+test('approval page lets the user pick the LOOP of a new requirement and start it', async () => {
   const draft = { ...pending, newIssues: [{ index: 0, title: '保存需求：登录优化', workflowId: '', defaultWorkflowId: 'wf-dev', defaultWorkflowName: '研发交付' }], workflows: [{ id: 'wf-dev', name: '研发交付' }, { id: 'wf-fix', name: '缺陷修复' }, { id: 'tpl', name: '通用 · 后端交付' }] };
   const p = page({
     'GET /api/auth/current': [200, { user: { id: 43 } }],
     [`GET /api/bot-drafts/${id}`]: [200, draft],
-    [`POST /api/bot-drafts/${id}/confirm`]: [200, { ...pending, status: 'executed', results: ['已完成：保存需求：登录优化（SOP：缺陷修复）', '已启动：缺陷修复（运行 run-1）'] }],
+    [`POST /api/bot-drafts/${id}/confirm`]: [200, { ...pending, status: 'executed', results: ['已完成：保存需求：登录优化（LOOP：缺陷修复）', '已启动：缺陷修复（运行 run-1）'] }],
   });
   await settle();
   const select = p.$('.sop select.wf');
   assert.equal(p.$('.sop select.repo'), null, 'no repository field without repositories');
   assert.equal(select.value, '', 'project default selected');
-  assert.equal(select.options[0].textContent, '项目默认 SOP（研发交付）');
+  assert.equal(select.options[0].textContent, '项目默认 LOOP（研发交付）');
   assert.equal(select.options.length, 4);
   select.value = 'wf-fix';
   p.$('.sop input[type=checkbox]').checked = true;
@@ -90,10 +90,10 @@ test('approval page lets the user pick the repository of a new requirement', asy
   const p = page({
     'GET /api/auth/current': [200, { user: { id: 43 } }],
     [`GET /api/bot-drafts/${id}`]: [200, draft],
-    [`POST /api/bot-drafts/${id}/confirm`]: [200, { ...pending, status: 'executed', results: ['已完成：保存需求：登录优化（仓库：web-console）（SOP：研发交付）'] }],
+    [`POST /api/bot-drafts/${id}/confirm`]: [200, { ...pending, status: 'executed', results: ['已完成：保存需求：登录优化（仓库：web-console）（LOOP：研发交付）'] }],
   });
   await settle();
-  assert.match(p.text(), /新需求使用的仓库和 SOP/);
+  assert.match(p.text(), /新需求使用的仓库和 LOOP/);
   const repo = p.$('.sop select.repo');
   assert.equal(repo.value, '', 'project default repository selected');
   assert.equal(repo.options[0].textContent, '项目默认仓库（lf-loop-sandbox）');

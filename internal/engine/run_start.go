@@ -51,8 +51,8 @@ func (e *Engine) StartWithExecutionContext(workflowID, input string, repository 
 
 // StartWithRepositoriesContext starts a run with one or more repositories.
 // Each repository is checked out into a first-level
-// sub-directory, gets the same work branch and, on scheduled runs, its own
-// integration merge and MR. SOP deliverables stay at the run workspace root.
+// sub-directory, gets its work branch and, on scheduled runs, its own
+// integration merge and MR. LOOP deliverables stay at the run workspace root.
 func (e *Engine) StartWithRepositoriesContext(workflowID, input string, repositories []domain.RepositoryContext, executionContext domain.TelemetryContext) (domain.Run, error) {
 	return e.StartWithRepositories(context.Background(), workflowID, input, repositories, executionContext)
 }
@@ -85,7 +85,7 @@ func (e *Engine) StartWithRepositories(ctx context.Context, workflowID, input st
 			}
 		}
 		if !allowed {
-			return domain.Run{}, fmt.Errorf("SOP 不在共享任务的引用范围内")
+			return domain.Run{}, fmt.Errorf("LOOP 不在共享任务的引用范围内")
 		}
 	}
 	return e.startWorkflowDefinition(ctx, wf, input, repositories, executionContext, false)
@@ -125,7 +125,7 @@ func (e *Engine) startWorkflowDefinition(ctx context.Context, wf domain.Workflow
 			executionContext.ProjectID = wf.ProjectID
 		}
 		if executionContext.ProjectID != wf.ProjectID {
-			return domain.Run{}, apperr.New(apperr.Forbidden, "只能在当前项目运行其私有 SOP")
+			return domain.Run{}, apperr.New(apperr.Forbidden, "只能在当前项目运行其私有 LOOP")
 		}
 	}
 	wf = defaultWorkflowSandboxProfile(wf)
@@ -146,7 +146,7 @@ func (e *Engine) startWorkflowDefinition(ctx context.Context, wf domain.Workflow
 		var ok bool
 		parent, ok = e.repo.RunState(executionContext.ParentRunID)
 		if !ok {
-			return domain.Run{}, fmt.Errorf("父 SOP 运行不存在")
+			return domain.Run{}, fmt.Errorf("父 LOOP 运行不存在")
 		}
 		if wf.AutoSelectSandbox {
 			workspaceSandboxID = parent.WorkflowSnapshot.SandboxProfileID
@@ -225,9 +225,6 @@ func (e *Engine) startWorkflowDefinition(ctx context.Context, wf domain.Workflow
 	}
 	wf.ExecutorDefaults = nil
 	if !autoAssign {
-		if err := e.requireRunnerRepositoryCapabilities(executionContext.ExecutionRunnerID, repositories); err != nil {
-			return domain.Run{}, err
-		}
 		if err := e.requireProjectCredentialRunner(wf, executionContext.ExecutionRunnerID); err != nil {
 			return domain.Run{}, err
 		}
@@ -240,18 +237,15 @@ func (e *Engine) startWorkflowDefinition(ctx context.Context, wf domain.Workflow
 		if _, err := workflowSandboxRequirements(e.repo, wf); err != nil {
 			return domain.Run{}, err
 		}
+		if err := e.assignSOPWorkBranches(ctx, executionContext, repositories, input, time.Now().UTC(), nil); err != nil {
+			return domain.Run{}, err
+		}
+		if err := e.requireRunnerRepositoryCapabilities(executionContext.ExecutionRunnerID, repositories); err != nil {
+			return domain.Run{}, err
+		}
 	}
 	now := time.Now().UTC()
 	id := fmt.Sprintf("run-%d", now.UnixNano())
-	assignWorkBranches(repositories, func() string {
-		issueID := strings.TrimSpace(executionContext.IssueID)
-		if issueID != "" {
-			if issue, ok := e.repo.Issue(issueID); ok {
-				return domain.DefaultWorkBranch(issue, now)
-			}
-		}
-		return defaultWorkBranch(executionContext.IssueNumber, issueID, now)
-	})
 	var firstRepository domain.RepositoryContext
 	if len(repositories) > 0 {
 		firstRepository = repositories[0]
@@ -294,7 +288,7 @@ func (e *Engine) startWorkflowDefinition(ctx context.Context, wf domain.Workflow
 		if strings.TrimSpace(instanceID) == "" || ttl <= 0 {
 			return domain.Run{}, ErrExecutionDisabled
 		}
-		r.OwnerInstanceID, r.Generation, r.LeaseUntil = instanceID, 1, now.Add(ttl)
+		r.OwnerInstanceID, r.Generation, r.LeaseUntil = instanceID, 1, time.Now().UTC().Add(ttl)
 	}
 	// Control plane persists an unowned running row. The worker claims it
 	// through ResumeInterruptedRuns. Combined instances still insert already

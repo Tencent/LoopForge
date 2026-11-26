@@ -1,4 +1,4 @@
-// Shared AI model catalog for the classic SPA. The SOP preview, role, Bot,
+// Shared AI model catalog for the classic SPA. The LOOP preview, role, Bot,
 // scheduler, run-eval and requirement-clarification pickers all read
 // window.AgentFlowAssistantModels, so this file must load before them.
 // Only the picker chrome lives here; per-feature selections stay in the
@@ -276,6 +276,7 @@
     featurePickerHTML,
     fetchCatalog,
     load,
+    modelIcon: item => FAMILY_ICON[item?.family || familyOf(item?.id)] || '',
     paint,
     paintItem,
     preferredFeatureModel,
