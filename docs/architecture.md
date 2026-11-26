@@ -33,7 +33,7 @@ An LOOP role chooses an executor. A CLI role runs in the workspace selected for 
 | External A2A Agent | User machine or CVM | The responsible user's personal Runner, which calls its configured loopback service |
 | External A2A Agent | Cloud HTTPS service | A server binding for the project and responsible user, explicitly selected on the role |
 
-Managed Agent dispatch records its attempt before sending the turn. An interrupted attempt with an unknown remote outcome requires an explicit retry. The node fails instead of consuming its remaining attempts. One WMA or A2A turn may run for up to five minutes; the connector then cancels the remote task and fails the node with a timeout. The CLI and sandbox paths retain their normal task leases, workspace handoff, and result handling.
+Managed Agent dispatch records its attempt before sending the turn. An attempt with an unknown remote outcome — an interrupted turn or one that ran past its budget — requires an explicit retry. The node fails instead of consuming its remaining attempts. One WMA or A2A turn may run for up to five minutes; the connector then cancels the remote task, fails the node with a timeout and, because cancellation is only advisory, does not resend the turn on its own. The CLI and sandbox paths retain their normal task leases, workspace handoff, and result handling.
 
 ### WorkBuddy Managed Agents
 

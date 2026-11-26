@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/managedagent"
 	"agentflow/internal/observability"
 	"agentflow/internal/runtime"
 )
@@ -263,6 +264,9 @@ func TestNodeOutcomeDecisionAndTransitionBranches(t *testing.T) {
 	}
 	if shouldRetryFailedAttempt(domain.WorkflowNode{MaxAttempts: 3}, 1, fmt.Errorf("%w：a2a 节点本次执行已发起或终止", errManagedTurnUnknown)) {
 		t.Fatal("a managed Agent turn with an unknown outcome must not be sent again automatically")
+	}
+	if shouldRetryFailedAttempt(domain.WorkflowNode{MaxAttempts: 3}, 1, fmt.Errorf("A2A Agent 未在 5m0s 内完成本轮，已请求取消：%w", managedagent.ErrTurnTimedOut)) {
+		t.Fatal("a timed-out managed Agent turn must not be sent again automatically")
 	}
 	if !shouldRetryFailedAttempt(domain.WorkflowNode{MaxAttempts: 3}, 1, errors.New("ordinary")) {
 		t.Fatal("ordinary failure not retried")

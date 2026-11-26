@@ -107,7 +107,7 @@ func TestA2ATurnTimeoutIsNamedAndCancelsTheTask(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err = agent.Run(context.Background(), "slow", nil)
-	if !errors.Is(err, context.DeadlineExceeded) || !strings.Contains(err.Error(), "A2A Agent 未在 1.5s 内完成本轮") {
+	if !errors.Is(err, context.DeadlineExceeded) || !errors.Is(err, ErrTurnTimedOut) || !strings.Contains(err.Error(), "A2A Agent 未在 1.5s 内完成本轮") {
 		t.Fatalf("Run() error = %v", err)
 	}
 	select {
