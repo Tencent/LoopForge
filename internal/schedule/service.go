@@ -296,7 +296,14 @@ func (s *Service) release(id string) {
 
 // execute runs a claimed job and records it as one ScheduleJobExecution.
 func (s *Service) execute(job domain.ScheduleJob, triggerOrigin string) (domain.ScheduleJob, error) {
-	exec := s.beginExecution(job, triggerOrigin)
+	exec, err := s.beginExecution(job, triggerOrigin)
+	if err != nil {
+		job.LastStatus = "failed"
+		job.LastError = err.Error()
+		job.LastPulled, job.LastDispatched = 0, 0
+		job.Blockers = nil
+		return s.saveResult(job), err
+	}
 	return s.executeJob(job, triggerOrigin, exec)
 }
 
@@ -376,10 +383,21 @@ func (s *Service) executeJob(job domain.ScheduleJob, triggerOrigin string, exec 
 			job.Blockers = nil
 			return finish(job, err)
 		}
+		dispatched++
 		if exec != nil {
 			exec.Runs = append(exec.Runs, domain.ScheduleJobExecutionRun{IssueID: issue.ID, IssueTitle: issue.Title, RunID: runID})
+			exec.Pulled, exec.Dispatched = job.LastPulled, dispatched
+			// The downstream run already exists. Save its attribution before the
+			// next dispatch can block or the process can be interrupted.
+			if err := s.repo.PutScheduleJobExecution(*exec); err != nil {
+				log.Printf("schedule job %s trace=%s: record dispatched run: %v", job.ID, exec.TraceID, err)
+				job.LastStatus = "failed"
+				job.LastError = "保存已派发运行记录失败"
+				job.LastDispatched = dispatched
+				job.Blockers = nil
+				return finish(job, errors.New(job.LastError))
+			}
 		}
-		dispatched++
 	}
 	job.LastDispatched = dispatched
 	if len(blocked) > 0 {
@@ -431,7 +449,7 @@ func (s *Service) dispatchIssue(job domain.ScheduleJob, issue domain.Issue, trig
 
 // beginExecution records the claimed job as a running execution. The trace
 // comes from the claim; a job executed without one gets a fresh trace.
-func (s *Service) beginExecution(job domain.ScheduleJob, triggerOrigin string) *domain.ScheduleJobExecution {
+func (s *Service) beginExecution(job domain.ScheduleJob, triggerOrigin string) (*domain.ScheduleJobExecution, error) {
 	traceID := job.LastTraceID
 	if traceID == "" {
 		traceID = domain.NewTraceID()
@@ -453,8 +471,9 @@ func (s *Service) beginExecution(job domain.ScheduleJob, triggerOrigin string) *
 	}
 	if err := s.repo.PutScheduleJobExecution(*exec); err != nil {
 		log.Printf("schedule job %s trace=%s: record execution: %v", job.ID, traceID, err)
+		return nil, errors.New("创建定时任务执行记录失败")
 	}
-	return exec
+	return exec, nil
 }
 
 func (s *Service) finishExecution(exec *domain.ScheduleJobExecution, result domain.ScheduleJob) {
