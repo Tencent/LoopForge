@@ -3,6 +3,7 @@ package runtime
 import (
 	"agentflow/internal/domain"
 	"agentflow/internal/procwatch"
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -13,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -30,6 +32,7 @@ type dockerSandbox struct {
 	mu                   sync.Mutex
 	browserMu            sync.Mutex
 	started              bool
+	incompatibleStartup  bool
 	gitToolsRoot         string
 	gitDistributionReady bool
 	activeTerminals      int
@@ -52,6 +55,10 @@ func (s *dockerSandbox) Driver() string    { return "docker" }
 // cannot prune a container that is still "running".
 func (s *dockerSandbox) Close(ctx context.Context) error {
 	s.mu.Lock()
+	if s.incompatibleStartup {
+		s.mu.Unlock()
+		return nil
+	}
 	s.started = false
 	image := s.builtImage
 	gitTools := s.gitToolsRoot
@@ -477,6 +484,9 @@ func isDockerCwdUnsafe(out string, err error) bool {
 }
 
 type dockerWorkspaceInspection struct {
+	image       string
+	entrypoint  []string
+	command     []string
 	source      string
 	legacyMasks bool
 	gitTools    string
@@ -486,16 +496,18 @@ type dockerWorkspaceInspection struct {
 }
 
 func inspectDockerWorkspace(ctx context.Context, name string) (*dockerWorkspaceInspection, error) {
-	const format = `{"mounts":{{json .Mounts}},"privileged":{{.HostConfig.Privileged}},"limitsLabel":{{json (index .Config.Labels "` + dockerSandboxLimitsLabel + `")}},"limits":{"NanoCpus":{{.HostConfig.NanoCpus}},"Memory":{{.HostConfig.Memory}},"PidsLimit":{{json .HostConfig.PidsLimit}}}}`
+	const format = `{"image":{{json .Config.Image}},"entrypoint":{{json .Config.Entrypoint}},"command":{{json .Config.Cmd}},"mounts":{{json .Mounts}},"privileged":{{.HostConfig.Privileged}},"limitsLabel":{{json (index .Config.Labels "` + dockerSandboxLimitsLabel + `")}},"limits":{"NanoCpus":{{.HostConfig.NanoCpus}},"Memory":{{.HostConfig.Memory}},"PidsLimit":{{json .HostConfig.PidsLimit}}}}`
 	out, err := exec.CommandContext(ctx, "docker", "inspect", "--type", "container", "--format", format, name).CombinedOutput()
 	if dockerObjectGone(string(out), err) {
 		return nil, nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("docker inspect workspace: %w: %s", err, strings.TrimSpace(string(out)))
+		return nil, dockerStageError("inspect workspace", name, out, err)
 	}
 	var config struct {
-		Mounts []struct {
+		Image               string
+		Entrypoint, Command []string
+		Mounts              []struct {
 			Destination, Source string
 			RW                  bool
 		}
@@ -504,9 +516,9 @@ func inspectDockerWorkspace(ctx context.Context, name string) (*dockerWorkspaceI
 		Limits      dockerHostLimits
 	}
 	if err := json.Unmarshal(out, &config); err != nil {
-		return nil, fmt.Errorf("decode Docker workspace for %s: %w", name, err)
+		return nil, fmt.Errorf("invalid Docker workspace metadata for %s", name)
 	}
-	workspace := &dockerWorkspaceInspection{privileged: config.Privileged, limitsLabel: config.LimitsLabel, limits: config.Limits}
+	workspace := &dockerWorkspaceInspection{image: config.Image, entrypoint: config.Entrypoint, command: config.Command, privileged: config.Privileged, limitsLabel: config.LimitsLabel, limits: config.Limits}
 	for _, mount := range config.Mounts {
 		switch mount.Destination {
 		case "/workspace":
@@ -847,6 +859,8 @@ const (
 	dockerStartRefreshGitTools
 )
 
+const dockerWorkspaceKeepalive = "cd /workspace && exec sleep infinity"
+
 func (s *dockerSandbox) start(ctx context.Context, mode dockerStartMode) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -865,11 +879,16 @@ func (s *dockerSandbox) start(ctx context.Context, mode dockerStartMode) error {
 	if err != nil {
 		return err
 	}
+	s.incompatibleStartup = false
 	recreate := mode == dockerStartRecreate
 	hasGitTools := false
 	if container != nil {
 		if !dockerBindMatchesWorkspace(container.source, workspace) {
 			return fmt.Errorf("docker sandbox %s is bound to %s, not %s", name, container.source, workspace)
+		}
+		if !slices.Equal(container.entrypoint, []string{"sh"}) || !slices.Equal(container.command, []string{"-c", dockerWorkspaceKeepalive}) {
+			s.incompatibleStartup = true
+			return fmt.Errorf("Docker sandbox %s has an incompatible startup command; when the workspace is idle, run `docker rm -f %s` on the execution host and prepare the workspace again (the workspace bind is retained, the container writable layer is not)", name, name)
 		}
 		recreate = recreate || container.privileged != p.Privileged || !s.limits.matches(container)
 		hasGitTools = dockerBindMatchesWorkspace(container.gitTools, gitTools)
@@ -878,7 +897,7 @@ func (s *dockerSandbox) start(ctx context.Context, mode dockerStartMode) error {
 			// execs have exited. Its local activity counters are gone.
 			out, err := exec.CommandContext(ctx, "docker", "inspect", "--type", "container", "--format", "{{len .ExecIDs}}", name).CombinedOutput()
 			if err != nil {
-				return fmt.Errorf("inspect active Docker executions: %w: %s", err, out)
+				return dockerStageError("inspect active executions", name, out, err)
 			}
 			if strings.TrimSpace(string(out)) != "0" {
 				return nil
@@ -890,15 +909,14 @@ func (s *dockerSandbox) start(ctx context.Context, mode dockerStartMode) error {
 	s.gitToolsRoot = ""
 	s.gitDistributionReady = false
 	if container != nil && !recreate && !container.legacyMasks {
-		if err := exec.CommandContext(ctx, "docker", "start", name).Run(); err == nil {
-			if err := waitDockerWorkspaceReady(ctx, name); err == nil {
-				if hasGitTools {
-					s.gitToolsRoot = gitTools
-				}
-				s.started = true
-				return nil
-			}
+		if err := startDockerWorkspace(ctx, name, container.image); err != nil {
+			return err
 		}
+		if hasGitTools {
+			s.gitToolsRoot = gitTools
+		}
+		s.started = true
+		return nil
 	}
 	built, err := ensureDockerImage(ctx, workspace, s.dockerfile)
 	if err != nil {
@@ -925,7 +943,7 @@ func (s *dockerSandbox) start(ctx context.Context, mode dockerStartMode) error {
 	if os.Geteuid() != 0 {
 		configured, err := exec.CommandContext(ctx, "docker", "image", "inspect", "--format", "{{.Config.User}}", image).CombinedOutput()
 		if err != nil {
-			return fmt.Errorf("inspect sandbox image user: %w: %s", err, strings.TrimSpace(string(configured)))
+			return dockerStageError("inspect image user", image, configured, err)
 		}
 		user, _, _ := strings.Cut(strings.TrimSpace(string(configured)), ":")
 		if user == "" || user == "root" || user == "0" {
@@ -968,23 +986,19 @@ func (s *dockerSandbox) start(ctx context.Context, mode dockerStartMode) error {
 	if p.ReadOnlyRootFS {
 		args = append(args, "--read-only", "--tmpfs", "/tmp:rw,noexec,nosuid,size=256m")
 	}
-	if image == isolatedRuntimeImage(s.dockerfile) {
-		args = append(args, "--entrypoint", "sh", image, "-lc", "trap : TERM INT; sleep infinity & wait")
-	} else {
-		args = append(args, image, "sh", "-lc", "trap : TERM INT; sleep infinity & wait")
-	}
+	args = append(args, "--entrypoint", "sh", image, "-c", dockerWorkspaceKeepalive)
 	// Resolve the replacement image and mounts before retiring the old
 	// container. Its new ID invalidates old preparation receipts.
 	if container != nil || recreate {
 		if err := removeDockerWorkspaceContainers(ctx, name); err != nil {
-			return err
+			return dockerStageError("retire previous workspace", name, []byte(err.Error()), errors.New("Docker removal failed"))
 		}
 	}
 	s.builtImage = built
 	if out, err := exec.CommandContext(ctx, "docker", args...).CombinedOutput(); err != nil {
 		dropEphemeralDockerImage(s.builtImage)
 		s.builtImage = ""
-		return fmt.Errorf("docker create: %w: %s", err, out)
+		return dockerStageError("create workspace", name+" (image "+image+")", out, err)
 	}
 	if s.limits != (dockerSandboxLimits{}) {
 		created, err := inspectDockerWorkspace(ctx, name)
@@ -993,22 +1007,19 @@ func (s *dockerSandbox) start(ctx context.Context, mode dockerStartMode) error {
 		}
 		if err != nil {
 			cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), dockerTeardownTimeout)
-			cleanupErr := removeDockerContainer(cleanupCtx, name)
+			_ = removeDockerContainer(cleanupCtx, name)
 			cancel()
 			dropEphemeralDockerImage(s.builtImage)
 			s.builtImage = ""
-			return errors.Join(err, cleanupErr)
+			return err
 		}
 	}
-	if out, err := exec.CommandContext(ctx, "docker", "start", name).CombinedOutput(); err != nil {
-		_ = exec.CommandContext(ctx, "docker", "rm", "-f", name).Run()
+	if err := startDockerWorkspace(ctx, name, image); err != nil {
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), dockerInspectLimit)
+		defer cancel()
+		_ = removeDockerContainer(cleanupCtx, name)
 		dropEphemeralDockerImage(s.builtImage)
 		s.builtImage = ""
-		return fmt.Errorf("docker start: %w: %s", err, out)
-	}
-	if err := waitDockerWorkspaceReady(ctx, name); err != nil {
-		_ = exec.Command("docker", "rm", "-f", name).Run()
-		s.started = false
 		return err
 	}
 	s.started = true
@@ -1016,27 +1027,69 @@ func (s *dockerSandbox) start(ctx context.Context, mode dockerStartMode) error {
 	return nil
 }
 
-func waitDockerWorkspaceReady(ctx context.Context, name string) error {
-	deadline := time.Now().Add(20 * time.Second)
-	var lastOut []byte
-	var lastErr error
-	for {
-		cmd := exec.CommandContext(ctx, "docker", "exec", name, "sh", "-lc", "cd /workspace && pwd")
-		lastOut, lastErr = cmd.CombinedOutput()
-		if lastErr == nil && strings.Contains(string(lastOut), "/workspace") {
+func startDockerWorkspace(ctx context.Context, name, image string) error {
+	readyCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	object := name + " (image " + image + ")"
+	output, err := exec.CommandContext(readyCtx, "docker", "start", name).CombinedOutput()
+	if err != nil {
+		err = dockerStageError("start workspace", object, output, err)
+	} else {
+		marker := rand.Text()
+		probe := &workspaceProbeOutput{marker: []byte("\n" + marker + "\n")}
+		var stderr cappedDockerOutput
+		cmd := exec.CommandContext(readyCtx, "docker", "exec", name, "sh", "-lc", `cd /workspace && printf '\n%s\n' "$1"`, "workspace-probe", marker)
+		cmd.Stdout, cmd.Stderr = probe, &stderr
+		if probeErr := cmd.Run(); probeErr != nil {
+			err = dockerStageError("workspace shell probe", object, stderr, probeErr)
+		} else if !probe.found {
+			err = fmt.Errorf("Docker workspace shell probe (%s): login shell exited 0 without executing the readiness probe", object)
+		}
+	}
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	state, stateErr := inspectDockerWorkspaceState(ctx, name)
+	if err == nil {
+		if stateErr != nil {
+			return stateErr
+		}
+		if state.generation() != "" {
 			return nil
 		}
-		if ctx.Err() != nil {
-			return ctx.Err()
-		}
-		if time.Now().After(deadline) {
-			if lastErr == nil {
-				lastErr = fmt.Errorf("unexpected pwd output %q", strings.TrimSpace(string(lastOut)))
-			}
-			return fmt.Errorf("docker workspace not ready: %w: %s", lastErr, strings.TrimSpace(string(lastOut)))
-		}
-		time.Sleep(200 * time.Millisecond)
+		err = fmt.Errorf("Docker workspace liveness check (%s): workspace is not ready", object)
 	}
+	if stateErr != nil {
+		return fmt.Errorf("%w (container status unknown)", err)
+	}
+	return fmt.Errorf("%w (state=%s, exit=%d, OOMKilled=%t)", err, state.Status, state.ExitCode, state.OOMKilled)
+}
+
+type workspaceProbeOutput struct {
+	marker, pending []byte
+	found           bool
+}
+
+func (probe *workspaceProbeOutput) Write(data []byte) (int, error) {
+	for _, value := range data {
+		if probe.found {
+			break
+		}
+		probe.pending = append(probe.pending, value)
+		if len(probe.pending) == len(probe.marker) {
+			probe.found = bytes.Equal(probe.pending, probe.marker)
+			copy(probe.pending, probe.pending[1:])
+			probe.pending = probe.pending[:len(probe.pending)-1]
+		}
+	}
+	return len(data), nil
+}
+
+type cappedDockerOutput []byte
+
+func (out *cappedDockerOutput) Write(data []byte) (int, error) {
+	*out = append(*out, data[:min(len(data), 4096-len(*out))]...)
+	return len(data), nil
 }
 
 func dockerBuildArgs(image, contextDir string) []string {
@@ -1123,9 +1176,7 @@ func ensureDockerImage(ctx context.Context, workspace string, dockerfile domain.
 		report(domain.WorkspaceImageBuildProgress{ID: buildID, Done: true, Failed: err != nil})
 	}
 	if err != nil {
-		// Only the tail: a build killed after minutes of apt output used to
-		// carry all of it in the error.
-		return "", fmt.Errorf("docker build: %w: %s", err, tail)
+		return "", dockerStageError("build workspace image", image, []byte(tail), err)
 	}
 	return image, nil
 }
@@ -1148,7 +1199,8 @@ func dockerBuildWatch(dockerfile domain.DockerfileDefinition) procwatch.Options 
 	}
 	return procwatch.Options{
 		Stage: "image", Label: label,
-		Stall: procwatch.DurationEnv(dockerBuildStallEnv, 0), StallEnv: dockerBuildStallEnv,
+		HideOutput: true,
+		Stall:      procwatch.DurationEnv(dockerBuildStallEnv, 0), StallEnv: dockerBuildStallEnv,
 		Timeout: procwatch.DurationEnv(dockerBuildTimeoutEnv, 0), TimeoutEnv: dockerBuildTimeoutEnv,
 	}
 }

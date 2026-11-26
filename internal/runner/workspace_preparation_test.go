@@ -170,7 +170,7 @@ func TestRunnerWorkspacePreparationRefreshesLegacyDockerGitMount(t *testing.T) {
 	}
 	release()
 	if out, err := exec.CommandContext(ctx, "docker", "run", "-d", "--name", "agentflow-"+sb.ID(),
-		"-v", root+":/workspace", "--entrypoint", "sh", image, "-c", "exec sleep infinity").CombinedOutput(); err != nil {
+		"-v", root+":/workspace", "--entrypoint", "sh", image, "-c", "cd /workspace && exec sleep infinity").CombinedOutput(); err != nil {
 		t.Fatalf("create legacy Docker container: %v (%s)", err, out)
 	}
 	legacy, err := runtime.ReadSandboxEnvironmentIdentity(ctx, sb)

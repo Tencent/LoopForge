@@ -19,8 +19,9 @@ func TestIsolatedRuntimeImageReusesInstalledImage(t *testing.T) {
 printf '%s\n' "$*" >> "$DOCKER_TEST_LOG"
 case "$*" in
   "image inspect loopforge-platform:tested") exit 0 ;;
+  "inspect --type container --format "*'.State.Status'*) echo '` + fakeDockerRunningWorkspace + `' ;;
   "inspect "*) echo 'Error: No such container' >&2; exit 1 ;;
-  "exec "*) echo /workspace ;;
+  "exec "*) printf '\n%s\n' "$7" ;;
   "build "*) exit 99 ;;
 esac
 `
@@ -45,7 +46,7 @@ esac
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(commands), "build ") || !strings.Contains(string(commands), "--entrypoint sh loopforge-platform:tested -lc") {
+	if strings.Contains(string(commands), "build ") || !strings.Contains(string(commands), "--entrypoint sh loopforge-platform:tested -c "+dockerWorkspaceKeepalive) {
 		t.Fatalf("unexpected sandbox commands: %s", commands)
 	}
 	for _, custom := range []domain.DockerfileDefinition{{Content: "FROM custom\n"}, {Content: IsolatedDockerfile, Files: map[string]string{"custom.txt": "keep"}}} {

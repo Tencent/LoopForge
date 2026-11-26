@@ -66,7 +66,8 @@ type Options struct {
 	Timeout    time.Duration
 	TimeoutEnv string
 	// Redact scrubs secrets from every line before it is kept or reported.
-	Redact func(string) string
+	Redact     func(string) string
+	HideOutput bool
 	// OnLine receives each nonempty line after redaction, independently of
 	// the throttled progress events. The callback should return promptly.
 	OnLine func(string)
@@ -135,7 +136,11 @@ func RunWithOutput(ctx context.Context, run func(context.Context, io.Writer) err
 			return
 		}
 		out.lastEmit = now
-		emit(Progress, opts.Label+"："+line, now.Sub(started))
+		message := opts.Label + "：" + line
+		if opts.HideOutput {
+			message = "正在" + opts.Label
+		}
+		emit(Progress, message, now.Sub(started))
 	}
 	emit(Started, "正在"+opts.Label, 0)
 
@@ -156,7 +161,11 @@ func RunWithOutput(ctx context.Context, run func(context.Context, io.Writer) err
 		return tail, nil
 	}
 	err = stopError(context.Cause(runCtx), opts, elapsed, err)
-	emit(Failed, failureMessage(opts.Label, elapsed, err, tail), elapsed)
+	publicTail := tail
+	if opts.HideOutput {
+		publicTail = ""
+	}
+	emit(Failed, failureMessage(opts.Label, elapsed, err, publicTail), elapsed)
 	return tail, err
 }
 

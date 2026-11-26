@@ -179,10 +179,24 @@ func openBrowserView(ctx context.Context, runID string) (*browserView, error) {
 	view := browserViews.items[runID]
 	browserViews.Unlock()
 	if view != nil && !view.client.closed() {
-		return view, nil
+		if view.endpoint.Kind != "docker" {
+			return view, nil
+		}
+		err := view.endpoint.checkWorkspace(ctx)
+		if err == nil {
+			return view, nil
+		}
+		if errors.Is(err, errDockerWorkspaceUnavailable) {
+			view.client.close()
+		} else {
+			return nil, err
+		}
 	}
-	endpoint, ok := lookupBrowserEndpoint(ctx, runID)
-	if !ok {
+	endpoint, err := resolveBrowserEndpoint(ctx, runID)
+	if err != nil {
+		return nil, err
+	}
+	if endpoint.Kind == "" {
 		return nil, errors.New("Agent 浏览器尚未启动：Agent 用到时会自动启动，也可以现在手动启动")
 	}
 	dialCtx, cancel := context.WithTimeout(ctx, 20*time.Second)

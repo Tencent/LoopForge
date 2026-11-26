@@ -313,11 +313,12 @@ func TestDockerExecRecoversFromUnsafeCWD(t *testing.T) {
 workspace="${CVR_DOCKER_WORKSPACE}"
 marker="${CVR_DOCKER_MARKER}"
 if [ "${1-}" = inspect ]; then
-  printf '{"mounts":[{"Destination":"/workspace","Source":"%s"}],"privileged":false}\n' "$workspace"
+  case "$*" in *'.State.Status'*) printf '%s\n' '` + fakeDockerRunningWorkspace + `'; exit 0;; esac
+  printf '{"mounts":[{"Destination":"/workspace","Source":"%s"}],"privileged":false,"entrypoint":["sh"],"command":["-c","cd /workspace && exec sleep infinity"]}\n' "$workspace"
   exit 0
 fi
 if [ "${1-}" = exec ]; then
-  case "$*" in *"cd /workspace && pwd"*) echo /workspace; exit 0;; esac
+  if [ "${6-}" = workspace-probe ]; then printf '\n%s\n' "$7"; exit 0; fi
   if [ ! -e "$marker" ]; then
     : > "$marker"
     echo 'OCI runtime exec failed: cwd is outside of container mount namespace'
@@ -368,14 +369,15 @@ case "$*" in
       exited) echo "false|id-$(cat "$state/generation")|start-$(cat "$state/starts")"; exit 0 ;;
     esac
     echo 'Error: No such object: box' >&2; exit 1 ;;
+  "inspect --type container --format "*'.State.Status'*) echo '` + fakeDockerRunningWorkspace + `'; exit 0 ;;
   "inspect --type container --format "*" box")
     [ -n "$(status)" ] || { echo 'Error: No such container: box' >&2; exit 1; }
-    printf '{"mounts":[{"Destination":"/workspace","Source":"%s"}],"privileged":false}\n' "$CVR_DOCKER_WORKSPACE"; exit 0 ;;
+    printf '{"mounts":[{"Destination":"/workspace","Source":"%s"}],"privileged":false,"entrypoint":["sh"],"command":["-c","cd /workspace && exec sleep infinity"]}\n' "$CVR_DOCKER_WORKSPACE"; exit 0 ;;
   "start box") [ -n "$(status)" ] || exit 1; echo running > "$state/status"; count starts; exit 0 ;;
   "create --name box "*) echo exited > "$state/status"; count generation; exit 0 ;;
   "rm -f box") rm -f "$state/status"; exit 0 ;;
   "exec box "*) [ "$(status)" = running ] || { echo 'Error response from daemon: container box is not running' >&2; exit 1; }
-    case "$*" in *"cd /workspace && pwd"*) echo /workspace ;; esac; exit 0 ;;
+    if [ "${6-}" = workspace-probe ]; then printf '\n%s\n' "$7"; fi; exit 0 ;;
   "image inspect --format {{.Config.User}} "*) exit 0 ;;
   "image inspect "*) exit 0 ;;
 esac
@@ -436,8 +438,9 @@ if [ "${1-}" = inspect ] && [ "${2-}" = -f ]; then
   exit 0
 fi
 case "$*" in
+  "inspect --type container --format "*'.State.Status'*) echo '` + fakeDockerRunningWorkspace + `'; exit 0 ;;
   "inspect --type container --format "*" box")
-    printf '{"mounts":[{"Destination":"/workspace","Source":"%s"}],"privileged":%s}\n' "$workspace" "${CVR_DOCKER_EXISTING_PRIVILEGED:-false}"; exit 0 ;;
+    printf '{"mounts":[{"Destination":"/workspace","Source":"%s"}],"privileged":%s,"entrypoint":["sh"],"command":["-c","cd /workspace && exec sleep infinity"]}\n' "$workspace" "${CVR_DOCKER_EXISTING_PRIVILEGED:-false}"; exit 0 ;;
   "inspect --type container "*) echo 'Error: No such container' >&2; exit 1 ;;
   "inspect --format {{.State.Running}}|{{.Id}}|{{.State.StartedAt}} "*) echo 'true|container-id|now'; exit 0 ;;
   "image inspect --format {{.Config.User}} "*) exit 0 ;;
@@ -446,7 +449,7 @@ case "$*" in
   "ps -a --format {{.Image}}"*) echo agentflow-img-b; exit 0 ;;
   "ps -aq --filter "*) echo id1; exit 0 ;;
   "inspect "*) exit 1 ;;
-  "exec "*) echo /workspace; exit 0 ;;
+  "exec "*) if [ "${6-}" = workspace-probe ]; then printf '\n%s\n' "$7"; else echo /workspace; fi; exit 0 ;;
   "create "*)
     if [ -n "${CVR_DOCKER_CREATE_ARGS:-}" ]; then printf '%s\n' "$@" > "$CVR_DOCKER_CREATE_ARGS"; fi
     exit 0 ;;

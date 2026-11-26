@@ -162,9 +162,6 @@ func TestDockerBrowserImageAndSidecarWithFakeCLI(t *testing.T) {
 	if err != nil || server.Transport != "http" || server.URL == "" {
 		t.Fatalf("server=%+v events=%v err=%v", server, events, err)
 	}
-	if err := waitDockerBrowserReady(context.Background(), "box-browser"); err != nil {
-		t.Fatal(err)
-	}
 	long := []byte(strings.Repeat("x", 2100))
 	if got := tailOutput(long); len(got) != 2003 || !strings.HasPrefix(got, "…") {
 		t.Fatalf("tail len=%d", len(got))

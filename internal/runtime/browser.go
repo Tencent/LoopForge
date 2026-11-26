@@ -64,7 +64,8 @@ type browserEndpoint struct {
 	Container string
 	WebSocket string
 	// Workspace is the host directory a local browser serves file:// from.
-	Workspace string
+	Workspace                     string
+	DockerOwner, DockerGeneration string
 }
 
 func (e browserEndpoint) dial(ctx context.Context) (cdpTransport, error) {
@@ -80,13 +81,24 @@ func BrowserRunning(ctx context.Context, runID string) bool {
 	return ok
 }
 
+// BrowserNeedsStart only requests startup when absence or staleness is known.
+func BrowserNeedsStart(ctx context.Context, runID string) bool {
+	endpoint, err := resolveBrowserEndpoint(ctx, runID)
+	return (err == nil && endpoint.Kind == "") || errors.Is(err, errDockerWorkspaceUnavailable)
+}
+
 // EnsureSandboxBrowser gives the invocation its run browser and returns the
 // MCP server the agent drives it through. A docker sandbox gets a sidecar
 // sharing its network namespace whatever image the user picked; host drivers
 // get a host Chromium. Failures only warn: the node still runs without it.
 func EnsureSandboxBrowser(ctx context.Context, sb Sandbox, workspace, runID string, sink EventSink) *domain.MCPServerDefinition {
+	server, _ := PrepareSandboxBrowser(ctx, sb, workspace, runID, sink)
+	return server
+}
+
+func PrepareSandboxBrowser(ctx context.Context, sb Sandbox, workspace, runID string, sink EventSink) (*domain.MCPServerDefinition, error) {
 	if !BrowserEnabled() || strings.TrimSpace(runID) == "" {
-		return nil
+		return nil, nil
 	}
 	var (
 		server domain.MCPServerDefinition
@@ -102,15 +114,15 @@ func EnsureSandboxBrowser(ctx context.Context, sb Sandbox, workspace, runID stri
 	case *processSandbox:
 		server, err = ensureHostBrowser(ctx, inner.workspace, runID)
 	default:
-		return nil
+		return nil, nil
 	}
 	if err != nil {
 		if sink != nil {
 			sink(domain.TelemetryEvent{Category: "sandbox", Name: "browser.unavailable", Level: "warn", Message: "Agent 浏览器未就绪，本节点不提供浏览器工具：" + err.Error()})
 		}
-		return nil
+		return nil, err
 	}
-	return &server
+	return &server, nil
 }
 
 func unwrapSandbox(sb Sandbox) Sandbox {
@@ -190,7 +202,7 @@ func EnsureBrowserImage(ctx context.Context) (string, error) {
 	}
 	if os.Getenv("AGENTFLOW_BROWSER_IMAGE") != "" {
 		if out, err := exec.CommandContext(ctx, "docker", "pull", image).CombinedOutput(); err != nil {
-			return "", fmt.Errorf("docker pull %s: %w: %s", image, err, tailOutput(out))
+			return "", dockerStageError("pull browser image", image, out, err)
 		}
 		return image, nil
 	}
@@ -213,7 +225,7 @@ func EnsureBrowserImage(ctx context.Context) (string, error) {
 		args = append(args, "--build-arg", "NPM_REGISTRY="+registry)
 	}
 	if out, err := exec.CommandContext(ctx, "docker", append(args, dir)...).CombinedOutput(); err != nil {
-		return "", fmt.Errorf("docker build browser image: %w: %s", err, tailOutput(out))
+		return "", dockerStageError("build browser image", image, out, err)
 	}
 	return image, nil
 }
@@ -232,6 +244,10 @@ func (s *dockerSandbox) ensureBrowser(ctx context.Context, runID string, sink Ev
 	}
 	s.browserMu.Lock()
 	defer s.browserMu.Unlock()
+	generation, err := s.browserWorkspaceGeneration(ctx)
+	if err != nil {
+		return domain.MCPServerDefinition{}, err
+	}
 	image, err := browserImageName()
 	if err != nil {
 		return domain.MCPServerDefinition{}, err
@@ -246,38 +262,101 @@ func (s *dockerSandbox) ensureBrowser(ctx context.Context, runID string, sink Ev
 		return domain.MCPServerDefinition{}, err
 	}
 	name := dockerBrowserContainerName(s.name)
-	out, inspectErr := exec.CommandContext(ctx, "docker", "inspect", "-f", "{{.State.Running}}|{{.Config.Image}}|{{index .Config.Labels \""+browserRunLabel+"\"}}", name).Output()
-	if inspectErr != nil || strings.TrimSpace(string(out)) != "true|"+image+"|"+runID {
-		_ = exec.CommandContext(ctx, "docker", "rm", "-f", name).Run()
+	sidecar, err := inspectDockerBrowser(ctx, name)
+	if err != nil {
+		return domain.MCPServerDefinition{}, err
+	}
+	if sidecar == nil || !*sidecar.Running || sidecar.Image != image || sidecar.Labels[browserRunLabel] != runID || sidecar.Labels[browserGenerationLabel] != generation {
+		if current, err := s.browserWorkspaceGeneration(ctx); err != nil || current != generation {
+			if err == nil {
+				err = fmt.Errorf("%w: %s changed generation", errDockerWorkspaceUnavailable, s.name)
+			}
+			return domain.MCPServerDefinition{}, err
+		}
+		if sidecar != nil {
+			if output, err := exec.CommandContext(ctx, "docker", "rm", "-f", sidecar.ID).CombinedOutput(); err != nil && !dockerObjectGone(string(output), err) {
+				return domain.MCPServerDefinition{}, dockerStageError("remove obsolete browser sidecar", name, output, err)
+			}
+		}
 		args := []string{"run", "-d", "--name", name, "--init",
 			"--label", browserRunLabel + "=" + runID, "--label", browserOwnerLabel + "=" + s.name,
-			"--network", "container:" + s.name, "--cap-drop=ALL", "--security-opt", "no-new-privileges",
+			"--label", browserGenerationLabel + "=" + generation,
+			"--network", "container:" + strings.SplitN(generation, "|", 2)[0], "--cap-drop=ALL", "--security-opt", "no-new-privileges",
 			"--shm-size", "512m", "-v", s.workspace + ":/workspace", "-w", "/workspace",
 			"-e", "AGENTFLOW_BROWSER_OUTPUT=/workspace/.agentflow/browser", "-e", "AGENTFLOW_BROWSER_SCALE=" + BrowserDeviceScale(), image}
 		if out, err := exec.CommandContext(ctx, "docker", args...).CombinedOutput(); err != nil {
-			return domain.MCPServerDefinition{}, fmt.Errorf("启动浏览器容器失败: %w: %s", err, tailOutput(out))
+			if _, stateErr := s.browserWorkspaceGeneration(ctx); errors.Is(stateErr, errDockerWorkspaceUnavailable) {
+				return domain.MCPServerDefinition{}, stateErr
+			}
+			return domain.MCPServerDefinition{}, dockerStageError("start browser sidecar", name, out, err)
 		}
 	}
-	if err := waitDockerBrowserReady(ctx, name); err != nil {
-		logs, _ := exec.Command("docker", "logs", "--tail", "20", name).CombinedOutput()
-		return domain.MCPServerDefinition{}, fmt.Errorf("%w: %s", err, tailOutput(logs))
+	if err := waitDockerBrowserReady(ctx, name, func(ctx context.Context) error {
+		current, err := s.browserWorkspaceGeneration(ctx)
+		if err == nil && current != generation {
+			err = fmt.Errorf("%w: %s changed generation", errDockerWorkspaceUnavailable, s.name)
+		}
+		return err
+	}); err != nil {
+		return domain.MCPServerDefinition{}, err
 	}
 	return domain.MCPServerDefinition{ID: BrowserMCPServerID, Name: "Agent 浏览器", Transport: "http", URL: fmt.Sprintf("http://127.0.0.1:%d/mcp", browserMCPPort)}, nil
 }
 
-func waitDockerBrowserReady(ctx context.Context, name string) error {
+const browserGenerationLabel = "agentflow.browser.generation"
+
+type dockerBrowserInspection struct {
+	ID, Image string
+	Running   *bool
+	Labels    map[string]string
+}
+
+func inspectDockerBrowser(ctx context.Context, name string) (*dockerBrowserInspection, error) {
+	ctx, cancel := context.WithTimeout(ctx, dockerInspectLimit)
+	defer cancel()
+	const format = `{"ID":{{json .Id}},"Image":{{json .Config.Image}},"Running":{{.State.Running}},"Labels":{{json .Config.Labels}}}`
+	out, err := exec.CommandContext(ctx, "docker", "inspect", "--type", "container", "--format", format, name).CombinedOutput()
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
+	if dockerObjectGone(string(out), err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, dockerStageError("inspect browser sidecar", name, out, err)
+	}
+	var sidecar dockerBrowserInspection
+	if json.Unmarshal(out, &sidecar) != nil || !validDockerContainerID(sidecar.ID) || sidecar.Running == nil || sidecar.Image == "" {
+		return nil, fmt.Errorf("invalid Docker browser sidecar metadata for %s", name)
+	}
+	return &sidecar, nil
+}
+
+func (s *dockerSandbox) browserWorkspaceGeneration(ctx context.Context) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	generation, err := dockerWorkspaceGeneration(ctx, s.name)
+	if errors.Is(err, errDockerWorkspaceUnavailable) {
+		s.started = false
+	}
+	return generation, err
+}
+
+func waitDockerBrowserReady(ctx context.Context, name string, checkWorkspace func(context.Context) error) error {
+	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
 	probe := fmt.Sprintf("fetch('http://127.0.0.1:%d/mcp').then(()=>process.exit(0),()=>process.exit(1))", browserMCPPort)
-	deadline := time.Now().Add(60 * time.Second)
 	for {
-		if exec.CommandContext(ctx, "docker", "exec", name, "node", "-e", probe).Run() == nil {
-			return nil
+		ready := exec.CommandContext(ctx, "docker", "exec", name, "node", "-e", probe).Run() == nil
+		if err := checkWorkspace(ctx); err != nil {
+			return err
 		}
-		if time.Now().After(deadline) {
-			return fmt.Errorf("浏览器 MCP 未在 60s 内就绪")
+		if ready {
+			return nil
 		}
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return fmt.Errorf("browser sidecar %s did not become ready: %w", name, ctx.Err())
 		case <-time.After(500 * time.Millisecond):
 		}
 	}
@@ -524,23 +603,56 @@ func FindChromium() (string, error) {
 // which local process started it: host browsers leave an endpoint record,
 // docker sidecars carry the run label.
 func lookupBrowserEndpoint(ctx context.Context, runID string) (browserEndpoint, bool) {
+	endpoint, err := resolveBrowserEndpoint(ctx, runID)
+	return endpoint, err == nil && endpoint.Kind != ""
+}
+
+func resolveBrowserEndpoint(ctx context.Context, runID string) (browserEndpoint, error) {
 	if raw, err := os.ReadFile(filepath.Join(hostBrowserDir(runID), "endpoint.json")); err == nil {
 		var record hostBrowserRecord
 		if json.Unmarshal(raw, &record) == nil && record.PID > 0 && syscall.Kill(record.PID, 0) == nil && hostDevToolsAlive(ctx, record.Port) {
-			return browserEndpoint{Kind: "local", WebSocket: record.WebSocket, Workspace: record.Workspace}, true
+			return browserEndpoint{Kind: "local", WebSocket: record.WebSocket, Workspace: record.Workspace}, nil
 		}
 	}
 	if !dockerAvailable() {
-		return browserEndpoint{}, false
+		return browserEndpoint{}, nil
 	}
-	out, err := exec.CommandContext(ctx, "docker", "ps", "--filter", "label="+browserRunLabel+"="+runID, "--format", "{{.Names}}").Output()
+	ctx, cancel := context.WithTimeout(ctx, dockerInspectLimit)
+	defer cancel()
+	const format = `{{.Names}}{{"\t"}}{{.Label "` + browserOwnerLabel + `"}}{{"\t"}}{{.Label "` + browserGenerationLabel + `"}}`
+	out, err := exec.CommandContext(ctx, "docker", "ps", "--filter", "label="+browserRunLabel+"="+runID, "--format", format).Output()
 	if err != nil {
-		return browserEndpoint{}, false
+		return browserEndpoint{}, fmt.Errorf("cannot list Docker browser sidecars: %w", err)
 	}
-	for _, name := range strings.Fields(string(out)) {
-		return browserEndpoint{Kind: "docker", Container: name}, true
+	var statusErr error
+	for _, line := range strings.Split(strings.TrimRight(string(out), "\n"), "\n") {
+		if line == "" {
+			continue
+		}
+		fields := strings.Split(line, "\t")
+		if len(fields) != 3 || fields[0] == "" || fields[1] == "" {
+			statusErr = errors.New("invalid Docker browser sidecar metadata")
+			continue
+		}
+		endpoint := browserEndpoint{Kind: "docker", Container: fields[0], DockerOwner: fields[1], DockerGeneration: fields[2]}
+		if err := endpoint.checkWorkspace(ctx); err == nil {
+			return endpoint, nil
+		} else if statusErr == nil || errors.Is(statusErr, errDockerWorkspaceUnavailable) {
+			statusErr = err
+		}
 	}
-	return browserEndpoint{}, false
+	return browserEndpoint{}, statusErr
+}
+
+func (e browserEndpoint) checkWorkspace(ctx context.Context) error {
+	generation, err := dockerWorkspaceGeneration(ctx, e.DockerOwner)
+	if err != nil {
+		return err
+	}
+	if e.DockerGeneration != generation {
+		return fmt.Errorf("%w: browser sidecar belongs to a previous workspace generation", errDockerWorkspaceUnavailable)
+	}
+	return nil
 }
 
 func hostDevToolsAlive(ctx context.Context, port int) bool {

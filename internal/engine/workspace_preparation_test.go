@@ -247,7 +247,7 @@ func TestWorkspacePreparationRefreshesIdleLegacyDocker(t *testing.T) {
 			}
 			t.Cleanup(func() { _ = e.releaseRunEnvironment(run.ID, false) })
 			if out, err := exec.CommandContext(ctx, "docker", "run", "-d", "--name", "agentflow-"+env.ID(),
-				"-v", env.Workspace()+":/workspace", "--entrypoint", "sh", image, "-c", "exec sleep infinity").CombinedOutput(); err != nil {
+				"-v", env.Workspace()+":/workspace", "--entrypoint", "sh", image, "-c", "cd /workspace && exec sleep infinity").CombinedOutput(); err != nil {
 				t.Fatalf("create legacy Docker container: %v (%s)", err, out)
 			}
 			dirty := filepath.Join(env.Workspace(), "uncommitted.txt")
