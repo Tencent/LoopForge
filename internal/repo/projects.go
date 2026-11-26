@@ -210,6 +210,15 @@ func (r *ProjectsRepo) writeProject(v domain.Project) error {
 				v.CreatedAt = *current.Created
 			}
 		}
+		// The RSI settings endpoint owns this separate project setting.
+		v.SOPDetection = nil
+		if current.ID != "" {
+			var stored domain.Project
+			if err := jsonUnmarshal(current.Payload, &stored); err != nil {
+				return err
+			}
+			v.SOPDetection = stored.SOPDetection
+		}
 		payload := v
 		payload.Members, payload.MembersVersion = nil, ""
 		payload.GitToken, payload.CodeBuddyAPIKey = "", ""

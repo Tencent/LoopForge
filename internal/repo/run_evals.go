@@ -78,7 +78,7 @@ func (r *RunsRepo) RunEval(id string) (domain.RunEvalRecord, bool) {
 
 func (r *RunsRepo) LatestRunEval(runID string) (domain.RunEvalRecord, bool) {
 	var row runEvalRow
-	if err := r.DB.Where("run_id = ?", runID).Order("created_at DESC, id DESC").Limit(1).Take(&row).Error; err != nil {
+	if err := r.DB.Where("run_id = ? AND id NOT LIKE ?", runID, sopDetectionIDPrefix+"%").Order("created_at DESC, id DESC").Limit(1).Take(&row).Error; err != nil {
 		return domain.RunEvalRecord{}, false
 	}
 	return runEvalFromRow(row)
@@ -104,7 +104,7 @@ func (r *RunsRepo) ActiveRunEval(runID string) (domain.RunEvalRecord, bool) {
 
 func activeRunEval(db *gorm.DB, runID string) (domain.RunEvalRecord, bool) {
 	var row runEvalRow
-	if err := db.Where("run_id = ? AND status = ?", runID, domain.RunEvalRunning).Order("created_at DESC").Limit(1).Take(&row).Error; err != nil {
+	if err := db.Where("run_id = ? AND status = ? AND id NOT LIKE ?", runID, domain.RunEvalRunning, sopDetectionIDPrefix+"%").Order("created_at DESC").Limit(1).Take(&row).Error; err != nil {
 		return domain.RunEvalRecord{}, false
 	}
 	return runEvalFromRow(row)
@@ -117,10 +117,10 @@ func (r *RunsRepo) trimRunEvals(db *gorm.DB, runID string) error {
 	var err error
 	if r.isMySQL() {
 		err = db.Raw(
-			"SELECT id FROM run_evals WHERE run_id = ? ORDER BY created_at DESC, id DESC LIMIT 18446744073709551615 OFFSET ?",
+			"SELECT id FROM run_evals WHERE run_id = ? AND id NOT LIKE 'sop-check-%' ORDER BY created_at DESC, id DESC LIMIT 18446744073709551615 OFFSET ?",
 			runID, maxRunEvalsPerRun).Scan(&ids).Error
 	} else {
-		err = db.Model(&runEvalRow{}).Where("run_id = ?", runID).Order("created_at DESC, id DESC").Limit(math.MaxInt64).Offset(maxRunEvalsPerRun).Pluck("id", &ids).Error
+		err = db.Model(&runEvalRow{}).Where("run_id = ? AND id NOT LIKE ?", runID, "sop-check-%").Order("created_at DESC, id DESC").Limit(math.MaxInt64).Offset(maxRunEvalsPerRun).Pluck("id", &ids).Error
 	}
 	if err != nil {
 		return err

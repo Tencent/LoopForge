@@ -995,6 +995,7 @@ async function boot(){
       return;
     }
     if(name==='flow')applyFlowRoute();
+    if(name==='evolution'&&typeof evoApplyRoute==='function')evoApplyRoute();
     if(name==='agents')applyAgentRoute();
     if(isProjectSharedAsset(name))applyAssetRoute();
     if(name==='projects')applyProjectAdminRoute();
@@ -1437,6 +1438,7 @@ function bind(){
     renderObsTabs();
     if($('#dashboardView').classList.contains('active'))renderDashboard();
     if($('#observabilityView').classList.contains('active'))refreshObs();
+    if($('#evolutionView')?.classList.contains('active')&&typeof renderEvolutionView==='function')renderEvolutionView();
     if($('#sopsView').classList.contains('active'))refreshWorkflowMetrics();
   };
   document.querySelectorAll('[data-scope-for]').forEach(bar=>{
@@ -1697,7 +1699,7 @@ function settingsSidebarExpanded(){
 }
 let settingsSidebarEntryFrame=0;
 let settingsSidebarWasManaged=false;
-const settingsManagementViews=['settings','assistant','projects','bots','projectCredentials','sops','flow','runs','aiSchedules','agents','mcp','rules','skills','runners','sandboxes','guide','platform'];
+const settingsManagementViews=['settings','assistant','projects','bots','projectCredentials','sops','flow','runs','aiSchedules','agents','mcp','rules','skills','runners','sandboxes','evolution','guide','platform'];
 const settingsRouteMotion=matchMedia('(prefers-reduced-motion: reduce)');
 let settingsRouteTransition=null;
 let settingsRouteApplying=false;
@@ -1877,7 +1879,7 @@ function setSettingsSidebarExpanded(expanded,focusToggle=false){
     });
   }
 }
-function viewTitles(){return {management:'设置',collaboration:'AI 工作台',issues:'需求列表',aiSchedules:'定时任务',bots:'通道管理',assistant:'AI 助手',runs:'运行记录',approvals:'待我确认',sops:'流程模板',flow:'流程设计',agents:'角色定义',mcp:'能力资产',rules:'能力资产',skills:'能力资产',sandboxes:'沙箱管理',observability:'统计',projects:'项目配置',projectCredentials:'凭据管理',platform:'平台管理',runners:'执行机器',settings:'个人配置',access:'访问密钥',guide:'访问密钥'}}
+function viewTitles(){return {management:'设置',collaboration:'AI 工作台',issues:'需求列表',aiSchedules:'定时任务',bots:'通道管理',assistant:'AI 助手',runs:'运行记录',approvals:'待我确认',sops:'流程模板',flow:'流程设计',agents:'角色定义',mcp:'能力资产',rules:'能力资产',skills:'能力资产',sandboxes:'沙箱管理',observability:'统计',projects:'项目配置',projectCredentials:'凭据管理',platform:'平台管理',runners:'执行机器',settings:'个人配置',access:'访问密钥',guide:'访问密钥',evolution:'RSI工作台'}}
 // 设置侧栏只列一级入口；被合并进同一页的子视图（能力资产的类型 Tab，
 // 从流程模板打开的流程设计）按 data-nav-match 高亮它们所属的入口。
 function settingsNavMatches(btn,name){return btn.dataset.view===name||String(btn.dataset.navMatch||'').split(/\s+/).includes(name)}
@@ -1999,6 +2001,7 @@ function persistView(name,push=false){
     if(linked)next=runViewHash(linked);
   }
   if(name==='flow')next=flowViewHash();
+  if(name==='evolution'&&routePart(0)==='evolution')next=location.hash;
   if(name==='agents'&&agentRouteId())next=`#/agents/${encodeURIComponent(agentRouteId())}${routePart(2)==='gov'?'/gov':''}`;
   if(isProjectSharedAsset(name)&&routePart(0)===name&&assetRouteId())next=`#/${name}/${encodeURIComponent(assetRouteId())}`;
   if(name==='projects')next=projectAdminHash(state.projectAdminDetailId||'',state.projectAdminTab);
@@ -2048,6 +2051,7 @@ function switchView(name){
   const staying=activeViewName()===name;
   const prevView=state.currentView;
   if(previous==='observability'&&name!=='observability'&&typeof obsDisposeCharts==='function'){obsCollapse?.({silent:true});obsDisposeCharts();obsDisposeSelects?.()}
+  if(previous==='evolution'&&name!=='evolution'&&typeof evoDispose==='function')evoDispose();
   state.currentView=name;
   if(name!=='runs')stopQueuedRunRefresh();
   $$('.nav[data-view]').forEach(n=>n.classList.toggle('active',settingsNavMatches(n,name)));
@@ -2114,6 +2118,7 @@ function switchView(name){
   if(name==='aiSchedules'){renderScheduleJobs();refreshAISchedules()}
   if(name==='bots')loadBots();
   if(name==='assistant')loadAssistantSettings();
+  if(name==='evolution'&&typeof renderEvolutionView==='function')renderEvolutionView();
   if(name==='sops'){if(!staying&&state.data){sopCatalogMotion.reset();renderSOPCatalog()}refreshWorkflowMetrics()}
   if(name==='dashboard')refreshDashboard()
   if(name==='approvals')renderApprovals(false)

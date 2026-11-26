@@ -1,0 +1,696 @@
+/* 进化中心：kb-* 面板、行、徽标、抽屉来自 knowledge.css 与 app/harness-ui.css（已登记 #evolutionView）。
+ * 这里只补问题队列（分组、区间条、趋势）、提案列表卡片、回放统计、正文 diff 与宽抽屉。 */
+#evolutionView .kb-head { align-items: center; }
+.evo-head-actions { display: flex; flex: none; gap: 8px; }
+
+/* 待决策横幅 */
+.evo-banner { display: flex; width: 100%; align-items: center; gap: 10px; margin: 0 0 12px; padding: 10px 14px; border: 1px solid color-mix(in srgb, var(--hui-warn) 35%, transparent); border-radius: 10px; background: color-mix(in srgb, var(--hui-warn) 8%, var(--hui-surface)); color: var(--hui-text); font: inherit; font-size: 13px; text-align: left; cursor: pointer; transition: border-color 150ms ease; }
+.evo-banner:hover { border-color: var(--hui-warn); }
+.evo-banner:focus-visible { outline: 2px solid var(--kb-focus, var(--hui-accent)); outline-offset: 2px; }
+.evo-banner > span:nth-child(2) { flex: 1; min-width: 0; }
+.evo-banner > b { flex: none; color: var(--hui-warn); font-weight: 600; }
+.evo-banner-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--hui-warn); animation: evo-blink 1.4s ease-in-out infinite; }
+
+/* 筛选条 */
+.evo-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 0 0 12px; }
+.evo-toolbar .kb-seg { flex: none; }
+#evolutionView .evo-search { flex: 1 1 240px; height: 36px; }
+
+/* 分组面板：标题即折叠按钮 */
+#evolutionView .evo-group { margin-bottom: 12px; }
+.evo-group-head { display: flex; width: 100%; align-items: center; gap: 8px; padding: 12px 16px; border: 0; background: none; color: var(--hui-text); font: inherit; text-align: left; cursor: pointer; }
+.evo-group-head:focus-visible { outline: 2px solid var(--kb-focus, var(--hui-accent)); outline-offset: -2px; border-radius: 14px; }
+.evo-group-head h3 { margin: 0; font-size: 14px; font-weight: 600; }
+.evo-group-hint { flex: 1; min-width: 0; overflow: hidden; color: var(--hui-tertiary); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.evo-group-caret { flex: none; width: 0; height: 0; border-top: 4px solid transparent; border-bottom: 4px solid transparent; border-left: 6px solid var(--hui-tertiary); transition: transform 150ms ease; }
+.evo-group-head[aria-expanded="true"] .evo-group-caret { transform: rotate(90deg); }
+.evo-group.g-fix .evo-group-head h3 { color: var(--hui-error); }
+.evo-group-body { border-top: 1px solid var(--hui-border-soft); }
+
+#evolutionView .evo-page { padding-top: 24px; }
+#evolutionView .kb-head { gap: 14px; margin-bottom: 20px; }
+#evolutionView .kb-head-main { flex: 1; }
+.evo-page-icon { display: grid; place-items: center; flex: none; width: 44px; height: 44px; color: var(--hui-accent); background: linear-gradient(145deg, var(--hui-accent-soft), var(--hui-surface)); border-radius: 12px; }
+.evo-page-icon svg { width: 27px; height: 27px; }
+.evo-icon { width: 18px; height: 18px; flex: none; vertical-align: middle; }
+.evo-head-actions .kb-btn { display: inline-flex; align-items: center; gap: 7px; }
+.evo-head-actions svg { width: 16px; height: 16px; }
+.evo-head-actions .evo-icon-button { width: 34px; padding: 0; justify-content: center; }
+.evo-attention { display: flex; align-items: center; gap: 14px; margin-bottom: 24px; padding: 17px 20px; border: 1px solid var(--hui-border); border-radius: 12px; background: var(--hui-surface); box-shadow: var(--hui-panel-shadow); }
+.evo-attention > div { flex: 1; min-width: 0; }
+.evo-attention strong { font-size: 14px; font-weight: 600; }
+.evo-attention p { margin: 5px 0 0; color: var(--hui-muted); font-size: 12px; }
+.evo-attention-icon { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 50%; color: var(--hui-warn); background: color-mix(in srgb, var(--hui-warn) 9%, transparent); }
+.evo-recent-change { display: flex; align-items: center; gap: 14px; padding: 16px 20px; margin-top: 20px; border: 1px solid var(--hui-border); border-radius: 12px; background: var(--hui-surface); font-size: 13px; }
+.evo-recent-change > div { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.evo-recent-change > svg { color: var(--hui-success); }
+.evo-recent-change p, .evo-page-note { margin: 6px 0 0; color: var(--hui-muted); font-size: 12px; line-height: 1.7; }
+.evo-page-note { margin-top: 18px; }
+.evo-settings-head { margin: 8px 0 20px; }
+.evo-settings-head h2 { font-size: 18px; margin: 12px 0 4px; }
+.evo-settings-head p, .evo-toolbar-hint { color: var(--hui-muted); font-size: 12px; }
+.evo-changes .evo-toolbar { margin: 18px 0 14px; }
+.evo-changes .evo-toolbar > select { width: auto; }
+.evo-toolbar-hint { margin-left: auto; }
+.evo-overview-trend { padding: 12px 16px; min-width: 0; border: 1px solid var(--hui-border-soft); border-radius: 14px; background: var(--hui-surface); }
+.evo-overview-trend h3 { margin: 0; font-size: 13px; font-weight: 600; }
+.evo-overview-trend h3 span { color: var(--hui-muted); font-weight: 400; }
+.evo-overview-trend > svg { display: block; width: 100%; height: 62px; color: var(--hui-accent); }
+.evo-overview-trend circle { fill: var(--hui-surface); stroke: currentColor; stroke-width: 1.5; }
+.evo-trend-dates { display: flex; justify-content: space-between; color: var(--hui-muted); font-size: 10px; }
+.evo-trend-empty { display: grid; place-items: center; height: 62px; color: var(--hui-muted); font-size: 12px; }
+#evolutionBody { min-width: 0; }
+#evolutionView .evo-tabs { display: flex; margin: 0 0 16px; padding: 0; gap: 26px; border-bottom: 1px solid var(--hui-border); }
+#evolutionView .evo-tabs button { position: relative; display: inline-flex; align-items: center; gap: 9px; height: 49px; padding: 0 4px; border: 0; background: none; color: var(--hui-muted); font: inherit; font-size: 13px; cursor: pointer; }
+#evolutionView .evo-tabs button.active { color: var(--hui-accent); font-weight: 600; }
+#evolutionView .evo-tabs button.active::after { content: ''; position: absolute; height: 2px; bottom: -1px; right: 0; left: 0; background: var(--hui-accent); }
+#evolutionView .evo-tabs button:focus-visible { outline: 2px solid var(--hui-accent); outline-offset: -2px; border-radius: 5px; }
+#evolutionView .evo-tabs .kb-count { margin: 0; }
+#evolutionView :is(.evo-head-actions, .evo-recent-change, .evo-settings-head) .kb-btn.quiet { color: var(--hui-secondary); }
+#evolutionView :is(.evo-head-actions, .evo-recent-change, .evo-settings-head) .kb-btn.quiet:hover:not(:disabled) { background: var(--hui-soft); }
+#evolutionView .evo-recent-change .kb-btn.quiet { color: var(--hui-accent); }
+#evolutionView :is(.evo-issue, .evo-row-primary, .evo-row-menu summary):hover { color: var(--hui-accent); }
+#evolutionView .evo-issues { overflow: visible; border: 0; box-shadow: none; margin: 0; border-radius: 0 0 14px 14px; }
+.evo-status-tabs { display: flex; flex-wrap: wrap; gap: 8px; padding: 18px 18px 4px; }
+.evo-status-tabs button { display: inline-flex; align-items: center; gap: 5px; padding: 3px 11px; border: 1px solid var(--hui-border-soft); border-radius: 18px; background: none; color: var(--hui-muted); font: inherit; font-size: 12px; cursor: pointer; }
+.evo-status-tabs button.active { border-color: transparent; color: var(--hui-accent); background: var(--hui-accent-soft); font-weight: 600; }
+#evolutionView .evo-status-tabs .kb-count { margin: 0; }
+.evo-issues .evo-toolbar { margin: 0; padding: 14px 18px 10px; }
+.evo-select { display: flex; align-items: center; min-width: 0; position: relative; color: var(--hui-secondary); }
+.evo-select > svg { position: absolute; left: 12px; pointer-events: none; width: 16px; height: 16px; z-index: 1; }
+#evolutionView .evo-select select { width: auto; min-width: 134px; height: 36px; padding: 0 30px 0 36px; font-size: 12px; border: 1px solid var(--hui-border-strong); border-radius: 9px; background-color: var(--hui-surface); box-shadow: 0 2px 5px color-mix(in srgb, var(--hui-text) 3%, transparent); }
+#evoIssueList, .evo-change-table { padding: 0; border: 1px solid var(--hui-border); border-radius: 12px; background: var(--hui-surface); box-shadow: var(--hui-panel-shadow); }
+.evo-issue-columns, .evo-issue-row { display: grid; grid-template-columns: 16px minmax(0, 1.8fr) minmax(0, 1.1fr) minmax(0, 1.6fr) 130px; align-items: center; gap: 18px; padding: 18px 20px; border-bottom: 1px solid var(--hui-border-soft); }
+.evo-change-columns, .evo-change-row { display: grid; grid-template-columns: minmax(0, 1.8fr) minmax(0, 1.1fr) minmax(0, 1.6fr) 116px; align-items: center; gap: 22px; padding: 20px; border-bottom: 1px solid var(--hui-border-soft); }
+.evo-issue-columns, .evo-change-columns { padding-block: 12px; color: var(--hui-muted); font-size: 12px; background: var(--hui-canvas); border-radius: 12px 12px 0 0; }
+.evo-issue-row, .evo-change-row { min-height: 122px; }
+.evo-issue-row:hover, .evo-change-row:hover { background: var(--hui-canvas); }
+.evo-issue-row.selected { background: var(--hui-accent-soft); }
+#evolutionView .evo-issue { display: block; width: 100%; min-width: 0; margin: 0; padding: 0; border: 0; background: none; color: var(--hui-text); font: inherit; text-align: left; cursor: pointer; }
+#evolutionView .evo-issue > b, .evo-change-row > div > b { display: block; color: var(--hui-text); font-size: 13px; line-height: 1.7; font-weight: 600; overflow-wrap: anywhere; }
+#evolutionView .evo-issue.v-fix .evo-issue-desc > span:first-child { color: var(--hui-error); }
+#evolutionView :is(.evo-issue, .evo-status-tabs button, .evo-row-primary, .evo-row-menu summary, .evo-list-footer button):focus-visible { outline: 2px solid var(--hui-accent); outline-offset: 2px; }
+#evolutionView input[type="checkbox"]:not([role="switch"], .hui-switch) { width: 15px; height: 15px; margin: 0; accent-color: var(--hui-accent); cursor: pointer; }
+.evo-issue-desc { display: flex; flex-wrap: wrap; align-items: center; gap: 5px 8px; margin-top: 7px; color: var(--hui-muted); font-size: 11px; overflow-wrap: anywhere; }
+.evo-object, .evo-change-copy, .evo-change-row > div { min-width: 0; overflow-wrap: anywhere; }
+.evo-object-name { display: flex; align-items: center; gap: 7px; font-size: 13px; font-weight: 500; }
+.evo-object-name svg { width: 15px; height: 15px; color: var(--hui-muted); }
+.evo-object small, .evo-change-row > div > small { display: block; margin-top: 6px; font-size: 11px; color: var(--hui-muted); }
+.evo-change-copy p { margin: 0 0 8px; font-size: 12px; line-height: 1.7; }
+.evo-change-copy > div { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.evo-change-copy small { color: var(--hui-muted); font-size: 11px; }
+.evo-row-actions { display: flex; align-items: center; justify-content: flex-end; gap: 7px; }
+.evo-row-primary { display: inline-flex; align-items: center; justify-content: center; gap: 5px; padding: 6px 9px; border: 1px solid transparent; border-radius: 7px; background: var(--hui-accent-soft); color: var(--hui-accent); font: inherit; font-size: 12px; white-space: nowrap; cursor: pointer; }
+.evo-row-primary:hover { background: var(--hui-accent-soft); }
+.evo-row-primary .evo-icon { width: 12px; height: 12px; }
+.evo-row-menu { position: relative; }
+.evo-row-menu summary { list-style: none; padding: 2px 5px; border-radius: 5px; color: var(--hui-secondary); font-weight: 700; cursor: pointer; }
+.evo-row-menu summary::-webkit-details-marker { display: none; }
+.evo-row-menu[open] summary { background: var(--hui-accent-soft); }
+.evo-row-menu-items { position: absolute; top: 100%; right: 0; z-index: 10; display: flex; flex-direction: column; width: 155px; padding: 5px; border: 1px solid var(--hui-border); border-radius: 8px; background: var(--hui-surface); box-shadow: var(--hui-popover-shadow); }
+.evo-row-menu-items button { border: 0; border-radius: 5px; padding: 9px 10px; background: none; color: var(--hui-text); text-align: left; font: inherit; font-size: 12px; cursor: pointer; }
+.evo-row-menu-items button:hover { background: var(--hui-soft); }
+.evo-list-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 0; color: var(--hui-secondary); font-size: 12px; }
+.evo-list-footer nav { display: flex; align-items: center; gap: 8px; }
+.evo-list-footer button { min-width: 29px; height: 29px; padding: 0 8px; border: 1px solid var(--hui-border); border-radius: 7px; background: var(--hui-surface); color: var(--hui-secondary); font: inherit; cursor: pointer; }
+.evo-list-footer button[aria-current="page"] { background: var(--hui-accent); border-color: var(--hui-accent); color: var(--hui-on-accent); box-shadow: 0 2px 6px var(--hui-accent-soft); }
+.evo-list-footer button:disabled, .evo-row-primary:disabled { opacity: .4; cursor: not-allowed; }
+.evo-batch { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; padding: 8px 10px; background: var(--hui-accent-soft); color: var(--hui-accent); border-radius: 7px; font-size: 12px; }
+.evo-list-note { padding: 0 18px 14px; color: var(--hui-muted); font-size: 11px; }
+#evoPane > .evo-group, #evoPane > .evo-assets, #evoPane > .evo-samples { margin: 16px; }
+
+#evoFindingModal { z-index: 150; padding: 20px; background: var(--hui-scrim); backdrop-filter: blur(3px); color: var(--hui-text); font: 14px/1.5 var(--hui-sans); }
+.evo-finding-dialog { display: flex; flex-direction: column; width: min(1120px, 96vw); max-height: 90vh; max-height: 90dvh; min-width: 0; overflow: hidden; border: 1px solid var(--hui-border); border-radius: 16px; background: var(--hui-surface); box-shadow: var(--hui-popover-shadow); }
+.evo-finding-head { position: relative; flex: none; padding: 20px 24px 14px; border-bottom: 1px solid var(--hui-border); }
+.evo-finding-head h2 { margin: 8px 36px 6px 0; font-size: 19px; overflow-wrap: anywhere; }
+.evo-finding-head p { margin: 0; color: var(--hui-muted); font-size: 13px; overflow-wrap: anywhere; }
+.evo-finding-head > small { display: block; margin-top: 8px; color: var(--hui-muted); font-size: 12px; }
+.evo-finding-close { position: absolute; top: 14px; right: 16px; width: 32px; height: 32px; border: 0; border-radius: 6px; background: none; color: var(--hui-muted); font-size: 24px; cursor: pointer; }
+.evo-finding-close:hover { background: var(--hui-soft); }
+.evo-finding-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 14px; }
+.evo-finding-actions > :last-child { margin-left: auto; }
+#evoFindingModal .kb-btn { padding: 6px 12px; border: 1px solid var(--hui-border-strong); border-radius: 8px; background: var(--hui-surface); color: var(--hui-text); font: inherit; font-size: 13px; cursor: pointer; }
+#evoFindingModal .kb-btn.primary { border-color: var(--hui-accent); background: var(--hui-accent); color: var(--hui-on-accent); }
+#evoFindingModal .kb-btn.quiet { border-color: transparent; color: var(--hui-muted); }
+#evoFindingModal .kb-btn:disabled { opacity: .5; cursor: not-allowed; }
+#evoFindingModal :focus-visible { outline: 2px solid var(--hui-accent); outline-offset: 2px; }
+.evo-finding-scroll { min-height: 0; overflow: auto; overscroll-behavior: contain; padding: 22px 26px; }
+.evo-detail-kicker { display: flex; align-items: center; gap: 8px; color: var(--hui-muted); font-size: 12px; }
+.evo-detail-section + .evo-detail-section, #evoLinkedChange > .evo-detail-section { margin-top: 22px; }
+.evo-detail-section > h3 { display: flex; align-items: center; gap: 9px; margin: 0 0 12px; color: var(--hui-text); font-size: 14px; font-weight: 600; }
+.evo-detail-section > h3 > span { display: grid; place-items: center; width: 23px; height: 23px; border-radius: 6px; background: var(--hui-soft); color: var(--hui-muted); font: 11px var(--hui-mono); }
+.evo-detail-lead, .evo-detail-rationale { margin: 0; color: var(--hui-secondary); font-size: 13px; line-height: 1.8; overflow-wrap: anywhere; white-space: pre-wrap; }
+.evo-evidence { margin-top: 12px; padding: 12px 15px; border: 1px solid var(--hui-border); border-radius: 8px; color: var(--hui-secondary); font-size: 12px; overflow-wrap: anywhere; }
+.evo-detail-more { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--hui-border); color: var(--hui-secondary); font-size: 12px; }
+.evo-detail-more > summary { cursor: pointer; color: var(--hui-muted); }
+.evo-detail-more p { line-height: 1.8; overflow-wrap: anywhere; }
+.evo-change-target { overflow: hidden; border: 1px solid var(--hui-border); border-radius: 10px; }
+.evo-change-target > .evo-object-name, .evo-change-target > small, .evo-change-target > p:not(.evo-detail-scope) { margin: 12px 16px; }
+.evo-change-target > small { display: block; color: var(--hui-muted); font-size: 12px; }
+.evo-target-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 16px; background: var(--hui-canvas); border-bottom: 1px solid var(--hui-border); }
+.evo-target-head > div { min-width: 0; overflow-wrap: anywhere; }
+.evo-target-head small { display: block; margin-top: 4px; color: var(--hui-muted); font-size: 11px; }
+.evo-before-after { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+.evo-before-after > section { min-width: 0; padding-bottom: 12px; }
+.evo-before-after > section + section { border-left: 1px solid var(--hui-border); }
+.evo-before-after h4 { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 0; padding: 12px 14px; color: var(--hui-secondary); font-size: 12px; font-weight: 500; }
+.evo-before-after h4 small { color: var(--hui-muted); font-size: 10px; font-weight: 400; }
+.evo-before-after .evo-diff-line { padding: 4px 12px; font: 12px/1.8 var(--hui-mono); }
+.evo-detail-scope { margin: 0; padding: 11px 16px; background: var(--hui-canvas); border-top: 1px solid var(--hui-border); color: var(--hui-muted); font-size: 11px; line-height: 1.8; overflow-wrap: anywhere; }
+.evo-validation-summary { padding: 14px 16px; border: 1px solid var(--hui-border); border-radius: 9px; }
+.evo-validation-summary h4 { margin: 0 0 7px; font-size: 13px; }
+.evo-validation-summary p { margin: 6px 0; font-size: 12px; line-height: 1.7; color: var(--hui-secondary); }
+.evo-validation-summary small { color: var(--hui-muted); font-size: 11px; }
+.evo-detail-footer { flex: none; display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 9px; padding: 16px 24px; border-top: 1px solid var(--hui-border); background: var(--hui-canvas); }
+.evo-detail-footer > span { flex: 1 1 220px; color: var(--hui-muted); font-size: 12px; line-height: 1.7; }
+.evo-detail-footer > div { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+#evoDetailCanary { margin-top: 18px; padding: 16px; background: var(--hui-soft); border-radius: 9px; }
+#evoDetailCanary[hidden] { display: none; }
+#evoFindingModal .kb-field-pair { display: flex; gap: 12px; }
+#evoFindingModal .kb-input { width: 100%; padding: 7px 10px; border: 1px solid var(--hui-border); border-radius: 7px; background: var(--hui-surface); color: var(--hui-text); }
+#evoFindingModal .kb-cap { margin-top: 14px; color: var(--hui-muted); font-size: 12px; }
+#evoFindingModal .evo-count-row { display: flex; flex-wrap: wrap; justify-content: flex-start; align-items: center; gap: 8px; margin: 10px 0; }
+#evoFindingModal .evo-count-row .hui-badge { margin: 0; }
+.evo-finding-stats { display: flex; flex-wrap: wrap; align-items: baseline; gap: 16px 24px; padding: 14px 24px; border-bottom: 1px solid var(--hui-border-soft); }
+.evo-finding-stats > div b { display: block; font-size: 18px; font-variant-numeric: tabular-nums; }
+.evo-finding-stats small { color: var(--hui-muted); font-size: 12px; }
+.evo-finding-stats .evo-how { flex: 1 1 240px; margin: 0; }
+.evo-records-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 24px 8px; }
+.evo-records-head h3 { margin: 0; font-size: 14px; font-weight: 600; }
+.evo-records-head select { max-width: 150px; padding: 4px 8px; border: 1px solid var(--hui-border); border-radius: 6px; background: var(--hui-surface); color: var(--hui-text); font: inherit; font-size: 12px; }
+.evo-record-table { overflow-x: auto; }
+.evo-record-table table { width: 100%; min-width: 700px; table-layout: fixed; border-collapse: collapse; font-size: 13px; }
+.evo-record-table th, .evo-record-table td { padding: 10px 16px; border-bottom: 1px solid var(--hui-border-soft); text-align: left; vertical-align: top; overflow-wrap: anywhere; }
+.evo-record-table th { color: var(--hui-muted); font-size: 12px; font-weight: 500; }
+.evo-record-table th:first-child { width: 12%; }
+.evo-record-table th:nth-child(2) { width: 19%; }
+.evo-record-table th:nth-child(3) { width: 23%; }
+.evo-record-table th:nth-child(4) { width: 13%; }
+.evo-record-table td small { display: block; color: var(--hui-muted); margin-top: 4px; font-size: 12px; }
+.evo-record-table tbody tr:hover { background: var(--hui-soft); }
+.evo-record-note, .evo-record-caption { padding: 8px 24px; color: var(--hui-muted); font-size: 12px; text-align: left; }
+.evo-record-pages { display: flex; align-items: center; justify-content: flex-end; gap: 12px; padding: 12px 24px; color: var(--hui-muted); font-size: 12px; }
+
+/* 后验区间条：浅色条是 90% 区间，圆点是估计值，竖线是项目平均 */
+.evo-ci { position: relative; height: 14px; }
+.evo-ci::before { content: ""; position: absolute; top: 6px; right: 0; left: 0; height: 2px; border-radius: 1px; background: var(--hui-border-soft); }
+.evo-ci-range { position: absolute; top: 3px; height: 8px; border-radius: 4px; background: color-mix(in srgb, var(--hui-warn) 30%, transparent); }
+.evo-ci-dot { position: absolute; top: 2px; width: 10px; height: 10px; margin-left: -5px; border: 2px solid var(--hui-surface); border-radius: 50%; background: var(--hui-warn); box-sizing: border-box; }
+.evo-ci-base { position: absolute; top: -1px; width: 2px; height: 16px; margin-left: -1px; border-radius: 1px; background: var(--hui-text); opacity: .55; }
+.evo-ci.v-fix .evo-ci-range { background: color-mix(in srgb, var(--hui-error) 26%, transparent); }
+.evo-ci.v-fix .evo-ci-dot { background: var(--hui-error); }
+.evo-ci.v-noise .evo-ci-range { background: color-mix(in srgb, var(--hui-text) 12%, transparent); }
+.evo-ci.v-noise .evo-ci-dot { background: var(--hui-tertiary); }
+.evo-ci.big { height: 24px; margin: 10px 0 18px; }
+.evo-ci.big::before { top: 11px; }
+.evo-ci.big .evo-ci-range { top: 6px; height: 12px; border-radius: 6px; }
+.evo-ci.big .evo-ci-dot { top: 5px; width: 14px; height: 14px; margin-left: -7px; }
+.evo-ci.big .evo-ci-base { top: 0; height: 24px; }
+.evo-ci-tick { position: absolute; top: 26px; color: var(--hui-tertiary); font-size: 11px; transform: translateX(-50%); }
+.evo-ci-tick.start { transform: none; }
+.evo-ci-tick.end { transform: translateX(-100%); }
+.evo-ci-legend { display: flex; flex-wrap: wrap; gap: 6px 16px; color: var(--hui-tertiary); font-size: 12px; }
+.evo-ci-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.evo-ci-legend i { display: inline-block; }
+.evo-ci-legend i.dot { width: 10px; height: 10px; border-radius: 50%; background: var(--hui-warn); }
+.evo-ci-legend i.range { width: 18px; height: 8px; border-radius: 4px; background: color-mix(in srgb, var(--hui-warn) 30%, transparent); }
+.evo-ci-legend i.base { width: 2px; height: 14px; background: var(--hui-text); opacity: .55; }
+
+/* 趋势 */
+.evo-spark { display: block; overflow: visible; }
+.evo-spark rect { fill: var(--hui-border-soft); }
+.evo-spark rect.on { fill: var(--hui-warn); }
+.evo-issue.v-fix .evo-spark rect.on { fill: var(--hui-error); }
+.evo-issue.v-noise .evo-spark rect.on { fill: var(--hui-tertiary); }
+.evo-trend-big { display: flex; align-items: flex-end; gap: 8px; padding: 4px 0 8px; color: var(--hui-tertiary); font-size: 11.5px; }
+.evo-trend-big .evo-spark rect.on { fill: var(--hui-accent); }
+
+/* 抽屉：判定说明、问题构成、信号明细 */
+.evo-how { margin: 12px 0 4px; color: var(--hui-secondary); font-size: 12.5px; line-height: 1.65; }
+.evo-how > summary { color: var(--hui-accent); cursor: pointer; }
+.evo-how > p { margin: 6px 0 0; }
+.evo-kinds { display: grid; gap: 6px; padding: 4px 0 8px; }
+.evo-kind { display: grid; grid-template-columns: 72px minmax(0, 1fr) 32px; align-items: center; gap: 10px; font-size: 12.5px; }
+.evo-kind > span { color: var(--hui-secondary); }
+.evo-kind > i { height: 8px; overflow: hidden; border-radius: 4px; background: var(--hui-border-soft); }
+.evo-kind > i > em { display: block; height: 100%; border-radius: 4px; background: var(--hui-warn); }
+.evo-kind > b { color: var(--hui-text); text-align: right; font-variant-numeric: tabular-nums; }
+.evo-signals > summary { list-style: none; cursor: pointer; }
+.evo-signals > summary::-webkit-details-marker { display: none; }
+.evo-signals > summary .kb-cap::after { content: " ▸"; }
+.evo-signals[open] > summary .kb-cap::after { content: " ▾"; }
+
+/* 提案卡片（列表） */
+#evolutionView .evo-card { align-items: flex-start; padding: 12px 16px; }
+.evo-card .kb-row-title { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.evo-card-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; margin-top: 8px; color: var(--hui-tertiary); font-size: 12px; }
+.evo-card-note { margin-top: 6px; overflow: hidden; color: var(--hui-muted); font-size: 12px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.evo-progress { height: 4px; margin-top: 8px; overflow: hidden; border-radius: 2px; background: var(--hui-accent-soft); }
+.evo-progress > i { display: block; height: 100%; border-radius: 2px; background: var(--hui-accent); transition: width 220ms cubic-bezier(.16, 1, .3, 1); }
+
+/* 资产与策略 */
+#evolutionView .evo-asset-row { gap: 12px; }
+.evo-asset-main { padding: 4px 6px; margin: -4px -6px; border-radius: 8px; cursor: pointer; transition: background-color 150ms ease; }
+.evo-asset-main:hover { background: var(--kb-hover); }
+.evo-asset-main:focus-visible { outline: 2px solid var(--kb-focus); outline-offset: 0; }
+.evo-rate { width: 48px; text-align: right; }
+
+/* 抽屉 */
+#kbDrawer.evo-wide { width: min(760px, 96vw); }
+.evo-run-link { color: var(--hui-accent); text-decoration: none; }
+.evo-run-link:hover { text-decoration: underline; text-underline-offset: 2px; }
+.evo-chips { display: flex; flex-wrap: wrap; gap: 6px 12px; padding: 8px 0; }
+.evo-verdict { margin-top: 16px; color: var(--hui-text); }
+.evo-rationale { margin: 4px 0 0; color: var(--hui-secondary); font-size: 13px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.evo-hash { color: var(--hui-tertiary); }
+#kbDrawer .evo-version.is-selected { background: var(--hui-accent-soft); }
+#kbDrawer .evo-version .kb-btn[aria-pressed="true"] { border-color: var(--hui-accent); color: var(--hui-accent); }
+.evo-content { max-height: 360px; overflow: auto; }
+
+/* 流程步骤条：抽屉顶部，一步一个标签，点哪步看哪步 */
+.evo-steps { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); margin: 4px 0 0; padding: 0; list-style: none; }
+.evo-step { position: relative; min-width: 0; }
+.evo-step + .evo-step::before,
+.evo-step + .evo-step::after { content: ""; position: absolute; top: 13px; right: calc(50% + 15px); left: calc(-50% + 15px); height: 2px; border-radius: 1px; background: var(--hui-border-soft); }
+.evo-step + .evo-step::after { background: var(--hui-success); transform: scaleX(0); transform-origin: left center; }
+.evo-step.is-reached + .evo-step.is-reached::after { animation: evo-fill 420ms var(--hui-ease-flow, cubic-bezier(.16, 1, .3, 1)) forwards; animation-delay: calc(var(--i) * 110ms); }
+.evo-step > button { display: flex; width: 100%; flex-direction: column; align-items: center; gap: 4px; padding: 0 2px 10px; border: 0; background: none; color: var(--hui-tertiary); font: inherit; cursor: pointer; }
+.evo-step > button:disabled { cursor: default; }
+.evo-step > button:focus-visible { outline: 2px solid var(--kb-focus, var(--hui-accent)); outline-offset: 2px; border-radius: 8px; }
+.evo-step > button[aria-selected="true"] { box-shadow: inset 0 -2px 0 var(--hui-accent); }
+.evo-step-dot { position: relative; z-index: 1; display: grid; width: 28px; height: 28px; place-items: center; border: 2px solid var(--hui-border); border-radius: 50%; background: var(--hui-surface); color: var(--hui-tertiary); font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums; opacity: 0; transform: scale(.6); animation: evo-pop 320ms cubic-bezier(.16, 1, .3, 1) forwards; animation-delay: calc(var(--i) * 110ms); }
+.evo-step-dot svg { width: 14px; height: 14px; }
+.evo-step-name { color: var(--hui-secondary); font-size: 12.5px; font-weight: 600; white-space: nowrap; }
+.evo-step-note { max-width: 100%; overflow: hidden; color: var(--hui-tertiary); font-size: 11.5px; text-overflow: ellipsis; white-space: nowrap; }
+.evo-step > button[aria-selected="true"] .evo-step-name { color: var(--hui-text); }
+.evo-step.is-todo .evo-step-name { color: var(--hui-tertiary); font-weight: 500; }
+.evo-step.is-done .evo-step-dot { border-color: var(--hui-success); background: var(--hui-success); color: #fff; }
+.evo-step.is-active .evo-step-dot { border-color: var(--hui-accent); color: var(--hui-accent); }
+.evo-step.is-wait .evo-step-dot { border-color: var(--hui-warn); color: var(--hui-warn); }
+.evo-step.is-fail .evo-step-dot { border-color: var(--hui-error); background: var(--hui-error); color: #fff; }
+.evo-step.is-stop .evo-step-dot,
+.evo-step.is-skip .evo-step-dot { border-color: var(--hui-border-strong); background: var(--hui-canvas); color: var(--hui-secondary); }
+.evo-step.is-active .evo-step-note { color: var(--hui-accent); }
+.evo-step.is-wait .evo-step-note { color: var(--hui-warn); }
+.evo-step.is-fail .evo-step-note { color: var(--hui-error); }
+.evo-step-pulse { width: 10px; height: 10px; border-radius: 50%; background: currentColor; animation: evo-pulse 1.6s ease-out infinite; }
+
+/* 当前状态一句话 + 步骤面板 */
+.evo-now { margin: 6px 0 14px; padding: 10px 12px; border-radius: 10px; background: color-mix(in srgb, var(--hui-text) 4%, transparent); color: var(--hui-text); font-size: 13px; line-height: 1.6; }
+.evo-now.info { background: var(--hui-accent-soft); }
+.evo-now.ok { background: color-mix(in srgb, var(--hui-success) 11%, transparent); }
+.evo-now.warn { background: color-mix(in srgb, var(--hui-warn) 13%, transparent); }
+.evo-now.err { background: color-mix(in srgb, var(--hui-error) 10%, transparent); color: var(--hui-error); }
+.evo-stage-panel.is-in { animation: evo-in 260ms cubic-bezier(.16, 1, .3, 1); }
+.evo-panel-lead { margin: 0 0 10px; color: var(--hui-secondary); font-size: 13px; line-height: 1.65; }
+.evo-panel-meta { margin: 10px 0 0; color: var(--hui-tertiary); font-size: 12px; }
+.evo-change-sum { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 12px; margin-bottom: 8px; color: var(--hui-tertiary); font-size: 12px; }
+.evo-change-sum > .kb-ok, .evo-change-sum > .kb-err { font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.evo-count-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 4px; color: var(--hui-tertiary); font-size: 12px; }
+.evo-count-row > span:last-child { margin-left: auto; }
+
+/* 回放卡片：原运行 → 新正文 → 回放 */
+.evo-replay { margin-top: 10px; padding: 12px 14px; border: 1px solid var(--hui-border-soft); border-radius: 12px; background: var(--hui-surface); opacity: 0; animation: evo-in 300ms cubic-bezier(.16, 1, .3, 1) forwards; animation-delay: calc(var(--i) * 80ms); }
+.evo-replay > header { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.evo-replay > header > b { color: var(--hui-text); font-size: 13.5px; }
+.evo-replay-no { display: grid; flex: none; width: 20px; height: 20px; place-items: center; border-radius: 50%; background: var(--hui-accent-soft); color: var(--hui-accent); font-size: 11.5px; font-weight: 700; }
+.evo-replay-hint { flex: 1; min-width: 0; overflow: hidden; color: var(--hui-tertiary); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.evo-flow-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(90px, 1.1fr) minmax(0, 1fr); align-items: center; gap: 10px; margin-top: 12px; }
+.evo-pill { display: flex; flex-direction: column; gap: 1px; min-width: 0; padding: 7px 12px; border: 1px solid var(--hui-border-soft); border-radius: 10px; background: var(--hui-canvas); color: var(--hui-text); text-decoration: none; transition: border-color 150ms ease, background-color 150ms ease; }
+a.evo-pill:hover { border-color: var(--hui-accent); }
+.evo-pill small { color: var(--hui-tertiary); font-size: 11.5px; }
+.evo-pill b { overflow: hidden; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.evo-pill.ok { border-color: color-mix(in srgb, var(--hui-success) 35%, transparent); background: color-mix(in srgb, var(--hui-success) 8%, transparent); }
+.evo-pill.ok b { color: var(--hui-success); }
+.evo-pill.warn { border-color: color-mix(in srgb, var(--hui-warn) 40%, transparent); background: color-mix(in srgb, var(--hui-warn) 9%, transparent); }
+.evo-pill.warn b { color: var(--hui-warn); }
+.evo-pill.err { border-color: color-mix(in srgb, var(--hui-error) 35%, transparent); background: color-mix(in srgb, var(--hui-error) 7%, transparent); }
+.evo-pill.err b { color: var(--hui-error); }
+.evo-pill.run b { color: var(--hui-accent); }
+.evo-flow { position: relative; display: flex; flex-direction: column; align-items: center; gap: 4px; }
+.evo-flow em { color: var(--hui-accent); font-size: 11.5px; font-style: normal; font-weight: 600; white-space: nowrap; }
+.evo-flow i { position: relative; display: block; width: 100%; height: 2px; background: linear-gradient(90deg, var(--hui-accent) 50%, transparent 0) 0 0 / 10px 2px repeat-x; }
+.evo-flow i::after { content: ""; position: absolute; top: -4px; right: -1px; border: 5px solid transparent; border-right: 0; border-left: 7px solid var(--hui-accent); }
+.evo-flow.is-running i { animation: evo-dash 700ms linear infinite; }
+.evo-replay-facts { margin-top: 10px; }
+.evo-replay-facts p { display: grid; grid-template-columns: 72px minmax(0, 1fr); gap: 8px; margin: 4px 0 0; color: var(--hui-secondary); font-size: 12.5px; line-height: 1.6; overflow-wrap: anywhere; }
+.evo-replay-facts b { color: var(--hui-tertiary); font-weight: 600; }
+.evo-nodes-toggle { margin-top: 8px; }
+.evo-nodes { margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--hui-border-soft); }
+.evo-nodes-input { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 8px; margin: 0 0 8px; color: var(--hui-secondary); font-size: 12.5px; overflow-wrap: anywhere; }
+.evo-nodes-input b { color: var(--hui-tertiary); font-weight: 600; }
+.evo-nodes-head, .evo-node { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) 16px minmax(0, 1fr); align-items: start; gap: 8px; }
+.evo-nodes-head { padding: 0 10px 4px; color: var(--hui-tertiary); font-size: 11.5px; }
+.evo-node { margin-top: 4px; padding: 7px 10px; border: 1px solid transparent; border-left: 3px solid transparent; border-radius: 8px; background: var(--hui-canvas); font-size: 12.5px; opacity: 0; animation: evo-in 260ms cubic-bezier(.16, 1, .3, 1) forwards; animation-delay: calc(var(--i) * 45ms); }
+.evo-node.is-shaped { border-left-color: var(--hui-accent); }
+.evo-node.is-changed { border-color: color-mix(in srgb, var(--hui-warn) 35%, transparent); background: color-mix(in srgb, var(--hui-warn) 6%, var(--hui-canvas)); }
+.evo-node.is-reused { opacity: .7; }
+.evo-node.is-reused { animation-name: evo-in-dim; }
+.evo-node-name { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; min-width: 0; }
+.evo-node-name b { color: var(--hui-text); font-weight: 600; overflow-wrap: anywhere; }
+.evo-node-side { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.evo-node-side small { color: var(--hui-tertiary); font-size: 11.5px; }
+.evo-node-arrow { color: var(--hui-tertiary); text-align: center; }
+.evo-node-reason { grid-column: 1 / -1; color: var(--hui-secondary); font-size: 12px; line-height: 1.55; overflow-wrap: anywhere; }
+.evo-node-reason p { margin: 2px 0 0; }
+.evo-st { font-weight: 600; color: var(--hui-secondary); }
+.evo-st.ok { color: var(--hui-success); }
+.evo-st.warn { color: var(--hui-warn); }
+.evo-st.err { color: var(--hui-error); }
+.evo-st.run { color: var(--hui-accent); }
+.evo-tag { padding: 0 6px; border-radius: 5px; background: color-mix(in srgb, var(--hui-text) 6%, transparent); color: var(--hui-secondary); font-size: 11px; line-height: 18px; white-space: nowrap; }
+.evo-tag.accent { background: var(--hui-accent-soft); color: var(--hui-accent); }
+.evo-tag.warn { background: color-mix(in srgb, var(--hui-warn) 15%, transparent); color: var(--hui-warn); }
+.evo-nodes-sum { margin: 8px 0 0; color: var(--hui-tertiary); font-size: 12px; }
+
+/* 看板卡片上的迷你流程条 */
+.evo-mini { display: flex; align-items: center; gap: 3px; margin-top: 8px; }
+.evo-mini > i { width: 14px; height: 4px; border-radius: 2px; background: var(--hui-border-soft); }
+.evo-mini > i.is-done { background: var(--hui-success); }
+.evo-mini > i.is-active { background: var(--hui-accent); animation: evo-blink 1.4s ease-in-out infinite; }
+.evo-mini > i.is-wait { background: var(--hui-warn); animation: evo-blink 1.4s ease-in-out infinite; }
+.evo-mini > i.is-fail { background: var(--hui-error); }
+.evo-mini > i.is-stop, .evo-mini > i.is-skip { background: var(--hui-border-strong); }
+.evo-mini > span { margin-left: 6px; overflow: hidden; color: var(--hui-tertiary); font-size: 11.5px; text-overflow: ellipsis; white-space: nowrap; }
+
+@keyframes evo-fill { to { transform: scaleX(1); } }
+@keyframes evo-pop { to { opacity: 1; transform: scale(1); } }
+@keyframes evo-pulse { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, currentColor 45%, transparent); } 80%, 100% { box-shadow: 0 0 0 8px transparent; } }
+@keyframes evo-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+@keyframes evo-in-dim { from { opacity: 0; transform: translateY(6px); } to { opacity: .7; transform: none; } }
+@keyframes evo-dash { to { background-position: 10px 0; } }
+@keyframes evo-blink { 50% { opacity: .35; } }
+
+/* 试用 / 发布后观察 */
+.evo-trial-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin: 6px 0; color: var(--hui-secondary); font-size: 13px; }
+.evo-trial-head b { font-variant-numeric: tabular-nums; }
+.evo-arms { overflow: hidden; border: 1px solid var(--hui-border-soft); border-radius: 10px; background: var(--hui-canvas); }
+.evo-arm { display: grid; grid-template-columns: minmax(96px, 1.4fr) repeat(5, minmax(0, 1fr)); gap: 8px; align-items: center; padding: 8px 12px; font-size: 13px; }
+.evo-arm + .evo-arm { border-top: 1px solid var(--hui-border-soft); }
+.evo-arm > span { min-width: 0; overflow: hidden; color: var(--hui-text); text-overflow: ellipsis; white-space: nowrap; }
+.evo-arm > b { font-weight: 600; text-align: right; font-variant-numeric: tabular-nums; }
+.evo-arm > b small { color: var(--hui-tertiary); font-weight: 400; }
+.evo-arm-head { padding-block: 6px; background: color-mix(in srgb, var(--hui-text) 3%, transparent); }
+.evo-arm-head > span { color: var(--hui-tertiary); font-size: 12px; }
+.evo-arm-head > span + span { text-align: right; }
+.evo-canary-form { margin-top: 8px; }
+.evo-canary-go { margin-top: 10px; }
+
+/* 正文 diff */
+.evo-diff { margin-top: 4px; overflow: hidden; border: 1px solid var(--hui-border-soft); border-radius: 10px; background: var(--hui-canvas); font: 12.5px/1.7 var(--mono); }
+.evo-diff-line { display: flex; gap: 8px; padding: 0 12px; }
+.evo-diff-line > span { flex: none; width: 10px; color: var(--hui-tertiary); user-select: none; }
+.evo-diff-line > code { min-width: 0; color: var(--hui-text); font: inherit; white-space: pre-wrap; overflow-wrap: anywhere; }
+.evo-diff-line.add { background: color-mix(in srgb, var(--hui-success) 10%, transparent); }
+.evo-diff-line.add > span { color: var(--hui-success); }
+.evo-diff-line.del { background: color-mix(in srgb, var(--hui-error) 9%, transparent); }
+.evo-diff-line.del > span { color: var(--hui-error); }
+.evo-diff-line.del > code { color: var(--hui-secondary); text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--hui-error) 45%, transparent); }
+.evo-diff-line.del.w > code { text-decoration: none; }
+.evo-diff-line del.evo-w { border-radius: 3px; background: color-mix(in srgb, var(--hui-error) 22%, transparent); color: var(--hui-text); text-decoration: line-through; text-decoration-color: var(--hui-error); }
+.evo-diff-line ins.evo-w { border-radius: 3px; background: color-mix(in srgb, var(--hui-success) 26%, transparent); color: var(--hui-text); text-decoration: none; }
+.evo-diff-skip { padding: 2px 12px 2px 30px; color: var(--hui-tertiary); font-size: 12px; background: color-mix(in srgb, var(--hui-text) 3%, transparent); }
+
+/* 运行详情：回放标记 */
+.run-meta-chip.evo-replay-chip { border-color: color-mix(in srgb, var(--hui-accent) 30%, transparent); color: var(--hui-accent); }
+
+@media (max-width: 1080px) {
+  .evo-issue-columns, .evo-issue-row { grid-template-columns: 16px minmax(0, 1.5fr) minmax(0, 1fr) minmax(0, 1.5fr); gap: 14px; }
+  .evo-issue-columns > :last-child, .evo-change-columns > :last-child { display: none; }
+  .evo-row-actions { grid-column: 4; justify-content: flex-start; }
+  .evo-change-columns, .evo-change-row { grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr) minmax(0, 1.5fr); gap: 14px; }
+  .evo-change-row > button { grid-column: 3; justify-self: start; }
+  .evo-toolbar-hint { display: none; }
+}
+@media (max-width: 720px) {
+  #evolutionView .kb-head { flex-wrap: wrap; align-items: flex-start; }
+  #evolutionView .kb-head-main { flex: 1; min-width: 190px; }
+  .evo-head-actions { margin-left: auto; }
+  .evo-attention { align-items: flex-start; flex-wrap: wrap; padding: 15px; gap: 10px; }
+  .evo-attention-icon { display: none; }
+  .evo-attention > div { flex-basis: 100%; }
+  .evo-recent-change { flex-wrap: wrap; padding: 15px; }
+  .evo-recent-change > div { flex-basis: calc(100% - 40px); }
+  #evolutionView .evo-tabs { gap: 20px; padding: 0; }
+  #evolutionView .evo-tabs button { gap: 6px; font-size: 13px; }
+  .evo-filters { display: grid; grid-template-columns: minmax(0, 1fr); width: 100%; }
+  .evo-select { min-width: 0; width: 100%; }
+  #evolutionView .evo-select select { min-width: 0; max-width: 100%; width: 100%; }
+  .evo-issues .evo-toolbar, .evo-status-tabs { padding-inline: 0; }
+  #evolutionView .evo-issue { padding: 0; }
+  .evo-issue-columns { grid-template-columns: 16px 1fr; }
+  .evo-issue-columns > span:nth-child(n+3), .evo-change-columns { display: none; }
+  .evo-issue-row { grid-template-columns: 16px minmax(0, 1fr); gap: 13px; align-items: start; padding: 20px 16px; }
+  .evo-issue-row > .evo-object, .evo-issue-row > .evo-change-copy, .evo-row-actions { grid-column: 2; }
+  .evo-change-row { grid-template-columns: minmax(0, 1fr); gap: 14px; padding: 20px 16px; }
+  .evo-change-row > button { grid-column: 1; }
+  #evoIssueList { padding: 0; }
+  .evo-before-after { grid-template-columns: minmax(0, 1fr); }
+  .evo-before-after > section + section { border-left: 0; border-top: 1px solid var(--hui-border); }
+  .evo-target-head { align-items: flex-start; flex-wrap: wrap; }
+  .evo-finding-scroll { padding: 18px 16px; }
+  .evo-detail-footer { padding: 14px 16px; }
+  .evo-detail-footer > span { flex-basis: 100%; }
+  #evoFindingModal .kb-btn { font-size: 12px; padding: 6px 9px; }
+  .evo-list-footer { flex-wrap: wrap; }
+  .evo-row-actions { justify-content: flex-start; gap: 12px; }
+  #evoFindingModal { padding: 8px; }
+  .evo-finding-dialog { width: 100%; max-height: 95dvh; }
+  .evo-finding-head { padding: 14px 16px; }
+  .evo-finding-head h2 { font-size: 16px; }
+  .evo-finding-stats { padding: 12px 16px; }
+  .evo-finding-actions > :last-child { margin-left: 0; }
+  .evo-group-hint { display: none; }
+  .evo-arm { grid-template-columns: minmax(72px, 1.2fr) repeat(5, minmax(0, 1fr)); gap: 4px; padding-inline: 8px; font-size: 12px; }
+  .evo-step-note { display: none; }
+  .evo-step-name { font-size: 11.5px; white-space: normal; text-align: center; }
+  .evo-flow-row { grid-template-columns: minmax(0, 1fr) 44px minmax(0, 1fr); }
+  .evo-flow em { display: none; }
+  .evo-nodes-head, .evo-node { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 12px minmax(0, 1fr); gap: 4px; }
+  #evolutionView .evo-asset-row { flex-wrap: wrap; }
+}
+#evoPageHead[hidden] { display: none; }
+#evolutionView .evo-page { max-width: 1360px; padding-top: 30px; }
+.evo-list-columns, .evo-list-row { display: grid; grid-template-columns: minmax(220px, 1fr) minmax(220px, 1fr) 250px 16px; gap: 24px; align-items: center; }
+.evo-list-columns { padding: 12px 20px; color: var(--hui-muted); font-size: 12px; background: var(--hui-canvas); border-bottom: 1px solid var(--hui-border-soft); }
+.evo-list-impact { min-width: 0; font-variant-numeric: tabular-nums; }
+.evo-list-impact b { font-size: 13px; font-weight: 500; }
+.evo-list-impact small, .evo-list-progress > small { display: block; margin-top: 6px; color: var(--hui-muted); font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
+.evo-list-context { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; margin-top: 8px; color: var(--hui-muted); font-size: 12px; }
+.evo-list-kind { flex-shrink: 0; }
+.evo-list-explanation { margin: 12px 0 0; color: var(--hui-muted); font-size: 12px; line-height: 1.7; }
+#evolutionView .evo-page-icon { width: 24px; height: 24px; border-radius: 0; background: none; }
+#evolutionView .evo-page-icon svg { width: 24px; height: 24px; }
+.evo-list-filters { display: inline-flex; flex-wrap: wrap; gap: 2px; padding: 3px; margin: 0 0 14px; border-radius: 9px; background: var(--hui-soft); }
+.evo-list-filters button { padding: 4px 12px; border: 0; border-radius: 7px; background: none; color: var(--hui-muted); font: 13px var(--hui-sans); cursor: pointer; }
+.evo-list-filters button[aria-pressed="true"] { background: var(--hui-surface); color: var(--hui-text); font-weight: 500; box-shadow: var(--hui-panel-shadow); }
+.evo-list-filters button > span { margin-left: 6px; font-size: 12px; color: var(--hui-muted); }
+.evo-unified-list { overflow: hidden; border: 1px solid var(--hui-border); border-radius: 14px; background: var(--hui-surface); }
+.evo-list-row { width: 100%; padding: 16px 20px; border: 0; border-bottom: 1px solid var(--hui-border-soft); background: none; color: var(--hui-text); text-align: left; font: 13px var(--hui-sans); cursor: pointer; }
+.evo-list-row:last-child { border-bottom: 0; }
+.evo-list-row:hover { background: var(--hui-canvas); }
+#evolutionView :is(.evo-list-row, .evo-list-filters button, .evo-back):focus-visible { outline: 2px solid var(--hui-accent); outline-offset: -2px; }
+.evo-list-problem, .evo-list-object, .evo-list-progress { min-width: 0; }
+.evo-list-problem > b { display: block; overflow-wrap: anywhere; font-size: 14px; font-weight: 600; line-height: 1.6; }
+.evo-list-object { display: flex; gap: 6px; align-items: center; font-weight: 500; }
+.evo-list-object > span { overflow-wrap: anywhere; }
+.evo-list-object svg { flex-shrink: 0; }
+.evo-list-object svg { width: 14px; height: 14px; color: var(--hui-muted); }
+.evo-list-row > svg { width: 16px; height: 16px; color: var(--hui-tertiary); }
+.evo-list-steps { display: flex; gap: 3px; }
+.evo-list-steps i { height: 4px; flex: 1; border-radius: 2px; background: var(--hui-soft); }
+.evo-list-steps .is-done { background: var(--hui-success); }
+.evo-list-steps :is(.is-active, .is-wait) { background: var(--hui-accent); }
+.evo-list-steps .is-fail { background: var(--hui-error); }
+.evo-list-steps :is(.is-stop, .is-skip) { background: var(--hui-tertiary); }
+.evo-list-state { display: block; margin: 0; color: var(--hui-secondary); font-size: 13px; font-weight: 500; line-height: 1.6; }
+.evo-list-state.tone-info { color: var(--hui-accent); }
+.evo-list-state.tone-warn { color: var(--hui-warn); }
+.evo-list-state.tone-err, .evo-bad { color: var(--hui-error); }
+.evo-list-effect { text-align: right; font-size: 12px; font-variant-numeric: tabular-nums; line-height: 1.5; }
+.evo-list-effect b { font-weight: 600; }
+.evo-list-effect small { display: block; margin-top: 4px; color: var(--hui-muted); font-size: 10px; }
+.evo-good { color: var(--hui-success); }
+.evo-muted { color: var(--hui-muted); }
+.evo-back, .evo-refresh-detail { display: inline-flex; align-items: center; padding: 0; border: 0; background: none; color: var(--hui-muted); font: 13px var(--hui-sans); cursor: pointer; }
+.evo-back { margin-bottom: 16px; }
+.evo-back:hover, .evo-refresh-detail:hover { color: var(--hui-accent); }
+.evo-settings-title { margin: 0 0 12px; font-size: 18px; }
+.evo-detail-head { display: flex; align-items: flex-start; gap: 16px; margin-bottom: 14px; }
+.evo-detail-head > div:first-child { flex: 1; min-width: 0; }
+.evo-detail-head h1 { margin: 0; font-size: 20px; font-weight: 600; line-height: 1.5; overflow-wrap: anywhere; }
+.evo-detail-object { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 6px; color: var(--hui-secondary); font-size: 13px; }
+.evo-detail-object svg { width: 14px; height: 14px; }
+.evo-detail-object > span { color: var(--hui-muted); font-size: 12px; }
+.evo-detail-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 14px; }
+#evolutionView .evo-detail-actions .kb-btn.quiet { margin-right: 0; }
+.evo-secondary-actions { position: relative; font-size: 12px; color: var(--hui-muted); }
+.evo-secondary-actions > summary { display: flex; align-items: center; height: 34px; padding-inline: 10px; cursor: pointer; list-style: none; }
+.evo-secondary-actions > summary::after { content: '⌄'; margin-left: 6px; }
+.evo-secondary-actions > div { position: absolute; z-index: 5; top: 100%; right: 0; display: flex; flex-direction: column; gap: 6px; padding: 8px; border: 1px solid var(--hui-border); border-radius: 8px; box-shadow: var(--hui-panel-shadow); background: var(--hui-surface); min-width: 120px; }
+.evo-detail-track { display:grid;grid-template-columns:repeat(6,minmax(0,1fr));list-style:none;margin:0;padding:0; }
+.evo-detail-track li { position:relative;min-width:0;text-align:center; }
+.evo-detail-track li:not(:last-child)::after {
+  content:'';position:absolute;top:14px;left:calc(50% + 13px);right:calc(-50% + 13px);
+  height:2px;background:var(--hui-border);pointer-events:none;
+}
+.evo-detail-track li:is(.is-done,.is-skip):not(:last-child)::after { background:var(--hui-accent); }
+.evo-detail-track button {
+  display:flex;flex-direction:column;align-items:center;gap:4px;width:100%;min-height:46px;
+  padding:4px 2px;border:0;border-radius:6px;background:transparent;color:var(--hui-muted);
+  font:11px/1.4 var(--hui-sans);text-align:center;overflow-wrap:anywhere;cursor:pointer;
+}
+.evo-detail-track button:hover { background:var(--hui-soft); }
+.evo-detail-track button:focus-visible { outline:2px solid var(--hui-accent);outline-offset:-2px; }
+.evo-detail-track button>span {
+  display:grid;place-items:center;width:22px;height:22px;border:1px solid var(--hui-border);
+  border-radius:50%;background:var(--hui-soft);font-weight:600;
+}
+.evo-detail-track button>span svg { width:13px;height:13px; }
+.evo-detail-track button>b { font-weight:500; }
+.evo-detail-track button>small { font:inherit; }
+.evo-detail-track .is-done button>span { background:var(--hui-accent);color:var(--hui-on-accent);border-color:var(--hui-accent); }
+.evo-detail-track :is(.is-active,.is-wait) button>span { border:2px solid var(--hui-accent);color:var(--hui-accent);background:var(--hui-surface); }
+.evo-detail-track .is-fail button>span { color:var(--hui-error);background:var(--hui-soft);border-color:var(--hui-error); }
+.evo-detail-track li[aria-current=step] button { color:var(--hui-text); }
+.evo-detail-track li[aria-current=step] button>b { font-weight:600; }
+.evo-detail-grid { display: block; }
+.evo-detail-impact { border-left: 1px solid var(--hui-border); padding-left: 10px; }
+.evo-decision-bar { display: flex; align-items: center; flex-wrap: wrap; gap: 12px 24px; padding: 12px 0 16px; }
+.evo-decision-copy { display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px 12px; flex: 1 1 300px; min-width: 0; line-height: 1.6; }
+.evo-decision-copy strong { font-size: 14px; font-weight: 600; }
+.evo-decision-copy > span { color: var(--hui-muted); font-size: 12px; overflow-wrap: anywhere; }
+.evo-decision-ok { color: var(--hui-success); }
+.evo-decision-err { color: var(--hui-error); }
+.evo-decision-warn { color: var(--hui-warn); }
+.evo-decision-bar .evo-detail-actions { margin-top: 0; align-items: center; flex: 0 0 auto; }
+#evoTrialHost { flex-basis: 100%; min-width: 0; }
+#evoTrialHost:empty, #evoTrialHost:has(> [hidden]) { display: none; }
+.evo-detail-tabs { display: flex; gap: 4px; margin: 0 0 14px; border-bottom: 1px solid var(--hui-border); }
+#evoDetailPage .evo-detail-tabs button { border: 0; border-bottom: 2px solid transparent; border-radius: 0; padding: 12px 16px; background: none; color: var(--hui-muted); font: 13px var(--hui-sans); cursor: pointer; }
+#evoDetailPage .evo-detail-tabs button[aria-selected="true"] { color: var(--hui-text); border-bottom-color: var(--hui-accent); font-weight: 600; }
+#evoDetailPage [role="tabpanel"][hidden] { display: none; }
+.evo-inspect-workspace { display: grid; grid-template-columns: minmax(300px, .65fr) minmax(0, 1.35fr); gap: 16px; align-items: stretch; }
+.evo-inspect-workspace > .evo-detail-box { max-height: 72dvh; overflow: auto; }
+[data-evo-evidence-slot] { display: flex; min-width: 0; }
+.evo-evidence-panel { display: flex; flex-direction: column; width: 100%; min-width: 0; min-height: 400px; max-height: 72dvh; border: 1px solid var(--hui-border); border-radius: 14px; background: var(--hui-surface); overflow: hidden; }
+.evo-evidence-panel > header { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 16px 18px; border-bottom: 1px solid var(--hui-border-soft); }
+.evo-evidence-panel h2 { margin: 0; font-size: 13px; font-weight: 600; }
+#evoEvidenceBody { padding: 18px; min-height: 0; overflow: auto; }
+.evo-evidence-empty { display: grid; justify-items: start; gap: 12px; color: var(--hui-muted); font-size: 12px; padding: 16px 0; }
+.evo-judgment-summary { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.evo-judgment-summary strong { font-size: 18px; font-weight: 600; }
+.evo-judgment-summary .v-fix { color: var(--hui-warn); }
+.evo-judgment-summary > span { color: var(--hui-secondary); font-size: 12px; }
+.evo-judgment-scope, .evo-compare-scope { color: var(--hui-muted); font-size: 11px; margin: 8px 0 12px; line-height: 1.6; }
+.evo-cause small { color: var(--hui-muted); font-size: 11px; }
+.evo-cause p { margin-top: 5px; }
+.evo-run-preview > h3 { margin: 0 0 8px; font-size: 12px; font-weight: 500; color: var(--hui-muted); }
+.evo-run-preview > button { display: flex; gap: 14px; align-items: center; justify-content: space-between; width: 100%; padding: 10px; border: 1px solid var(--hui-border-soft); border-radius: 8px; background: none; color: var(--hui-text); text-align: left; cursor: pointer; margin-top: 6px; }
+.evo-run-preview > button[aria-pressed="true"] { border-color: var(--hui-accent); background: var(--hui-accent-soft); }
+.evo-run-preview button > span:first-child { min-width: 0; }
+.evo-run-preview b { display: block; font-size: 12px; font-weight: 500; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.evo-run-preview small { display: block; margin-top: 3px; font-size: 11px; color: var(--hui-muted); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.evo-run-preview > button:disabled { opacity: .5; cursor: default; }
+.evo-sample-filters { display: flex; flex-wrap: wrap; gap: 4px; margin: 18px 0 10px; }
+.evo-sample-filters button { padding: 5px 8px; border: 0; border-radius: 6px; background: none; color: var(--hui-muted); font: 11px var(--hui-sans); cursor: pointer; }
+.evo-sample-filters button[aria-pressed="true"] { color: var(--hui-accent); background: var(--hui-accent-soft); }
+.evo-sample-filters span { margin-left: 4px; }
+.evo-compare-columns, .evo-compare-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(110px, 1fr) 74px; align-items: center; gap: 10px; width: 100%; padding: 10px 8px; font-size: 11px; }
+.evo-compare-columns { color: var(--hui-muted); border-bottom: 1px solid var(--hui-border); }
+.evo-compare-row { border: 0; border-bottom: 1px solid var(--hui-border-soft); color: var(--hui-text); background: none; text-align: left; cursor: pointer; }
+.evo-compare-row[aria-pressed="true"] { background: var(--hui-accent-soft); }
+.evo-compare-row:hover { background: var(--hui-soft); }
+.evo-compare-row b { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 11px var(--hui-mono); }
+.evo-compare-row small { display: block; margin-top: 3px; color: var(--hui-muted); font-size: 10px; }
+.evo-result-pair i { color: var(--hui-muted); font-style: normal; margin-inline: 3px; }
+.evo-evidence-context h3 { margin: 0 0 5px; font-size: 14px; font-weight: 600; overflow-wrap: anywhere; }
+.evo-evidence-context small { color: var(--hui-muted); font-size: 11px; }
+.evo-evidence-context > div { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; font-size: 11px; color: var(--hui-muted); }
+.evo-replay-judgment { margin: 12px 0; padding-bottom: 12px; border-bottom: 1px solid var(--hui-border-soft); font-size: 12px; line-height: 1.7; overflow-wrap: anywhere; }
+.evo-replay-judgment strong { font-size: 13px; font-weight: 600; }
+.evo-replay-judgment p { margin: 6px 0 0; color: var(--hui-muted); }
+.evo-replay-judgment .evo-bad { color: var(--hui-error); }
+.evo-evidence-context a, .evo-evidence-links a { display: inline-block; color: var(--hui-accent); font-size: 11px; text-decoration: none; }
+.evo-evidence-context > a { margin-top: 8px; }
+.evo-evidence-links { display: flex; justify-content: space-between; gap: 14px; margin-top: 10px; }
+.evo-evidence-signal { margin-top: 16px; padding: 12px; background: var(--hui-canvas); border-radius: 8px; }
+.evo-evidence-signal small { color: var(--hui-muted); font-size: 11px; }
+.evo-evidence-signal p { margin: 4px 0 0; font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
+.evo-evidence-node-label { display: block; margin: 16px 0 12px; font-size: 11px; color: var(--hui-muted); }
+.evo-evidence-node-label select { display: block; width: 100%; max-width: 100%; margin-top: 6px; }
+.evo-output-pair { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); border: 1px solid var(--hui-border); border-radius: 8px; overflow: hidden; }
+.evo-output-pair > section { min-width: 0; padding: 12px; }
+.evo-output-pair > section + section { border-left: 1px solid var(--hui-border); }
+.evo-output-pair h4 { margin: 0 0 10px; color: var(--hui-muted); font-size: 11px; font-weight: 500; }
+#evoDetailPage .evo-output-excerpt { white-space: pre-wrap; overflow-wrap: anywhere; max-width: 100%; margin: 10px 0; color: var(--hui-text); font: 11px/1.8 var(--hui-mono); }
+.evo-output-pair small, .evo-evidence-single small { display: block; color: var(--hui-muted); font-size: 10px; }
+.evo-evidence-single { font-size: 12px; }
+.evo-detail-box { min-width: 0; padding: 18px 20px; border: 1px solid var(--hui-border); border-radius: 14px; background: var(--hui-surface); }
+.evo-detail-box > h2 { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin: 0 0 12px; color: var(--hui-muted); font-size: 13px; font-weight: 600; }
+.evo-detail-box > h2 > span { font-size: 12px; font-weight: 400; }
+.evo-wide-box { grid-column: 1 / -1; }
+.evo-problem-lead { margin: 0; font-size: 14px; line-height: 1.7; overflow-wrap: anywhere; }
+.evo-run-preview { margin-top: 12px; }
+.evo-run-preview > div { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 7px 0; border-bottom: 1px solid var(--hui-border-soft); }
+.evo-run-preview > div:last-child { border-bottom: 0; }
+.evo-run-preview a { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--hui-accent); font: 12px var(--hui-mono); text-decoration: none; }
+.evo-effect-numbers { display: flex; flex-wrap: wrap; gap: 14px 24px; margin-top: 12px; }
+.evo-effect-numbers > div { min-width: 50px; }
+.evo-effect-numbers small { color: var(--hui-muted); font-size: 11px; }
+.evo-effect-numbers b { display: block; margin-top: 4px; font-size: 24px; font-weight: 600; line-height: 1.3; font-variant-numeric: tabular-nums; }
+.evo-effect-arms { margin-top: 18px; }
+.evo-effect-arms b { font-size: 20px; }
+#evoDetailPage .evo-muted { font-size: 12px; }
+#evoDetailPage .evo-live-note { margin: 12px 0 0; color: var(--hui-muted); font-size: 12px; overflow-wrap: anywhere; }
+#evoDetailPage .evo-refresh-detail { margin-top: 12px; font-size: 12px; }
+#evoDetailPage .evo-diff { border: 1px solid var(--hui-border-soft); border-radius: 9px; overflow: hidden; }
+#evoDetailPage .evo-diff-line { padding: 6px 12px; }
+#evoDetailPage .evo-detail-more { margin-top: 14px; padding-top: 0; border-top: 0; }
+#evoDetailPage .evo-detail-more[open] { padding-top: 10px; }
+#evoDetailPage .evo-before-after { margin-top: 12px; border: 1px solid var(--hui-border); border-radius: 9px; }
+#evoDetailPage .evo-count-row { display: flex; justify-content: flex-start; flex-wrap: wrap; gap: 8px; }
+#evoDetailPage :focus-visible { outline: 2px solid var(--hui-accent); outline-offset: 2px; }
+#evoDetailPage h1:focus-visible { outline: none; }
+@media (max-width: 1120px) {
+  .evo-list-columns, .evo-list-row { grid-template-columns: minmax(220px, 1fr) 145px 210px 16px; gap: 16px; padding-inline: 16px; }
+  .evo-inspect-workspace { grid-template-columns: minmax(280px, .75fr) minmax(0, 1.25fr); gap: 14px; }
+}
+@media (max-width: 850px) {
+  .evo-inspect-workspace { grid-template-columns: minmax(0, 1fr); }
+  .evo-decision-copy { flex-basis: 100%; }
+  .evo-decision-bar { gap: 10px; }
+  .evo-decision-bar .evo-detail-actions { flex: 1 1 100%; }
+  .evo-decision-bar .evo-detail-actions > .kb-btn.primary { flex: 1; }
+  .evo-inspect-workspace > .evo-detail-box { max-height: none; }
+  .evo-evidence-panel { min-height: 0; max-height: none; }
+  #evoEvidenceBody { max-height: none; }
+  #evoDetailPage .evo-detail-tabs button { padding-inline: 12px; }
+}
+@media (max-width: 720px) {
+  .evo-list-columns { display: none; }
+  .evo-list-row { grid-template-columns: minmax(0, 1fr) 16px; gap: 12px; }
+  .evo-list-problem { grid-column: 1; }
+  .evo-list-row > svg { grid-row: 1; grid-column: 2; }
+  .evo-list-impact, .evo-list-progress { grid-column: 1 / 3; }
+  .evo-list-impact { padding-top: 10px; border-top: 1px solid var(--hui-border-soft); }
+  .evo-list-impact small { display: inline; margin-left: 8px; }
+  .evo-list-context { gap: 4px 8px; }
+  .evo-list-filters button { padding-inline: 9px; }
+  .evo-detail-head { gap: 12px; }
+  .evo-detail-head h1 { font-size: 18px; }
+  .evo-detail-box { padding: 16px; }
+  .evo-compare-row, .evo-compare-columns { grid-template-columns: minmax(0, 1fr) minmax(90px, .9fr) 58px; padding-inline: 0; gap: 6px; }
+  .evo-output-pair { grid-template-columns: minmax(0, 1fr); }
+  .evo-output-pair > section + section { border-left: 0; border-top: 1px solid var(--hui-border); }
+  #evoDetailPage .evo-before-after { grid-template-columns: minmax(0, 1fr); }
+  #evoDetailPage .evo-before-after > section + section { border-left: 0; border-top: 1px solid var(--hui-border); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .evo-progress > i, .evo-asset-main, .evo-pill, .evo-banner, .evo-group-caret { transition: none; }
+  .evo-banner-dot { animation: none; }
+  .evo-step-dot, .evo-replay, .evo-node, .evo-stage-panel.is-in { animation: none; opacity: 1; transform: none; }
+  .evo-node.is-reused { opacity: .7; }
+  .evo-step.is-reached + .evo-step.is-reached::after { animation: none; transform: scaleX(1); }
+  .evo-step-pulse, .evo-flow.is-running i, .evo-mini > i { animation: none; }
+}

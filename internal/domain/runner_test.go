@@ -146,6 +146,14 @@ func TestRunnerSupportsConversationSOPWorkspaceWithNestedCheckouts(t *testing.T)
 	}
 }
 
+func TestRunnerSupportsEvolutionReplayDisableBrowser(t *testing.T) {
+	for version, want := range map[string]bool{"": false, "dev": false, "0.13.0": false, "0.13.1": true, "v0.13.1": true, "0.14.0": true} {
+		if got := (Runner{RunnerVersion: version}).SupportsEvolutionReplayDisableBrowser(); got != want {
+			t.Errorf("SupportsEvolutionReplayDisableBrowser(%q) = %v, want %v", version, got, want)
+		}
+	}
+}
+
 func TestRunnerSupportsCreateNewWorkBranch(t *testing.T) {
 	for version, want := range map[string]bool{
 		"": false, "dev": false, "0.9.0": false, "0.9.1": true, "0.10.0": true, "1.0.0": true,
