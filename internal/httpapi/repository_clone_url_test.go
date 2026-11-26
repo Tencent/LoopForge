@@ -144,3 +144,36 @@ func TestLegacyCloneURLCredentialsStayOutOfPromptAndRunViews(t *testing.T) {
 		t.Fatalf("stored manual run must keep the clone URL it clones with: %+v", stored.Repositories)
 	}
 }
+
+// A project copy of a generic template is a regular project LOOP. Starting it
+// by hand from the designer must check out the project's default repository,
+// the same way requirement dispatch does, instead of running without code.
+func TestManualRunOfProjectLOOPBindsProjectDefaultRepository(t *testing.T) {
+	f := cvBNewHTTPFixture(t)
+	if err := f.s.PutWorkflow(domain.WorkflowDefinition{ID: "project-copy", Name: "Project copy", ProjectID: "platform", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{ID: "approval", Name: "Approval", Type: "approval", MaxAttempts: 1}}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.s.PutRepository(domain.Repository{ID: "project-default", Name: "app", ProjectID: "platform", Provider: "github", GongfengProjectID: "acme/app", DefaultBranch: "main", CloneURL: "https://github.com/acme/app.git"}); err != nil {
+		t.Fatal(err)
+	}
+	project, ok := f.s.Project("platform")
+	if !ok {
+		t.Fatal("platform project missing")
+	}
+	project.DefaultRepositoryID = "project-default"
+	if err := f.s.PutProject(project); err != nil {
+		t.Fatal(err)
+	}
+	rec := cvBRequest(t, f, http.MethodPost, "/api/runs", map[string]any{"workflowId": "project-copy", "input": "x", "projectId": "platform"}, true)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("POST /api/runs = %d: %s", rec.Code, rec.Body.String())
+	}
+	var started domain.Run
+	if err := json.Unmarshal(rec.Body.Bytes(), &started); err != nil {
+		t.Fatal(err)
+	}
+	stored, ok := f.s.Run(started.ID)
+	if !ok || len(stored.Repositories) != 1 || stored.Repositories[0].RepositoryID != "project-default" {
+		t.Fatalf("manual run of a project LOOP must bind the project default repository: %+v", stored.Repositories)
+	}
+}

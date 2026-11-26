@@ -145,7 +145,11 @@ func (h *runsHandlers) runs(c *gin.Context) {
 			return
 		}
 		var repositories []domain.RepositoryContext
-		if wf, ok := h.repo.Workflow(req.WorkflowID); ok && wf.Generic && strings.TrimSpace(project.DefaultRepositoryID) != "" {
+		// Every LOOP started inside a project works on the project's default
+		// repository, like requirement dispatch does. Limiting this to raw
+		// generic templates left project copies (the only editable form of a
+		// generic template) running without any code checkout.
+		if _, ok := h.repo.Workflow(req.WorkflowID); ok && req.ProjectID != "" && strings.TrimSpace(project.DefaultRepositoryID) != "" {
 			repositoryID := strings.TrimSpace(project.DefaultRepositoryID)
 			repoDef, found := h.repo.Repository(repositoryID)
 			if !found || repoDef.ProjectID != req.ProjectID {
