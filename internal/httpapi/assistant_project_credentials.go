@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+	"time"
 
 	"agentflow/internal/domain"
 	"github.com/gin-gonic/gin"
@@ -31,25 +32,44 @@ func (h *assistantHandlers) sessionProjectCredentialContext(c *gin.Context, sess
 		c.JSON(http.StatusForbidden, gin.H{"error": "当前会话不能使用项目凭据"})
 		return "", nil, false
 	}
+	observedAt := time.Now().UTC()
 	if use, _ := h.projectCredentialAccess(c.Request, session.ProjectID, userID); !use {
-		return "\n本轮无权使用已绑定的项目凭据。继续处理用户请求，仅在任务确实需要凭据时说明。\n", nil, true
+		observations := make(map[string]domain.AssistantProjectCredentialObservation, len(session.ProjectCredentialIDs))
+		changed := false
+		for _, id := range session.ProjectCredentialIDs {
+			previous := session.ProjectCredentialObservations[id]
+			changed = changed || previous.Status != domain.AssistantProjectCredentialAccessDenied
+			previous.Status = domain.AssistantProjectCredentialAccessDenied
+			previous.ObservedAt = observedAt
+			observations[id] = previous
+		}
+		if !changed {
+			return "", observations, true
+		}
+		return "\n本轮无权使用已绑定的项目凭据。继续处理用户请求，仅在任务确实需要凭据时说明。\n", observations, true
 	}
 	items, err := h.repo.AvailableProjectCredentialMetadata(c.Request.Context(), session.ProjectID, session.ProjectCredentialIDs)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return "", nil, false
 	}
-	note, observations := conversationProjectCredentialContext(session, items)
+	note, observations := conversationProjectCredentialContext(session, items, observedAt)
 	return note, observations, true
 }
 
-func conversationProjectCredentialContext(session domain.AssistantSession, items []domain.ProjectCredential) (string, map[string]domain.AssistantProjectCredentialObservation) {
-	observations := make(map[string]domain.AssistantProjectCredentialObservation, len(items))
+func conversationProjectCredentialContext(session domain.AssistantSession, items []domain.ProjectCredential, observedAt time.Time) (string, map[string]domain.AssistantProjectCredentialObservation) {
+	observations := make(map[string]domain.AssistantProjectCredentialObservation, len(session.ProjectCredentialIDs))
 	var available, updated, unavailable []string
+	changed := false
 	for _, item := range items {
-		observations[item.ID] = domain.AssistantProjectCredentialObservation{Variables: item.Variables, UpdatedAt: item.UpdatedAt}
+		previous, seen := session.ProjectCredentialObservations[item.ID]
+		observations[item.ID] = domain.AssistantProjectCredentialObservation{
+			Variables: item.Variables, UpdatedAt: item.UpdatedAt, ObservedAt: observedAt,
+		}
 		available = append(available, item.Variables...)
-		if previous, ok := session.ProjectCredentialObservations[item.ID]; ok && !previous.UpdatedAt.Equal(item.UpdatedAt) {
+		changed = changed || !seen || previous.Status != domain.AssistantProjectCredentialAvailable
+		if !previous.UpdatedAt.IsZero() && (!previous.UpdatedAt.Equal(item.UpdatedAt) || !slices.Equal(previous.Variables, item.Variables)) {
+			changed = true
 			updated = append(updated, item.Variables...)
 			// Renamed variables from this binding may still be in the model's history.
 			unavailable = append(unavailable, previous.Variables...)
@@ -61,8 +81,17 @@ func conversationProjectCredentialContext(session domain.AssistantSession, items
 			continue
 		}
 		previous := session.ProjectCredentialObservations[id]
-		unavailable = append(unavailable, previous.Variables...)
-		unknownBinding = unknownBinding || len(previous.Variables) == 0
+		if previous.Status != domain.AssistantProjectCredentialUnavailable {
+			changed = true
+			unavailable = append(unavailable, previous.Variables...)
+			unknownBinding = unknownBinding || len(previous.Variables) == 0
+		}
+		previous.Status = domain.AssistantProjectCredentialUnavailable
+		previous.ObservedAt = observedAt
+		observations[id] = previous
+	}
+	if !changed {
+		return "", observations
 	}
 	unavailable = slices.DeleteFunc(unavailable, func(name string) bool { return slices.Contains(available, name) })
 	slices.Sort(available)

@@ -41,10 +41,10 @@ func mergeAssistantCredentialObservations(stored, incoming domain.AssistantSessi
 		return observations
 	}
 	// Transcript saves can arrive out of order. Keep only observations for
-	// the bound credentials and advance each to the latest observed revision.
+	// the bound credentials and prefer the most recent check, including loss of access.
 	for _, id := range stored.ProjectCredentialIDs {
 		state, ok := incoming.ProjectCredentialObservations[id]
-		if !ok || !state.UpdatedAt.After(observations[id].UpdatedAt) {
+		if !ok || !state.ObservedAt.After(observations[id].ObservedAt) {
 			continue
 		}
 		if observations == nil {

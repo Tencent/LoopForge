@@ -282,18 +282,27 @@ func TestConversationContinuesWhenProjectCredentialsChange(t *testing.T) {
 		}
 		return prompt
 	}
-	turn(t, map[string]string{"ROTATED_TOKEN": "fixture-original", "DELETED_TOKEN": "fixture-deleted", "DISABLED_TOKEN": "fixture-disabled"},
-		"有已绑定的项目凭据本轮不可用", "继续处理用户请求")
+	quietTurn := func(t *testing.T, wantEnv map[string]string) {
+		t.Helper()
+		if prompt := turn(t, wantEnv); strings.Contains(prompt, "项目凭据") {
+			t.Error("unchanged credentials were announced again")
+		}
+	}
+	initialEnv := map[string]string{"ROTATED_TOKEN": "fixture-original", "DELETED_TOKEN": "fixture-deleted", "DISABLED_TOKEN": "fixture-disabled"}
+	turn(t, initialEnv, "DELETED_TOKEN、DISABLED_TOKEN、ROTATED_TOKEN", "有已绑定的项目凭据本轮不可用", "继续处理用户请求")
+	quietTurn(t, initialEnv)
 	save("rotated", "ROTATED_TOKEN", "fixture-replacement", false, false)
 	save("disabled", "DISABLED_TOKEN", "fixture-disabled", false, true)
 	if err := h.repo.DeleteProjectCredential(t.Context(), session.ProjectID, "deleted"); err != nil {
 		t.Fatal(err)
 	}
-	turn(t, map[string]string{"ROTATED_TOKEN": "fixture-replacement"},
-		"ROTATED_TOKEN 的配置已更新", "DELETED_TOKEN、DISABLED_TOKEN 本轮已不可用")
-	if prompt := turn(t, map[string]string{"ROTATED_TOKEN": "fixture-replacement"}, "DELETED_TOKEN、DISABLED_TOKEN 本轮已不可用"); strings.Contains(prompt, "配置已更新") {
-		t.Error("reported the same rotation on consecutive turns")
-	}
+	rotatedEnv := map[string]string{"ROTATED_TOKEN": "fixture-replacement"}
+	turn(t, rotatedEnv, "ROTATED_TOKEN 的配置已更新", "DELETED_TOKEN、DISABLED_TOKEN 本轮已不可用")
+	quietTurn(t, rotatedEnv)
+	save("disabled", "DISABLED_TOKEN", "fixture-disabled", false, false)
+	availableEnv := map[string]string{"ROTATED_TOKEN": "fixture-replacement", "DISABLED_TOKEN": "fixture-disabled"}
+	turn(t, availableEnv, "DISABLED_TOKEN、ROTATED_TOKEN")
+	quietTurn(t, availableEnv)
 	t.Run("viewer downgrade", func(t *testing.T) {
 		setRole(t, "viewer")
 		prompt := turn(t, nil, "本轮无权使用已绑定的项目凭据", "继续处理用户请求")
@@ -302,10 +311,14 @@ func TestConversationContinuesWhenProjectCredentialsChange(t *testing.T) {
 				t.Errorf("viewer CLI received a credential variable name %q", name)
 			}
 		}
+		quietTurn(t, nil)
 		saved, _ := h.repo.AssistantSession(user.ID, session.ID)
 		if !slices.Equal(saved.ProjectCredentialIDs, session.ProjectCredentialIDs) {
 			t.Fatal("viewer turn changed the stored bindings")
 		}
+		setRole(t, "member")
+		turn(t, availableEnv, "DISABLED_TOKEN、ROTATED_TOKEN")
+		quietTurn(t, availableEnv)
 	})
 }
 

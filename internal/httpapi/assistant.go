@@ -734,6 +734,7 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 				if err != nil {
 					return "", err
 				}
+				projectCredentialNote = ""
 				resume = true
 				nativeContinuationReady = true
 				toolSession.mu.Lock()
