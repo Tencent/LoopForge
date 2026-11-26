@@ -107,6 +107,22 @@ func (h *mcpHandlers) mcpImport(c *gin.Context) {
 		c.JSON(400, map[string]string{"error": err.Error()})
 		return
 	}
+	// One import is one transaction, so a repeated ID would either let the
+	// later entry silently overwrite the earlier one (existing ID) or fail
+	// with a misleading "changed, refresh" conflict (new ID). The stored ID
+	// column compares case-insensitively, so "Demo" and "demo" collide too.
+	seen := make(map[string]int, len(imported))
+	for i, item := range imported {
+		key := strings.ToLower(strings.TrimSpace(item.ID))
+		if key == "" {
+			continue
+		}
+		if first, dup := seen[key]; dup {
+			c.JSON(400, map[string]string{"error": fmt.Sprintf("第 %d 项与第 %d 项的 id %q 重复，同一次导入中 id 不能重复（不区分大小写）", i+1, first+1, strings.TrimSpace(item.ID))})
+			return
+		}
+		seen[key] = i
+	}
 	changes := make([]repo.MCPServerChange, 0, len(imported))
 	for i, item := range imported {
 		item.Scope = strings.TrimSpace(item.Scope)

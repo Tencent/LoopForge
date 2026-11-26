@@ -457,6 +457,48 @@ func TestMarketAndWorkspaceMRHelpers(t *testing.T) {
 	}
 }
 
+func TestMCPImportRejectsRepeatedIDs(t *testing.T) {
+	st := cvAStore(t)
+	projectID := "cva-mcp-dup-p"
+	_ = st.PutProject(domain.Project{ID: projectID, Name: "P"})
+	h := &mcpHandlers{deps: &deps{repo: st}}
+	existing := domain.MCPServerDefinition{ID: "cva-dup-existing", Name: "Original", Scope: "project", ProjectID: projectID, Transport: "http", URL: "https://example.test/original"}
+	if err := st.PutMCPServer(existing); err != nil {
+		t.Fatal(err)
+	}
+	entry := func(id, name, url string) string {
+		return `{"id":"` + id + `","name":"` + name + `","transport":"http","url":"` + url + `","scope":"project","projectId":"` + projectID + `"}`
+	}
+	cases := map[string]string{
+		"existing id":   `{"servers":[` + entry("cva-dup-existing", "First", "https://example.test/first") + `,` + entry("cva-dup-existing", "Second", "https://example.test/second") + `]}`,
+		"new id":        `[` + entry("cva-dup-new", "First", "https://example.test/first") + `,` + entry("cva-dup-new", "Second", "https://example.test/second") + `]`,
+		"case variants": `[` + entry("cva-Dup-Case", "First", "https://example.test/first") + `,` + entry("cva-dup-case", "Second", "https://example.test/second") + `]`,
+		"padded id":     `[` + entry("cva-dup-pad", "First", "https://example.test/first") + `,` + entry(" cva-dup-pad ", "Second", "https://example.test/second") + `]`,
+	}
+	for name, body := range cases {
+		c, rec := cvAContext(t, http.MethodPost, "/api/mcp-servers/import", body, nil)
+		h.mcpImport(c)
+		if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "第 2 项与第 1 项") {
+			t.Fatalf("%s: import=%d %s", name, rec.Code, rec.Body.String())
+		}
+	}
+	stored, ok := st.MCPServer("cva-dup-existing")
+	if !ok || stored.Name != "Original" || stored.URL != "https://example.test/original" {
+		t.Fatalf("rejected import changed the stored MCP: %+v", stored)
+	}
+	for _, id := range []string{"cva-dup-new", "cva-dup-case", "cva-dup-pad"} {
+		if _, ok := st.MCPServer(id); ok {
+			t.Fatalf("rejected import stored %s", id)
+		}
+	}
+	body := `[` + entry("cva-dup-a", "A", "https://example.test/a") + `,` + entry("cva-dup-b", "B", "https://example.test/b") + `]`
+	c, rec := cvAContext(t, http.MethodPost, "/api/mcp-servers/import", body, nil)
+	h.mcpImport(c)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"imported":2`) {
+		t.Fatalf("distinct ids import=%d %s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestMCPImportFilesAndServerBranches(t *testing.T) {
 	st := cvAStore(t)
 	projectID := "cva-r3-mcp-p"
