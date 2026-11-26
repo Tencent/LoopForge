@@ -74,6 +74,7 @@ export default function SessionContextMenu({
     };
     const resize = () => close();
     const key = (event) => {
+      if (event.defaultPrevented) return;
       if (event.key === "Escape") {
         event.preventDefault();
         event.stopPropagation();

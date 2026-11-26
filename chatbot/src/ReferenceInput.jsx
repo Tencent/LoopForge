@@ -149,7 +149,7 @@ export default forwardRef(function ReferenceInput(
                     }}
                   >
                     <span id={`remove-${chipID}`} className="sr-only">
-                      移除引用
+                      {window.lfT?.("移除引用", "Remove reference") || "移除引用"}
                     </span>
                     <span
                       id={`name-${chipID}`}

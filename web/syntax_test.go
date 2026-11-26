@@ -1695,6 +1695,7 @@ global.$ = () => mockEl();
 global.$$ = () => [];
 global.localStorage = { getItem: () => null, setItem: () => {}, removeItem: () => {} };
 global.fetch = () => Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
+window.loopforgeBootstrap = { ready: Promise.resolve(true) };
 eval(code + '; global.state = state; global.renderIssues = renderIssues; global.issueMatchesStatusFilter = issueMatchesStatusFilter; global.issueFinished = issueFinished; global.issueRunHealth = issueRunHealth; global.issueStatusBucket = issueStatusBucket; global.deliveryLockedLabel = deliveryLockedLabel; global.reopenDeliveredButton = reopenDeliveredButton; global.canRetriggerIssue = canRetriggerIssue; global.issueOutcome = issueOutcome; global.issueCurrentStage = issueCurrentStage; global.issueListProgress = issueListProgress;');
 state.data = { issues: [], projects: [], repositories: [], workflows: [], runs: [], tasks: [] };
 state.listPages = {};
@@ -1877,6 +1878,7 @@ global.document = {
 global.$ = () => mockEl();
 global.$$ = () => [];
 global.localStorage = { getItem: () => null, setItem: () => {}, removeItem: () => {} };
+window.loopforgeBootstrap = { ready: Promise.resolve(true) };
 eval(code + '; global.issueRow = issueRow; global.clarifyPane = clarifyPane; global.state = state;');
 
 // 1. Issue with pending confirm
@@ -2740,7 +2742,9 @@ func TestApprovalBadgeRefreshesOutsideApprovals(t *testing.T) {
 		}
 		return string(data)
 	}
-	if !strings.Contains(read("app.js"), "switchView(view);\n  settleBootLoader();\n  if(!['approvals','issues','runs','sops'].includes(state.currentView))preloadApprovalBadge();") {
+	_, boot, found := strings.Cut(read("app.js"), "async function boot(){")
+	boot, _, ended := strings.Cut(boot, "\nfunction finishBootLoader()")
+	if !found || !ended || !strings.Contains(strings.Join(strings.Fields(boot), ""), "elseswitchView(view,{fromLocation:true});finishBootLoader();if(!['approvals','issues','runs','sops'].includes(state.currentView))preloadApprovalBadge();") {
 		t.Fatal("boot must preload the approval badge when the first view does not fetch runs")
 	}
 	if !strings.Contains(read("app/approvals.js"), "async function preloadApprovalBadge(){try{const runs=await api('/api/runs',{silent:true});") {

@@ -11,3 +11,9 @@ test('scopes document and themed rules to the workbench while preserving keyfram
   expect(result.css).toContain('[data-theme="dark"] #chatRoot{--surface:black}');
   expect(result.css).toContain('@keyframes fade{from{opacity:0}to{opacity:1}}');
 });
+
+test('leaves inline Shadow DOM styles unchanged', async () => {
+  const css = ':host{color:red} .composer{position:relative}';
+  const result = await postcss([scopeChatCSS()]).process(css, { from: 'prompt-editor.css?inline' });
+  expect(result.css).toBe(css);
+});

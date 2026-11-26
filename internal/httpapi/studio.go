@@ -21,6 +21,26 @@ var studioAssetRef = regexp.MustCompile(`((?:href|src)=")(/[^"]+\.(?:js|css))(\?
 // Vite emits content-hashed files in assets/ using eight-character URL-safe hashes.
 var studioHashedChatAsset = regexp.MustCompile(`^assets/[^/]+-[A-Za-z0-9_-]{8}\.[A-Za-z0-9]+$`)
 
+var studioWorkbenchEntry = regexp.MustCompile(`<script type="module"[^>]* src="(/chatbot/assets/[A-Za-z0-9_-]+\.js)"`)
+var studioWorkbenchStyles = regexp.MustCompile(`<link rel="stylesheet"[^>]* href="(/chatbot/assets/[A-Za-z0-9_-]+\.css)"`)
+
+func injectWorkbenchAssets(static fs.FS, html string) string {
+	const marker = "<!-- loopforge-workbench-assets -->"
+	if !strings.Contains(html, marker) {
+		return html
+	}
+	index, err := fs.ReadFile(static, "native-chat/index.html")
+	if err != nil {
+		return html
+	}
+	entry := studioWorkbenchEntry.FindSubmatch(index)
+	styles := studioWorkbenchStyles.FindSubmatch(index)
+	if len(entry) == 0 || len(styles) == 0 {
+		return html
+	}
+	return strings.Replace(html, marker, fmt.Sprintf(`<link rel="preload" as="style" href="%s" data-workbench-style><link rel="modulepreload" href="%s" data-workbench-entry>`, styles[1], entry[1]), 1)
+}
+
 func stampStudioIndex(static fs.FS, raw []byte) []byte {
 	html := string(raw)
 	html = studioAssetRef.ReplaceAllStringFunc(html, func(m string) string {
@@ -30,6 +50,9 @@ func stampStudioIndex(static fs.FS, raw []byte) []byte {
 		}
 		name := strings.TrimPrefix(sub[2], "/")
 		if strings.HasPrefix(name, "chatbot/") {
+			if studioHashedChatAsset.MatchString(strings.TrimPrefix(name, "chatbot/")) {
+				return m
+			}
 			name = "native-chat/" + strings.TrimPrefix(name, "chatbot/")
 		}
 		body, err := fs.ReadFile(static, name)
@@ -113,10 +136,26 @@ func studioFileServer(static fs.FS) http.Handler {
 	native, _ := fs.Sub(static, "native-chat")
 	nativeFiles := http.StripPrefix(chatPath, http.FileServer(http.FS(native)))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Embedded surfaces (the SOP orchestrator panel) still render the
-		// standalone chat app; only the old workbench entry redirects.
-		if (r.URL.Path == chatPath || r.URL.Path == chatPath+"index.html" || r.URL.Path == strings.TrimSuffix(chatPath, "/")) && r.URL.Query().Get("surface") == "" {
+		if r.URL.Path == chatPath || r.URL.Path == chatPath+"index.html" || r.URL.Path == strings.TrimSuffix(chatPath, "/") {
 			query := r.URL.Query()
+			if surface := query.Get("surface"); surface != "" {
+				if surface != "sop-designer" {
+					w.Header().Set("Cache-Control", "no-store")
+					http.NotFound(w, r)
+					return
+				}
+				w.Header().Set("Cache-Control", "no-store")
+				if index, err := fs.ReadFile(native, "index.html"); err == nil {
+					w.Header().Set("Content-Type", "text/html; charset=utf-8")
+					w.WriteHeader(http.StatusOK)
+					if r.Method != http.MethodHead {
+						_, _ = w.Write(index)
+					}
+				} else {
+					http.NotFound(w, r)
+				}
+				return
+			}
 			session := query.Get("session")
 			issue := query.Get("issueId")
 			query.Del("session")
@@ -182,7 +221,7 @@ func studioFileServer(static fs.FS) http.Handler {
 			w.Header().Set("Cache-Control", "no-cache")
 			// 显式写状态码：gin 的 NoRoute 预设 404，隐式 WriteHeader 会沿用。
 			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write(stampStudioIndex(static, raw))
+			_, _ = w.Write([]byte(injectWorkbenchAssets(static, string(stampStudioIndex(static, raw)))))
 			return
 		}
 		if strings.HasPrefix(r.URL.Path, "/extensions/agentflow-workspace/") ||

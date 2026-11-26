@@ -215,6 +215,8 @@ body.platform-chat-active #collaborationView>.collaboration-shell{display:none!i
 .platform-chat-host{display:none}
 body.platform-chat-active .platform-chat-host{display:flex;flex:1;flex-direction:column;width:100%;min-height:0;height:auto}
 .chat-workbench{display:block;width:100%;height:100%;min-height:0;position:relative;isolation:isolate}
+.platform-chat-host{position:relative}
+.chat-workbench-status:not([hidden]){position:absolute;inset:0;z-index:1;display:flex;flex-direction:column;gap:12px;align-items:center;justify-content:center;background:var(--hui-surface)}
 
 /* Codex thread: duration, a rule, then the reply. */
 #collaborationView .collaboration-shell{background:var(--bg,#f7f7f8)}

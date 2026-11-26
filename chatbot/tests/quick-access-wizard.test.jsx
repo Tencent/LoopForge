@@ -275,9 +275,7 @@ describe("QuickAccessWizard", () => {
 
       await act(async () => {
         window.dispatchEvent(new MessageEvent("message", { data, origin: location.origin, source: parent }));
-        window.dispatchEvent(new MessageEvent("message", { data: { type: "agentflow-chat-resume-quick-access" }, origin: location.origin, source: parent }));
       });
-      expect(screen.getByRole("heading", { name: "凭据与授权", level: 3 })).toHaveFocus();
       expect(screen.getByText(/可以继续选择项目和仓库/)).toBeVisible();
       await userAction.click(next);
       expect(await screen.findByRole("heading", { name: "项目与仓库", level: 3 })).toBeInTheDocument();

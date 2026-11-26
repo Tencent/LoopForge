@@ -138,6 +138,32 @@ func TestStudioChatbotCacheControl(t *testing.T) {
 	}
 }
 
+func TestStudioIndexUsesFingerprintedWorkbenchFromBuild(t *testing.T) {
+	const entry = "/chatbot/assets/main-CiKeIPH5.js"
+	const style = "/chatbot/assets/style-XY0-1_qA.css"
+	static := fstest.MapFS{
+		"index.html":                            {Data: []byte(`<!doctype html><head><!-- loopforge-workbench-assets --></head>`)},
+		"native-chat/index.html":                {Data: []byte(`<script type="module" crossorigin src="` + entry + `"></script><link rel="stylesheet" crossorigin href="` + style + `">`)},
+		"native-chat/assets/main-CiKeIPH5.js":   {Data: []byte(`export {}`)},
+		"native-chat/assets/style-XY0-1_qA.css": {Data: []byte(`#chatRoot{color:red}`)},
+	}
+	handler := studioFileServer(static)
+	home := httptest.NewRecorder()
+	handler.ServeHTTP(home, httptest.NewRequest(http.MethodGet, "/", nil))
+	if home.Code != http.StatusOK || !strings.Contains(home.Body.String(), `href="`+entry+`" data-workbench-entry`) ||
+		!strings.Contains(home.Body.String(), `rel="preload" as="style" href="`+style+`" data-workbench-style`) ||
+		strings.Contains(home.Body.String(), `rel="stylesheet" href="`+style+`"`) {
+		t.Fatalf("host does not reference the build's JS and CSS: %d %q", home.Code, home.Body.String())
+	}
+	for _, path := range []string{entry, style} {
+		asset := httptest.NewRecorder()
+		handler.ServeHTTP(asset, httptest.NewRequest(http.MethodGet, path, nil))
+		if asset.Code != http.StatusOK || asset.Header().Get("Cache-Control") != "public, max-age=31536000, immutable" {
+			t.Fatalf("fingerprinted asset %s: %d %q", path, asset.Code, asset.Header().Get("Cache-Control"))
+		}
+	}
+}
+
 func TestStudioVscodePageStampsAssetsWithContentHash(t *testing.T) {
 	static, err := fs.Sub(webassets.Files, ".")
 	if err != nil {

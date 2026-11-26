@@ -51,7 +51,9 @@ export function Menu({ label, children, className = "", onClose }) {
       if (ref.current && !ref.current.contains(e.target)) onClose();
     }
     function key(e) {
+      if (e.defaultPrevented) return;
       if (e.key === "Escape") {
+        e.preventDefault();
         e.stopPropagation();
         ref.current?.parentElement?.querySelector("button")?.focus();
         onClose();
@@ -103,35 +105,23 @@ export function Dialog({ title, children, onClose, footer }) {
     (
       ref.current?.querySelector("input,textarea,select") || ref.current
     )?.focus();
-    const key = (e) => {
-      if (e.key === "Escape") onClose();
-      if (e.key === "Tab") {
-        const focusable = [
-          ...ref.current.querySelectorAll(
-            "button,input,select,textarea,a[href]",
-          ),
-        ].filter((x) => !x.disabled);
-        if (!focusable.length) {
-          e.preventDefault();
-          return;
-        }
-        const first = focusable[0],
-          last = focusable.at(-1);
-        if (e.shiftKey && document.activeElement === first) {
-          e.preventDefault();
-          last.focus();
-        } else if (!e.shiftKey && document.activeElement === last) {
-          e.preventDefault();
-          first.focus();
-        }
-      }
-    };
-    document.addEventListener("keydown", key);
-    return () => {
-      document.removeEventListener("keydown", key);
-      previous?.focus?.();
-    };
+    return () => previous?.focus?.();
   }, []);
+  const key = (e) => {
+    if (e.defaultPrevented) return;
+    if (e.key === "Escape") { e.preventDefault(); onClose(); }
+    if (e.key !== "Tab") return;
+    const focusable = [...ref.current.querySelectorAll("button,input,select,textarea,a[href]")].filter((element) => !element.disabled);
+    const first = focusable[0], last = focusable.at(-1);
+    if (!first) e.preventDefault();
+    else if (e.shiftKey && document.activeElement === first) {
+      e.preventDefault();
+      last.focus();
+    } else if (!e.shiftKey && document.activeElement === last) {
+      e.preventDefault();
+      first.focus();
+    }
+  };
   return (
     <div
       className="dialog-backdrop"
@@ -149,6 +139,7 @@ export function Dialog({ title, children, onClose, footer }) {
         aria-modal="true"
         aria-label={title}
         tabIndex={-1}
+        onKeyDown={key}
       >
         <header>
           <h2>{title}</h2>
@@ -464,7 +455,7 @@ function SelectPopover({
       latest.current.onClose();
     };
     const key = (event) => {
-      if (event.key !== "Escape") return;
+      if (event.defaultPrevented || event.key !== "Escape") return;
       event.preventDefault();
       event.stopPropagation();
       dismiss(true);

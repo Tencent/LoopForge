@@ -15,6 +15,7 @@ import HarnessIcon from "./HarnessIcon";
 import SlidingTabs from "./SlidingTabs";
 import { attachmentURL, visibleText } from "./api";
 import { definitionTarget } from "./platform.js";
+import { uiLabel } from "./platform-host.js";
 import {
   AgentBrowserLinks,
   agentBrowserTarget,
@@ -151,8 +152,8 @@ export function Slides({ source }) {
         className={`slide ${currentPage === 0 ? "slide-cover" : ""}`}
         aria-label={`幻灯片 ${currentPage + 1}`}
       >
-        <div className="slide-eyebrow">{presentationTitle(source)}</div>
-        <Markdown remarkPlugins={[remarkGfm]}>{slides[currentPage]}</Markdown>
+        <div className="slide-eyebrow" data-i18n-skip>{presentationTitle(source)}</div>
+        <div data-i18n-skip><Markdown remarkPlugins={[remarkGfm]}>{slides[currentPage]}</Markdown></div>
         <small className="slide-page">
           {currentPage + 1} / {slides.length}
         </small>
@@ -189,7 +190,7 @@ export function Slides({ source }) {
           }}
         >
           <Download size={14} />
-          {exporting ? "正在导出…" : "下载 PowerPoint"}
+          {exporting ? uiLabel("正在导出…", "Exporting…") : uiLabel("下载 PowerPoint", "Download PowerPoint")}
         </button>
       </div>
       {error ? (
@@ -364,7 +365,7 @@ export function RichContent({ message, assets = emptyAssets, projectId = "" }) {
   ), [text]);
   return (
     <MarkdownAssets.Provider value={context}>
-      <div className="markdown">{markdown}</div>
+      <div className="markdown" data-i18n-skip>{markdown}</div>
     </MarkdownAssets.Provider>
   );
 }
@@ -373,7 +374,11 @@ export function RichContent({ message, assets = emptyAssets, projectId = "" }) {
 // files. Double-click an image to open; Esc closes.
 export function ImageLightbox({ src, alt, onClose }) {
   useEffect(() => {
-    const onKey = (e) => e.key === "Escape" && onClose();
+    const onKey = (event) => {
+      if (event.defaultPrevented || event.key !== "Escape") return;
+      event.preventDefault();
+      onClose();
+    };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
@@ -621,11 +626,11 @@ export function ArtifactPreview({ artifact }) {
         <div className="artifact-preview-file-row">
           <FileText size={17} />
           <div className="artifact-preview-file-identity">
-            <p className="artifact-preview-file-name" title={artifact.name}>
+            <p className="artifact-preview-file-name" title={artifact.name} data-i18n-skip>
               {artifact.name}
             </p>
             {artifact.source ? (
-              <p className="artifact-preview-file-meta">{artifact.source}</p>
+              <p className="artifact-preview-file-meta" data-i18n-skip>{artifact.source}</p>
             ) : null}
           </div>
         </div>
@@ -719,10 +724,11 @@ export function ArtifactPreview({ artifact }) {
         ) : artifact.kind === "svg" ? (
           <div
             className="svg-preview"
+            data-i18n-skip
             dangerouslySetInnerHTML={{ __html: safeSVG(source) }}
           />
         ) : artifact.kind === "mermaid" ? (
-          <Diagram source={source} />
+          <div data-i18n-skip><Diagram source={source} /></div>
         ) : kind === "html" ? (
           <iframe
             title="HTML 产物预览"

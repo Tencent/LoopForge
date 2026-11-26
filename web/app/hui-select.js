@@ -62,7 +62,7 @@
     panel.dataset.placement = down ? 'bottom' : 'top';
     return panel.dataset.placement;
   }
-  window.HuiPopover = Object.freeze({ claim, release, closeAll, place });
+  window.HuiPopover = Object.freeze({ claim, release, closeAll, place, isOpen: () => active !== null });
 
   const instances = new WeakMap();
   const live = new Set();

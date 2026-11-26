@@ -11,6 +11,7 @@ import { SubagentSession, subagentName, subagentStatus } from "./SubagentSession
 import { collectSubagents, resumeMissed } from "./activity";
 import { IconButton } from "./ui";
 import { definitionTarget, actionName } from "./platform.js";
+import { uiLabel } from "./platform-host.js";
 import { useArtifactPanelLayout } from "./useArtifactPanelLayout";
 import "./artifact-panel.css";
 
@@ -93,8 +94,8 @@ function DefinitionPreview({ artifact }) {
   if (target)
     return (
       <section className="definition-preview">
-        <h2>{data.name || artifact.name}</h2>
-        <p className="muted">{data.description}</p>
+        <h2 data-i18n-skip>{data.name || artifact.name}</h2>
+        <p className="muted" data-i18n-skip>{data.description}</p>
         <a
           className="definition-open-link"
           href={target.href}
@@ -112,8 +113,8 @@ function DefinitionPreview({ artifact }) {
         <span className="artifact-type-label">
           {artifact.kind === "sop" ? "LOOP" : "角色"}
         </span>
-        <h2>{data.name || artifact.name}</h2>
-        <p>{data.description}</p>
+        <h2 data-i18n-skip>{data.name || artifact.name}</h2>
+        <p data-i18n-skip>{data.description}</p>
         <small>
           {artifact.draft && !artifact.draft.saved
             ? "待确认"
@@ -128,7 +129,7 @@ function DefinitionPreview({ artifact }) {
             <li key={node.id}>
               <span className="definition-step-number">{index + 1}</span>
               <div>
-                <strong>{node.name || node.id}</strong>
+                <strong data-i18n-skip>{node.name || node.id}</strong>
                 <small>
                   {node.type === "approval"
                     ? "人工确认"
@@ -149,11 +150,9 @@ function DefinitionPreview({ artifact }) {
       ) : (
         <>
           <h3>工作说明</h3>
-          <RichContent
-            message={data.prompt || data.description || "暂无说明"}
-          />
+          {data.prompt || data.description ? <RichContent message={data.prompt || data.description} /> : <p>暂无说明</p>}
           {data.model ? (
-            <small className="muted">模型 · {data.model}</small>
+            <small className="muted">模型 · <span data-i18n-skip>{data.model}</span></small>
           ) : null}
         </>
       )}
@@ -367,16 +366,15 @@ export default function ArtifactPanel({
     // so the row opens them in a new tab instead of opening a local preview.
     const href = target?.href || (artifact.external ? artifact.url : "");
     const Row = href ? "a" : "button";
-    const title = target
-      ? `${artifact.name} · ${target.label}`
-      : artifact.external
-        ? `${artifact.name} · 在代码仓库打开`
-        : artifact.name;
+    const action = target ? window.lfTranslate?.(target.label) ?? target.label
+      : artifact.external ? uiLabel("在代码仓库打开", "Open in repository") : "";
+    const title = action ? `${artifact.name} · ${action}` : artifact.name;
     return (
       <Row
         className={`artifact-row artifact-file-row ${selected?.id === artifact.id ? "is-selected" : ""}`}
         key={artifact.id}
         title={title}
+        data-i18n-skip-attrs="title"
         aria-current={selected?.id === artifact.id ? "true" : undefined}
         {...(href
           ? { href, target: "_blank", rel: "noopener noreferrer" }
@@ -386,7 +384,7 @@ export default function ArtifactPanel({
           <Icon size={16} />
         </span>
         <span className="artifact-file-copy">
-          <strong>{artifact.name}</strong>
+          <strong data-i18n-skip>{artifact.name}</strong>
           <small>
             {target
               ? `${artifact.kind === "sop" ? "LOOP" : "角色"} · ${artifact.asset?.status === "published" ? "已发布" : "已保存"}`
@@ -528,25 +526,27 @@ export default function ArtifactPanel({
               onClick={() => (nodeId ? setNodeId(null) : setSelected(null))}
             >
               <ChevronLeft size={14} />
-              <span>{nodeId ? "返回流程节点" : "返回产物列表"}</span>
+              <span>{nodeId ? uiLabel("返回流程节点", "Back to LOOP nodes") : uiLabel("返回产物列表", "Back to artifacts")}</span>
             </button>
-            {nodeId ? <span className="artifact-node-title">{nodeDefinition?.name || nodeId}</span> : null}
+            {nodeId ? <span className="artifact-node-title" data-i18n-skip>{nodeDefinition?.name || nodeId}</span> : null}
             {selectedAgent ? (
               <>
-                <span className="artifact-node-title">{subagentName(selectedAgent)}</span>
-                <small className="node-header-meta" title={[selectedAgent.subagent, selectedAgent.agentId, selectedAgent.model].filter(Boolean).join(" · ")}>
-                  {[subagentStatus(selectedAgent, live).label, selectedAgent.model].filter(Boolean).join(" · ")}
+                <span className="artifact-node-title" data-i18n-skip>{subagentName(selectedAgent)}</span>
+                <small className="node-header-meta" data-i18n-skip-attrs="title" title={[selectedAgent.subagent, selectedAgent.agentId, selectedAgent.model].filter(Boolean).join(" · ")}>
+                  {subagentStatus(selectedAgent, live).label}
+                  {selectedAgent.model ? <> · <span data-i18n-skip>{selectedAgent.model}</span></> : null}
                 </small>
               </>
             ) : null}
             {nodeId ? (
               <small
                 className="node-header-meta"
-                title={[node?.model, runStatus[node?.status] || node?.status]
+                data-i18n-skip-attrs="title"
+                title={[node?.model, window.lfTranslate?.(runStatus[node?.status]) || runStatus[node?.status] || node?.status]
                   .filter(Boolean)
                   .join(" · ")}
               >
-                {node?.model || runStatus[node?.status]}
+                {node?.model ? <span data-i18n-skip>{node.model}</span> : runStatus[node?.status]}
               </small>
             ) : null}
           </div>

@@ -124,29 +124,31 @@ test('chat initialization reads the latest route while preserving quick access',
   const app = await loadApp();
   t.after(app.close);
   app.window.history.replaceState({}, '', '/?quickAccess=1&chatSession=old#/collaboration/old');
-  app.window.loopforgeBootstrap.prepareApplication();
+  app.evaluate('prepareApplication()');
   app.window.history.replaceState({}, '', '/?chatSession=new#/collaboration/new');
   const context = app.window.loopforgePlatform.initialChatContext();
   assert.equal(context.sessionId, 'new');
   assert.equal(context.quickAccess, true);
 });
 
-test('the shared state exposes immutable snapshots and releases subscribers', async (t) => {
+test('shared events update immutable snapshots and can be unsubscribed', async (t) => {
   const app = await loadApp();
   t.after(app.close);
   const state = app.window.loopforgeApplicationState;
   const initial = state.getSnapshot();
-  let calls = 0;
-  const unsubscribe = state.subscribe(() => { calls++; });
-  state.update({issue: 'issue-1'});
-  assert.equal(state.getSnapshot().issue, 'issue-1');
-  assert.equal(initial.issue, '');
-  assert.notEqual(state.getSnapshot(), initial);
-  state.update({issue: 'issue-1'});
-  assert.equal(calls, 1);
+  const received = [];
+  const unsubscribe = state.on('session', value => received.push([value, state.getSnapshot().session]));
+  state.emit('session', 's-1');
+  const updated = state.getSnapshot();
+  assert.equal(updated.session, 's-1');
+  assert.equal(initial.session, '');
+  assert.ok(Object.isFrozen(updated));
+  state.update({session: 's-1'});
+  assert.equal(state.getSnapshot(), updated);
   unsubscribe();
-  state.update({issue: ''});
-  assert.equal(calls, 1);
+  state.emit('session', 's-2');
+  assert.equal(state.getSnapshot().session, 's-2');
+  assert.deepEqual(received, [['s-1', 's-1']]);
 });
 
 test('personal chat follows selected and newly created projects', async (t) => {

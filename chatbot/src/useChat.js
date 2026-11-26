@@ -232,7 +232,7 @@ export function useChat() {
     platform()?.setProject(id);
   }, []);
   const open = useCallback(
-    (id) => {
+    (id, { fromRoute = false } = {}) => {
       if (id === currentId.current && sessionRef.current?.id === id) return;
       setError("");
       generationRevision.current++;
@@ -249,7 +249,7 @@ export function useChat() {
       currentId.current = id;
       setActiveId(id);
       if (id) setRevealId(id);
-      changeURL(id);
+      if (!fromRoute) changeURL(id);
     },
     [changeURL, executionMachines.resetMachine, setGenerationKnown],
   );
@@ -278,7 +278,6 @@ export function useChat() {
     const opening = sessionRef.current?.id !== stored.id;
     restoreConversationModel(stored, { running, preserveChoice: !opening });
     if (opening) {
-      changeURL(stored.id);
       setProjectId(stored.projectId || "");
       syncProject(stored.projectId || "");
     }
@@ -669,7 +668,10 @@ export function useChat() {
           if (Array.isArray(projectRows)) setProjects(projectRows);
         }).catch(() => {});
     });
-    const offSession = subscribe("session", (id) => { if (id !== currentId.current) open(id || null); });
+    const offSession = subscribe("session", (id, issueId) => {
+      setDraftIssueId(issueId || "");
+      if ((id || null) !== currentId.current) open(id || null, { fromRoute: true });
+    });
     return () => { offProject(); offEnvironments(); offSession(); };
   }, [ready, open]);
   const missingKey = !!user && !user.codeBuddyApiKeyConfigured;

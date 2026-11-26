@@ -8,9 +8,6 @@ export default defineConfig({
   css: { postcss: { plugins: [scopeChatCSS()] } },
   build: {
     outDir: "../web/native-chat", emptyOutDir: true,
-    // The platform shell links one /chatbot/assets/workbench.css. Splitting the
-    // static CSS graph into workbench.css + workbench2.css would drop the
-    // second half for the unified workbench and leave the chat unstyled.
     cssCodeSplit: false,
     rollupOptions: {
       input: {
@@ -18,8 +15,7 @@ export default defineConfig({
         "prompt-editor": new URL("./src/prompt-editor-entry.jsx", import.meta.url).pathname,
       },
       output: {
-        entryFileNames: (chunk) => chunk.name === "prompt-editor" ? "prompt-editor.js" : "assets/workbench.js",
-        assetFileNames: (asset) => asset.names?.some((name) => name.endsWith(".css")) ? "assets/workbench.css" : "assets/[name]-[hash][extname]",
+        entryFileNames: (chunk) => chunk.name === "prompt-editor" ? "prompt-editor.js" : "assets/[name]-[hash].js",
       },
     },
   },

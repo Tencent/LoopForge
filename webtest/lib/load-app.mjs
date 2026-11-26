@@ -240,11 +240,11 @@ export async function loadApp({ routes = [], hash = '', dispatchReady = true, or
   const context = dom.getInternalVMContext();
   const sources = await Promise.all(files.map((filename) => readFile(filename, 'utf8')));
   for (let index = 0; index < files.length; index += 1) {
+    if (!dispatchReady && files[index] === path.join(WEB_ROOT, 'app/start.js')) continue;
     new vm.Script(sources[index], { filename: files[index] }).runInContext(context);
   }
   if (dispatchReady) {
-    await window.loopforgeBootstrap.start();
-    window.loopforgeBootstrap.prepareApplication();
+    await window.loopforgeBootstrap.ready;
     window.document.dispatchEvent(new window.Event('DOMContentLoaded', { bubbles: true }));
     window.dispatchEvent(new window.Event('load'));
     await settle();

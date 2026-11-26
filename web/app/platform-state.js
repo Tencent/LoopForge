@@ -2,16 +2,13 @@
 // specific data and a conversation's persisted project remain in their owners.
 (() => {
   let snapshot = Object.freeze({view: '', project: '', chatProject: '', session: '', issue: '', theme: 'light'});
-  const listeners = new Set();
   const events = new Map();
   window.loopforgeApplicationState = {
     getSnapshot: () => snapshot,
     update(patch) {
       if (Object.keys(patch).every(key => Object.is(snapshot[key], patch[key]))) return;
       snapshot = Object.freeze({...snapshot, ...patch});
-      for (const listener of listeners) listener();
     },
-    subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
     on(type, listener) {
       let group = events.get(type);
       if (!group) events.set(type, group = new Set());

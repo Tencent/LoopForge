@@ -25,11 +25,16 @@ func TestOldWorkbenchEntryRedirectsButPreviewRemainsAccessible(t *testing.T) {
 	if preview.Code != http.StatusOK || preview.Body.String() != "preview" {
 		t.Fatalf("preview changed: %d %q", preview.Code, preview.Body.String())
 	}
-	// The SOP orchestrator panel embeds the chatbot surface, so it must keep
-	// serving the chat app instead of redirecting the frame to the platform.
-	designer := httptest.NewRecorder()
-	handler.ServeHTTP(designer, httptest.NewRequest(http.MethodGet, "/chatbot/?surface=sop-designer&workflowId=sop-1", nil))
-	if designer.Code != http.StatusOK || designer.Body.String() != "designer" {
-		t.Fatalf("designer surface must stay accessible: %d %q", designer.Code, designer.Body.String())
+	for _, path := range []string{"/chatbot/", "/chatbot", "/chatbot/index.html"} {
+		designer := httptest.NewRecorder()
+		handler.ServeHTTP(designer, httptest.NewRequest(http.MethodGet, path+"?surface=sop-designer&workflowId=sop-1", nil))
+		if designer.Code != http.StatusOK || designer.Body.String() != "designer" || designer.Header().Get("Cache-Control") != "no-store" {
+			t.Fatalf("designer surface must stay accessible on %s: %d %q", path, designer.Code, designer.Body.String())
+		}
+		unknown := httptest.NewRecorder()
+		handler.ServeHTTP(unknown, httptest.NewRequest(http.MethodGet, path+"?surface=unknown", nil))
+		if unknown.Code != http.StatusNotFound {
+			t.Fatalf("unknown surface on %s served a document: %d", path, unknown.Code)
+		}
 	}
 }

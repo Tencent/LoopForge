@@ -179,7 +179,7 @@ describe("dispatched subagents", () => {
     await userEvent.click(card);
     view.rerender(panel());
     expect(screen.getByLabelText("运行模型").textContent).toBe("模型 · claude-opus-4-5");
-    expect(screen.getByText("已完成 · claude-opus-4-5")).toBeTruthy();
+    expect(screen.getByText("claude-opus-4-5", { selector: ".node-header-meta span" }).parentElement).toHaveTextContent("已完成 · claude-opus-4-5");
   });
 });
 

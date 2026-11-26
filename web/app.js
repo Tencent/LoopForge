@@ -979,18 +979,28 @@ async function boot(){
   renderProjectSwitcher(); updateApprovalBadge();
   ensureMCPMarketCatalog().then(()=>{if(activeViewName()==='sops')renderSOPCatalog()});
   listenForGongfengOAuth();
-  window.addEventListener('hashchange',async()=>{
+  let popstateURL='';
+  let routeRevision=0;
+  const applyLocation=async event=>{
+    if(event.type==='hashchange'){
+      const paired=popstateURL===event.newURL;
+      popstateURL='';
+      if(paired||event.newURL!==location.href)return;
+    }else popstateURL=location.href;
+    const revision=++routeRevision;
     const name=restoredView();
     const assetDetailHash=state.selectedAsset&&isProjectSharedAsset(activeViewName())?assetViewHash(state.assetType,state.selectedAsset):'';
     if(assetDetailHash&&location.hash!==assetDetailHash&&!(await confirmAssetLeave())){
-      history.pushState({assetFrom:assetViewHash(state.assetType)},'',assetDetailHash);
+      if(revision===routeRevision)history.pushState({assetFrom:assetViewHash(state.assetType)},'',assetDetailHash);
       return;
     }
+    if(revision!==routeRevision)return;
+    if(settingsRouteTransition?.target!==name)cancelSettingsRouteTransition();
     if(name==='settings'&&routePart(1)==='executors'){gotoCredential('executors');return}
     if(activeViewName()!==name){
       if(name==='flow')await applyFlowRoute();
       if(name==='projects')syncProjectAdminRouteState();
-      if(restoredView()===name)switchView(name);
+      if(revision===routeRevision&&restoredView()===name)switchView(name,{fromLocation:true});
       return;
     }
     if(name==='runs'){
@@ -1003,24 +1013,23 @@ async function boot(){
     if(name==='agents')applyAgentRoute();
     if(isProjectSharedAsset(name))applyAssetRoute();
     if(name==='projects')applyProjectAdminRoute();
-    if(name==='collaboration'){
-      const id=routePart(1);
-      {const url=new URL(location.href);if(id)url.searchParams.set('chatSession',id);else url.searchParams.delete('chatSession');history.replaceState({},'',url);platformNotify('session',id||'')}
-    }
-  });
+    if(name==='evolution'&&typeof evoApplyRoute==='function')evoApplyRoute();
+    if(name==='collaboration')applyChatRoute();
+  };
+  window.addEventListener('hashchange',applyLocation);
+  window.addEventListener('popstate',applyLocation);
   const view=restoredView();
+  prepareApplication();
   if(view==='projects')syncProjectAdminRouteState();
   renderAll();
   if(view==='settings'&&routePart(1)==='executors')gotoCredential('executors');
-  else switchView(view);
-  settleBootLoader();
+  else switchView(view,{fromLocation:true});
+  finishBootLoader();
   if(!['approvals','issues','runs','sops'].includes(state.currentView))preloadApprovalBadge();
   restoreRequirementComposer();
   return true;
 }
-let bootLoaderTimer=0;
 function finishBootLoader(){
-  clearTimeout(bootLoaderTimer);bootLoaderTimer=0;
   document.body.classList.remove('booting');
   const loader=document.getElementById('bootLoader');
   if(!loader?.isConnected||loader.classList.contains('leaving'))return;
@@ -1031,7 +1040,6 @@ function finishBootLoader(){
   loader.addEventListener('transitionend',remove,{once:true});
   setTimeout(remove,250);
 }
-function settleBootLoader(){finishBootLoader()}
 window.addEventListener('pageshow',event=>{if(event.persisted)finishBootLoader()});
 // Shared theme preference: light|dark|system, while data-theme stays light|dark.
 const THEME_KEY='agentflow.theme.v3',LEGACY_THEME_KEY='agentflow.native-chat.theme',EARLIER_THEME_KEY='loopforge.theme.v3',themeMedia=matchMedia('(prefers-color-scheme: dark)');
@@ -1054,8 +1062,9 @@ function bind(){
       resetProjectAdminDetail();
     }
     if(btn.id==='railSettingsEntry'&&(settingsRouteTransition?.target?isSettingsManagementView(settingsRouteTransition.target):document.body.classList.contains('management-mode'))){
-      switchView('collaboration');
-    }else switchView(btn.dataset.view);
+      returnToWorkbench();
+    }else if(btn.dataset.view==='collaboration')returnToWorkbench();
+    else switchView(btn.dataset.view);
   });
   $('#settingsSidebarToggle')?.addEventListener('click',()=>{cancelSettingsRouteTransition();setSettingsSidebarExpanded(!settingsSidebarExpanded())});
   $('#settingsSidebarExpand')?.addEventListener('click',()=>{
@@ -1360,15 +1369,22 @@ function bind(){
     modal.classList.remove('open');
   }));
   document.addEventListener('keydown',e=>{
-    if($('#artifactModal').open)return;
-    if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='k'){e.preventDefault();openCommandPalette();return}
+    if(e.defaultPrevented||document.querySelector('dialog[open]'))return;
+    if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='k'){
+      e.preventDefault();
+      if(document.querySelector('.modal.open')||state.drawerOpen||window.HuiPopover?.isOpen())return;
+      if(activeViewName()==='collaboration')platformNotify('search');
+      else openCommandPalette();
+      return;
+    }
     if(!$('#commandPalette').hidden){
-      if(e.key==='Escape'){closeCommandPalette();return}
+      if(e.key==='Escape'){e.preventDefault();closeCommandPalette();return}
       if(e.key==='ArrowDown'){e.preventDefault();moveCommandSelection(1);return}
       if(e.key==='ArrowUp'){e.preventDefault();moveCommandSelection(-1);return}
       if(e.key==='Enter'){e.preventDefault();executeCommand(commandSelectedIndex);return}
     }
     if(e.key==='Escape'){
+      if(activeViewName()==='collaboration'&&!state.drawerOpen&&!document.querySelector('.modal.open'))return;
       if(flowDesignerEscape(e))return;
       if(state.drawerOpen)return closeIssueDrawer();
       if($('#requirementModal')?.classList.contains('open')){
@@ -1386,8 +1402,8 @@ function bind(){
   });
 
   // --- 工作台 / 待办验收 / 可观测与分析 / Issue 详情抽屉 ---
-  $('.platform-sidebar .brand')?.addEventListener('click',()=>switchView('collaboration'));
-  $('.rail-brand') && ($('.rail-brand').onclick=()=>switchView('collaboration'));
+  $('.platform-sidebar .brand')?.addEventListener('click',returnToWorkbench);
+  $('.rail-brand') && ($('.rail-brand').onclick=returnToWorkbench);
   $('#railUserBadge') && ($('#railUserBadge').onclick=()=>switchView('settings'));
   (function bindSidebarResize(){
     const KEY=SIDEBAR_WIDTH_KEY,MIN=220,MAX=420,wide=matchMedia('(min-width:1001px)'),sidebar=$('.platform-sidebar');
@@ -1410,7 +1426,7 @@ function bind(){
   $('#dashImportTAPD')&&($('#dashImportTAPD').onclick=openImportTAPDModal);
   $('#dashNewRequirement').onclick=openRequirementWizard;
   $('#dashNewRun').onclick=()=>switchView('issues');
-  $$('[data-jump]').forEach(el=>el.onclick=()=>switchView(el.dataset.jump));
+  $$('[data-jump]').forEach(el=>el.onclick=()=>el.dataset.jump==='collaboration'?returnToWorkbench():switchView(el.dataset.jump));
   $('#refreshApprovals').onclick=()=>renderApprovals(false);
   $('#refreshObs').onclick=refreshObs;
   $('#exportObsReport').onclick=exportObsReport;
@@ -1437,6 +1453,7 @@ function bind(){
     renderObsTabs();
     if($('#dashboardView').classList.contains('active'))renderDashboard();
     if($('#observabilityView').classList.contains('active'))refreshObs();
+    if($('#evolutionView')?.classList.contains('active')&&typeof renderEvolutionView==='function')renderEvolutionView();
     if($('#sopsView').classList.contains('active'))refreshWorkflowMetrics();
     platformNotify('project',state.projectFilter,previousProject);
   };
@@ -1549,6 +1566,24 @@ function nativeChatProjectId(){
 }
 // Explicit boundary between the React chat surface and the in-document management views.
 function platformNotify(type, ...values){applicationState.emit(type,...values)}
+function validChatSession(id){return /^[a-zA-Z0-9_-]{1,64}$/.test(id||'')?id:''}
+function parseChatRoute(){
+  const params=new URLSearchParams(location.search);
+  const detail=routePart(0)==='collaboration'?routePart(1):'';
+  const sessionId=validChatSession(detail||params.get('chatSession'));
+  return {sessionId,issueId:sessionId?'':params.get('chatIssue')||''};
+}
+function applyChatRoute(){
+  const {sessionId,issueId}=parseChatRoute();
+  const current=applicationState.getSnapshot();
+  if(current.session===sessionId&&current.issue===issueId)return;
+  applicationState.update({session:sessionId,issue:issueId});
+  platformNotify('session',sessionId,issueId);
+}
+function chatViewHash(id){return id?'#/collaboration/'+encodeURIComponent(id):'#/collaboration'}
+function returnToWorkbench(){switchView('collaboration')}
+let pendingIssueHandoff=null;
+let issueHandoffReady=false;
 // A project created, deleted or restored from the chat must reach the project
 // switcher without a page refresh.
 function reloadShellProjects(){
@@ -1557,17 +1592,11 @@ function reloadShellProjects(){
 // Executor settings opened from the chat wizard return to it. The wizard is
 // part of this document now, so the resume travels through the shared state.
 const QUICK_ACCESS_EXECUTOR_SETTINGS='#/settings/executors/quick-access';
-let pendingQuickAccessReturn=false;
 let quickAccessExecutorSettingsActive=false;
-function postQuickAccessReturn(){
-  if(!pendingQuickAccessReturn)return;
-  pendingQuickAccessReturn=false;
-  platformNotify('quickAccessReturn');
-}
 function returnToQuickAccess(){
   if(location.hash!==QUICK_ACCESS_EXECUTOR_SETTINGS)return;
   if(history.state?.quickAccessExecutorReturn){history.back();return}
-  switchView('collaboration');
+  returnToWorkbench();
 }
 function openIssueInChat(issue,opts){
   if(!issue?.id||!issue.projectId)return;
@@ -1576,10 +1605,10 @@ function openIssueInChat(issue,opts){
   const url=new URL(location.href);
   ['chatSession','chatIssue'].forEach(key=>url.searchParams.delete(key));
   history.replaceState({},'',url.pathname+url.search+'#/collaboration');
-  // The mention goes first: it moves the chat to the requirement's project,
-  // so the project context emitted by switchView no longer rebinds anything.
-  platformNotify('mentionIssue',{issueId:issue.id,projectId:issue.projectId,...(intent?{intent}:{})});
-  switchView('collaboration');
+  switchView('collaboration',{fromLocation:true});
+  const handoff={issueId:issue.id,projectId:issue.projectId,...(intent?{intent}:{})};
+  if(!issueHandoffReady)pendingIssueHandoff=handoff;
+  platformNotify('mentionIssue',handoff);
 }
 function refreshCredentialUser(){
   const userId=state.currentUser?.id;
@@ -1593,18 +1622,24 @@ function refreshCredentialUser(){
 let initialQuickAccess=false;
 window.loopforgePlatform={
   subscribe(type,listener){return applicationState.on(type,listener)},
+  issueHandoffReady(){
+    issueHandoffReady=true;
+    const handoff=pendingIssueHandoff;
+    pendingIssueHandoff=null;
+    if(handoff)platformNotify('mentionIssue',handoff);
+    return ()=>{issueHandoffReady=false};
+  },
   getSnapshot(){return applicationState.getSnapshot()},
-  subscribeState(listener){return applicationState.subscribe(listener)},
   initialChatContext(){
     const params=new URL(location.href).searchParams;
-    return {projectId:nativeChatProjectId(),sessionId:((routePart(0)==='collaboration'&&routePart(1))||params.get('chatSession')||''),issueId:params.get('chatIssue')||'',quickAccess:initialQuickAccess||params.get('quickAccess')==='1'};
+    return {projectId:nativeChatProjectId(),...parseChatRoute(),quickAccess:initialQuickAccess||params.get('quickAccess')==='1'};
   },
   setSession(id){
-    id=id||'';if(id&&!/^[a-zA-Z0-9_-]{1,64}$/.test(id))return;
+    id=id||'';if(id&&!validChatSession(id))return;
     const url=new URL(location.href);
     if(id)url.searchParams.set('chatSession',id);else url.searchParams.delete('chatSession');
     url.searchParams.delete('chatIssue');
-    if(activeViewName()==='collaboration')url.hash=id?'#/collaboration/'+encodeURIComponent(id):'#/collaboration';
+    if(activeViewName()==='collaboration')url.hash=chatViewHash(id);
     history.replaceState({},'',url);
     applicationState.update({session:id,issue:''});
   },
@@ -1640,14 +1675,14 @@ function prepareApplication(){
   applicationState.update({chatProject:context.projectId,session:context.sessionId,issue:context.issueId});
   if(params.get('gongfeng')==='ok')state.gongfengReturned=true;
   params.delete('gongfeng');params.delete('quickAccess');
-  history.replaceState(history.state,'',url);
+  if(url.href!==location.href)history.replaceState(history.state,'',url);
 }
 function settingsSidebarExpanded(){
   return document.body.classList.contains('management-mode')&&!document.body.classList.contains('settings-sidebar-hidden');
 }
 let settingsSidebarEntryFrame=0;
 let settingsSidebarWasManaged=false;
-const settingsManagementViews=['settings','assistant','projects','bots','projectCredentials','sops','flow','runs','aiSchedules','agents','mcp','rules','skills','runners','sandboxes','guide','platform'];
+const settingsManagementViews=['settings','assistant','projects','bots','projectCredentials','sops','flow','runs','aiSchedules','agents','mcp','rules','skills','runners','sandboxes','evolution','guide','platform'];
 const settingsRouteMotion=matchMedia('(prefers-reduced-motion: reduce)');
 let settingsRouteTransition=null;
 let settingsRouteApplying=false;
@@ -1680,10 +1715,10 @@ function cancelSettingsRouteTransition(){
   }
   document.body.classList.remove('settings-mode-switch');
 }
-function startSettingsRouteTransition(name){
+function startSettingsRouteTransition(name,options){
   const apply=()=>{
     settingsRouteApplying=true;
-    try{switchView(name)}finally{settingsRouteApplying=false}
+    try{switchView(name,options)}finally{settingsRouteApplying=false}
     const focused=document.activeElement;
     if(focused&&focused!==document.body&&!focused.getClientRects().length){
       $('#railSettingsEntry')?.focus({preventScroll:true});
@@ -1693,6 +1728,7 @@ function startSettingsRouteTransition(name){
   if(current?.motion){
     const reversing=isSettingsManagementView(current.target)!==isSettingsManagementView(name);
     current.target=name;
+    current.options=options;
     apply();
     if(reversing)current.motion.reverse();
     return;
@@ -1702,7 +1738,7 @@ function startSettingsRouteTransition(name){
   const home=settingsRouteSurface('collaboration');
   const homeSettled=!home?.shell?.matches('.sidebar-entering,.sidebar-transitioning,.sidebar-resizing');
   const preserveGeometry=!!from?.expanded&&homeSettled&&(isSettingsManagementView(name)||!!home?.expanded);
-  const transition={from:fromName,to:name,target:name,preserveGeometry,held:[],motion:null,observer:null,timer:0};
+  const transition={from:fromName,to:name,target:name,options,preserveGeometry,held:[],motion:null,observer:null,timer:0};
   settingsRouteTransition=transition;
   if(from?.expanded&&!isSettingsManagementView(name)&&home&&!home.expanded){
     // Returning to an intentionally closed drawer needs one close, not a
@@ -1753,17 +1789,17 @@ function startSettingsRouteTransition(name){
   }
 }
 window.addEventListener('resize',()=>{
-  const pending=settingsRouteTransition?.target;
+  const pending=settingsRouteTransition;
   cancelSettingsRouteTransition();
-  if(pending&&activeViewName()!==pending){
+  if(pending&&activeViewName()!==pending.target){
     settingsRouteApplying=true;
-    try{switchView(pending)}finally{settingsRouteApplying=false}
+    try{switchView(pending.target,pending.options)}finally{settingsRouteApplying=false}
   }
 });
 settingsRouteMotion.addEventListener('change',()=>{
-  const pending=settingsRouteTransition?.target;
+  const pending=settingsRouteTransition;
   cancelSettingsRouteTransition();
-  if(pending)switchView(pending);
+  if(pending)switchView(pending.target,pending.options);
   setSettingsSidebarExpanded(settingsSidebarExpanded());
 });
 function setSettingsSidebarExpanded(expanded,focusToggle=false){
@@ -1824,7 +1860,7 @@ function setSettingsSidebarExpanded(expanded,focusToggle=false){
     });
   }
 }
-function viewTitles(){return {management:'设置',collaboration:'AI 工作台',issues:'需求列表',aiSchedules:'定时任务',bots:'通道管理',assistant:'AI 助手',runs:'运行记录',approvals:'待我确认',sops:'流程模板',flow:'流程设计',agents:'角色定义',mcp:'能力资产',rules:'能力资产',skills:'能力资产',sandboxes:'沙箱管理',observability:'统计',projects:'项目配置',projectCredentials:'凭据管理',platform:'平台管理',runners:'执行机器',settings:'个人配置',access:'访问密钥',guide:'访问密钥'}}
+function viewTitles(){return {management:'设置',collaboration:'AI 工作台',issues:'需求列表',aiSchedules:'定时任务',bots:'通道管理',assistant:'AI 助手',runs:'运行记录',approvals:'待我确认',sops:'流程模板',flow:'流程设计',agents:'角色定义',mcp:'能力资产',rules:'能力资产',skills:'能力资产',sandboxes:'沙箱管理',observability:'统计',projects:'项目配置',projectCredentials:'凭据管理',platform:'平台管理',runners:'执行机器',settings:'个人配置',access:'访问密钥',guide:'访问密钥',evolution:'RSI工作台'}}
 // 设置侧栏只列一级入口；被合并进同一页的子视图（能力资产的类型 Tab，
 // 从流程模板打开的流程设计）按 data-nav-match 高亮它们所属的入口。
 function settingsNavMatches(btn,name){return btn.dataset.view===name||String(btn.dataset.navMatch||'').split(/\s+/).includes(name)}
@@ -1839,6 +1875,7 @@ function activeViewName(){if(state.currentView)return state.currentView;const el
 function restoredView(){
   const titles=viewTitles();
   const hash=(location.hash||'').replace(/^#\/?/,'').split(/[/?]/)[0];
+  if(!hash||hash==='dashboard')return 'collaboration';
   if(hash==='access')return 'guide';
   if(['assets','dockerfiles','environments'].includes(hash))return 'sandboxes';
   if(hash==='playbooks')return 'sops';
@@ -1937,8 +1974,9 @@ function syncRunHash(id){
   const next=runViewHash(id||'');
   if(location.hash!==next)history.replaceState(null,'',next);
 }
-function persistView(name,push=false){
+function persistView(name,push=false,{fromLocation}={}){
   localStorage.setItem('agentflow.activeView',name);
+  if(name==='collaboration'&&fromLocation)return;
   let next=`#/${name}`;
   if(name==='settings'&&location.hash===QUICK_ACCESS_EXECUTOR_SETTINGS)next=QUICK_ACCESS_EXECUTOR_SETTINGS;
   if(name==='runs'){
@@ -1949,12 +1987,9 @@ function persistView(name,push=false){
   if(name==='agents'&&agentRouteId())next=`#/agents/${encodeURIComponent(agentRouteId())}${routePart(2)==='gov'?'/gov':''}`;
   if(isProjectSharedAsset(name)&&routePart(0)===name&&assetRouteId())next=`#/${name}/${encodeURIComponent(assetRouteId())}`;
   if(name==='projects')next=projectAdminHash(state.projectAdminDetailId||'',state.projectAdminTab);
+  if(name==='evolution'&&routePart(0)==='evolution')next=location.hash;
   if(name==='collaboration'){
-    const current=(location.hash||'').replace(/^#\/?/,'').split('?')[0].split('/').filter(Boolean);
-    let fromHash=current[0]==='collaboration'?current[1]||'':'';
-    try{fromHash=decodeURIComponent(fromHash)}catch{}
-    const id=fromHash||new URL(location.href).searchParams.get('chatSession');
-    if(id)next='#/collaboration/'+encodeURIComponent(id);
+    next=chatViewHash(applicationState.getSnapshot().session);
   }
   if(location.hash===next)return;
   // push=true 时压入新历史记录，让浏览器「后退」能在平台页面间回退；
@@ -1962,7 +1997,7 @@ function persistView(name,push=false){
   if(push)history.pushState(null,'',next);
   else history.replaceState(null,'',next);
 }
-function switchView(name){
+function switchView(name,options={}){
   $$('details.collab-settings').forEach(menu=>menu.open=false);
   const titles=viewTitles();
   if(name==='dashboard')name='collaboration';
@@ -1988,13 +2023,14 @@ function switchView(name){
   if(previous==='agents'&&name!=='agents')$('#agentModal')?.classList.remove('open');
   if(!settingsRouteApplying){
     const crossingSettings=previous!==name&&((previous==='collaboration'&&isSettingsManagementView(name))||(isSettingsManagementView(previous)&&name==='collaboration'));
-    if(crossingSettings&&!settingsRouteMotion.matches){startSettingsRouteTransition(name);return}
+    if(crossingSettings&&!settingsRouteMotion.matches){startSettingsRouteTransition(name,options);return}
     cancelSettingsRouteTransition();
   }
   const target=assetViews.includes(name)?'assets':name;
   const staying=activeViewName()===name;
   const prevView=state.currentView;
   if(previous==='observability'&&name!=='observability'&&typeof obsDisposeCharts==='function'){obsCollapse?.({silent:true});obsDisposeCharts();obsDisposeSelects?.()}
+  if(previous==='evolution'&&name!=='evolution'&&typeof evoDispose==='function')evoDispose();
   state.currentView=name;
   if(name!=='runs')stopQueuedRunRefresh();
   $$('.nav[data-view]').forEach(n=>n.classList.toggle('active',settingsNavMatches(n,name)));
@@ -2020,27 +2056,21 @@ function switchView(name){
   // Chat stays mounted while management views are active. Project and
   // environment changes travel through the shared application state instead
   // of a parent/child window bridge.
-  if(name==='collaboration'||isPureManagement){
-    platformNotify('project',nativeChatProjectId());
-    platformNotify('environments');
-  }
-  if(name==='collaboration'&&previous!==name){const id=routePart(0)==='collaboration'&&routePart(1)||new URL(location.href).searchParams.get('chatSession');if(id)platformNotify('session',id)}
+  if(name==='collaboration'||isPureManagement)platformNotify('environments');
   showDirectRunButton(name==='flow');
   closeIssueDrawer();
   if(name!=='sops'&&typeof hideSOPCardMenu==='function')hideSOPCardMenu();
   // 仅真实用户切换时压栈：boot 首次进入（prevView 为空）与同视图重复调用
   //（staying）不压；hashchange 后退触发的调用 prevView 非空且 hash 已是目标值，
   // persistView 内部会短路，不会重复压栈。
-  persistView(name,!staying&&!!prevView);
+  persistView(name,!options.fromLocation&&!staying&&!!prevView,options);
+  if(name==='collaboration')applyChatRoute();
+  if(name==='evolution'&&typeof renderEvolutionView==='function')renderEvolutionView();
   const resumeQuickAccess=name==='collaboration'&&quickAccessExecutorSettingsActive;
   quickAccessExecutorSettingsActive=name==='settings'&&location.hash===QUICK_ACCESS_EXECUTOR_SETTINGS;
   const quickAccessReturnButton=$('#returnToQuickAccess');
   if(quickAccessReturnButton)quickAccessReturnButton.hidden=!quickAccessExecutorSettingsActive;
-  if(name!=='collaboration')pendingQuickAccessReturn=false;
-  if(resumeQuickAccess){
-    pendingQuickAccessReturn=true;
-    postQuickAccessReturn();
-  }
+  if(resumeQuickAccess)platformNotify('quickAccessReturn');
   const nav=$('.platform-sidebar nav');
   if(nav){
     if(['dashboard','issues','approvals'].includes(name)){

@@ -5,7 +5,8 @@ import selectorParser from 'postcss-selector-parser';
 export default function scopeChatCSS() {
   return {
     postcssPlugin: 'scope-chat-css',
-    Rule(rule) {
+    Rule(rule, { result } = {}) {
+      if (result?.opts.from?.includes('?inline')) return;
       if (rule.parent?.type === 'atrule' && /keyframes$/i.test(rule.parent.name)) return;
       const selectors = selectorParser().astSync(rule.selector);
       rule.selector = selectors.nodes.map((selector) => {

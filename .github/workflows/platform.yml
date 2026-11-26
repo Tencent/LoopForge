@@ -91,6 +91,12 @@ jobs:
         working-directory: e2e
       - run: bash ../scripts/install-playwright-deps.sh npx playwright
         working-directory: e2e
+      - name: Build workbench assets from this checkout
+        run: |
+          npm --prefix chatbot ci --no-audit --no-fund
+          npm --prefix webtest ci --no-audit --no-fund
+          node -e 'const a = require("./e2e/node_modules/playwright-core/package.json").version, b = require("./chatbot/node_modules/playwright-core/package.json").version; if (a !== b) throw new Error(`Browser job requires matching Playwright versions, got ${a} and ${b}`)'
+          npm --prefix chatbot run build
       # The e2e LOOPs and the runner the suite starts use the native e2e sandbox,
       # which is bwrap on Linux.
       - name: Let bubblewrap create user namespaces
@@ -113,6 +119,8 @@ jobs:
           done
           cat /tmp/loopforge.log
           exit 1
+      - name: Test the unified entry against the head build
+        run: LOOPFORGE_BROWSER_BASE=http://127.0.0.1:8090 node --test chatbot/browser/unified-entry.test.mjs
       - name: Provision account without model credentials
         run: |
           python3 -c 'import pathlib,secrets; p=pathlib.Path(".local/no-key-password"); p.write_text(secrets.token_urlsafe(20)); p.chmod(0o600)'

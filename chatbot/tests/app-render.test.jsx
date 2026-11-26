@@ -3,6 +3,7 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import { modelProviderFor } from "../src/ModelProviderIcon";
+import { installTestPlatform } from "./setup.js";
 
 const chat = {
   user: { id: "u1", loginName: "tester", chineseName: "测试用户" },
@@ -528,6 +529,7 @@ describe("App", () => {
     }));
     Object.assign(chat, { projectId: "p1", startProjectDraft: vi.fn() });
     history.replaceState({}, "", "/?projectId=p1&mentionIssue=i1");
+    const host = installTestPlatform();
     let view;
     try {
       view = render(<App />);
@@ -537,11 +539,7 @@ describe("App", () => {
       expect(globalThis.fetch).toHaveBeenCalledWith("/api/issues/i1", expect.anything());
       expect(new URLSearchParams(location.search).has("mentionIssue")).toBe(false);
 
-      window.dispatchEvent(new MessageEvent("message", {
-        data: { type: "agentflow-chat-mention-issue", issueId: "i2", projectId: "p1" },
-        origin: location.origin,
-        source: window.parent,
-      }));
+      act(() => host.emit("mentionIssue", { issueId: "i2", projectId: "p1" }));
       expect(chat.startProjectDraft).toHaveBeenCalledWith("p1");
       await waitFor(() => expect(box.value).toBe("@导出报表 "));
       expect(screen.queryByLabelText("移除引用 个人主页徽章")).not.toBeInTheDocument();
@@ -569,6 +567,7 @@ describe("App", () => {
     }));
     Object.assign(chat, { projectId: "p1", startProjectDraft: vi.fn() });
     history.replaceState({}, "", "/?projectId=p1&mentionIssue=i1&mentionIntent=clarify");
+    const host = installTestPlatform();
     let view;
     try {
       view = render(<App />);
@@ -577,11 +576,7 @@ describe("App", () => {
       expect(new URLSearchParams(location.search).has("mentionIssue")).toBe(false);
       expect(new URLSearchParams(location.search).has("mentionIntent")).toBe(false);
 
-      window.dispatchEvent(new MessageEvent("message", {
-        data: { type: "agentflow-chat-mention-issue", issueId: "i2", projectId: "p1", intent: "clarify" },
-        origin: location.origin,
-        source: window.parent,
-      }));
+      act(() => host.emit("mentionIssue", { issueId: "i2", projectId: "p1", intent: "clarify" }));
       await waitFor(() => expect(box.value).toBe("@筛选条件 帮我澄清这个需求"));
     } finally {
       view?.unmount();
@@ -610,6 +605,7 @@ describe("App", () => {
     });
     localStorage.setItem(projectDraftKey, projectDraft);
     history.replaceState({}, "", "/?projectId=p1&mentionIssue=i3");
+    const host = installTestPlatform();
     let view;
     try {
       view = render(<App />);
@@ -625,11 +621,7 @@ describe("App", () => {
       });
 
       fireEvent.change(box, { target: { value: "@订单导出 先聊范围" } });
-      window.dispatchEvent(new MessageEvent("message", {
-        data: { type: "agentflow-chat-mention-issue", issueId: "i3", projectId: "p1" },
-        origin: location.origin,
-        source: window.parent,
-      }));
+      act(() => host.emit("mentionIssue", { issueId: "i3", projectId: "p1" }));
       await waitFor(() => expect(globalThis.fetch).toHaveBeenCalledTimes(2));
       expect(box.value).toBe("@订单导出 先聊范围");
     } finally {
@@ -726,7 +718,7 @@ describe("App", () => {
     if (settings) await user.click(settings);
     fireEvent.keyDown(document, { key: "k", ctrlKey: true });
     expect(screen.getByRole("dialog")).toBeInTheDocument();
-    fireEvent.keyDown(document, { key: "Escape" });
+    await user.keyboard("{Escape}");
     await user.click(screen.getByLabelText("选择项目"));
     expect(screen.getByRole("listbox", { name: "项目" })).toBeInTheDocument();
     fireEvent.keyDown(document, { key: "Escape" });
