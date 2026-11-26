@@ -87,8 +87,8 @@ func (r *RunsRepo) BeginWorkspaceUsePreemptingSave(runID string, now time.Time) 
 	return token, previous, err
 }
 
-// BeginSOPWorkspacePreparation leases a conversation checkout for the SOP
-// already admitted to execute there. Other foreground use waits for that SOP.
+// BeginSOPWorkspacePreparation leases a conversation checkout for the LOOP
+// already admitted to execute there. Other foreground use waits for that LOOP.
 func (r *RunsRepo) BeginSOPWorkspacePreparation(runID string, now time.Time) (string, string, error) {
 	var previous string
 	token, err := r.beginWorkspaceLease(runID, now, true, false, true, &previous)
@@ -536,7 +536,7 @@ func (r *RunsRepo) ClaimWorkspaceDeletion(runID, token string, revision int, now
 				return err
 			}
 			if inUse {
-				return fmt.Errorf("工作区仍有关联的 SOP 运行：%w", ErrWorkspaceInUse)
+				return fmt.Errorf("工作区仍有关联的 LOOP 运行：%w", ErrWorkspaceInUse)
 			}
 		}
 		var count int64

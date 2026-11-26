@@ -11,7 +11,7 @@ import (
 
 func diagnosisTestRun() domain.Run {
 	prompt := strings.Repeat("节点任务说明，", 400)
-	wf := domain.WorkflowDefinition{ID: "wf", Name: "通用后端交付 SOP"}
+	wf := domain.WorkflowDefinition{ID: "wf", Name: "通用后端交付 LOOP"}
 	for _, n := range []struct{ id, name, typ string }{
 		{"requirement", "需求分析", "agent"}, {"design", "方案设计", "agent"}, {"implement", "代码实现", "agent"},
 		{"review", "代码评审", "agent"}, {"mr", "提交 MR", "agent"}, {"approve", "上线确认", "approval"},
@@ -48,7 +48,7 @@ func TestAssistantRunDetailKeepsDiagnosis(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &view); err != nil {
 		t.Fatal(err)
 	}
-	if view.WorkflowName != "通用后端交付 SOP" || len(view.Nodes) != 6 || view.Nodes[1].ID != "design" || view.Nodes[1].Name != "方案设计" {
+	if view.WorkflowName != "通用后端交付 LOOP" || len(view.Nodes) != 6 || view.Nodes[1].ID != "design" || view.Nodes[1].Name != "方案设计" {
 		t.Fatalf("nodes must follow workflow order with names: %+v", view.Nodes)
 	}
 	if len(view.Problems) != 3 {

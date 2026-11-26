@@ -20,7 +20,7 @@ const (
 
 // PushConversationWorkspace commits whatever changed in the run workspace and
 // pushes the work branch of every bound repository that differs from its base,
-// so a conversation can open an MR without an SOP delivery node. Unchanged
+// so a conversation can open an MR without a LOOP delivery node. Unchanged
 // repositories are left out of the returned heads. Callers
 // hold the conversation workspace lease and supply the requesting user's Git
 // identity, so the push is attributed to whoever asked for it.
@@ -30,7 +30,7 @@ func (e *Engine) PushConversationWorkspace(ctx context.Context, runID string, re
 		return nil, fmt.Errorf("运行不存在")
 	}
 	if WorkspaceRunID(run) != run.ID {
-		return nil, fmt.Errorf("子 SOP 共享父任务工作区，请从父任务提交")
+		return nil, fmt.Errorf("子 LOOP 共享父任务工作区，请从父任务提交")
 	}
 	var repositories []domain.RepositoryContext
 	for _, rc := range run.RepositoryContexts() {

@@ -128,7 +128,7 @@ func (h *assistantHandlers) conversationExecutor(s *AgentToolSession, root strin
 				return "", fmt.Errorf("工作区与会话不在同一执行机器")
 			}
 			if !run.IsWorkspace() && !sopStopped(run) {
-				return "", fmt.Errorf("SOP 正在执行，请先暂停后接管工作区")
+				return "", fmt.Errorf("LOOP 正在执行，请先暂停后接管工作区")
 			}
 			var err error
 			if s.workspaceTurn != nil {

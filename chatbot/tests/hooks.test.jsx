@@ -1394,7 +1394,7 @@ describe("conversation hooks", () => {
     await waitFor(() => expect(result.current.ready).toBe(true));
     act(() => result.current.open("s1"));
     await waitFor(() => expect(result.current.session?.id).toBe("s1"));
-    const draft = { tool: "issues_dispatch", path: { id: "i1" }, proposal: { reason: "走 SOP", timing: "start" } };
+    const draft = { tool: "issues_dispatch", path: { id: "i1" }, proposal: { reason: "走 LOOP", timing: "start" } };
     const withDraft = (extra = {}) => ({
       id: "s1",
       projectId: "p1",
@@ -1434,7 +1434,7 @@ describe("conversation hooks", () => {
     await waitFor(() => expect(result.current.ready).toBe(true));
     act(() => result.current.open("s1"));
     await waitFor(() => expect(result.current.session?.id).toBe("s1"));
-    const draft = { tool: "issues_dispatch", path: { id: "i1" }, proposal: { reason: "走 SOP", timing: "start" } };
+    const draft = { tool: "issues_dispatch", path: { id: "i1" }, proposal: { reason: "走 LOOP", timing: "start" } };
     const withDraft = (value) => ({
       ...result.current.session,
       messages: [{ role: "assistant", content: JSON.stringify({ message: "建议", drafts: [value] }) }],

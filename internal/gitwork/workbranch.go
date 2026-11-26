@@ -159,7 +159,7 @@ func HasWork(ctx context.Context, workspace, base string) bool {
 
 // PullWorkBranch brings a reused checkout up to the remote work branch.
 // Another run may have pushed to the same branch since this checkout was
-// made, e.g. a child SOP. Local-only commits (a rejected push) are rebased
+// made, e.g. a child LOOP. Local-only commits (a rejected push) are rebased
 // onto the remote. It returns the new HEAD, or "" when nothing moved.
 func PullWorkBranch(ctx context.Context, workspace, branch string) (string, error) {
 	return pullWorkBranch(ctx, workspace, branch, false)
@@ -310,7 +310,7 @@ func RequireOnWorkBranch(ctx context.Context, workspace, branch string) error {
 }
 
 // StageChanges stages tracked changes and untracked sources, minus Excluded
-// paths: secrets, AgentFlow control files, SOP deliverables and
+// paths: secrets, AgentFlow control files, LOOP deliverables and
 // dependency/cache trees.
 func StageChanges(workspace string) error {
 	if err := StageUntracked(workspace); err != nil {

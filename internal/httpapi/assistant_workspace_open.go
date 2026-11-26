@@ -18,16 +18,16 @@ import (
 )
 
 // A conversation workspace is an environment, not a checkout: Main Bot picks
-// the sandbox profile (or workspaceRunId to bind a same-project SOP run or an
+// the sandbox profile (or workspaceRunId to bind a same-project LOOP run or an
 // earlier workspace of this conversation on the same execution machine). Empty
 // workspaces start empty so the agent clones, branches, commits and pushes with
 // its own git using the requester's Git credentials.
-const workspaceOpenSchema = `{"type":"object","properties":{"sandboxProfileId":{"type":"string","maxLength":128,"description":"运行环境（沙箱配置）id；用于新开或切回本对话在该环境自己的工作区，不填沿用当前工作区的环境（没有工作区时用会话设置、AI 助手设置里倾向的环境或 generic-docker）。传入 workspaceRunId 接入已有工作区/SOP 时沿用原运行冻结的沙箱环境，不要传不同的 sandboxProfileId"},"workspaceRunId":{"type":"string","maxLength":128,"description":"可选：要直接接入的同项目 SOP 运行 id（或本对话之前开过的工作区 id）。要求与当前对话在同一执行机器上：会直接绑定并操作该原工作区现场（包括未推送改动与中间产物，改完后也可回 SOP 从后续节点重跑或继续；已回收工作区会自动恢复快照；传子 SOP 时自动定位到父工作区）。日常继续当前工作区或只切换对话自身环境时不要传"}},"additionalProperties":false}`
+const workspaceOpenSchema = `{"type":"object","properties":{"sandboxProfileId":{"type":"string","maxLength":128,"description":"运行环境（沙箱配置）id；用于新开或切回本对话在该环境自己的工作区，不填沿用当前工作区的环境（没有工作区时用会话设置、AI 助手设置里倾向的环境或 generic-docker）。传入 workspaceRunId 接入已有工作区/LOOP 时沿用原运行冻结的沙箱环境，不要传不同的 sandboxProfileId"},"workspaceRunId":{"type":"string","maxLength":128,"description":"可选：要直接接入的同项目 LOOP 运行 id（或本对话之前开过的工作区 id）。要求与当前对话在同一执行机器上：会直接绑定并操作该原工作区现场（包括未推送改动与中间产物，改完后也可回 LOOP 从后续节点重跑或继续；已回收工作区会自动恢复快照；传子 LOOP 时自动定位到父工作区）。日常继续当前工作区或只切换对话自身环境时不要传"}},"additionalProperties":false}`
 
 func workspaceOpenDescriptor() agentToolDescriptor {
 	return agentToolDescriptor{
 		Name:        "workbench_workspace_open",
-		Description: "进入工作区模式：在指定的运行环境（沙箱配置）里打开本对话的工作区，或直接接入某次同项目 SOP 运行的原工作区，之后用 CLI 原生的文件、补丁和命令工具工作。需要看代码、改代码、跑命令、构建、访问 GitHub 或 GitLab（查 PR/MR、开 PR/MR、合并、评论等）时调用。新开的普通工作区是空白可写目录，可以直接创建文件、运行命令和预览。涉及已有仓库时，自行 git clone、建分支、提交、推送并开 PR/MR。若要在普通新对话里接着某次历史/暂停 SOP 的原工作区现场干活（保留未推送改动与产物，且支持之后回原 SOP 重跑节点或继续），传 workspaceRunId 直接接入（需与当前对话在同一执行机器，已回收的快照会自动恢复；删除本对话不会删除借用的 SOP 工作区）。平台已按本轮发言人的个人凭证配置好 Git（已配置主机的 HTTPS 自动认证，SSH 用个人 SSH 密钥），gh 和 glab 会按仓库所在主机拿到令牌，环境里没有时可以自己安装；其他 API 需要令牌时用 git credential fill 按主机获取。不要打印、回显或写入任何令牌。一个对话同一时间只有一个活动工作区：不传参数或传相同环境时继续用当前工作区，传不同的 sandboxProfileId 就切换过去；切走的工作区解绑，空闲时保存快照后回收。返回 handoff=true 时只回复一句「好的。」结束本阶段，平台会在工作区里续接同一原生会话。项目对话中开好的 GitHub PR 或 GitLab MR 由平台在本轮结束时自动登记到需求并跟踪合入。子 Agent 不能调用本工具。",
+		Description: "进入工作区模式：在指定的运行环境（沙箱配置）里打开本对话的工作区，或直接接入某次同项目 LOOP 运行的原工作区，之后用 CLI 原生的文件、补丁和命令工具工作。需要看代码、改代码、跑命令、构建、访问 GitHub 或 GitLab（查 PR/MR、开 PR/MR、合并、评论等）时调用。新开的普通工作区是空白可写目录，可以直接创建文件、运行命令和预览。涉及已有仓库时，自行 git clone、建分支、提交、推送并开 PR/MR。若要在普通新对话里接着某次历史/暂停 LOOP 的原工作区现场干活（保留未推送改动与产物，且支持之后回原 LOOP 重跑节点或继续），传 workspaceRunId 直接接入（需与当前对话在同一执行机器，已回收的快照会自动恢复；删除本对话不会删除借用的 LOOP 工作区）。平台已按本轮发言人的个人凭证配置好 Git（已配置主机的 HTTPS 自动认证，SSH 用个人 SSH 密钥），gh 和 glab 会按仓库所在主机拿到令牌，环境里没有时可以自己安装；其他 API 需要令牌时用 git credential fill 按主机获取。不要打印、回显或写入任何令牌。一个对话同一时间只有一个活动工作区：不传参数或传相同环境时继续用当前工作区，传不同的 sandboxProfileId 就切换过去；切走的工作区解绑，空闲时保存快照后回收。返回 handoff=true 时只回复一句「好的。」结束本阶段，平台会在工作区里续接同一原生会话。项目对话中开好的 GitHub PR 或 GitLab MR 由平台在本轮结束时自动登记到需求并跟踪合入。子 Agent 不能调用本工具。",
 		InputSchema: json.RawMessage(workspaceOpenSchema),
 		Kind:        "workspace",
 	}
@@ -216,10 +216,10 @@ func parseWorkspaceOpenChoice(args map[string]any) (workspaceOpenChoice, error) 
 	return choice, nil
 }
 
-// openConversationWorkspace binds an environment (or a borrowable SOP / own
+// openConversationWorkspace binds an environment (or a borrowable LOOP / own
 // workspace runId on the same execution machine) to an ordinary conversation
 // and hands the CLI over to it. A task conversation enters its task's
-// workspace once the SOP has stopped.
+// workspace once the LOOP has stopped.
 func (h *agentToolGateway) openConversationWorkspace(ctx context.Context, s *AgentToolSession, args map[string]any) (string, error) {
 	if s.workspaceStartFailed.Load() {
 		return "", errors.New(assistantWorkspaceFallbackPrompt)
@@ -248,9 +248,9 @@ func (h *agentToolGateway) openConversationWorkspace(ctx context.Context, s *Age
 	case !run.IsWorkspace():
 		out["sopRunId"], out["sopStatus"], out["issueId"] = run.ID, run.Status, run.ExecutionContext.IssueID
 		if bound.Reused {
-			fmt.Fprintf(&notice, "继续使用本对话当前绑定的需求 %s 的 SOP 运行 %s 的工作区。", run.ExecutionContext.IssueID, run.ID)
+			fmt.Fprintf(&notice, "继续使用本对话当前绑定的需求 %s 的 LOOP 运行 %s 的工作区。", run.ExecutionContext.IssueID, run.ID)
 		} else {
-			fmt.Fprintf(&notice, "已将本对话绑定到需求 %s 的 SOP 运行 %s 的工作区。", run.ExecutionContext.IssueID, run.ID)
+			fmt.Fprintf(&notice, "已将本对话绑定到需求 %s 的 LOOP 运行 %s 的工作区。", run.ExecutionContext.IssueID, run.ID)
 		}
 		notice.WriteString(borrowedSOPNotice(run))
 	case bound.Created:
@@ -271,7 +271,7 @@ func (h *agentToolGateway) openConversationWorkspace(ctx context.Context, s *Age
 		if previous.IsWorkspace() {
 			fmt.Fprintf(&notice, "之前的工作区 %s 已解绑，空闲时保存快照并回收。", previous.ID)
 		} else {
-			fmt.Fprintf(&notice, "之前接入的 SOP 工作区 %s 已解绑，本对话修改保留在原工作区中。", previous.ID)
+			fmt.Fprintf(&notice, "之前接入的 LOOP 工作区 %s 已解绑，本对话修改保留在原工作区中。", previous.ID)
 		}
 		if bound.CheckpointError != "" {
 			out["previousCheckpointError"] = bound.CheckpointError
@@ -336,7 +336,7 @@ func (h *agentToolGateway) resolveWorkspaceRunTarget(conv domain.AssistantSessio
 				return parent, nil
 			}
 			if !found || !borrowableSOPRun(parent, projectID) {
-				return domain.Run{}, fmt.Errorf("子 SOP %s 所属父工作区 %s 不属于当前项目或不可接入", run.ID, canonicalID)
+				return domain.Run{}, fmt.Errorf("子 LOOP %s 所属父工作区 %s 不属于当前项目或不可接入", run.ID, canonicalID)
 			}
 			run = parent
 		}
@@ -385,7 +385,7 @@ func (h *agentToolGateway) openTaskWorkspace(s *AgentToolSession) (string, error
 		return "", errAgentToolForbidden
 	}
 	if !run.IsWorkspace() && !sopStopped(run) {
-		return "", fmt.Errorf("SOP 运行 %s（%s）执行中，工作区只读：先暂停（runs_pause）或取消（runs_cancel）后再进入工作区", run.ID, run.Status)
+		return "", fmt.Errorf("LOOP 运行 %s（%s）执行中，工作区只读：先暂停（runs_pause）或取消（runs_cancel）后再进入工作区", run.ID, run.Status)
 	}
 	s.requestMode(domain.AssistantModeWorkspace)
 	raw, _ := json.Marshal(map[string]any{"runId": run.ID, "handoff": true, "notice": "进入任务工作区。" + assistantHandoffNotice})
@@ -440,7 +440,7 @@ type conversationWorkspaceBinding struct {
 	CheckpointError string
 }
 
-// bindConversationWorkspace binds an explicitly requested SOP / own workspace
+// bindConversationWorkspace binds an explicitly requested LOOP / own workspace
 // (workspaceRunId), keeps the bound workspace unless a different environment is
 // asked for (the user's fixed sandbox, else the model's choice), or resumes /
 // creates the conversation's own workspace in wanted. Switching saves the
@@ -504,12 +504,12 @@ func (h *agentToolGateway) bindConversationWorkspace(ctx context.Context, s *Age
 			binding.Run, binding.Created = run, true
 		}
 	}
-	// An SOP workspace belongs to the run, so working in it needs the same
+	// A LOOP workspace belongs to the run, so working in it needs the same
 	// write access as the run's workspace edits, terminal, resume and retry.
 	// This also covers a viewer speaking in a shared conversation that another
-	// member bound to an SOP.
+	// member bound to a LOOP.
 	if !binding.Run.IsWorkspace() && !h.speakerProjectWriter(s.ProjectID, s.User, s.UserID) {
-		return binding, fmt.Errorf("只读成员不能接入或进入 SOP 运行 %s 的工作区：工作区写入需要项目成员、项目 Owner 或平台管理员权限", binding.Run.ID)
+		return binding, fmt.Errorf("只读成员不能接入或进入 LOOP 运行 %s 的工作区：工作区写入需要项目成员、项目 Owner 或平台管理员权限", binding.Run.ID)
 	}
 	if runRunner := h.workspaceExecutionRunner(binding.Run); runRunner != conv.Execution().RunnerID {
 		srcMachine := h.executionMachineLabel(runRunner)

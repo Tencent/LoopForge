@@ -61,7 +61,7 @@ func prepareRepositories(ctx context.Context, workspace string, repositories []d
 	prepare := prepareRepository
 	if len(preserveCheckout) > 0 && preserveCheckout[0] {
 		if !gitwork.HasWorkspaceExecutor(ctx) {
-			return fmt.Errorf("shared checkout preparation requires the SOP sandbox")
+			return fmt.Errorf("shared checkout preparation requires the LOOP sandbox")
 		}
 		prepare = prepareSharedRepository
 	}
@@ -346,7 +346,7 @@ func prepareLocalSnapshotRepository(ctx context.Context, workspace, localPath st
 
 // seedEmptyRepository handles a freshly created Gongfeng repository with no
 // commits: clone has no branch to check out, so neither an assistant
-// workspace nor an SOP run could write the first file (the owner had to make an
+// workspace nor a LOOP run could write the first file (the owner had to make an
 // initial commit by hand). It publishes the base branch
 // (and the default branch first, when the base is an integration branch) with
 // one empty commit and leaves workspace on it. seeded is false when the
@@ -639,7 +639,7 @@ func checkoutWorkBranch(ctx context.Context, workspace, workBranch, baseBranch s
 
 // cloneWatch bounds a platform-side clone. A clone that keeps printing
 // progress is allowed to be slow; one that prints nothing for the stall window
-// is treated as hung. The total limit is off by default so a large SOP
+// is treated as hung. The total limit is off by default so a large LOOP
 // checkout is not cut short.
 func cloneWatch(repository domain.RepositoryContext) procwatch.Options {
 	name := strings.TrimSpace(repository.Name)

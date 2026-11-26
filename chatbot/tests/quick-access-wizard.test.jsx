@@ -28,7 +28,7 @@ const { project, user, apiMock, writeMock, mockState } = vi.hoisted(() => {
     return [
       {
         id: "generic-backend-delivery",
-        name: "通用后端交付 SOP",
+        name: "通用后端交付 LOOP",
         generic: true,
         nodes: [{ id: "build", name: "实现", type: "agent" }],
       },
@@ -43,10 +43,10 @@ const { project, user, apiMock, writeMock, mockState } = vi.hoisted(() => {
     if (path === "/api/projects") return { ...project, ...body };
     if (path.includes("/clone")) {
       if (mockState.failClone) throw new Error("clone unavailable");
-      return { id: "generic-backend-delivery-p1", name: "后端交付 SOP" };
+      return { id: "generic-backend-delivery-p1", name: "后端交付 LOOP" };
     }
     if (path.includes("/publish"))
-      return { id: "generic-backend-delivery-p1", name: "后端交付 SOP", status: "published" };
+      return { id: "generic-backend-delivery-p1", name: "后端交付 LOOP", status: "published" };
     return { id: body?.id || "saved", ...body };
   });
   return { project, user, apiMock, writeMock, mockState };
@@ -151,7 +151,7 @@ describe("QuickAccessWizard", () => {
     await userAction.click(screen.getByRole("button", { name: "下一步" }));
     await screen.findByText("项目与仓库", { selector: "h3" });
     await userAction.click(screen.getByRole("button", { name: "下一步" }));
-    await screen.findByText("默认角色与 SOP", { selector: "h3" });
+    await screen.findByText("默认角色与 LOOP", { selector: "h3" });
     await userAction.click(screen.getByRole("button", { name: "完成接入" }));
 
     expect(await screen.findByText("快速接入已完成")).toBeInTheDocument();
@@ -192,7 +192,7 @@ describe("QuickAccessWizard", () => {
       await userAction.type(address, "git@gitea.example.org:team/repo.git");
       expect(screen.getByRole("alert")).toHaveTextContent("可稍后");
       await userAction.click(screen.getByRole("button", { name: "下一步" }));
-      await screen.findByText("默认角色与 SOP", { selector: "h3" });
+      await screen.findByText("默认角色与 LOOP", { selector: "h3" });
       await userAction.click(screen.getByRole("button", { name: "完成接入" }));
       expect(await screen.findByText("快速接入已完成")).toBeInTheDocument();
       expect(writeMock).toHaveBeenCalledWith("/api/repositories", expect.objectContaining({ provider: "ssh", cloneUrl: "git@gitea.example.org:team/repo.git" }));
@@ -363,7 +363,7 @@ describe("QuickAccessWizard", () => {
     );
     expect(screen.getByText(/已识别仓库/)).toBeInTheDocument();
     await userAction.click(screen.getByRole("button", { name: "下一步" }));
-    await screen.findByText("默认角色与 SOP", { selector: "h3" });
+    await screen.findByText("默认角色与 LOOP", { selector: "h3" });
     await userAction.click(screen.getByRole("tab", { name: /默认角色/ }));
     expect(screen.getByText("需求定型")).toBeInTheDocument();
     await userAction.click(screen.getByRole("button", { name: "完成接入" }));
@@ -415,7 +415,7 @@ describe("QuickAccessWizard repository permission (#122)", () => {
     apiMock.mockImplementation(async (path) => {
       if (path === "/api/projects") return [welcome];
       if (path === "/api/users") return [member];
-      if (path === "/api/workflows") return [{ id: "generic-backend-delivery", name: "通用后端交付 SOP", generic: true, nodes: [] }];
+      if (path === "/api/workflows") return [{ id: "generic-backend-delivery", name: "通用后端交付 LOOP", generic: true, nodes: [] }];
       return [];
     });
     writeMock.mockClear();
@@ -428,7 +428,7 @@ describe("QuickAccessWizard repository permission (#122)", () => {
     await userAction.click(screen.getByRole("button", { name: "下一步" }));
     // Blocked here, not on the last step, and nothing was written.
     expect(await screen.findByText(/不能为它绑定仓库/)).toBeInTheDocument();
-    expect(screen.queryByText("默认角色与 SOP", { selector: "h3" })).toBeNull();
+    expect(screen.queryByText("默认角色与 LOOP", { selector: "h3" })).toBeNull();
     expect(writeMock).not.toHaveBeenCalledWith("/api/repositories", expect.anything());
     expect(writeMock).not.toHaveBeenCalledWith("/api/repositories", expect.anything(), expect.anything());
 
@@ -444,7 +444,7 @@ describe("QuickAccessWizard repository permission (#122)", () => {
     apiMock.mockImplementation(async (path) => {
       if (path === "/api/projects") return [welcome];
       if (path === "/api/users") return [member];
-      if (path === "/api/workflows") return [{ id: "generic-backend-delivery", name: "通用后端交付 SOP", generic: true, nodes: [] }];
+      if (path === "/api/workflows") return [{ id: "generic-backend-delivery", name: "通用后端交付 LOOP", generic: true, nodes: [] }];
       return [];
     });
     writeMock.mockClear();
@@ -454,7 +454,7 @@ describe("QuickAccessWizard repository permission (#122)", () => {
     await userAction.type(screen.getByPlaceholderText("https://github.com/owner/repo"), "https://github.com/team/repo");
     await userAction.click(screen.getByRole("button", { name: "跳过绑定，继续体验" }));
     await userAction.click(screen.getByRole("button", { name: "下一步" }));
-    await screen.findByText("默认角色与 SOP", { selector: "h3" });
+    await screen.findByText("默认角色与 LOOP", { selector: "h3" });
     expect(screen.getByText(/使用已有项目「LoopForge 体验项目」/)).toBeInTheDocument();
     expect(screen.queryByText(/绑定 repo/)).toBeNull();
     await userAction.click(screen.getByRole("button", { name: "完成接入" }));

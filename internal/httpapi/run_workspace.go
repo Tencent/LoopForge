@@ -26,7 +26,7 @@ import (
 )
 
 // runnerWorkspaceRunID names the runner directory holding run's checkout: a
-// child SOP on the shared layout works in the checkout of its parent chain.
+// child LOOP on the shared layout works in the checkout of its parent chain.
 func runnerWorkspaceRunID(run domain.Run) string {
 	if run.ExecutionContext.RunnerWorkspaceLayout == domain.RunnerWorkspaceLayoutShared {
 		return engine.WorkspaceRunID(run)
@@ -173,7 +173,7 @@ func (h *runsHandlers) runWorkspace(c *gin.Context) {
 		h.proxyRunnerWorkspace(c, run, owner, runnerID)
 		return
 	}
-	// In a child-first SOP, the child may have bound the checkout before the
+	// In a child-first LOOP, the child may have bound the checkout before the
 	// owner has run a step of its own. Use that binding until the owner has one.
 	workspace := owner
 	if strings.TrimSpace(workspace.WorkspaceRoot) == "" {

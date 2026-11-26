@@ -5,15 +5,15 @@ import (
 	"strings"
 )
 
-// WorkflowNotifications selects one SOP Bot, with compatibility for legacy node bindings.
-// Explicit SOP configuration takes precedence over all node configuration.
+// WorkflowNotifications selects one LOOP Bot, with compatibility for legacy node bindings.
+// Explicit LOOP configuration takes precedence over all node configuration.
 func WorkflowNotifications(w WorkflowDefinition) []NotificationBinding {
 	var selected *NotificationBinding
 	if len(w.Notifications) > 0 {
 		b := w.Notifications[0]
 		selected = &b
 	}
-	// Prefer legacy SOP configuration to individual node settings.
+	// Prefer legacy LOOP configuration to individual node settings.
 	if selected == nil {
 		for _, node := range w.Nodes {
 			for _, b := range node.Notifications {
@@ -54,7 +54,7 @@ func NodeReminderBindings(bindings []NotificationBinding) []NotificationBinding 
 	out := []NotificationBinding{}
 	for _, b := range bindings {
 		events := []string{"waiting", "failed"}
-		out = append(out, NotificationBinding{BotID: b.BotID, Events: events, Scope: "node", WaitingPolicy: "actionable", Template: "### {{status}}\n需求：{{issue.title}}\nSOP：{{workflow}}\n节点：{{node}}\n{{error}}\n查看详情：{{url}}"})
+		out = append(out, NotificationBinding{BotID: b.BotID, Events: events, Scope: "node", WaitingPolicy: "actionable", Template: "### {{status}}\n需求：{{issue.title}}\nLOOP：{{workflow}}\n节点：{{node}}\n{{error}}\n查看详情：{{url}}"})
 	}
 	return out
 }
@@ -103,7 +103,7 @@ func BuildWorkflowNotificationResult(run Run) string {
 	if !generatedAny {
 		return body
 	}
-	content := AINotificationContent{Title: run.WorkflowSnapshot.Name + " · SOP 已完成", Summary: body, Body: body, Simulated: simulated}
+	content := AINotificationContent{Title: run.WorkflowSnapshot.Name + " · LOOP 已完成", Summary: body, Body: body, Simulated: simulated}
 	raw, _ := json.Marshal(content)
 	return body + "\n\n```notification\n" + string(raw) + "\n```"
 }

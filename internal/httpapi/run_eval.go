@@ -85,7 +85,7 @@ func (h *runsHandlers) startRunEval(c *gin.Context) {
 		return
 	}
 	if !domain.TerminalRunStatus(run.Status) {
-		c.JSON(http.StatusConflict, map[string]string{"error": "请等 SOP 跑完后再评测"})
+		c.JSON(http.StatusConflict, map[string]string{"error": "请等 LOOP 跑完后再评测"})
 		return
 	}
 	current, loggedIn := h.requestUser(c.Request, true)
@@ -337,6 +337,14 @@ func (h *runsHandlers) applyOneRecommendation(run domain.Run, projectID string, 
 		if err := runeval.ApplyRecommendation(rec, nil, &agent); err != nil {
 			return rec, err
 		}
+		// Applying a recommendation edits the role, so it is a new version, the
+		// same as saving the role from its editor. Without the bump the previous
+		// revision and this one share a version number and cannot be told apart.
+		if agent.Version < 1 {
+			agent.Version = 1
+		} else {
+			agent.Version++
+		}
 		if err := h.repo.PutAgent(agent); err != nil {
 			return rec, err
 		}
@@ -355,7 +363,7 @@ func (h *runsHandlers) ensureProjectWorkflow(run domain.Run, projectID, workflow
 		}
 	}
 	if !ok {
-		return domain.WorkflowDefinition{}, fmt.Errorf("SOP %q 不存在", workflowID)
+		return domain.WorkflowDefinition{}, fmt.Errorf("LOOP %q 不存在", workflowID)
 	}
 	if strings.TrimSpace(wf.Name) == "" {
 		wf.Name = firstNonEmpty(wf.ID, "workflow")
@@ -386,7 +394,9 @@ func (h *runsHandlers) ensureProjectAgent(run domain.Run, projectID, agentID str
 	if !ok {
 		return domain.AgentDefinition{}, fmt.Errorf("角色 %q 不存在", agentID)
 	}
-	if !agent.Shared && (agent.ProjectID == "" || agent.ProjectID == projectID) {
+	// A platform role (no project) is used by every project, so a project's
+	// evaluation edits a project copy, as for shared roles.
+	if !agent.Shared && agent.ProjectID == projectID {
 		return agent, nil
 	}
 	cloneID := runeval.CloneID(agent.ID, firstNonEmpty(projectID, "copy"))
@@ -467,7 +477,7 @@ func (h *runsHandlers) runEvalJob(ctx context.Context, job *runEvalJob, rec doma
 		job.publish("error", map[string]string{"error": "评测排队超时"})
 		return
 	}
-	emitRunEvalStage(emit, "collecting", "正在整理本次 SOP 轨迹")
+	emitRunEvalStage(emit, "collecting", "正在整理本次 LOOP 轨迹")
 	exec := currentRunEvalExec()
 	if exec == nil {
 		exec = h.executeRunEval

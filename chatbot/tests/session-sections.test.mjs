@@ -100,7 +100,7 @@ describe("splitSidebarSections", () => {
   });
 });
 
-describe("splitSidebarSections with SOP run conversations", () => {
+describe("splitSidebarSections with LOOP run conversations", () => {
   const run = (id, extra = {}) =>
     session(id, { shared: true, runId: `run-${id}`, messageCount: 0, runStatus: "succeeded", ...extra });
   const ids = (sections) => sections.groups.flatMap((g) => g.sessions.map((s) => s.id)).sort();
@@ -141,9 +141,9 @@ describe("splitSidebarSections with SOP run conversations", () => {
     expect(ids(split([run("quiet")]))).toEqual(["quiet"]);
   });
 
-  test("a search still finds a hidden run, by its title or its SOP", () => {
+  test("a search still finds a hidden run, by its title or its LOOP", () => {
     const hidden = run("r1", {
-      title: "通用后端交付 SOP（LoopForge）",
+      title: "通用后端交付 LOOP（LoopForge）",
       displayTitle: "#7 修复登录失败",
       sopName: "通用后端交付",
     });

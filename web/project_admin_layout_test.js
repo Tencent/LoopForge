@@ -96,6 +96,7 @@ const gitParsers = fs.readFileSync(require("node:path").join(__dirname, "app", "
 vm.runInContext(gitParsers, ctx);
 
 for (const name of ["parseGongfengRepoURL","repoDisplayPath","repoProviderLabel"]) vm.runInContext(extract(fs.readFileSync(issuesPath,"utf8"),name),ctx);
+vm.runInContext(extract(fs.readFileSync(require("node:path").join(__dirname, "app.js"),"utf8"),"resourceIdProblem"),ctx);
 vm.runInContext(fs.readFileSync(projectsPath,"utf8"),ctx);
 vm.runInContext(fs.readFileSync(drawerPath,"utf8"),ctx);
 vm.runInContext("projectAdminFail=(form,name,message)=>{globalThis.__fail={name,message};return false}",ctx);

@@ -116,9 +116,9 @@ func TestAssistantPromptTitleMatchesTruncation(t *testing.T) {
 
 func TestGeneratedTitleReplacesSOPDisplayTitle(t *testing.T) {
 	view := runSessionView{assistantConversation: domain.AssistantSession{Title: "梳理积分商城", TitleGenerated: true, Shared: true, RunID: "run-1"}}
-	applyRunSessionMeta(&view, repo.SidebarRunMeta{WorkflowID: "wf-1", WorkflowName: "发布检查 SOP", Status: "running"}, repo.SidebarIssue{}, 1, true)
+	applyRunSessionMeta(&view, repo.SidebarRunMeta{WorkflowID: "wf-1", WorkflowName: "发布检查 LOOP", Status: "running"}, repo.SidebarIssue{}, 1, true)
 	if view.DisplayTitle != "" || view.SOPName == "" {
-		t.Fatalf("summary should be the visible title, SOP stays available: %+v", view)
+		t.Fatalf("summary should be the visible title, LOOP stays available: %+v", view)
 	}
 }
 

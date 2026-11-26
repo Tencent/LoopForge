@@ -88,7 +88,7 @@ func requirementConversation(issue domain.Issue, runs []domain.Run) *domain.Requ
 	return &conv
 }
 
-// splitNestedRuns separates runs started by an SOP node from top-level runs.
+// splitNestedRuns separates runs started by a LOOP node from top-level runs.
 // A child shares its parent's issue, so without this it would show up as a
 // separate lane. The result maps a parent run ID to its child runs.
 func splitNestedRuns(runs []domain.Run) ([]domain.Run, map[string][]domain.Run) {
@@ -123,7 +123,7 @@ func nestedRunUsage(runID string, nested map[string][]domain.Run, depth int) (in
 	return tokens, cost
 }
 
-// withSOPBinding copies the binding-owned fields of an issue SOP binding onto
+// withSOPBinding copies the binding-owned fields of an issue LOOP binding onto
 // a requirement lane, leaving every other lane field untouched.
 func withSOPBinding(lane domain.RequirementLane, binding domain.IssueSOPBinding) domain.RequirementLane {
 	lane.BindingID = binding.ID
@@ -430,7 +430,7 @@ func stagesWaitForHuman(stages []domain.RequirementNodeStage) bool {
 	return false
 }
 
-// nodeChildRun returns the child run the SOP node currently references. A node
+// nodeChildRun returns the child run the LOOP node currently references. A node
 // whose link was cleared by a reset shows its planned stages, not an orphaned
 // older child. Reset and retry both clear ChildRunID while leaving the node
 // "pending", so a pending node never falls back. For any other status a

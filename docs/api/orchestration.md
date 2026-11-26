@@ -2,14 +2,14 @@
 
 认证和通用状态码见 [README](README.md)。
 
-## SOP（Workflow）
+## LOOP（Workflow）
 
 `WorkflowDefinition` 主要字段：
 
 ```json
 {
   "id":"wf-dev",
-  "name":"研发 SOP",
+  "name":"研发 LOOP",
   "version":1,
   "revision":0,
   "status":"draft",
@@ -28,22 +28,22 @@
 
 返回全部 `WorkflowDefinition[]`，`200`，不分页。
 
-返回值包含两类 SOP：项目里存储的 SOP，以及 `generic_templates` 表中的**通用模板**（payload 带 `generic: true`，`projectId` 为空）。通用模板与项目无关，所有项目都能看到；普通用户只读，复制到项目后才能编辑。运行时按和自定义 SOP 相同的流程解析节点与角色。通用模板通过 `requirements` 声明运行依赖（例如 `gongfeng-git-token`、`gongfeng-mcp`、`tapd-mcp`），Studio 会在复制前做依赖预检。需要人工把关时可在复制后自行添加审批节点。
+返回值包含两类 LOOP：项目里存储的 LOOP，以及 `generic_templates` 表中的**通用模板**（payload 带 `generic: true`，`projectId` 为空）。通用模板与项目无关，所有项目都能看到；普通用户只读，复制到项目后才能编辑。运行时按和自定义 LOOP 相同的流程解析节点与角色。通用模板通过 `requirements` 声明运行依赖（例如 `gongfeng-git-token`、`gongfeng-mcp`、`tapd-mcp`），Studio 会在复制前做依赖预检。需要人工把关时可在复制后自行添加审批节点。
 
 ### `PUT /api/workflows`
 
-按 `id` 保存。固定环境填写 `sandboxProfileId`。由 Agent 选择时填写 `autoSelectSandbox: true`，沙箱在每次运行启动时决定，实际 ID 保存在 `workflowSnapshot.sandboxProfileId`。`version=0` 时改为 `1`。成功 `200` 返回保存后的 SOP；revision 冲突返回 `409`，其他校验/存储错误 `400`。`id` 命中通用模板时返回 `409`（通用模板只读）。
+按 `id` 保存。固定环境填写 `sandboxProfileId`。由 Agent 选择时填写 `autoSelectSandbox: true`，沙箱在每次运行启动时决定，实际 ID 保存在 `workflowSnapshot.sandboxProfileId`。`version=0` 时改为 `1`。成功 `200` 返回保存后的 LOOP；revision 冲突返回 `409`，其他校验/存储错误 `400`。`id` 命中通用模板时返回 `409`（通用模板只读）。
 
 ```bash
 curl -u "$AGENTFLOW_USER:$AGENTFLOW_PASS" -X PUT \
   -H 'Content-Type: application/json' \
-  -d '{"id":"wf-dev","name":"研发 SOP","version":1,"status":"draft","sandboxProfileId":"sandbox-go","nodes":[],"edges":[]}' \
+  -d '{"id":"wf-dev","name":"研发 LOOP","version":1,"status":"draft","sandboxProfileId":"sandbox-go","nodes":[],"edges":[]}' \
   "$AGENTFLOW_URL/api/workflows"
 ```
 
 ### `GET /api/workflows/{id}`
 
-成功 `200` 返回完整 SOP（含通用模板）；不存在 `404`。
+成功 `200` 返回完整 LOOP（含通用模板）；不存在 `404`。
 
 ### `DELETE /api/workflows/{id}`
 
@@ -52,32 +52,32 @@ curl -u "$AGENTFLOW_USER:$AGENTFLOW_PASS" -X PUT \
 ### revision
 
 - `GET /api/workflows/{id}/revisions`：`200 DefinitionRevision[]`。
-- `GET /api/workflows/{id}/revisions/{revisionId}`：`200 DefinitionRevision`；revision 不存在或不属于该 SOP 时 `404`。
-- `POST /api/workflows/{id}/revisions/{revisionId}/restore`：恢复并 `200` 返回 SOP；失败通常 `400`。
+- `GET /api/workflows/{id}/revisions/{revisionId}`：`200 DefinitionRevision`；revision 不存在或不属于该 LOOP 时 `404`。
+- `POST /api/workflows/{id}/revisions/{revisionId}/restore`：恢复并 `200` 返回 LOOP；失败通常 `400`。
 
-以上接口在 SOP 本身不存在时先返回 `404`。
+以上接口在 LOOP 本身不存在时先返回 `404`。
 
 ### `POST /api/workflows/{id}/publish`
 
-无请求体。设置 `status=published`，`version` 加一，成功 `200` 返回 SOP；不存在 `404`；保存失败 `400`。
+无请求体。设置 `status=published`，`version` 加一，成功 `200` 返回 LOOP；不存在 `404`；保存失败 `400`。
 
 ### `POST /api/workflows/{id}/clone`
 
 请求：
 
 ```json
-{"id":"wf-dev-copy","name":"研发 SOP 副本","owner":"u-1","projectId":"alpha"}
+{"id":"wf-dev-copy","name":"研发 LOOP 副本","owner":"u-1","projectId":"alpha"}
 ```
 
-`id`、`name` 必填。副本固定为 `draft`、`version=1`、`revision=0`，成功 `201`；字段/存储错误 `400`，源 SOP 不存在 `404`。
+`id`、`name` 必填。副本固定为 `draft`、`version=1`、`revision=0`，成功 `201`；字段/存储错误 `400`，源 LOOP 不存在 `404`。
 
-可用 `sandboxProfileId` 为副本指定固定沙箱，或用 `autoSelectSandbox: true` 让 Agent 选择。省略两项时继承来源 SOP 的设置。
+可用 `sandboxProfileId` 为副本指定固定沙箱，或用 `autoSelectSandbox: true` 让 Agent 选择。省略两项时继承来源 LOOP 的设置。
 
-源 SOP 是通用模板时，复制会同时把模板引用的角色创建到 `projectId` 指定的项目（已存在的同名角色直接复用），并把节点上的 `agentId` 重写到本项目角色，因此复制出的 SOP 可直接运行；此时 `projectId` 必填，缺失返回 `400`。模板声明的 `requirements` 会保留在副本上，Studio 继续据此提示依赖（例如发起 MR 节点需要工蜂 Git Token / 工蜂 MCP）。
+源 LOOP 是通用模板时，复制会同时把模板引用的角色创建到 `projectId` 指定的项目（已存在的同名角色直接复用），并把节点上的 `agentId` 重写到本项目角色，因此复制出的 LOOP 可直接运行；此时 `projectId` 必填，缺失返回 `400`。模板声明的 `requirements` 会保留在副本上，Studio 继续据此提示依赖（例如发起 MR 节点需要工蜂 Git Token / 工蜂 MCP）。
 
 ## 运行
 
-对话工作区使用 `kind=workspace`，仅作为沙箱与文件生命周期记录，不执行 SOP 节点，不占用 SOP 配额。环境取用户在高级设置中的选择，否则由 Main Bot 打开工作区时选择（默认 `generic-docker`），创建后冻结；详见 [对话工作区](../conversation-workspaces.md)。旧角色协作写入口已移除，历史记录可继续查看。
+对话工作区使用 `kind=workspace`，仅作为沙箱与文件生命周期记录，不执行 LOOP 节点，不占用 LOOP 配额。环境取用户在高级设置中的选择，否则由 Main Bot 打开工作区时选择（默认 `generic-docker`），创建后冻结；详见 [对话工作区](../conversation-workspaces.md)。旧角色协作写入口已移除，历史记录可继续查看。
 
 run 状态通常为 `running|waiting|succeeded|failed|cancelled`。响应中的 `nodes` 是 node id 到 `NodeRun` 的映射；还包含 usage、toolCalls、artifact 元数据、时间和 revision。
 
@@ -91,7 +91,7 @@ run 状态通常为 `running|waiting|succeeded|failed|cancelled`。响应中的 
 
 ### `POST /api/runs`
 
-直接启动 SOP：
+直接启动 LOOP：
 
 ```json
 {"workflowId":"wf-dev","input":"实现审计日志","projectId":"platform"}
@@ -295,7 +295,7 @@ SSE 的 `thought` 事件报告平台阶段，`stage` 依次为 `queued`、`colle
 
 ### `POST /api/runs/{runId}/eval/apply`
 
-请求 `{ "evalId":"eval-1", "recommendationIds":["rec-1"] }`。把用户确认的建议合并进**当前** SOP 或角色，不改这次 run 的冻结 snapshot。通用只读模板会先克隆到项目再改。
+请求 `{ "evalId":"eval-1", "recommendationIds":["rec-1"] }`。把用户确认的建议合并进**当前** LOOP 或角色，不改这次 run 的冻结 snapshot。通用只读模板会先克隆到项目再改。
 
 ```bash
 curl -u "$AGENTFLOW_USER:$AGENTFLOW_PASS" -X POST \
@@ -334,7 +334,7 @@ curl -u "$AGENTFLOW_USER:$AGENTFLOW_PASS" \
 
 `ScheduleJob` 分两类，由 `skipDispatch` 区分，不能写在同一条任务里。
 
-触发任务（`skipDispatch=false`）字段包括 `id`、`name`、`enabled`、`projectId`、`workflowId` / `useIssueWorkflow`、`intervalSec` 或 `cron`、最近执行结果和时间戳。到点扫描本项目未运行需求，做基线门禁再派发 SOP；仓库集成分支冲突会把任务标成 `waiting` 并带上 `blockers`，暂停自动派发；对齐 Agent 会自动解决冲突并合入基线。
+触发任务（`skipDispatch=false`）字段包括 `id`、`name`、`enabled`、`projectId`、`workflowId` / `useIssueWorkflow`、`intervalSec` 或 `cron`、最近执行结果和时间戳。到点扫描本项目未运行需求，做基线门禁再派发 LOOP；仓库集成分支冲突会把任务标成 `waiting` 并带上 `blockers`，暂停自动派发；对齐 Agent 会自动解决冲突并合入基线。
 
 触发任务可选 `maxDispatch`，配置每次最多成功触发的需求数，取值为 1–10；不配置（或为 0）时默认为 10，旧任务同样适用。自动执行和「立即运行」共用此上限；已有任务、基线阻塞或派发时被跳过的需求不占用名额，其余需求留待后续执行。`lastPulled` 仍记录所有匹配候选数，`lastDispatched` 记录本次实际成功触发数。AI 定时任务不使用此配置。
 
@@ -373,7 +373,7 @@ curl -u "$AGENTFLOW_USER:$AGENTFLOW_PASS" -X POST \
 
 ### `POST /api/schedule-jobs/{id}/run`
 
-在服务端启动一次 job，`202` 返回 `lastStatus=running` 的 `ScheduleJob`。这次 HTTP 调用不等待扫描、AI 提示词或派发完成；关闭浏览器或断开 MCP 客户端都不会取消。用 `GET /api/schedule-jobs` 轮询，直到 `lastStatus` 变为 `success` / `failed` / `waiting`。被派发的 SOP 仍作为独立长任务运行。
+在服务端启动一次 job，`202` 返回 `lastStatus=running` 的 `ScheduleJob`。这次 HTTP 调用不等待扫描、AI 提示词或派发完成；关闭浏览器或断开 MCP 客户端都不会取消。用 `GET /api/schedule-jobs` 轮询，直到 `lastStatus` 变为 `success` / `failed` / `waiting`。被派发的 LOOP 仍作为独立长任务运行。
 
 - 当前实例 `AGENTFLOW_SCHEDULER_ENABLED=false` 时返回 `409`。
 - 已有定时任务正在本实例运行时返回 `409`。
@@ -418,7 +418,7 @@ curl -u "$AGENTFLOW_USER:$AGENTFLOW_PASS" \
 
 缺 `projectId` 或 `since` 格式不对返回 400；`jobId` 属于无权访问的项目返回 403。统计表从部署后开始累计。升级时可备份并停止平台后，手动执行 `migrations/039_schedule_execution_legacy_stats.sql`，将仍保留的旧执行补入缺失的小时桶；脚本不覆盖已有桶，发现部分重叠时拒绝回补，不重建已清理的记录，也不推算旧 Token。
 
-AI 执行记录的可选 `model`、`usage`、`costCny` 保存本次 generation 的消耗与费用估计，包含重试及失败前已上报的调用，不含同一固定会话的前次执行或下游 SOP。`usage` 缺失表示未上报。`overview.current` / `overview.previous` 另外返回 `metered`、`tokens`（`total`、`input`、`output`、`cacheRead`、`cacheWrite`）、`avgTokens`、`priced`、`costCny`。`tokens.total` 优先使用模型上报总量，否则为输入加输出；缓存明细不再相加。`avgTokens` 仅对已上报执行取平均，`priced` 仅计入可估价执行。
+AI 执行记录的可选 `model`、`usage`、`costCny` 保存本次 generation 的消耗与费用估计，包含重试及失败前已上报的调用，不含同一固定会话的前次执行或下游 LOOP。`usage` 缺失表示未上报。`overview.current` / `overview.previous` 另外返回 `metered`、`tokens`（`total`、`input`、`output`、`cacheRead`、`cacheWrite`）、`avgTokens`、`priced`、`costCny`。`tokens.total` 优先使用模型上报总量，否则为输入加输出；缓存明细不再相加。`avgTokens` 仅对已上报执行取平均，`priced` 仅计入可估价执行。
 
 ```bash
 curl -u "$AGENTFLOW_USER:$AGENTFLOW_PASS" \

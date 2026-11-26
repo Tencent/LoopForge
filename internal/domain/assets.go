@@ -137,6 +137,7 @@ type DockerfileDefinition struct {
 type SandboxProfile struct {
 	ID             string            `json:"id"`
 	Name           string            `json:"name"`
+	Description    string            `json:"description,omitempty"`
 	Toolchain      string            `json:"toolchain,omitempty"`
 	ProjectID      string            `json:"projectId,omitempty"`
 	Shared         bool              `json:"shared,omitempty"`
@@ -219,6 +220,9 @@ func ValidateSandboxAssets(v SandboxProfile) error {
 // profile drops the embedded copy.
 func RunnerSandbox(profile SandboxProfile) *RunnerSandboxSpec {
 	spec := &RunnerSandboxSpec{Profile: profile}
+	// The description is catalog copy only; keeping it out of the runner spec
+	// keeps the run snapshot and preparation fingerprints execution-only.
+	spec.Profile.Description = ""
 	spec.Profile.Dockerfile = nil
 	if d := profile.Dockerfile; d != nil && strings.TrimSpace(d.Content) != "" {
 		spec.Profile.DockerfileID = profile.ID

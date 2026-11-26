@@ -56,6 +56,21 @@ func TestRunEvalCloneAndApplyBranches(t *testing.T) {
 	if again, err := h.ensureProjectAgent(run, "cvb-eval-p", "cvb-eval-agent"); err != nil || again.ID != agent.ID {
 		t.Fatalf("agent clone reuse: %+v %v", again, err)
 	}
+	// A platform role serves every project: a project's evaluation edits a copy.
+	if err := f.s.PutAgent(domain.AgentDefinition{ID: "cvb-eval-platform", Name: "Platform agent", ExecutorID: "codebuddy", Prompt: "platform"}); err != nil {
+		t.Fatal(err)
+	}
+	platformCopy, err := h.ensureProjectAgent(run, "cvb-eval-p", "cvb-eval-platform")
+	if err != nil || platformCopy.ID == "cvb-eval-platform" || platformCopy.ProjectID != "cvb-eval-p" {
+		t.Fatalf("platform agent must be copied into the project: %+v %v", platformCopy, err)
+	}
+	if original, _ := f.s.Agent("cvb-eval-platform"); original.ProjectID != "" || original.Prompt != "platform" {
+		t.Fatalf("platform agent changed: %+v", original)
+	}
+	// Without a project there is no copy to make; the role is used as is.
+	if same, err := h.ensureProjectAgent(run, "", "cvb-eval-platform"); err != nil || same.ID != "cvb-eval-platform" {
+		t.Fatalf("project-less run: %+v %v", same, err)
+	}
 	for _, rec := range []domain.RunEvalRecommendation{
 		{Target: "workflow", Action: "update_node", NodeID: "n", Set: map[string]any{"maxAttempts": 3}},
 		{Target: "agent", Action: "append_instructions", TargetID: "cvb-eval-agent", Text: "be careful"},
@@ -63,6 +78,12 @@ func TestRunEvalCloneAndApplyBranches(t *testing.T) {
 	} {
 		_, _ = h.applyOneRecommendation(run, "cvb-eval-p", rec)
 	}
+	// Editing a role through a recommendation is a new version, like a save from
+	// the role editor; otherwise two revisions share one version number.
+	if updated, ok := f.s.Agent(agent.ID); !ok || updated.Version != agent.Version+1 {
+		t.Fatalf("role recommendation did not bump the version: %+v", updated)
+	}
+
 	legacy, _ := f.s.Workflow(wf.ID)
 	legacy.Version = 4 // Evaluation copies used to retain the source version.
 	if err := f.s.PutWorkflow(legacy); err != nil {
@@ -372,7 +393,7 @@ func TestRunEvalLiveStreamAndPersistenceErrors(t *testing.T) {
 	}
 	h := &runsHandlers{deps: &deps{repo: f.s}, evalJobs: newRunEvalHub()}
 	job := &runEvalJob{runID: run.ID, evalID: "eval", subs: map[chan runEvalJobEvent]struct{}{}, done: make(chan struct{})}
-	emitRunEvalStage(job.publish, "collecting", "正在整理本次 SOP 轨迹")
+	emitRunEvalStage(job.publish, "collecting", "正在整理本次 LOOP 轨迹")
 	h.evalJobs.jobs[run.ID] = job
 	router := gin.New()
 	router.GET("/api/runs/:id/eval/stream", h.streamRunEval)

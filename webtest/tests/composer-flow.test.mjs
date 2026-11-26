@@ -96,10 +96,10 @@ test('the composer gates on the description and creates an undispatched issue wi
   assert.equal($('#reqCreateChat').disabled, false);
   assert.equal($('#reqCharCount').textContent, '27 字');
   assert.match($('#reqComposerHint').textContent, /去对话里把需求聊清楚/);
-  assert.equal($('[data-req-delivery="sop"]').getAttribute('aria-checked'), 'true', 'SOP delivery is the default');
+  assert.equal($('[data-req-delivery="sop"]').getAttribute('aria-checked'), 'true', 'LOOP delivery is the default');
   assert.equal($('#reqWorkflowField').hidden, false);
   const workflowId = $('#reqWorkflow').value;
-  assert.ok(workflowId, 'the project SOP is preselected');
+  assert.ok(workflowId, 'the project LOOP is preselected');
 
   app.router.post('/api/issues', (call) => ({ status: 200, body: { id: 'issue-direct', ...call.body } }));
   $('#reqCreate').click();
@@ -114,7 +114,7 @@ test('the composer gates on the description and creates an undispatched issue wi
   assert.ok(!app.router.calls.some((c) => c.path.endsWith('/dispatch')));
   assert.ok(!app.router.calls.some((c) => c.path.includes('chat-clarify')));
   assert.equal($('#requirementModal').classList.contains('open'), false);
-  assert.match($('#toastContainer').textContent, /可在详情里触发 SOP/);
+  assert.match($('#toastContainer').textContent, /可在详情里触发 LOOP/);
   assert.ok(app.evaluate(`state.data.issues.some(issue=>issue.id==='issue-direct')`));
 });
 
@@ -126,7 +126,7 @@ test('创建并去对话澄清 creates the issue and opens a new chat with the r
   describe(app, 'Add CSV export');
   $('[data-req-delivery="none"]').click();
   assert.equal($('[data-req-delivery="none"]').getAttribute('aria-checked'), 'true');
-  assert.equal($('#reqWorkflowField').hidden, true, 'the SOP picker hides when no SOP is used');
+  assert.equal($('#reqWorkflowField').hidden, true, 'the LOOP picker hides when no LOOP is used');
   assert.match($('#reqComposerHint').textContent, /定时任务也不会自动认领/);
   app.router.post('/api/issues', (call) => ({ status: 200, body: { id: 'issue-chat', ...call.body } }));
   $('#reqCreateChat').click();
@@ -136,7 +136,7 @@ test('创建并去对话澄清 creates the issue and opens a new chat with the r
   assert.equal(create.body.sopMode, 'none');
   assert.equal(create.body.workflowId, '');
   assert.equal(create.body.playbookId, '');
-  assert.ok(!app.router.calls.some((c) => c.path.endsWith('/dispatch')), 'the chat handoff does not start an SOP');
+  assert.ok(!app.router.calls.some((c) => c.path.endsWith('/dispatch')), 'the chat handoff does not start a LOOP');
   assert.equal($('#requirementModal').classList.contains('open'), false);
   assert.match($('#toastContainer').textContent, /在对话里继续澄清/);
   assert.equal(app.evaluate(`activeViewName()`), 'collaboration');

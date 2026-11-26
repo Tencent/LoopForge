@@ -95,7 +95,7 @@ test('project credentials use placeholder hints on create, save write-only value
   assert.match(panel.textContent, /当前项目还没有凭据/);
 });
 
-test('SOP credential selection shows project credentials and allows clearing a stale binding', async (t) => {
+test('LOOP credential selection shows project credentials and allows clearing a stale binding', async (t) => {
   const app = await loadApp({ routes: [{ path: endpoint, body: { credentials: [
     { id: 'active', name: 'Active credential' },
     { id: 'disabled', name: 'Disabled credential', disabled: true },

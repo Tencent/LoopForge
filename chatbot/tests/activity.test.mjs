@@ -57,7 +57,7 @@ test("activity summaries replace internal tool names with readable subjects whil
     detail: "mcp__agentflow_session__agentflow__workflows_list",
   };
   assert.equal(activityFace(tool).kind, "workflow");
-  assert.match(activityFace(tool).done, /SOP/);
+  assert.match(activityFace(tool).done, /LOOP/);
   assert.equal(activityTarget(tool), "");
   const schema = {
     kind: "tool",
@@ -244,9 +244,9 @@ test("paragraphs stay between the tool calls that separate them", () => {
 });
 
 test("thinking rows show a one-line headline like Codex", () => {
-  assert.equal(thoughtLine("**Inspecting SOP**\n细节", true), "Inspecting SOP");
-  assert.equal(thoughtLine("先读取 SOP 列表\n再确认节点", false), "先读取 SOP 列表");
-  assert.equal(thoughtLine("先读取 SOP 列表\n再确认节点", true), "再确认节点");
+  assert.equal(thoughtLine("**Inspecting LOOP**\n细节", true), "Inspecting LOOP");
+  assert.equal(thoughtLine("先读取 LOOP 列表\n再确认节点", false), "先读取 LOOP 列表");
+  assert.equal(thoughtLine("先读取 LOOP 列表\n再确认节点", true), "再确认节点");
   assert.equal(
     activityTarget({ kind: "thinking", text: "用户只是问候。\n直接回复。", finishedAt: "x" }),
     "用户只是问候。",
@@ -254,7 +254,7 @@ test("thinking rows show a one-line headline like Codex", () => {
   assert.equal(activityTarget({ kind: "thinking", text: "" }), "");
 });
 
-test("SOP node events fold into one Codex-style trace per turn", async () => {
+test("LOOP node events fold into one Codex-style trace per turn", async () => {
   const { nodeConversationItems, groupNodeActivity } = await import(
     "../src/node-conversation.js"
   );

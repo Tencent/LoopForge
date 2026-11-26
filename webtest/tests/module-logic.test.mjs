@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { loadApp, settle } from '../lib/load-app.mjs';
 
-test('issue drawer panes render clarification, SOP, delivery, and activity data', async (t) => {
+test('issue drawer panes render clarification, LOOP, delivery, and activity data', async (t) => {
   const app = await loadApp();
   t.after(app.close);
   const rendered = app.evaluate(`

@@ -253,7 +253,7 @@ func TestWorkbenchReferencesAndUploads(t *testing.T) {
 			{Type: "run", ID: run.ID}, {Type: "issue", ID: "cva-wb-i"},
 		}}},
 	}
-	if err := h.prepareWorkbenchContext(c, &runReq, owner); err != nil || !strings.Contains(runReq.contextText, "当前 SOP 运行") {
+	if err := h.prepareWorkbenchContext(c, &runReq, owner); err != nil || !strings.Contains(runReq.contextText, "当前 LOOP 运行") {
 		t.Fatalf("run context err=%v text=%s", err, runReq.contextText)
 	}
 	longReq := assistantRequest{ProjectID: projectID, Messages: make([]assistantMessage, 201)}

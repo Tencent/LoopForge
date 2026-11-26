@@ -50,7 +50,7 @@ function lineDiff(oldText,newText){
 }
 async function restoreSelectedRevision(){
   const id=state.revisionSelected;if(!id)return;
-  if(!await afConfirm({title:'版本回退确认',message:'回退会把当前定义换成这一版，并再记一条新历史。已经跑完的 SOP 不受影响。继续？',confirmText:'确认回退',isDanger:true}))return;
+  if(!await afConfirm({title:'版本回退确认',message:'回退会把当前定义换成这一版，并再记一条新历史。已经跑完的 LOOP 不受影响。继续？',confirmText:'确认回退',isDanger:true}))return;
   try{
     const kind=state.revisionKind,entity=state.revisionEntity;
     const saved=await api(kind==='workflow'?`/api/workflows/${encodeURIComponent(entity)}/revisions/${encodeURIComponent(id)}/restore`:`/api/agents/${encodeURIComponent(entity)}/revisions/${encodeURIComponent(id)}/restore`,{method:'POST',body:'{}'});

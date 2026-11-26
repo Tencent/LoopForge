@@ -243,19 +243,19 @@ func TestRunNotificationBindings(t *testing.T) {
 
 	got := runNotificationBindings(run, domain.WorkflowNode{ID: "agent"}, "failed")
 	if len(got) != 1 || got[0].BotID != "bot-sop" || got[0].Scope != "node" || fmt.Sprint(got[0].Events) != "[waiting failed]" {
-		t.Fatalf("workflow node should use SOP reminder bindings, got %+v", got)
+		t.Fatalf("workflow node should use LOOP reminder bindings, got %+v", got)
 	}
 	if got := runNotificationBindings(run, sopNode, "succeeded"); fmt.Sprint(got) != fmt.Sprint(sopBindings) {
-		t.Fatalf("SOP node on success should keep its own bindings, got %+v", got)
+		t.Fatalf("LOOP node on success should keep its own bindings, got %+v", got)
 	}
 	run.Events = nodeFailed
 	if got := runNotificationBindings(run, sopNode, "failed"); fmt.Sprint(got) != fmt.Sprint(sopBindings) {
-		t.Fatalf("SOP node after a node failure should keep its own bindings, got %+v", got)
+		t.Fatalf("LOOP node after a node failure should keep its own bindings, got %+v", got)
 	}
 	run.Events = nil
 	got = runNotificationBindings(run, sopNode, "failed")
 	if len(got) != 1 || got[0].BotID != "bot-sop" || got[0].Scope != "run" || fmt.Sprint(got[0].Events) != "[failed]" || got[0].WaitingPolicy != "actionable" {
-		t.Fatalf("SOP node failing without node failure should fall back to run-scoped failed reminders, got %+v", got)
+		t.Fatalf("LOOP node failing without node failure should fall back to run-scoped failed reminders, got %+v", got)
 	}
 	if fmt.Sprint(sopBindings[0].Events) != "[succeeded failed]" {
 		t.Fatalf("fallback must not mutate the workflow bindings, got %+v", sopBindings)

@@ -30,7 +30,7 @@ func TestOpeningAConversationKeepsALocalTurnAfterSlowHeartbeat(t *testing.T) {
 	}
 }
 
-// An ordinary chat turn (no SOP run) records the workspace lease its first
+// An ordinary chat turn (no LOOP run) records the workspace lease its first
 // tool takes, before the turn ends, so a reader that reaps the turn after its process died can free
 // exactly that lease.
 func TestGenerationRecordsTheWorkspaceLeaseItsToolTakes(t *testing.T) {

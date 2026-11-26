@@ -10,9 +10,9 @@ import (
 func TestBuildRequirementSnapshotGroupsLanes(t *testing.T) {
 	now := time.Now().UTC()
 	issue := domain.Issue{ID: "iss-1", ProjectID: "p1", Kind: "requirement", Title: "多泳道"}
-	product := domain.WorkflowDefinition{ID: "wf-product", Name: "产品 SOP", SOPLane: "product", Nodes: []domain.WorkflowNode{{ID: "prd", Name: "写 PRD"}}}
-	backend := domain.WorkflowDefinition{ID: "wf-backend", Name: "后端 SOP", SOPLane: "backend", Nodes: []domain.WorkflowNode{{ID: "code", Name: "实现"}}}
-	frontend := domain.WorkflowDefinition{ID: "wf-frontend", Name: "前端 SOP", SOPLane: "frontend", Nodes: []domain.WorkflowNode{{ID: "ui", Name: "页面"}}}
+	product := domain.WorkflowDefinition{ID: "wf-product", Name: "产品 LOOP", SOPLane: "product", Nodes: []domain.WorkflowNode{{ID: "prd", Name: "写 PRD"}}}
+	backend := domain.WorkflowDefinition{ID: "wf-backend", Name: "后端 LOOP", SOPLane: "backend", Nodes: []domain.WorkflowNode{{ID: "code", Name: "实现"}}}
+	frontend := domain.WorkflowDefinition{ID: "wf-frontend", Name: "前端 LOOP", SOPLane: "frontend", Nodes: []domain.WorkflowNode{{ID: "ui", Name: "页面"}}}
 	runs := []domain.Run{
 		{
 			ID: "run-p", WorkflowID: product.ID, WorkflowSnapshot: product, Status: "succeeded",
@@ -45,7 +45,7 @@ func TestBuildRequirementSnapshotGroupsLanes(t *testing.T) {
 		t.Fatalf("backend lane=%#v", snap.Lanes[1])
 	}
 	if len(snap.Stages) == 0 || snap.Stages[0].Key == "clarify" {
-		t.Fatalf("stages must be the bound SOP nodes, not 澄清: %#v", snap.Stages)
+		t.Fatalf("stages must be the bound LOOP nodes, not 澄清: %#v", snap.Stages)
 	}
 }
 
@@ -53,7 +53,7 @@ func TestBuildRequirementSnapshotNestsChildSOPRuns(t *testing.T) {
 	now := time.Now().UTC()
 	issue := domain.Issue{ID: "iss-n", ProjectID: "p1", Kind: "requirement", WorkflowID: "wf-parent"}
 	child := domain.WorkflowDefinition{ID: "wf-mcp", Name: "MCP测试", Nodes: []domain.WorkflowNode{{ID: "probe", Name: "探测"}, {ID: "report", Name: "汇报"}}}
-	parent := domain.WorkflowDefinition{ID: "wf-parent", Name: "多 SOP 串联", Nodes: []domain.WorkflowNode{
+	parent := domain.WorkflowDefinition{ID: "wf-parent", Name: "多 LOOP 串联", Nodes: []domain.WorkflowNode{
 		{ID: "mcp1", Name: "MCP测试", Type: "sop", SOPWorkflowID: child.ID},
 		{ID: "gate", Name: "AI 门禁"},
 		{ID: "mcp2", Name: "MCP测试", Type: "sop", SOPWorkflowID: child.ID},
@@ -76,7 +76,7 @@ func TestBuildRequirementSnapshotNestsChildSOPRuns(t *testing.T) {
 	workflows := map[string]domain.WorkflowDefinition{parent.ID: parent, child.ID: child}
 	snap := BuildRequirementSnapshot(issue, domain.Project{}, runs, nil, workflows, now.Add(time.Minute))
 	if len(snap.Lanes) != 1 || snap.Lanes[0].Orphan {
-		t.Fatalf("a child SOP run must not become its own lane: %#v", snap.Lanes)
+		t.Fatalf("a child LOOP run must not become its own lane: %#v", snap.Lanes)
 	}
 	if snap.Overall.RunCount != 1 || snap.Overall.Tokens != 12 || snap.Lanes[0].Tokens != 12 {
 		t.Fatalf("overall=%#v lane tokens=%d", snap.Overall, snap.Lanes[0].Tokens)
@@ -87,7 +87,7 @@ func TestBuildRequirementSnapshotNestsChildSOPRuns(t *testing.T) {
 	}
 	first := stages[0]
 	if first.ChildRunID != "run-child" || len(first.Children) != 2 || first.Children[0].Status != "succeeded" || first.Children[1].Status != "running" {
-		t.Fatalf("running SOP node must carry its child run stages: %#v", first)
+		t.Fatalf("running LOOP node must carry its child run stages: %#v", first)
 	}
 	if snap.Lanes[0].Status != "active" {
 		t.Fatalf("lane status=%q", snap.Lanes[0].Status)
@@ -98,14 +98,14 @@ func TestBuildRequirementSnapshotNestsChildSOPRuns(t *testing.T) {
 	}
 	last := stages[2]
 	if last.ChildRunID != "" || len(last.Children) != 2 || last.Children[0].Status != "pending" {
-		t.Fatalf("an SOP node that has not started must list the planned child nodes: %#v", last)
+		t.Fatalf("a LOOP node that has not started must list the planned child nodes: %#v", last)
 	}
 	// A reset cleared the node's link: the orphaned child must neither show as
 	// the node's stages nor hold the lane in "waiting".
 	runs[0].Nodes["mcp1"] = &domain.NodeRun{NodeID: "mcp1", Status: "pending"}
 	reset := BuildRequirementSnapshot(issue, domain.Project{}, runs, nil, workflows, now.Add(time.Minute))
 	if got := reset.Lanes[0].Stages[0]; got.ChildRunID != "" || got.Children[0].Status != "pending" {
-		t.Fatalf("reset SOP node still shows the orphaned child: %#v", got)
+		t.Fatalf("reset LOOP node still shows the orphaned child: %#v", got)
 	}
 	if reset.Lanes[0].Status == "waiting" {
 		t.Fatalf("an orphaned child's approval must not mark the lane waiting")
@@ -171,9 +171,9 @@ func TestNodeChildRunFallsBackWithoutChildRunID(t *testing.T) {
 }
 
 func TestBuildRequirementSnapshotUsesBindings(t *testing.T) {
-	design := domain.WorkflowDefinition{ID: "wf-design", Name: "设计 SOP", SOPLane: "design"}
-	backend := domain.WorkflowDefinition{ID: "wf-backend", Name: "后端 SOP", SOPLane: "backend"}
-	frontend := domain.WorkflowDefinition{ID: "wf-frontend", Name: "前端 SOP", SOPLane: "frontend"}
+	design := domain.WorkflowDefinition{ID: "wf-design", Name: "设计 LOOP", SOPLane: "design"}
+	backend := domain.WorkflowDefinition{ID: "wf-backend", Name: "后端 LOOP", SOPLane: "backend"}
+	frontend := domain.WorkflowDefinition{ID: "wf-frontend", Name: "前端 LOOP", SOPLane: "frontend"}
 	issue := domain.Issue{
 		ID: "iss-bind", Kind: "requirement", WorkflowID: backend.ID,
 		SOPBindings: []domain.IssueSOPBinding{
@@ -211,13 +211,13 @@ func TestBuildRequirementSnapshotSingleBindingUsesFrozenRun(t *testing.T) {
 		bound.ID: bound, frozen.ID: frozen,
 	}, now.Add(time.Minute))
 	if len(snap.Lanes) != 1 || snap.Lanes[0].Orphan || snap.Lanes[0].WorkflowID != frozen.ID || snap.Lanes[0].WorkflowName != frozen.Name {
-		t.Fatalf("single SOP must be the frozen run, not a second binding: %#v", snap.Lanes)
+		t.Fatalf("single LOOP must be the frozen run, not a second binding: %#v", snap.Lanes)
 	}
 }
 
 func TestBuildRequirementSnapshotFollowsBoundWorkflow(t *testing.T) {
-	product := domain.WorkflowDefinition{ID: "wf-product", Name: "产品 SOP", SOPLane: "product", Nodes: []domain.WorkflowNode{{ID: "prd", Name: "写 PRD"}}}
-	backend := domain.WorkflowDefinition{ID: "wf-backend", Name: "后端 SOP", SOPLane: "backend", Nodes: []domain.WorkflowNode{{ID: "code", Name: "实现"}, {ID: "gate", Name: "门禁"}}}
+	product := domain.WorkflowDefinition{ID: "wf-product", Name: "产品 LOOP", SOPLane: "product", Nodes: []domain.WorkflowNode{{ID: "prd", Name: "写 PRD"}}}
+	backend := domain.WorkflowDefinition{ID: "wf-backend", Name: "后端 LOOP", SOPLane: "backend", Nodes: []domain.WorkflowNode{{ID: "code", Name: "实现"}, {ID: "gate", Name: "门禁"}}}
 	issue := domain.Issue{ID: "iss-inherit", Kind: "requirement", WorkflowID: backend.ID, AssigneeUserID: 3}
 	project := domain.Project{ID: "p1", SOPBindings: []domain.IssueSOPBinding{
 		{WorkflowID: product.ID, Order: 1},
