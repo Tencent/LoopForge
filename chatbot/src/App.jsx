@@ -84,7 +84,6 @@ import { effortOptions } from "./effort.js";
 import QuickAccessWizard from "./QuickAccessWizard";
 import HarnessSelect from "./HarnessSelect";
 import SandboxPicker from "./SandboxPicker";
-import ProjectCredentialPicker from "./ProjectCredentialPicker";
 import ExecutionMachinePicker from "./ExecutionMachinePicker";
 import { shouldRevealTitle, titleRevealTiming } from "./title-reveal.js";
 import {
@@ -1457,7 +1456,6 @@ export default function App() {
                 </div>
               ) : null}
               {showEnvironmentPicker ? <SandboxPicker chat={chat} onCreate={() => navigate("sandboxes", { action: "create", projectId: chat.projectId })} /> : null}
-              <ProjectCredentialPicker chat={chat} />
               <Participants session={chat.session} users={chat.users} />
             </>
           ) : null}
@@ -2021,7 +2019,6 @@ export default function App() {
                   </div>
                   {showEnvironmentPicker && chat.projectId ? <ChevronRightSmall /> : null}
                   {showEnvironmentPicker ? <SandboxPicker chat={chat} onCreate={() => navigate("sandboxes", { action: "create", projectId: chat.projectId })} /> : null}
-                  <ProjectCredentialPicker chat={chat} />
                 </div>
                 ) : null}
                 <QueuedMessages

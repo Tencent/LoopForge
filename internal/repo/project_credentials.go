@@ -185,6 +185,14 @@ func (r *ProjectCredentialsRepo) DeleteProjectCredential(ctx context.Context, pr
 }
 
 func (r *ProjectCredentialsRepo) selectedProjectCredentials(ctx context.Context, projectID string, ids []string, includeValues bool) ([]projectCredentialRow, error) {
+	rows, err := r.availableProjectCredentials(ctx, projectID, ids, includeValues)
+	if err == nil && len(rows) != len(ids) {
+		return nil, ErrProjectCredentialUnavailable
+	}
+	return rows, err
+}
+
+func (r *ProjectCredentialsRepo) availableProjectCredentials(ctx context.Context, projectID string, ids []string, includeValues bool) ([]projectCredentialRow, error) {
 	if len(ids) == 0 {
 		return nil, nil
 	}
@@ -210,22 +218,13 @@ func (r *ProjectCredentialsRepo) selectedProjectCredentials(ctx context.Context,
 	if err := query.Find(&rows).Error; err != nil {
 		return nil, err
 	}
-	if len(rows) != len(ids) {
-		return nil, ErrProjectCredentialUnavailable
-	}
-	matched := make(map[string]bool, len(rows))
+	available := rows[:0]
 	for _, row := range rows {
-		if row.ProjectID != projectID {
-			return nil, ErrProjectCredentialUnavailable
-		}
-		matched[row.ID] = true
-	}
-	for _, id := range ids {
-		if !matched[id] {
-			return nil, ErrProjectCredentialUnavailable
+		if row.ProjectID == projectID && seen[row.ID] {
+			available = append(available, row)
 		}
 	}
-	return rows, nil
+	return available, nil
 }
 
 // ProjectCredentialVariableNames validates bindings without decrypting values.
@@ -234,35 +233,69 @@ func (r *ProjectCredentialsRepo) ProjectCredentialVariableNames(ctx context.Cont
 	if err != nil {
 		return nil, err
 	}
-	names := make([]string, 0, len(ids))
+	_, names, err := projectCredentialMetadata(rows)
+	return names, err
+}
+
+// AvailableProjectCredentialMetadata returns the currently usable part of a
+// conversation's selection. Missing or disabled bindings can outlive a chat.
+func (r *ProjectCredentialsRepo) AvailableProjectCredentialMetadata(ctx context.Context, projectID string, ids []string) ([]domain.ProjectCredential, error) {
+	rows, err := r.availableProjectCredentials(ctx, projectID, ids, false)
+	if err != nil {
+		return nil, err
+	}
+	items, _, err := projectCredentialMetadata(rows)
+	return items, err
+}
+
+func projectCredentialMetadata(rows []projectCredentialRow) ([]domain.ProjectCredential, []string, error) {
+	items := make([]domain.ProjectCredential, 0, len(rows))
+	names := make([]string, 0, len(rows))
 	seen := make(map[string]bool)
 	for _, row := range rows {
 		item, err := row.metadata()
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		for _, name := range item.Variables {
 			if err := domain.ValidateProjectCredentialVariable(name); err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 			key := strings.ToUpper(name)
 			if seen[key] {
-				return nil, fmt.Errorf("所选凭据的环境变量 %s 冲突", name)
+				return nil, nil, fmt.Errorf("所选凭据的环境变量 %s 冲突", name)
 			}
 			seen[key] = true
 			names = append(names, name)
 		}
+		items = append(items, item)
 	}
 	sort.Strings(names)
-	return names, nil
+	return items, names, nil
 }
 
-// ResolveProjectCredentialEnv is called with a project derived from the saved
-// workflow or authenticated conversation. Plaintext is held for execution only.
+// ResolveProjectCredentialEnv requires all bindings in a saved workflow.
 func (r *ProjectCredentialsRepo) ResolveProjectCredentialEnv(ctx context.Context, projectID string, ids []string) (map[string]string, error) {
 	rows, err := r.selectedProjectCredentials(ctx, projectID, ids, true)
-	if err != nil || len(rows) == 0 {
+	if err != nil {
 		return nil, err
+	}
+	return projectCredentialEnvironment(rows)
+}
+
+// ResolveAvailableProjectCredentialEnv re-reads the current bindings when a
+// conversation launches a process, including after a change during setup.
+func (r *ProjectCredentialsRepo) ResolveAvailableProjectCredentialEnv(ctx context.Context, projectID string, ids []string) (map[string]string, error) {
+	rows, err := r.availableProjectCredentials(ctx, projectID, ids, true)
+	if err != nil {
+		return nil, err
+	}
+	return projectCredentialEnvironment(rows)
+}
+
+func projectCredentialEnvironment(rows []projectCredentialRow) (map[string]string, error) {
+	if len(rows) == 0 {
+		return nil, nil
 	}
 	box, err := projectCredentialCipher()
 	if err != nil {

@@ -655,6 +655,7 @@ body.view-has-heading .topbar .command-trigger{margin-left:0 !important}
 .approval-stats,
 .approval-list,
 .runner-onboarding,
+.runner-dispatch-bar,
 .runner-platform-section,
 .runner-list-heading,
 .runner-grid,
@@ -2312,17 +2313,24 @@ html[data-theme="dark"] #runnersView{--rv-term:#0a0a0b;--rv-codex:#3f3f46}
 #runnersView .runner-uninstall summary::-webkit-details-marker{display:none}
 #runnersView .runner-uninstall summary::after{content:"›";display:inline-block;margin-left:4px;transition:transform .16s}
 #runnersView .runner-uninstall[open] summary::after{transform:rotate(90deg)}
-#runnersView .runner-platform-section{margin:24px 0 0}
+#runnersView .runner-dispatch-bar{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px 20px;margin:20px 0 0;padding:14px 18px;border:1px solid var(--rv-line);border-radius:14px;background:var(--rv-surface);box-shadow:var(--hui-panel-shadow);transition:border-color .16s}
+#runnersView .runner-dispatch-bar.is-auto{border-color:color-mix(in srgb,var(--hui-accent) 42%,var(--rv-line))}
+#runnersView .runner-dispatch-copy{flex:1 1 320px;min-width:0;display:grid;gap:4px}
+#runnersView .runner-dispatch-head{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px}
+#runnersView .runner-dispatch-label{color:var(--rv-text);font-size:14px;font-weight:600}
+#runnersView .runner-dispatch-hint{margin:0;color:var(--rv-muted);font-size:12px;line-height:1.5}
+#runnersView .runner-dispatch-hint[hidden]{display:none}
+#runnersView .runner-platform-section{margin:20px 0 0}
 #runnersView .runner-platform-section[hidden]{display:none}
 #runnersView .runner-section-heading{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:6px 12px;margin:0 0 10px}
 #runnersView .runner-section-heading h2{margin:0;color:var(--rv-text);font-size:15px;font-weight:600}
 #runnersView .runner-section-meta{color:var(--rv-muted-2);font-size:12px}
 #runnersView .runner-list-heading{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin:24px 0 10px}
 #runnersView .runner-list-heading h2{margin:0;color:var(--rv-text);font-size:15px;font-weight:600}
-#runnersView #runnerAutoAssign{min-height:28px;padding:0 10px;font-size:12px}
+#runnersView #runnerAutoAssign{flex:none;min-height:30px;padding:0 12px;font-size:12.5px}
 #runnersView #runnerAutoAssign[hidden]{display:none}
 #runnersView .runner-count{color:var(--rv-muted);font-size:12px;font-variant-numeric:tabular-nums}
-#runnersView .runner-pool-status{display:inline-flex;align-items:center;gap:7px;margin:0 0 0 auto;padding:0;border:0;color:var(--rv-muted);font-size:12.5px}
+#runnersView .runner-pool-status{display:inline-flex;align-items:center;gap:7px;margin:0;padding:0;border:0;color:var(--rv-muted);font-size:12.5px}
 #runnersView .runner-pool-status::before{content:"";flex:none;width:7px;height:7px;border-radius:50%;background:var(--rv-ok);box-shadow:0 0 0 3px var(--rv-ok-fill)}
 #runnersView .runner-pool-status:empty{display:none}
 #runnersView .runner-pool-status.warn{padding:3px 10px;border:1px solid var(--rv-warn-line);border-radius:8px;background:var(--rv-warn-fill);color:var(--rv-warn)}

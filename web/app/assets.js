@@ -317,17 +317,35 @@ function sandboxSetupHTML(a){
   const driver=sandboxDriverOption(a.driver);
   const privilegeHelp=lfT('执行机器须允许特权沙箱。容器内进程可访问宿主机设备，并可能控制执行机器。','The execution machine must allow privileged sandboxes. Processes in the container can access host devices and may take control of the machine.');
   return `<div class="sandbox-setup">
-  ${assetFieldLabel('隔离方式','Docker 在 OCI 容器里执行；系统轻量隔离按执行机器的系统自动选择 seatbelt（macOS）或 bwrap（Linux），可以在用户的执行机器、云端 Runner 或平台本机上运行。')}
-  <select name="driver" class="asset-select" aria-label="隔离方式"><option value="docker" ${driver==='docker'?'selected':''}>${sandboxDriverLabel('docker')}</option><option value="native" ${driver==='native'?'selected':''}>${sandboxDriverLabel('native')}</option></select>
-  ${assetFieldLabel('工具链说明','Agent 自动选择沙箱时参考这些工具和版本。','assetSandboxToolchain')}
-  <input id="assetSandboxToolchain" name="toolchain" class="asset-input" maxlength="500" value="${escapeHTML(a.toolchain||'')}" placeholder="例如 Python 3.12、uv、PostgreSQL 客户端">
-  <div data-sandbox-drivers="docker">
-    ${assetFieldLabel('Dockerfile','保存在这个沙箱里。沙箱初始化时用它 docker build 出镜像；内容相同的沙箱共用同一个镜像。不要指向仓库目录或现成镜像名。','assetDockerfile')}
-    <textarea id="assetDockerfile" name="dockerfileContent" class="asset-editor" rows="14" spellcheck="false" placeholder="FROM node:22-bookworm-slim">${escapeHTML(a.dockerfile?.content||'')}</textarea>
-    ${assetFieldLabel('构建上下文文件','JSON 对象：键是构建上下文里的相对路径，值是文件内容，和 Dockerfile 一起保存，可在 Dockerfile 里 COPY。','assetDockerfileFiles')}
-    <textarea id="assetDockerfileFiles" name="dockerfileFiles" class="asset-editor is-short" rows="4" spellcheck="false" placeholder='{"packages.txt":"git\\ncurl"}'>${escapeHTML(JSON.stringify(a.dockerfile?.files||{},null,2))}</textarea>
+  <section class="sandbox-card">
+    <div class="sandbox-card-head">
+      <div><h3>运行环境与工具链</h3><p>选择隔离方式并说明沙箱预装的语言、工具与版本。</p></div>
+    </div>
+    <div class="sandbox-env-grid">
+      <div class="sandbox-field">
+        ${assetFieldLabel('隔离方式','Docker 在 OCI 容器里执行；系统轻量隔离按执行机器的系统自动选择 seatbelt（macOS）或 bwrap（Linux），可以在用户的执行机器、云端 Runner 或平台本机上运行。')}
+        <select name="driver" class="asset-select" aria-label="隔离方式"><option value="docker" ${driver==='docker'?'selected':''}>${sandboxDriverLabel('docker')}</option><option value="native" ${driver==='native'?'selected':''}>${sandboxDriverLabel('native')}</option></select>
+      </div>
+      <div class="sandbox-field">
+        ${assetFieldLabel('工具链说明','Agent 自动选择沙箱时参考这些工具和版本。','assetSandboxToolchain')}
+        <input id="assetSandboxToolchain" name="toolchain" class="asset-input" maxlength="500" value="${escapeHTML(a.toolchain||'')}" placeholder="例如 Python 3.12、uv、PostgreSQL 客户端">
+      </div>
+    </div>
+  </section>
+  <section class="sandbox-card" data-sandbox-drivers="docker">
+    <div class="sandbox-card-head">
+      <div><h3>容器构建与安全限制</h3><p>使用标准 Dockerfile 构建隔离镜像；内容相同的沙箱自动复用镜像缓存。</p></div>
+    </div>
+    <div class="sandbox-field">
+      ${assetFieldLabel('Dockerfile','保存在这个沙箱里。沙箱初始化时用它 docker build 出镜像；内容相同的沙箱共用同一个镜像。不要指向仓库目录或现成镜像名。','assetDockerfile')}
+      <textarea id="assetDockerfile" name="dockerfileContent" class="asset-editor is-dockerfile" rows="9" spellcheck="false" placeholder="FROM node:22-bookworm-slim">${escapeHTML(a.dockerfile?.content||'')}</textarea>
+    </div>
+    <div class="sandbox-field">
+      ${assetFieldLabel('构建上下文文件','JSON 对象：键是构建上下文里的相对路径，值是文件内容，和 Dockerfile 一起保存，可在 Dockerfile 里 COPY。','assetDockerfileFiles')}
+      <textarea id="assetDockerfileFiles" name="dockerfileFiles" class="asset-editor is-compact" rows="4" spellcheck="false" placeholder='{"packages.txt":"git\\ncurl"}'>${escapeHTML(JSON.stringify(a.dockerfile?.files||{},null,2))}</textarea>
+    </div>
     <div class="asset-switch-row">
-      <label for="assetReadOnlyRootFS"><b>容器根文件系统只读</b></label>
+      <label for="assetReadOnlyRootFS"><b>容器根文件系统只读</b><small>开启后系统目录只读、/tmp 使用内存盘，仅工作区 /workspace 可写；默认建议关闭。</small></label>
       <span class="asset-switch-controls">
         <button type="button" class="field-help" aria-label="容器根文件系统只读说明" title="开启后 /usr、/etc 等系统目录只读，/tmp 使用临时内存盘，缺少的 CLI 无法在容器内自动安装；工作区 /workspace 仍可写。默认建议关闭。">?</button>
         <input id="assetReadOnlyRootFS" name="readOnlyRootFS" type="checkbox" class="asset-switch" role="switch" ${a.readOnlyRootFS?'checked':''}>
@@ -335,31 +353,43 @@ function sandboxSetupHTML(a){
     </div>
     <details class="sandbox-advanced">
       <summary>${lfT('高级设置','Advanced settings')}</summary>
-      <div class="sandbox-resource-fields">
-        <div>
-          <label for="assetSandboxCPU" class="asset-field-label">CPU 上限（核）</label>
-          <input id="assetSandboxCPU" name="cpuCores" class="asset-input" type="number" inputmode="decimal" min="0.01" max="9223372036.854" step="0.001" aria-describedby="assetSandboxResourceHint" value="${a.cpuMillicores?a.cpuMillicores/1000:''}">
+      <div class="sandbox-advanced-body">
+        <div class="sandbox-resource-fields">
+          <div>
+            <label for="assetSandboxCPU" class="asset-field-label">CPU 上限（核）</label>
+            <input id="assetSandboxCPU" name="cpuCores" class="asset-input" type="number" inputmode="decimal" min="0.01" max="9223372036.854" step="0.001" aria-describedby="assetSandboxResourceHint" value="${a.cpuMillicores?a.cpuMillicores/1000:''}" placeholder="默认不限">
+          </div>
+          <div>
+            <label for="assetSandboxMemory" class="asset-field-label">内存上限（MiB）</label>
+            <input id="assetSandboxMemory" name="memoryMiB" class="asset-input" type="number" inputmode="numeric" min="6" max="8796093022207" step="1" aria-describedby="assetSandboxResourceHint" value="${escapeHTML(a.memoryMiB||'')}" placeholder="默认不限">
+          </div>
         </div>
-        <div>
-          <label for="assetSandboxMemory" class="asset-field-label">内存上限（MiB）</label>
-          <input id="assetSandboxMemory" name="memoryMiB" class="asset-input" type="number" inputmode="numeric" min="6" max="8796093022207" step="1" aria-describedby="assetSandboxResourceHint" value="${escapeHTML(a.memoryMiB||'')}">
+        <div id="assetSandboxResourceHint" class="asset-field-hint">留空使用执行机器配置。两处都配置上限时，较低值生效。</div>
+        <div class="asset-switch-row">
+          <label for="assetPrivileged"><b>${lfT('特权模式','Privileged mode')}</b><small>容器可访问宿主机设备，需执行机器开启特权许可。</small></label>
+          <span class="asset-switch-controls">
+            <button type="button" class="field-help" aria-label="${lfT('特权模式说明','About privileged mode')}" title="${escapeHTML(privilegeHelp)}">?</button>
+            <input id="assetPrivileged" name="privileged" type="checkbox" class="asset-switch" role="switch" ${a.privileged?'checked':''}>
+          </span>
         </div>
-      </div>
-      <div id="assetSandboxResourceHint" class="asset-field-hint">留空使用执行机器配置。两处都配置上限时，较低值生效。</div>
-      <div class="asset-switch-row">
-        <label for="assetPrivileged"><b>${lfT('特权模式','Privileged mode')}</b></label>
-        <span class="asset-switch-controls">
-          <button type="button" class="field-help" aria-label="${lfT('特权模式说明','About privileged mode')}" title="${escapeHTML(privilegeHelp)}">?</button>
-          <input id="assetPrivileged" name="privileged" type="checkbox" class="asset-switch" role="switch" ${a.privileged?'checked':''}>
-        </span>
       </div>
     </details>
-  </div>
-  <div data-sandbox-drivers="native">
-    <div class="asset-field-hint">系统轻量隔离直接使用执行机器上已安装的语言和工具，系统目录只读，只有工作区可写。需要的设置（如 JAVA_HOME、代理）写进下面的环境变量。仓库从执行机器的仓库缓存共享克隆，不重复下载。</div>
-  </div>
-  ${assetFieldLabel('环境变量','JSON 对象，叠加到沙箱基础环境并随资产保存；不要在这里保存凭证。平台凭证、HOME/TMPDIR 和遥测变量优先级更高。')}
-  <textarea name="environment" class="asset-editor is-env" rows="4" placeholder='{"NAME":"value"}'>${escapeHTML(JSON.stringify(a.environment||{},null,2))}</textarea>
+  </section>
+  <section class="sandbox-card sandbox-native-card" data-sandbox-drivers="native">
+    <div class="sandbox-native-callout">
+      <span class="sandbox-native-icon" aria-hidden="true">${huiIcon('server')}</span>
+      <div>
+        <b>系统轻量隔离</b>
+        <p>系统轻量隔离直接使用执行机器上已安装的语言和工具，系统目录只读，只有工作区可写。需要的设置（如 JAVA_HOME、代理）写进下面的环境变量。仓库从执行机器的仓库缓存共享克隆，不重复下载。</p>
+      </div>
+    </div>
+  </section>
+  <section class="sandbox-card">
+    <div class="sandbox-field">
+      ${assetFieldLabel('环境变量','JSON 对象，叠加到沙箱基础环境并随资产保存；不要在这里保存凭证。平台凭证、HOME/TMPDIR 和遥测变量优先级更高。','assetSandboxEnv')}
+      <textarea id="assetSandboxEnv" name="environment" class="asset-editor is-env" rows="4" spellcheck="false" placeholder='{"NAME":"value"}'>${escapeHTML(JSON.stringify(a.environment||{},null,2))}</textarea>
+    </div>
+  </section>
 </div>`}
 function assetMainPanesHTML(a,{creating,readonly}){
   const pane=(key,body)=>`<div class="asset-tabpanel" data-asset-pane="${key}" role="tabpanel">${body}</div>`;
