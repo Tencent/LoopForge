@@ -14,6 +14,9 @@ test('GitHub authorization has a separate manual token path',async({page},info)=
   await appReady(page);
   await page.waitForLoadState('networkidle');
   const capability=await page.request.get('/api/auth/github').then(response=>response.json());
+  const {user}=await page.request.get('/api/auth/current').then(response=>response.json());
+  const users=await page.request.get('/api/users').then(response=>response.json());
+  const configured=users.find(item=>item.id===user.id)?.gitHubCredentialConfigured;
   await page.goto('/#/settings');
   await expect(page.locator('#personalSettingsContent > .personal-settings-card')).toHaveCount(0);
   const panel=page.locator('#credentialPanel');
@@ -21,13 +24,24 @@ test('GitHub authorization has a separate manual token path',async({page},info)=
   const add=panel.getByRole('button',{name:'新增 Git 配置',exact:true});
   const chooser=await add.isVisible();
   const row=panel.locator('[data-credential-row="gitToken"]');
-  if(chooser)await expect(row).toHaveCount(0);
+  if(chooser&&!configured)await expect(row).toHaveCount(0);
   else await expect(row).toContainText('GitHub');
   await page.screenshot({path:info.outputPath('github-settings.png'),fullPage:true});
   if(chooser){
     await add.click();
     await page.getByRole('listbox',{name:'新增 Git 配置',exact:true}).getByRole('option',{name:'GitHub',exact:true}).click();
   }else await row.locator('[data-credential-act="setup"]').click();
+  if(chooser&&configured){
+    const replace=row.getByRole('button',{name:'手动更换令牌',exact:true});
+    await expect(replace).toBeVisible();
+    await expect(row.locator('input[name="secret"]:visible')).toHaveCount(0);
+    await replace.click();
+    await expect(row.locator('input[name="secret"]')).toBeVisible();
+    await expect(row.locator('input[name="secret"]')).toHaveValue('');
+    expect(errors).toEqual([]);
+    expect(failed).toEqual([]);
+    return;
+  }
   const wizard=page.locator('#credentialWizard');
   if(capability.enabled){
     await expect(wizard.locator('[data-github-start]')).toBeVisible();

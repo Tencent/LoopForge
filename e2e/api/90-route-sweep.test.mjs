@@ -89,8 +89,9 @@ test('read-only status endpoints answer for a signed-in user', async () => {
   await status('GET', '/api/assistant/cli-install?engine=not-a-cli', undefined, [400]);
 });
 
-test('OTLP ingest accepts an empty export', async () => {
-  await status('POST', '/api/otel/v1/traces', {}, [200, 202]);
+test('OTLP ingest accepts a local empty export and refuses non-loopback callers', async () => {
+  const res = await status('POST', '/api/otel/v1/traces', {}, [200, 202, 403]);
+  if (res.status === 403) assert.equal(res.data.error, 'otel collector is loopback-only');
 });
 
 test('platform admins and repository registration validate required fields', async () => {
