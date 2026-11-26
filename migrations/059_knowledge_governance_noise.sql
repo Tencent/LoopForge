@@ -2,7 +2,7 @@
 --
 -- 控制面：来源可关闭负责人/过期检查；同步进行中写入阶段；知识缺口可标为
 -- 忽略或已处理，并记下最近的用户和会话，供短时间重复合并计数。
--- 不改文档正文。启动版本检查认 knowledge_schema_versions(56)。
+-- 不改文档正文。启动版本检查认 knowledge_schema_versions(59)。
 
 -- @plane control
 

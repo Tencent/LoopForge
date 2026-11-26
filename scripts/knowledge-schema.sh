@@ -15,7 +15,7 @@
 # (AGENTFLOW_KNOWLEDGE_MYSQL_DSN, falling back to the control DSN). Scripts
 # without markers are control-plane only. 058's mapping table is copied to a
 # separate content database before its content segment runs. 059 records
-# knowledge_schema_versions(56).
+# knowledge_schema_versions(59).
 #
 # `check` fails with an explicit repair command when the ngram full-text index
 # required by the MySQL keyword adapter is absent. `seed` applies
