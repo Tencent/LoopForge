@@ -1,7 +1,8 @@
 import { createContext, useContext, useEffect, useState } from "react";
 import { api } from "./api.js";
 
-export const KnowledgeProject = createContext("");
+export const KnowledgeProject = createContext({});
+const EMPTY_CITATION_INFO = {};
 
 const CITATION_RE =
   /(?<![\w@])([A-Za-z0-9][\w.-]{0,63})@([A-Za-z0-9][\w.-]{0,127}):([^\s#]+\.md)(?:#L(\d+)(?:-L(\d+))?)?/g;
@@ -26,13 +27,13 @@ export function applyCitationMarks(text, statuses) {
 // Resolve citations to {status, kind, title, url}. The API stays the same as
 // the freshness check; new fields are additive so older servers keep working.
 export function useCitationInfo(text) {
-  const projectId = useContext(KnowledgeProject);
+  const { projectId, builtin } = useContext(KnowledgeProject);
   const key = findCitations(text).join("\n");
-  const [info, setInfo] = useState({});
+  const [info, setInfo] = useState(EMPTY_CITATION_INFO);
   useEffect(() => {
     const citations = key ? key.split("\n") : [];
-    if (!projectId || citations.length === 0) {
-      setInfo({});
+    if (!builtin || !projectId || citations.length === 0) {
+      setInfo(EMPTY_CITATION_INFO);
       return undefined;
     }
     let cancel = false;
@@ -55,13 +56,13 @@ export function useCitationInfo(text) {
         setInfo(next);
       })
       .catch(() => {
-        if (!cancel) setInfo({});
+        if (!cancel) setInfo(EMPTY_CITATION_INFO);
       });
     return () => {
       cancel = true;
     };
-  }, [projectId, key]);
-  return info;
+  }, [builtin, projectId, key]);
+  return builtin ? info : EMPTY_CITATION_INFO;
 }
 
 export function useCitationStatuses(text) {

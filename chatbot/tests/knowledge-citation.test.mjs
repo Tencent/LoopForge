@@ -1,11 +1,42 @@
-import { test } from "vitest";
+import { test, vi } from "vitest";
 import assert from "node:assert/strict";
+import { createElement } from "react";
+import { renderHook, waitFor } from "@testing-library/react";
 import {
   applyCitationMarks,
   citationHref,
   findCitations,
+  KnowledgeProject,
   remarkKnowledgeCitations,
+  useCitationInfo,
 } from "../src/knowledge-citation.jsx";
+
+test("external citations stay navigable without calling the builtin freshness API", async () => {
+  const citation = "source@revision:docs/guide.md#L1";
+  const fetch = vi.fn(async () => new Response(JSON.stringify({
+    items: [{ citation, status: "changed" }],
+  }), { headers: { "Content-Type": "application/json" } }));
+  vi.stubGlobal("fetch", fetch);
+  const renderCitation = (builtin) => renderHook(() => useCitationInfo(citation), {
+    wrapper: ({ children }) => createElement(KnowledgeProject.Provider, {
+      value: { projectId: "project", builtin },
+    }, children),
+  });
+  try {
+    const external = renderCitation(false);
+    assert.equal(fetch.mock.calls.length, 0);
+    assert.match(citationHref(citation, external.result.current), /^knowledge-citation:/);
+    external.unmount();
+
+    const builtin = renderCitation(true);
+    await waitFor(() => assert.equal(builtin.result.current[citation]?.status, "changed"));
+    assert.equal(fetch.mock.calls.length, 1);
+    assert.match(String(fetch.mock.calls[0][0]), /\/api\/knowledge\/citations\/freshness$/);
+    builtin.unmount();
+  } finally {
+    vi.unstubAllGlobals();
+  }
+});
 
 test("citation marks compare the cited version without touching ordinary text", () => {
   const text = "见 docs@1:guides/a.md#L2-L4，以及 user@example.com 和 docs@2:guides/a.md#L2。";

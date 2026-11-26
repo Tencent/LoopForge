@@ -373,7 +373,11 @@ export default function App() {
   const realChat = useChat();
   const chat = useLocalConversations(realChat);
   const knowledgeProject = chat.session?.projectId || "";
-  const [builtinKnowledge, setBuiltinKnowledge] = useState(true);
+  const [builtinKnowledge, setBuiltinKnowledge] = useState(false);
+  const knowledgeContext = useMemo(() => ({
+    projectId: knowledgeProject,
+    builtin: builtinKnowledge && !chat.local,
+  }), [knowledgeProject, builtinKnowledge, chat.local]);
   useEffect(() => {
     if (!knowledgeProject || chat.local) return;
     let active = true;
@@ -1313,7 +1317,7 @@ export default function App() {
     );
   };
   return (
-    <KnowledgeProject.Provider value={chat.session?.projectId || chat.projectId || ""}>
+    <KnowledgeProject.Provider value={knowledgeContext}>
     <AgentBrowserLinks.Provider
       value={conversationStarted && workspaceRunId ? openAgentBrowser : null}
     >
