@@ -186,6 +186,46 @@ func TestWorkflowAgentsAreFilteredAndValidatedByProject(t *testing.T) {
 	}
 }
 
+// The sandbox editor sends a description like every other catalog asset; it
+// must survive the save, a reload of the list and a share toggle that PUTs the
+// listed item back.
+func TestSandboxDescriptionRoundTrips(t *testing.T) {
+	s, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.Close() })
+	if err := s.PutProject(domain.Project{ID: "alpha", Key: "ALPHA", Name: "Alpha"}); err != nil {
+		t.Fatal(err)
+	}
+	h := New(s, engine.New(s, runtime.NewManager(sandboxRoot(t))), tracker.NewService(), "", "")
+	requestJSON[map[string]bool](t, h, http.MethodPut, "/api/sandboxes", map[string]any{
+		"id": "alpha-native", "name": "Alpha native", "description": "前端构建用，含 Node 22", "projectId": "alpha", "driver": "native",
+	}, http.StatusOK)
+	find := func() domain.SandboxProfile {
+		t.Helper()
+		for _, item := range requestEmptyJSON[[]domain.SandboxProfile](t, h, http.MethodGet, "/api/sandboxes?projectId=alpha", http.StatusOK) {
+			if item.ID == "alpha-native" {
+				return item
+			}
+		}
+		t.Fatal("saved sandbox is missing from the list")
+		return domain.SandboxProfile{}
+	}
+	listed := find()
+	if listed.Description != "前端构建用，含 Node 22" {
+		t.Fatalf("description lost on save: %+v", listed)
+	}
+	listed.Shared = true
+	requestJSON[map[string]bool](t, h, http.MethodPut, "/api/sandboxes", listed, http.StatusOK)
+	if shared := find(); !shared.Shared || shared.Description != "前端构建用，含 Node 22" {
+		t.Fatalf("description lost on share toggle: %+v", shared)
+	}
+	if spec := domain.RunnerSandbox(find()); spec.Profile.Description != "" {
+		t.Fatalf("runner spec carries the description: %+v", spec.Profile)
+	}
+}
+
 func TestSharedWorkflowRequiresSharedSandbox(t *testing.T) {
 	s, err := repo.OpenTest()
 	if err != nil {
