@@ -40,6 +40,18 @@ func (h *runsHandlers) analytics(c *gin.Context) {
 		Grain:            strings.TrimSpace(c.Query("grain")),
 		TimeZone:         strings.TrimSpace(c.Query("tz")),
 	}
+	// personal=1 scopes the dashboard to the signed-in user when no explicit
+	// userId was supplied. This mirrors the responsible=me rule on /api/runs:
+	// an explicit userId always wins, and an unauthenticated personal request
+	// is rejected rather than silently falling back to the project-wide view.
+	if c.Query("personal") == "1" && filter.UserID == "" {
+		user, ok := h.requestUser(c.Request, true)
+		if !ok {
+			c.JSON(401, gin.H{"error": "请先登录"})
+			return
+		}
+		filter.UserID = fmt.Sprint(user.ID)
+	}
 	if raw := c.Query("from"); raw != "" {
 		value, err := time.Parse(time.RFC3339, raw)
 		if err != nil {
