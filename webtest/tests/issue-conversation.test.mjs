@@ -183,3 +183,39 @@ test('conversation repo cards link GitHub branches, PRs and diffs', async (t) =>
   assert.equal(out.buttons[0], 'PR #12 ↗');
   assert.equal(out.unsubmitted, '已直推');
 });
+
+// A requirement created without an SOP has never run: the drawer and list must
+// not say it "runs by SOP" or was started directly, and a requirement with an
+// SOP that never ran is not reported as a direct run either.
+test('requirements that never ran describe how they will be handled', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  const out = JSON.parse(app.evaluate(`
+    const pid=state.projectFilter||state.data.projects[0].id;
+    const none={id:'iss-none',projectId:pid,number:61,kind:'requirement',source:'local',status:'backlog',title:'不走 SOP',sopMode:'none'};
+    const bound={...none,id:'iss-sop',number:62,title:'走 SOP',sopMode:'',workflowId:state.data.workflows[0].id};
+    state.data.issues=[none,bound];state.data.tasks=[];state.data.runs=[];
+    const html=(s)=>{const d=document.createElement('div');d.innerHTML=s;return d};
+    const fact=(el,label)=>[...el.querySelectorAll('.detail-grid > *')].find(x=>x.textContent.includes(label))?.textContent||'';
+    const noneView=html(overviewPane(none,{issue:none}));
+    const boundView=html(overviewPane(bound,{issue:bound}));
+    const ranTask={id:'t1',issueId:'iss-sop',status:'succeeded',dispatchMode:'manual'};
+    const ranView=html(overviewPane(bound,{issue:bound,task:ranTask}));
+    JSON.stringify({
+      noneOutcome:issueOutcome(none),noneActor:issueActor(none),
+      noneBanner:noneView.querySelector('.issue-outcome')?.textContent,
+      noneTrigger:fact(noneView,'触发方式'),
+      boundOutcome:issueOutcome(bound),boundTrigger:fact(boundView,'触发方式'),
+      ranTrigger:fact(ranView,'触发方式')
+    });
+  `));
+  assert.doesNotMatch(out.noneOutcome.body, /按 SOP 执行/);
+  assert.match(out.noneOutcome.body, /不使用 SOP/);
+  assert.doesNotMatch(out.noneActor.sub, /SOP 节点/);
+  assert.doesNotMatch(out.noneBanner, /按 SOP 执行/);
+  assert.doesNotMatch(out.noneTrigger, /直接运行/);
+  assert.match(out.noneTrigger, /对话处理/);
+  assert.match(out.boundOutcome.body, /按 SOP 执行/);
+  assert.match(out.boundTrigger, /尚未触发/);
+  assert.match(out.ranTrigger, /手动触发/);
+});

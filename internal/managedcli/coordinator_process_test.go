@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -135,6 +136,7 @@ func TestCrossProcessDrainAndCrashRecovery(t *testing.T) {
 }
 
 func TestDailyClaimAcrossProcessesAndCrash(t *testing.T) {
+	t.Setenv(providerAllowlistEnv, "")
 	for _, crash := range []bool{false, true} {
 		root := t.TempDir()
 		if crash {
@@ -156,7 +158,7 @@ func TestDailyClaimAcrossProcessesAndCrash(t *testing.T) {
 		}
 		data, err := os.ReadFile(filepath.Join(root, "attempts"))
 		must(t, err)
-		want := "attempt\nattempt\nattempt\n" // One check visits all three providers.
+		want := strings.Repeat("attempt\n", 3) // One check visits the legacy default providers.
 		if crash {
 			want = "attempt\n" // The first request was interrupted after the claim.
 		}

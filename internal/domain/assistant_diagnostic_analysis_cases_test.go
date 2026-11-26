@@ -180,7 +180,7 @@ func TestAnalyzeAssistantDiagnosticsProcessSignalsAndIdentifiers(t *testing.T) {
 		}
 	}
 	// Both attempts lack a CLI version, but the unknown is reported once.
-	if n := strings.Count(strings.Join(a.Unknowns, "\n"), "CLI 未提供版本"); n != 1 {
+	if n := strings.Count(strings.Join(a.Unknowns, "\n"), "未采集到 CLI 版本"); n != 1 {
 		t.Fatalf("missing-version unknown repeated %d times: %v", n, a.Unknowns)
 	}
 	if strings.Contains(joined, "requestId") {

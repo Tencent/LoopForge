@@ -46,3 +46,34 @@ func TestPublishToolAppearsOnlyForSpaceSession(t *testing.T) {
 		t.Fatal("personal sessions should not get the space deliverable rule")
 	}
 }
+
+// One deliverable tool: in a workspace it takes a file path (any
+// conversation); content fields only exist where a space sidebar does.
+func TestPublishArtifactSchemaFollowsModeAndSpace(t *testing.T) {
+	schema := func(s *AgentToolSession, workspace bool) string {
+		return string(publishArtifactDescriptor(s, workspace).InputSchema)
+	}
+	plain := &AgentToolSession{Mode: AgentToolAssistant}
+	space := &AgentToolSession{Mode: AgentToolAssistant, SpaceID: "room-1"}
+	if got := schema(plain, true); !strings.Contains(got, `"path"`) || strings.Contains(got, `"body"`) {
+		t.Fatalf("workspace schema outside a space: %s", got)
+	}
+	if got := schema(space, true); !strings.Contains(got, `"path"`) || !strings.Contains(got, `"body"`) {
+		t.Fatalf("workspace schema in a space: %s", got)
+	}
+	if got := schema(space, false); strings.Contains(got, `"path"`) || !strings.Contains(got, `"imageBase64"`) {
+		t.Fatalf("platform schema in a space: %s", got)
+	}
+	names := map[string]bool{}
+	for _, tool := range workspaceIntegrationCatalog(&AgentToolSession{Mode: AgentToolAssistant, ProjectID: "p", UserID: 1, ChatSessionID: "c", ChatOwnerID: 1}) {
+		names[tool.Name] = true
+	}
+	if !names["workbench_publish_artifact"] || names["workbench_workspace_attach"] {
+		t.Fatalf("workspace catalog = %v", names)
+	}
+	for _, noisy := range []string{"runs_logs_download", "issues_chat_clarify", "issues_chat_clarify_stream", "clarification_chat"} {
+		if assistantPlatformToolAllowed(assistantExecMode{AutoWrite: true}, noisy) {
+			t.Errorf("%s should not be offered to agents", noisy)
+		}
+	}
+}

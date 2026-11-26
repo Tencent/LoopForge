@@ -87,7 +87,7 @@ func TestRunnerTaskListDropsCloneURLCredentials(t *testing.T) {
 
 func TestLegacyCloneURLCredentialsStayOutOfPromptAndRunViews(t *testing.T) {
 	f := cvBNewHTTPFixture(t)
-	if err := f.s.PutWorkflow(domain.WorkflowDefinition{ID: "legacy-flow", Name: "Legacy flow", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "approval", Name: "Approval", Type: "approval", MaxAttempts: 1}}}); err != nil {
+	if err := f.s.PutWorkflow(domain.WorkflowDefinition{ID: "legacy-flow", Name: "Legacy flow", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{ID: "approval", Name: "Approval", Type: "approval", MaxAttempts: 1}}}); err != nil {
 		t.Fatal(err)
 	}
 	const legacyURL = "https://user:s3cret-token@github.com/acme/app.git"
@@ -121,7 +121,7 @@ func TestLegacyCloneURLCredentialsStayOutOfPromptAndRunViews(t *testing.T) {
 		}
 	}
 
-	if err := f.s.PutWorkflow(domain.WorkflowDefinition{ID: "legacy-generic", Name: "Legacy generic", Generic: true, SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "approval", Name: "Approval", Type: "approval", MaxAttempts: 1}}}); err != nil {
+	if err := f.s.PutWorkflow(domain.WorkflowDefinition{ID: "legacy-generic", Name: "Legacy generic", Generic: true, SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{ID: "approval", Name: "Approval", Type: "approval", MaxAttempts: 1}}}); err != nil {
 		t.Fatal(err)
 	}
 	project, ok := f.s.Project("platform")

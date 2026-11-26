@@ -7,13 +7,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/gin-gonic/gin"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/gin-gonic/gin"
 )
 
 func TestDecodeAssistantCLIResult(t *testing.T) {
@@ -21,7 +22,7 @@ func TestDecodeAssistantCLIResult(t *testing.T) {
 	if err != nil || !strings.Contains(out, `"message":"ok"`) {
 		t.Fatalf("is_error with body should still return result: out=%q err=%v", out, err)
 	}
-	if _, err := decodeAssistantCLIResult("", false, nil, []string{"boom"}); err == nil || !strings.Contains(err.Error(), "did not emit type=result") {
+	if _, err := decodeAssistantCLIResult("", false, nil, []string{"boom"}); !errors.Is(err, errAssistantMissingResult) {
 		t.Fatalf("empty result should fail: %v", err)
 	}
 	if _, err := decodeAssistantCLIResult("ok", false, errors.New("signal: killed"), []string{"x"}); err == nil || !strings.Contains(err.Error(), "signal: killed") {
@@ -57,8 +58,7 @@ func TestAssistantDraftBoundary(t *testing.T) {
 		{"assistant task", `{"message":"草稿","drafts":[{"tool":"assistant_tasks_save","body":{"name":"每小时检查待办","prompt":"列出当前项目未完成事项","intervalSec":3600,"enabled":true,"projectId":"p"}}]}`, "p", true},
 		{"assistant task cron", `{"message":"草稿","drafts":[{"tool":"assistant_tasks_save","body":{"name":"工作日巡检","prompt":"列出当前项目未完成事项","cron":"0 9 * * 1-5","model":"default","enabled":true,"projectId":"p"}}]}`, "p", true},
 		{"schedule job", `{"message":"草稿","drafts":[{"tool":"schedule_jobs_save","body":{"id":"job-1","name":"TAPD 自动开发","projectId":"p","source":"tapd","workflowId":"wf","intervalSec":300,"tapdWorkspaceId":"ws","tapdIterationId":"it","enabled":true}}]}`, "p", true},
-		{"sandbox", `{"message":"草稿","drafts":[{"tool":"sandboxes_save","body":{"id":"p-box","name":"Docker 沙箱","projectId":"p","driver":"docker","dockerfileId":"p-df"}}]}`, "p", true},
-		{"dockerfile", `{"message":"草稿","drafts":[{"tool":"dockerfiles_save","body":{"id":"p-df","name":"构建镜像","projectId":"p","content":"FROM debian:12"}}]}`, "p", true},
+		{"sandbox", `{"message":"草稿","drafts":[{"tool":"sandboxes_save","body":{"id":"p-box","name":"Docker 沙箱","projectId":"p","driver":"docker","dockerfile":{"content":"FROM debian:12"}}}]}`, "p", true},
 		{"script node", `{"message":"草稿","drafts":[{"tool":"workflows_save","body":{"id":"a","name":"A","projectId":"p","status":"draft","sandboxProfileId":"s","edges":[],"nodes":[{"id":"script","name":"脚本","type":"script","scriptLanguage":"shell","script":"printf ok"}]}}]}`, "p", true},
 		{"hook allowed", `{"message":"草稿","drafts":[{"tool":"agents_save","body":{"id":"a","name":"A","projectId":"p","hooks":[{"id":"h1","name":"start","event":"SessionStart","language":"shell","script":"echo hi"}]}}]}`, "p", true},
 		{"publish", `{"message":"草稿","drafts":[{"tool":"workflows_publish","path":{"id":"a"}}]}`, "p", true},
@@ -112,7 +112,7 @@ func TestAssistantAuthenticationAndCredentialIsolation(t *testing.T) {
 		if u.CodeBuddyAPIKey != "alice-secret" {
 			t.Fatal("wrong credential")
 		}
-		if strings.Contains(prompt, "secret") {
+		if strings.Contains(prompt, "alice-secret") || strings.Contains(prompt, "bob-secret") || strings.Contains(prompt, "project-secret") {
 			t.Fatal("credential leaked to prompt")
 		}
 		return `{"message":"alice-secret 已隐藏","drafts":[]}`, nil
@@ -271,7 +271,7 @@ func TestAssistantPromptDoesNotInjectProjectCatalog(t *testing.T) {
 		ID: "p-dev-review-test", Name: "开发-评审-测试流程", ProjectID: "p", Status: "draft", Revision: 1,
 		Nodes: []domain.WorkflowNode{{ID: "dev", Name: "开发实现", Type: "agent", Script: strings.Repeat("HUGE_SOP", 2000)}},
 	})
-	if err := st.PutDockerfile(domain.DockerfileDefinition{ID: "p-df", Name: "构建镜像", ProjectID: "p", Content: "FROM debian:12"}); err != nil {
+	if err := st.PutSandbox(domain.SandboxProfile{ID: "p-box", Name: "构建镜像", ProjectID: "p", Driver: "docker", Dockerfile: &domain.SandboxDockerfile{Content: "FROM debian:12"}}); err != nil {
 		t.Fatal(err)
 	}
 	h := &assistantHandlers{deps: &deps{repo: st}}
@@ -322,7 +322,7 @@ func TestAssistantResumeTurnKeepsCurrentAttachments(t *testing.T) {
 	if strings.Contains(prompt, "第一轮问题") || strings.Contains(prompt, "old-file") {
 		t.Fatalf("resume prompt leaked earlier turns: %s", prompt)
 	}
-	for _, want := range []string{"这里丑，给几个 demo", "shot-1", "Clipboard_Screenshot.png", "image/png", "workbench_attachment_read"} {
+	for _, want := range []string{"这里丑，给几个 demo", "shot-1", "Clipboard_Screenshot.png", "image/png", "原生可读路径"} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("resume prompt missing %q: %s", want, prompt)
 		}
@@ -330,7 +330,7 @@ func TestAssistantResumeTurnKeepsCurrentAttachments(t *testing.T) {
 	first := h.turnPrompt(assistantRequest{
 		Messages: []assistantMessage{{Role: "user", Content: "看这张图", Attachments: []domain.AssistantAttachment{{ID: "shot-1", Name: "a.png", MimeType: "image/png"}}}},
 	}, "", false)
-	if !strings.Contains(first, "workbench_attachment_read") || !strings.Contains(first, "shot-1") {
+	if !strings.Contains(first, "原生可读路径") || !strings.Contains(first, "shot-1") {
 		t.Fatalf("first turn dropped attachment instruction: %s", first)
 	}
 }

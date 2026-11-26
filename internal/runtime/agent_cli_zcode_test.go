@@ -82,7 +82,7 @@ func TestApplyZCodeCredential(t *testing.T) {
 		t.Fatal(err)
 	}
 	argv := []string{"zcode", "--prompt", "it's \"quoted\" $HOME"}
-	bound, env, err := ApplyAgentCLICredential(AgentCLIZCode, ProviderCredential{APIKey: " secret-key "}, AgentCLIOptions{Model: "glm-5.3"}, HostAgentCLIHome(home), "/w/home", argv)
+	bound, env, err := ApplyAgentCLICredential(AgentCLIZCode, ProviderCredential{APIKey: " secret-key "}, AgentCLIOptions{Model: "glm-5.3", Effort: "max"}, HostAgentCLIHome(home), "/w/home", argv)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,8 +110,14 @@ func TestApplyZCodeCredential(t *testing.T) {
 		config["personalModelIds"].([]any)[0] != "glm-5.3" {
 		t.Fatalf("provider config: %v", provider)
 	}
-	if selection := rules["defaultModelSelection"].(map[string]any); selection["providerId"] != "agentflow" || selection["modelId"] != "glm-5.3" {
+	selection := rules["defaultModelSelection"].(map[string]any)
+	if selection["providerId"] != "agentflow" || selection["modelId"] != "glm-5.3" || selection["options"] != nil {
 		t.Fatalf("selection: %v", selection)
+	}
+	modelRule := rules["modelConfigRules"].(map[string]any)["providerModelRules"].([]any)[0].(map[string]any)
+	configured := modelRule["config"].(map[string]any)["optionSpecs"].(map[string]any)["reasoningLevel"].(map[string]any)
+	if modelRule["modelId"] != "glm-5.3" || configured["map"] != `{"output_config":{"effort":"max"},"thinking":{"type":"enabled"}}` {
+		t.Fatalf("reasoning rule: %v", modelRule)
 	}
 
 	// The cleanup hook joins the MCP configuration without replacing it, and
@@ -284,7 +290,7 @@ func TestZCodeBindCommandComposition(t *testing.T) {
 			command.CredentialBindings = []CredentialBinding{BindAgentCLI, BindGit, BindMCP}
 			command.PrivateHome = true
 			command.PrivateHomeKey = "zcode-a"
-			bound, err := bindCommand(sb, workspace, command, RunCredentials{AgentCLI: map[string]ProviderCredential{AgentCLIZCode: {APIKey: "k"}}})
+			bound, err := bindCommand(t.Context(), sb, workspace, command, RunCredentials{AgentCLI: map[string]ProviderCredential{AgentCLIZCode: {APIKey: "k"}}})
 			if err != nil {
 				t.Fatal(err)
 			}

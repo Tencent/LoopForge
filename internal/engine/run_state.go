@@ -34,7 +34,7 @@ func (e *Engine) updateRunAt(id string, allowExpiredLease bool, mutate func(*dom
 func (e *Engine) updateRunAtErr(id string, allowExpiredLease bool, mutate func(*domain.Run)) (bool, error) {
 	e.stateMu.Lock()
 	defer e.stateMu.Unlock()
-	r, ok := e.repo.RunState(id)
+	r, ok := e.repo.RunProgress(id)
 	if !ok {
 		_ = e.takePendingObservations(id)
 		return false, nil
@@ -50,15 +50,26 @@ func (e *Engine) updateRunAtErr(id string, allowExpiredLease bool, mutate func(*
 	for _, item := range pending {
 		e.applyObservation(&r, item.nodeID, item.event)
 	}
+	wasSucceeded := r.Status == "succeeded"
 	if mutate != nil {
 		mutate(&r)
 	}
 	if err := e.repo.PutRun(r); err != nil {
+		code := runWriteLockErrorCode(err)
+		if len(pending) > 0 && (code == mysqlLockWaitTimeout || code == mysqlDeadlock) {
+			// Restore the rolled-back observations ahead of newer observations.
+			e.obsMu.Lock()
+			e.obsPending = append(pending, e.obsPending...)
+			e.obsMu.Unlock()
+		}
 		log.Printf("put run %s: %v", id, err)
 		return false, err
 	}
 	if current, ok := e.repo.RunStreamView(id); ok {
 		e.publishRun(current)
+	}
+	if !wasSucceeded && r.Status == "succeeded" && r.ExecutionContext.ParentRunID == "" && !r.IsWorkspace() {
+		e.wakeRunClaimLoop()
 	}
 	return true, nil
 }
@@ -140,15 +151,23 @@ func (e *Engine) StartClaimLoop(ctx context.Context) {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				if !e.executes() {
-					return
-				}
-				if resumed := e.ResumeInterruptedRuns(); len(resumed) > 0 {
-					log.Printf("claimed %d run(s): %v", len(resumed), resumed)
-				}
+			case <-e.claimKick:
+			}
+			if !e.executes() {
+				return
+			}
+			if resumed := e.ResumeInterruptedRuns(); len(resumed) > 0 {
+				log.Printf("claimed %d run(s): %v", len(resumed), resumed)
 			}
 		}
 	}()
+}
+
+func (e *Engine) wakeRunClaimLoop() {
+	select {
+	case e.claimKick <- struct{}{}:
+	default:
+	}
 }
 
 func (e *Engine) publish(runID string) {

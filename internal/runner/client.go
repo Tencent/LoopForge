@@ -52,6 +52,8 @@ func (c *Client) sessionToken() string {
 
 // ---------- request plumbing ----------
 
+const runnerTaskClaimPath = "/runners/tasks/claim"
+
 func (c *Client) do(ctx context.Context, method, path string, body any, out any) error {
 	var reader io.Reader
 	if body != nil {
@@ -82,15 +84,13 @@ func (c *Client) do(ctx context.Context, method, path string, body any, out any)
 	if resp.StatusCode == http.StatusNoContent {
 		return nil
 	}
-	payload, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+	responseLimit := int64(8 << 20)
+	if path == runnerTaskClaimPath {
+		responseLimit += domain.RunnerSSHKnownHostsWireLimit + domain.RunnerTaskAssetWireLimit
+	}
+	payload, _ := io.ReadAll(io.LimitReader(resp.Body, responseLimit))
 	if resp.StatusCode >= 400 {
-		var detail struct {
-			Error string `json:"error"`
-		}
-		if resp.StatusCode == http.StatusConflict && json.Unmarshal(payload, &detail) == nil && detail.Error == ErrTaskLeaseLost.Error() {
-			return ErrTaskLeaseLost
-		}
-		return fmt.Errorf("%s %s: %s", method, path, strings.TrimSpace(string(payload)))
+		return runnerResponseError(method, path, resp.StatusCode, payload)
 	}
 	if out != nil && len(payload) > 0 {
 		if err := json.Unmarshal(payload, out); err != nil {
@@ -100,17 +100,38 @@ func (c *Client) do(ctx context.Context, method, path string, body any, out any)
 	return nil
 }
 
+type runnerHTTPError struct {
+	status int
+	detail string
+}
+
+func (e *runnerHTTPError) Error() string { return e.detail }
+
+func runnerResponseError(method, path string, status int, payload []byte) error {
+	if status == http.StatusUnauthorized {
+		return ErrUnauthorized
+	}
+	var detail struct {
+		Error string `json:"error"`
+	}
+	if status == http.StatusConflict && json.Unmarshal(payload, &detail) == nil && detail.Error == ErrTaskLeaseLost.Error() {
+		return ErrTaskLeaseLost
+	}
+	return &runnerHTTPError{status: status, detail: fmt.Sprintf("%s %s (HTTP %d): %s", method, path, status, strings.TrimSpace(string(payload)))}
+}
+
 // ---------- endpoints ----------
 
 type RegisterRequest struct {
-	RunnerID       string                 `json:"runnerId,omitempty"`
-	Name           string                 `json:"name"`
-	OS             string                 `json:"os"`
-	Arch           string                 `json:"arch"`
-	Version        string                 `json:"version"`
-	Labels         []string               `json:"labels,omitempty"`
-	MaxConcurrency int                    `json:"maxConcurrency"`
-	Runtimes       []domain.RunnerRuntime `json:"runtimes,omitempty"`
+	RunnerID               string                 `json:"runnerId,omitempty"`
+	Name                   string                 `json:"name"`
+	OS                     string                 `json:"os"`
+	Arch                   string                 `json:"arch"`
+	Version                string                 `json:"version"`
+	Labels                 []string               `json:"labels,omitempty"`
+	MaxConcurrency         int                    `json:"maxConcurrency"`
+	Runtimes               []domain.RunnerRuntime `json:"runtimes,omitempty"`
+	NativeSandboxAvailable bool                   `json:"nativeSandboxAvailable"`
 }
 
 type RegisterResponse struct {
@@ -151,10 +172,11 @@ func (c *Client) Register(ctx context.Context, bootstrapToken string, req Regist
 }
 
 type HeartbeatRequest struct {
-	Status       string                 `json:"status"`
-	RunningTasks int                    `json:"runningTasks"`
-	Version      string                 `json:"version,omitempty"`
-	Runtimes     []domain.RunnerRuntime `json:"runtimes,omitempty"`
+	Status                 string                 `json:"status"`
+	RunningTasks           int                    `json:"runningTasks"`
+	Version                string                 `json:"version,omitempty"`
+	Runtimes               []domain.RunnerRuntime `json:"runtimes,omitempty"`
+	NativeSandboxAvailable bool                   `json:"nativeSandboxAvailable"`
 }
 
 type HeartbeatResponse struct {
@@ -182,21 +204,25 @@ func (c *Client) Disconnect(ctx context.Context) error {
 }
 
 type ClaimRequest struct {
-	AvailableRuntimes []string `json:"availableRuntimes"`
-	Capacity          int      `json:"capacity"`
-	Preflight         bool     `json:"preflight,omitempty"`
-	NoWait            bool     `json:"noWait,omitempty"`
+	AvailableRuntimes           []string `json:"availableRuntimes"`
+	Capacity                    int      `json:"capacity"`
+	Preflight                   bool     `json:"preflight,omitempty"`
+	NoWait                      bool     `json:"noWait,omitempty"`
+	SupportsGitSSHKnownHosts    bool     `json:"supportsGitSshKnownHosts,omitempty"`
+	SupportsDockerSandboxLimits bool     `json:"supportsDockerSandboxLimits,omitempty"`
 }
 
 // WaitForTask long-polls without leasing work. Older servers ignore preflight
 // and return a leased task, which the daemon can still execute.
 func (c *Client) WaitForTask(ctx context.Context, req ClaimRequest) (bool, *domain.RunnerTask, error) {
 	req.Preflight = true
+	req.SupportsGitSSHKnownHosts = true
+	req.SupportsDockerSandboxLimits = true
 	var out struct {
 		TaskAvailable bool              `json:"taskAvailable"`
 		Task          domain.RunnerTask `json:"task"`
 	}
-	if err := c.do(ctx, http.MethodPost, "/runners/tasks/claim", req, &out); err != nil {
+	if err := c.do(ctx, http.MethodPost, runnerTaskClaimPath, req, &out); err != nil {
 		return false, nil, err
 	}
 	if out.Task.ID != "" {
@@ -209,10 +235,12 @@ func (c *Client) WaitForTask(ctx context.Context, req ClaimRequest) (bool, *doma
 // is reported as (nil, false, nil); the caller simply polls again. The
 // context deadline must exceed the server long-poll timeout.
 func (c *Client) Claim(ctx context.Context, req ClaimRequest) (*domain.RunnerTask, bool, error) {
+	req.SupportsGitSSHKnownHosts = true
+	req.SupportsDockerSandboxLimits = true
 	var out struct {
 		Task domain.RunnerTask `json:"task"`
 	}
-	if err := c.do(ctx, http.MethodPost, "/runners/tasks/claim", req, &out); err != nil {
+	if err := c.do(ctx, http.MethodPost, runnerTaskClaimPath, req, &out); err != nil {
 		return nil, false, err
 	}
 	if out.Task.ID == "" {
@@ -264,6 +292,8 @@ func (c *Client) OpenControl(ctx context.Context) (*websocket.Conn, error) {
 	}
 	u.Path = strings.TrimRight(u.Path, "/") + "/runners/connect"
 	header := http.Header{}
+	header.Set(domain.RunnerSSHHostKeyProbeHeader, "1")
+	header.Set(domain.RunnerDockerSandboxLimitsHeader, "1")
 	if session := c.sessionToken(); session != "" {
 		header.Set("Authorization", "Bearer "+session)
 	}

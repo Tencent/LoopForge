@@ -13,27 +13,41 @@ import (
 )
 
 func (e *Engine) workspaceSandboxProfile(run domain.Run) (domain.SandboxProfile, runtime.SandboxResources, error) {
-	if spec := run.WorkflowSnapshot.SandboxSnapshot; spec != nil {
-		return spec.Profile, sandboxResourcesFromSnapshot(spec), nil
+	spec := run.WorkflowSnapshot.SandboxSnapshot
+	if spec == nil {
+		id := strings.TrimSpace(run.WorkflowSnapshot.SandboxProfileID)
+		if id == "" {
+			id = repo.DefaultSandboxProfileID
+		}
+		profile, ok := e.repo.Sandbox(id)
+		if !ok {
+			return profile, runtime.SandboxResources{}, fmt.Errorf("sandbox profile %q not found", id)
+		}
+		var err error
+		if spec, err = resolveSandbox(profile); err != nil {
+			return profile, runtime.SandboxResources{}, err
+		}
 	}
-	id := strings.TrimSpace(run.WorkflowSnapshot.SandboxProfileID)
-	if id == "" {
-		id = "local"
+	if err := domain.ValidateFrozenSandbox(spec.Profile); err != nil {
+		return domain.SandboxProfile{}, runtime.SandboxResources{}, err
 	}
-	profile, ok := e.repo.Sandbox(id)
-	if !ok {
-		return profile, runtime.SandboxResources{}, fmt.Errorf("sandbox profile %q not found", id)
-	}
-	resources, err := resolveSandboxResources(e.repo, profile)
-	return profile, resources, err
+	return spec.Profile, sandboxResourcesFromSnapshot(spec), nil
 }
 
 // acquireConversationEnvironment does not acquire or steal the SOP scheduler
 // lease. The workspace-use lease fences cleanup; the sandbox's workspace flock
 // fences another process. An active local scheduler shares its existing handle.
 func (e *Engine) acquireConversationEnvironment(ctx context.Context, run domain.Run) (*runEnvironment, error) {
+	if latest, ok := e.repo.RunState(run.ID); ok {
+		run = latest
+	}
 	if e.foreignWorkspaceBind(run) || e.defaultExecutionRunner(run) != "" {
 		return nil, fmt.Errorf("工作区属于其他执行实例")
+	}
+	if !run.WorkspaceCleanedAt.IsZero() {
+		if meta, saved := e.repo.WorkspaceCheckpoint(run.ID); saved && meta.SavedAt != nil {
+			return nil, fmt.Errorf("工作区已回收，请先恢复快照后再打开环境")
+		}
 	}
 	e.runEnvMu.Lock()
 	defer e.runEnvMu.Unlock()
@@ -45,7 +59,7 @@ func (e *Engine) acquireConversationEnvironment(ctx context.Context, run domain.
 	if err != nil {
 		return nil, err
 	}
-	requirements, err := workspaceConversationRequirements(e.repo, run.WorkflowSnapshot)
+	requirements, err := workspaceConversationRequirements(e.repo, run.WorkflowSnapshot, false)
 	if err != nil {
 		return nil, err
 	}
@@ -80,26 +94,36 @@ func (e *Engine) withPreparationProgress(ctx context.Context, runID string) cont
 func (e *Engine) prepareLocalEnvironment(ctx context.Context, run domain.Run, env *runEnvironment) (runtime.WorkspacePreparationStatus, error) {
 	// The first sandbox call below builds the Docker image when it is missing.
 	ctx = e.withPreparationProgress(ctx, run.ID)
+	if run.UsesConversationWorkspace() {
+		ctx = runtime.WithSandboxGit(ctx, env.sandbox, env.credentialSnapshot())
+	}
 	env.preparing.Store(true)
 	defer env.preparing.Store(false)
 	// Caller owns env.nodeMu so reconstruction is serialized without turning
 	// environment preparation into business-node attempts.
+	if env.activeExecutions.Load() == 0 {
+		if err := runtime.RefreshWorkspaceGitTools(ctx, env.sandbox); err != nil {
+			return runtime.WorkspacePreparationStatus{Status: "failed", Error: err.Error(), Steps: []runtime.WorkspacePreparationStep{}}, err
+		}
+	}
 	assets := e.resolveScriptMCPAssets(run.ExecutionContext.ProjectID, run.ExecutionContext.ResponsibleUserID)
 	if len(runtime.PreparationNodes(workspacePreparationPlan(run))) > 0 {
 		if err := runtime.ProvisionMCPAssets(ctx, env, env.Workspace(), assets, nil); err != nil {
 			return runtime.WorkspacePreparationStatus{Status: "failed", Error: err.Error(), Steps: []runtime.WorkspacePreparationStep{}}, err
 		}
 	}
-	return runtime.EnsureWorkspacePreparation(ctx, env.sandbox, workspacePreparationPlan(run), run.RepositoryContexts(), e.preparationSink(run.ID))
+	return runtime.EnsureWorkspacePreparation(e.withSSHKnownHosts(ctx), env.sandbox, workspacePreparationPlan(run), run.RepositoryContexts(), e.preparationSink(run.ID))
 }
 
 func (e *Engine) preparedWorkspaceRequest(run domain.Run, request domain.RunnerWorkspaceRequest) (domain.RunnerWorkspaceRequest, error) {
 	runnerID := e.defaultExecutionRunner(run)
+	var runner domain.Runner
 	if runnerID != "" {
 		if run.ExecutionContext.RunnerWorkspaceLayout != domain.RunnerWorkspaceLayoutShared && len(runtime.PreparationNodes(runtime.WorkspacePreparationWorkflow(run.WorkflowSnapshot))) > 0 {
 			return request, fmt.Errorf("此历史运行使用逐节点工作区，不能自动重建共享环境；请重新发起一次运行")
 		}
-		runner, ok := e.repo.Runner(runnerID)
+		var ok bool
+		runner, ok = e.repo.Runner(runnerID)
 		if run.IsWorkspace() && (!ok || !runner.SupportsConversationWorkspace()) {
 			return request, fmt.Errorf("对话工作区需要执行机器升级至 %s", domain.RunnerVersionConversationWorkspace)
 		}
@@ -138,8 +162,9 @@ func (e *Engine) preparedWorkspaceRequest(run domain.Run, request domain.RunnerW
 	request.Repositories = run.RepositoryContexts()
 	credentials := e.resolveRunCredentials(run)
 	invocation := &domain.RunnerInvocation{}
-	bindRunnerRepositories(invocation, run, credentials.GitToken, credentials.GitUserName, credentials.GitUserEmail)
+	bindRunnerRepositories(invocation, run, credentials.GitUserName, credentials.GitUserEmail)
 	invocation.GitSSHUserID = 0
+	invocation.GitHTTPUserID = 0
 	assets := e.resolveScriptMCPAssets(run.ExecutionContext.ProjectID, run.ExecutionContext.ResponsibleUserID)
 	invocation.Assets = assets
 	invocation.MCPCallServers = assets.MCPServers
@@ -147,15 +172,18 @@ func (e *Engine) preparedWorkspaceRequest(run domain.Run, request domain.RunnerW
 	// Status and terminal I/O don't need keys. A separate platform instance
 	// can also resolve its own credentials from the shared store.
 	request.TerminalGitSSHKeys = nil
+	request.TerminalGitHTTPCredentials = nil
 	terminalOpen := request.Operation == domain.RunnerWorkspaceOperationTerminal && request.Terminal != nil && request.Terminal.Operation == "open"
-	sshRemotes := invocation.GitSSHRemotes()
-	if runnerID != "" && len(sshRemotes) > 0 {
-		if request.Operation == domain.RunnerWorkspaceOperationPrepare || terminalOpen {
+	if runnerID != "" && (request.Operation == domain.RunnerWorkspaceOperationPrepare || terminalOpen) {
+		invocation.GitHTTPCredentials = runner.FilterGitHTTPCredentials(credentials.GitHTTPCredentials)
+		if len(invocation.GitSSHRemotes()) > 0 {
 			invocation.GitSSHKeys = credentials.GitSSHKeys
 		}
-		if terminalOpen {
-			request.TerminalGitSSHKeys = e.repo.GitSSHKeysForRemotes(request.TerminalOwner, sshRemotes)
-		}
+	}
+	if runnerID != "" && terminalOpen {
+		terminalCredentials := e.WorkspaceTerminalGitCredentials(context.Background(), run, request.TerminalOwner)
+		request.TerminalGitHTTPCredentials = runner.FilterGitHTTPCredentials(terminalCredentials.HTTPS)
+		request.TerminalGitSSHKeys = terminalCredentials.SSHKeys
 	}
 	request.RunStatus = run.Status
 	request.WorkspaceLayout = run.ExecutionContext.RunnerWorkspaceLayout
@@ -333,13 +361,32 @@ func (e *Engine) PrepareNodeWorkspace(ctx context.Context, run domain.Run, env *
 // contract as SOP execution. The pool owns the PTY, the Engine owns the sandbox.
 func (e *Engine) HandleWorkspaceTerminal(ctx context.Context, id string, pool *runtime.TerminalPool, scope string, req domain.WorkspaceTerminalRequest, actorID int64) (runtime.TerminalResult, error) {
 	if req.Operation == "open" {
+		if err := e.RestoreConversationWorkspaceIfNeeded(ctx, id); err != nil {
+			return runtime.TerminalResult{}, err
+		}
 		if _, err := e.EnsureWorkspaceReady(ctx, id); err != nil {
 			return runtime.TerminalResult{}, err
 		}
 	}
 	run, _ := e.repo.RunState(id)
 	run.ID = id
-	return e.HandlePreparedWorkspaceTerminal(ctx, run, pool, scope, req, actorID)
+	var credentials runtime.TerminalGitCredentials
+	if req.Operation == "open" {
+		credentials = e.WorkspaceTerminalGitCredentials(ctx, run, actorID)
+	}
+	return e.HandlePreparedWorkspaceTerminal(ctx, run, pool, scope, req, credentials)
+}
+
+// WorkspaceTerminalGitCredentials resolves the opening user's credentials before
+// acquiring an editor transaction on the run.
+func (e *Engine) WorkspaceTerminalGitCredentials(ctx context.Context, run domain.Run, actorID int64) runtime.TerminalGitCredentials {
+	if actorID <= 0 {
+		return runtime.TerminalGitCredentials{}
+	}
+	return runtime.TerminalGitCredentials{
+		HTTPS:   e.repo.GitHTTPCredentialSecrets(ctx, actorID),
+		SSHKeys: e.repo.GitSSHKeysForRemotes(actorID, sshRepositoryURLs(run.RepositoryContexts())),
+	}
 }
 
 // HandlePreparedWorkspaceTerminal takes the run from its caller, which may
@@ -347,7 +394,7 @@ func (e *Engine) HandleWorkspaceTerminal(ctx context.Context, id string, pool *r
 // The run must carry its node states (RunState, not a bare locked row):
 // without them every succeeded preparation step looks pending and the
 // readiness check would be skipped as if there were nothing to prepare.
-func (e *Engine) HandlePreparedWorkspaceTerminal(ctx context.Context, run domain.Run, pool *runtime.TerminalPool, scope string, req domain.WorkspaceTerminalRequest, actorID int64) (runtime.TerminalResult, error) {
+func (e *Engine) HandlePreparedWorkspaceTerminal(ctx context.Context, run domain.Run, pool *runtime.TerminalPool, scope string, req domain.WorkspaceTerminalRequest, credentials runtime.TerminalGitCredentials) (runtime.TerminalResult, error) {
 	id := run.ID
 	if req.Operation != "open" {
 		return pool.HandleSandbox(ctx, nil, scope, req, nil)
@@ -358,6 +405,14 @@ func (e *Engine) HandlePreparedWorkspaceTerminal(ctx context.Context, run domain
 	if env == nil {
 		return runtime.TerminalResult{}, fmt.Errorf("工作区环境尚未准备，请重新打开终端")
 	}
+	if env.Driver() == domain.SandboxDriverDocker {
+		// Keep the readiness check and PTY launch on the same container. This
+		// caller may hold the run row, so it cannot wait for node preparation.
+		if !env.nodeMu.TryLock() {
+			return runtime.TerminalResult{}, repo.ErrWorkspaceInUse
+		}
+		defer env.nodeMu.Unlock()
+	}
 
 	state := runtime.ReadWorkspacePreparationStatus(env.Workspace(), env.ID())
 	epoch, err := runtime.ReadSandboxEnvironmentIdentity(ctx, env.sandbox)
@@ -365,15 +420,7 @@ func (e *Engine) HandlePreparedWorkspaceTerminal(ctx context.Context, run domain
 	if !trivial && (err != nil || state.Status != "ready" || state.Environment != epoch) {
 		return runtime.TerminalResult{}, fmt.Errorf("工作区执行环境已变化，请重新准备后打开终端")
 	}
-	sshKeys := env.credentialSnapshot().GitSSHKeys
-	if len(sshKeys) > 0 {
-		remotes := make([]string, 0, len(sshKeys))
-		for remote := range sshKeys {
-			remotes = append(remotes, remote)
-		}
-		return pool.HandleSandboxWithGitSSH(ctx, env.sandbox, scope, req, nil, e.repo.GitSSHKeysForRemotes(actorID, remotes))
-	}
-	return pool.HandleSandbox(ctx, env.sandbox, scope, req, nil)
+	return pool.HandleSandboxWithGit(e.withSSHKnownHosts(ctx), env.sandbox, scope, req, nil, credentials)
 }
 
 // TrustedWorkspaceRequest attaches frozen execution configuration to an
@@ -398,7 +445,7 @@ func (e *Engine) ForwardWorkspaceRequest(ctx context.Context, run domain.Run, re
 // A settled historical workflow may refer to a role removed from the catalog.
 // Opening its files/terminal must not require resurrecting that model role.
 // Execution still uses the strict workflow validation and executor resolution.
-func workspaceConversationRequirements(st *repo.Store, wf domain.WorkflowDefinition) (runtime.SandboxRequirements, error) {
+func workspaceConversationRequirements(st *repo.Store, wf domain.WorkflowDefinition, codexLoginRelay bool) (runtime.SandboxRequirements, error) {
 	var items []runtime.SandboxRequirements
 	for _, node := range wf.Nodes {
 		if node.Type != "agent" {
@@ -408,11 +455,15 @@ func workspaceConversationRequirements(st *repo.Store, wf domain.WorkflowDefinit
 		if !ok {
 			continue
 		}
-		executor, err := resolveNodeExecutor(st, node, agent)
+		executor, err := workflowNodeExecutor(st, wf, node, agent)
 		if err != nil {
 			continue
 		}
-		items = append(items, runtime.ProviderRequirements(executor.Kind))
+		requirements := runtime.ProviderRequirements(executor.Kind)
+		// Freeze the relay need for the whole workflow so preparation, scripts,
+		// terminals and agents can reuse the same Docker container.
+		requirements.RunnerLoginRelay = codexLoginRelay && executor.Kind == "codex"
+		items = append(items, requirements)
 	}
 	return runtime.MergeSandboxRequirements(items...), nil
 }

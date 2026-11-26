@@ -165,6 +165,15 @@ func orphanSettleStatus(reason string) string {
 // deliveryMRsFromRun resolves one delivery MR per run repository: Gongfeng
 // lookup by work branch first, MR-bearing artifacts of the same project next.
 func (e *Engine) deliveryMRsFromRun(run domain.Run) []domain.DeliveryMR {
+	run.Artifacts = append([]domain.Artifact(nil), run.Artifacts...)
+	for i, artifact := range run.Artifacts {
+		if artifact.Content != "" || domain.MRArtifactPriority(artifact.Name, artifact.Path, artifact.NodeID) <= 0 {
+			continue
+		}
+		if stored, ok := e.repo.Artifact(run.ID, artifact.ID); ok {
+			run.Artifacts[i] = stored
+		}
+	}
 	var byBranch func(domain.RepositoryContext) (domain.DeliveryMR, bool)
 	if e.FindBranchMR != nil {
 		byBranch = func(rc domain.RepositoryContext) (domain.DeliveryMR, bool) {

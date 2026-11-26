@@ -3,7 +3,6 @@ package repo
 import (
 	"database/sql"
 	"fmt"
-	"sort"
 	"strings"
 	"time"
 
@@ -12,19 +11,20 @@ import (
 	"gorm.io/gorm/clause"
 )
 
-// ProjectRunLimit caps concurrently admitted top-level SOP runs per project on
-// platform (cloud) execution. Personal machines are counted per machine
-// against their optional user-configured Runner.RunLimit instead.
-const ProjectRunLimit = 10
+const (
+	ProjectRunLimit            = domain.DefaultRunnerRunLimit
+	PlatformAdmissionBucketKey = "platform"
+	projectAutoBucketPrefix    = "project-auto:"
+	runnerBucketPrefix         = "runner:"
+	legacyProjectBucketPrefix  = "project:"
+)
 
-// Slot accounting is partitioned into buckets: "project:<id>" for platform
-// execution (the empty id is the shared bucket of unassigned runs) and
-// "runner:<id>" for a personal machine. Each bucket has its own lock row, so
-// different projects and machines never wait on each other.
+// Slot accounting uses one platform bucket across all projects and one
+// bucket per personal machine. Elastic queues do not hold slots or locks.
 //
 // Lock rule: a transaction that takes a bucket lock takes it FIRST, before any
 // run row lock, and holds at most one bucket. Only transactions that claim a
-// slot (insert a running run, restart a succeeded/unstarted run, promote the
+// slot (insert a running run, restart a released/unstarted run, promote the
 // queue) or change a machine limit take it. Writes that keep or release a
 // slot never do: a release that races an admission decision can only make it
 // over-count and queue a little longer, never exceed the limit, and the next
@@ -45,8 +45,8 @@ func lockAdmissionGate(d *deps, tx *gorm.DB, key string) error {
 	return d.locking(tx.Where("id = ?", row.ID)).Take(&row).Error
 }
 
-// admissionTxOptions makes plain reads inside a bucket-locked transaction see
-// every commit up to the lock (MySQL defaults to REPEATABLE READ snapshots).
+// admissionTxOptions makes plain reads after a bucket or workspace lock see
+// every commit up to that lock, and avoids gap locks on missing run IDs.
 // sqlite serializes writers on its single test connection already.
 func (d *deps) admissionTxOptions() []*sql.TxOptions {
 	if d.isMySQL() {
@@ -61,17 +61,34 @@ type admissionLockRequired struct{ key string }
 
 func (e *admissionLockRequired) Error() string { return "admission lock required for " + e.key }
 
-func admissionBucketKey(project, runnerID string, exempt bool) string {
-	if exempt {
-		return "runner:" + strings.TrimSpace(runnerID)
-	}
-	return "project:" + strings.TrimSpace(project)
+func runnerAdmissionBucketKey(id string) string {
+	return runnerBucketPrefix + strings.TrimSpace(id)
 }
 
-// runAdmissionBucketKey is the persisted bucket of a run whose project and
-// exemption are already frozen on it.
+func admissionBucketKey(runnerID string, exempt bool) string {
+	if exempt {
+		return runnerAdmissionBucketKey(runnerID)
+	}
+	return PlatformAdmissionBucketKey
+}
+
+func unboundProjectAutoRun(run domain.Run) bool {
+	ec := run.ExecutionContext
+	return ec.ExecutionPool == domain.ExecutionPoolProjectAuto && ec.ExecutionMode == "" && strings.TrimSpace(ec.ExecutionRunnerID) == ""
+}
+
+func canonicalAdmissionBucketKey(key string) string {
+	if strings.HasPrefix(key, legacyProjectBucketPrefix) {
+		return PlatformAdmissionBucketKey
+	}
+	return key
+}
+
 func runAdmissionBucketKey(run domain.Run) string {
-	return admissionBucketKey(run.ExecutionContext.ProjectID, run.ExecutionContext.ExecutionRunnerID, run.ConcurrencyExempt)
+	if unboundProjectAutoRun(run) {
+		return projectAutoBucketPrefix + strings.TrimSpace(run.ExecutionContext.ProjectID)
+	}
+	return admissionBucketKey(run.ExecutionContext.ExecutionRunnerID, run.ConcurrencyExempt)
 }
 
 type runnerAdmissionInfo struct {
@@ -142,11 +159,11 @@ func (s *admissionScope) exempt(run domain.Run) (bool, error) {
 
 // limit returns the bucket's slot count; 0 means unlimited.
 func (s *admissionScope) limit(key string) (int, error) {
-	if id, ok := strings.CutPrefix(key, "runner:"); ok {
+	if id, ok := strings.CutPrefix(key, runnerBucketPrefix); ok {
 		info, err := s.runner(id)
 		return info.limit, err
 	}
-	return ProjectRunLimit, nil
+	return platformRunnerRunLimit(s.tx)
 }
 
 // rowBucketKey reads the persisted bucket, falling back to execution_context,
@@ -154,83 +171,161 @@ func (s *admissionScope) limit(key string) (int, error) {
 // 010 backfill has not populated (written by the previous binary).
 func (s *admissionScope) rowBucketKey(row runRow) (string, error) {
 	if row.QuotaBucket != nil && *row.QuotaBucket != "" {
-		return *row.QuotaBucket, nil
+		return canonicalAdmissionBucketKey(*row.QuotaBucket), nil
 	}
 	run := runFromRow(row)
-	project := ""
-	if row.QuotaProjectID != nil {
-		project = *row.QuotaProjectID
-	} else {
-		var err error
-		if project, err = s.project(run); err != nil {
-			return "", err
-		}
-	}
-	exempt := row.QuotaExempt != nil && *row.QuotaExempt
+	run.ConcurrencyExempt = row.QuotaExempt != nil && *row.QuotaExempt
 	if row.QuotaExempt == nil {
 		var err error
-		if exempt, err = s.exempt(run); err != nil {
+		if run.ConcurrencyExempt, err = s.exempt(run); err != nil {
 			return "", err
 		}
 	}
-	return admissionBucketKey(project, run.ExecutionContext.ExecutionRunnerID, exempt), nil
+	return runAdmissionBucketKey(run), nil
 }
 
-// occupied counts admitted top-level runs in one bucket through
-// idx_runs_quota_bucket. Rows with a NULL bucket are legacy rows not yet
-// backfilled; they are resolved in Go so they still count.
-//
-// Conversation workspaces and retired template-free groups do not execute SOPs
-// and never reserve SOP capacity. Nested SOPs share their top-level SOP slot.
-func (s *admissionScope) occupied(key, exclude string) (int, error) {
+// admissionBuckets matches the fixed queues for the given machines. Older
+// platform runs used a project-prefixed bucket and now share the platform gate.
+func admissionBuckets(keys []string) (string, []any) {
+	for _, key := range keys {
+		if key == PlatformAdmissionBucketKey {
+			return "(quota_bucket IN ? OR quota_bucket LIKE ?)", []any{keys, legacyProjectBucketPrefix + "%"}
+		}
+	}
+	return "quota_bucket IN ?", []any{keys}
+}
+
+// loadSnapshots reads all relevant slot holders and queues in one query so a
+// concurrent write filling a legacy NULL bucket cannot make a slot disappear.
+func (s *admissionScope) loadSnapshots(keys []string, exclude string) (map[string]domain.RunnerLoad, error) {
+	loads := make(map[string]domain.RunnerLoad, len(keys))
+	for _, key := range keys {
+		loads[key] = domain.RunnerLoad{}
+	}
+	if len(keys) == 0 {
+		return loads, nil
+	}
 	var rows []runRow
-	q := s.tx.Select("id", "kind", "workflow_id", "status", "quota_bucket", "quota_project_id", "quota_parent_run_id", "quota_exempt", "admission_state", "execution_context").
-		Where("(quota_bucket = ? OR quota_bucket IS NULL) AND status NOT IN ? AND (admission_state IS NULL OR admission_state <> ?)",
-			key, []string{"succeeded", "queued"}, "unstarted")
+	buckets, args := admissionBuckets(keys)
+	q := s.tx.Select("status", "quota_bucket", "quota_parent_run_id", "quota_exempt",
+		"CASE WHEN quota_bucket IS NULL OR quota_bucket = '' OR quota_parent_run_id IS NULL THEN execution_context END AS execution_context").
+		Where("("+buckets+" OR quota_bucket IS NULL OR quota_bucket = '')", args...).
+		Where("status <> ? AND (status = ? OR admission_state IS NULL OR admission_state NOT IN ?)", "succeeded", "queued", []string{"unstarted", "released"}).
+		Where("(kind IS NULL OR kind <> ?) AND (workflow_id IS NULL OR workflow_id <> ?)", domain.RunKindWorkspace, domain.FreeCollaborationWorkflowID).
+		Where("(quota_parent_run_id IS NULL OR quota_parent_run_id = '')")
 	if exclude != "" {
 		q = q.Where("id <> ?", exclude)
 	}
 	if err := q.Find(&rows).Error; err != nil {
-		return 0, err
+		return nil, err
 	}
-	n := 0
 	for _, row := range rows {
-		parent := ""
-		if row.QuotaParentRunID != nil {
-			parent = *row.QuotaParentRunID
-		} else {
-			parent = runFromRow(row).ExecutionContext.ParentRunID
-		}
-		if strings.TrimSpace(parent) != "" {
-			continue
-		}
-		if row.Kind == domain.RunKindWorkspace || row.WorkflowID == domain.FreeCollaborationWorkflowID {
+		if row.QuotaParentRunID == nil && strings.TrimSpace(runFromRow(row).ExecutionContext.ParentRunID) != "" {
 			continue
 		}
 		bucket, err := s.rowBucketKey(row)
 		if err != nil {
-			return 0, err
+			return nil, err
 		}
-		if bucket == key {
-			n++
+		load, ok := loads[bucket]
+		if !ok {
+			continue
 		}
+		if row.Status == "queued" {
+			load.QueuedRuns++
+		} else {
+			load.OccupiedRuns++
+			if row.Status == "running" {
+				load.RunningRuns++
+			}
+		}
+		loads[bucket] = load
 	}
-	return n, nil
+	return loads, nil
+}
+
+func (s *admissionScope) occupied(key, exclude string) (int, error) {
+	key = canonicalAdmissionBucketKey(key)
+	loads, err := s.loadSnapshots([]string{key}, exclude)
+	return loads[key].OccupiedRuns, err
+}
+
+// LoadSnapshots returns the global platform load and the requested machine
+// loads keyed by their admission buckets.
+func (r *RunsRepo) LoadSnapshots(runnerIDs []string) (map[string]domain.RunnerLoad, error) {
+	keys := []string{PlatformAdmissionBucketKey}
+	for _, id := range runnerIDs {
+		keys = append(keys, runnerAdmissionBucketKey(id))
+	}
+	return newAdmissionScope(r.DB).loadSnapshots(keys, "")
+}
+
+func (r *RunsRepo) RunnerLoadSnapshots(ids []string) (map[string]domain.RunnerLoad, error) {
+	keys := make([]string, 0, len(ids))
+	for _, id := range ids {
+		keys = append(keys, runnerAdmissionBucketKey(id))
+	}
+	loads, err := newAdmissionScope(r.DB).loadSnapshots(keys, "")
+	if err != nil {
+		return nil, err
+	}
+	byID := make(map[string]domain.RunnerLoad, len(ids))
+	for _, id := range ids {
+		byID[id] = loads[runnerAdmissionBucketKey(id)]
+	}
+	return byID, nil
 }
 
 // hasQueued reports whether a run already waits in the bucket; a new request
 // must not overtake it. Queued rows always carry a persisted bucket.
 func (s *admissionScope) hasQueued(key, exclude string) (bool, error) {
+	buckets, args := admissionBuckets([]string{canonicalAdmissionBucketKey(key)})
 	var ids []string
-	err := s.tx.Model(&runRow{}).Where("quota_bucket = ? AND status = ? AND id <> ?", key, "queued", exclude).Limit(1).Pluck("id", &ids).Error
+	err := s.tx.Model(&runRow{}).Where(buckets, args...).Where("status = ? AND id <> ?", "queued", exclude).Limit(1).Pluck("id", &ids).Error
 	return len(ids) > 0, err
 }
 
+func (s *admissionScope) wouldQueue(key, exclude string, limit int) (bool, error) {
+	occupied, err := s.occupied(key, exclude)
+	if err != nil || occupied >= limit {
+		return occupied >= limit, err
+	}
+	return s.hasQueued(key, exclude)
+}
+
+// RunWouldQueueOnAdmission is a preflight for workspace restoration. Only the
+// eventual write under the bucket lock decides admission.
+func (r *RunsRepo) RunWouldQueueOnAdmission(run domain.Run) (bool, error) {
+	if !isTopLevelSOP(run) || run.AdmissionState != "released" && run.AdmissionState != "unstarted" && run.Status != "succeeded" {
+		return false, nil
+	}
+	s := newAdmissionScope(r.DB)
+	var row runRow
+	if err := r.DB.Select("quota_bucket", "quota_project_id", "quota_exempt", "execution_context").Where("id = ?", run.ID).Take(&row).Error; err != nil {
+		return false, err
+	}
+	key, err := s.rowBucketKey(row)
+	if err != nil {
+		return false, err
+	}
+	if unboundProjectAutoRun(run) {
+		return true, nil
+	}
+	limit, err := s.limit(key)
+	if err != nil || limit <= 0 {
+		return false, err
+	}
+	return s.wouldQueue(key, run.ID, limit)
+}
+
 func queuedMessage(key string) string {
-	if strings.HasPrefix(key, "runner:") {
+	if strings.HasPrefix(key, runnerBucketPrefix) {
 		return "等待执行机器可用运行名额"
 	}
-	return "等待项目可用运行名额"
+	if strings.HasPrefix(key, projectAutoBucketPrefix) {
+		return "等待项目内可用执行机器名额"
+	}
+	return "等待平台执行机器可用运行名额"
 }
 
 // prepareRunAdmission freezes the run's quota identity and decides whether a
@@ -240,6 +335,13 @@ func (r *RunsRepo) prepareRunAdmission(tx *gorm.DB, run *domain.Run, current run
 	s := newAdmissionScope(tx)
 	if exists {
 		cur := runFromRow(current)
+		if cur.ExecutionContext.ExecutionPool == domain.ExecutionPoolProjectAuto {
+			// Promotion is the only write that may bind a project-auto run.
+			run.ExecutionContext.ExecutionPool = cur.ExecutionContext.ExecutionPool
+			run.ExecutionContext.ExecutionRunnerID = cur.ExecutionContext.ExecutionRunnerID
+			run.ExecutionContext.ExecutionMode = cur.ExecutionContext.ExecutionMode
+			run.ExecutionContext.RunnerWorkspaceLayout = cur.ExecutionContext.RunnerWorkspaceLayout
+		}
 		run.AdmissionState = current.AdmissionState
 		if current.QueueEntered != nil {
 			run.QueueEnteredAt = *current.QueueEntered
@@ -294,35 +396,35 @@ func (r *RunsRepo) prepareRunAdmission(tx *gorm.DB, run *domain.Run, current run
 		}
 		return nil
 	}
-	if exists && current.Status != "succeeded" && current.AdmissionState != "unstarted" {
+	if run.IsWorkspace() || run.WorkflowID == domain.FreeCollaborationWorkflowID {
+		return nil
+	}
+	if unboundProjectAutoRun(*run) {
+		markRunQueued(run, time.Now().UTC())
+		return nil
+	}
+	if exists && current.Status != "succeeded" && current.AdmissionState != "unstarted" && current.AdmissionState != "released" {
 		run.AdmissionState = "held"
-		return r.checkParentAdmission(tx, *run)
+		return r.checkParentAdmission(tx, run)
 	}
 	run.AdmissionState = "held"
 	if strings.TrimSpace(run.ExecutionContext.ParentRunID) != "" {
-		return r.checkParentAdmission(tx, *run)
+		return r.checkParentAdmission(tx, run)
 	}
 	key := runAdmissionBucketKey(*run)
+	if key != lockedKey {
+		return &admissionLockRequired{key: key}
+	}
 	limit, err := s.limit(key)
 	if err != nil || limit <= 0 {
 		return err
 	}
-	if key != lockedKey {
-		return &admissionLockRequired{key: key}
-	}
-	occupied, err := s.occupied(key, run.ID)
+	queued, err := s.wouldQueue(key, run.ID, limit)
 	if err != nil {
 		return err
 	}
-	queued, err := s.hasQueued(key, run.ID)
-	if err != nil {
-		return err
-	}
-	if occupied >= limit || queued {
-		run.Status, run.AdmissionState = "queued", "queued"
-		run.QueueEnteredAt = time.Now().UTC()
-		run.OwnerInstanceID, run.LeaseUntil = "", time.Time{}
-		run.CancelRequested, run.PauseRequested = false, false
+	if queued {
+		markRunQueued(run, time.Now().UTC())
 		for i := range run.Events {
 			if run.Events[i].Type == "run.started" && !exists {
 				run.Events[i].Type = "run.queued"
@@ -333,7 +435,85 @@ func (r *RunsRepo) prepareRunAdmission(tx *gorm.DB, run *domain.Run, current run
 	return nil
 }
 
-func (r *RunsRepo) checkParentAdmission(tx *gorm.DB, run domain.Run) error {
+func markRunQueued(run *domain.Run, now time.Time) {
+	run.Status, run.AdmissionState = "queued", "queued"
+	run.QueueEnteredAt = now
+	run.OwnerInstanceID, run.LeaseUntil = "", time.Time{}
+	run.CancelRequested, run.PauseRequested = false, false
+}
+
+// ReleaseCleanedRunAdmission frees a slot after workspace cleanup succeeded.
+// Releases take only the run row lock, never the admission bucket lock.
+func (r *RunsRepo) ReleaseCleanedRunAdmission(runID, eventMessage string) (bool, error) {
+	released := false
+	err := r.DB.Transaction(func(tx *gorm.DB) error {
+		row, err := r.takeRunForUpdate(tx, runID)
+		if err != nil {
+			return err
+		}
+		if row.Status == "running" || row.Status == "queued" || row.WorkspaceCleaned == nil || row.AdmissionState == "unstarted" || row.AdmissionState == "released" {
+			return nil
+		}
+		released = true
+		return releaseRunAdmission(tx, runID, eventMessage)
+	})
+	return released && err == nil, err
+}
+
+// ReleaseIdleBorrowedSOPAdmission frees a slot while leaving the conversation
+// checkout under its owner's lifecycle.
+func (r *RunsRepo) ReleaseIdleBorrowedSOPAdmission(runID string, revision int, now time.Time) (bool, error) {
+	released := false
+	err := r.DB.Transaction(func(tx *gorm.DB) error {
+		row, err := r.takeRunForUpdate(tx, runID)
+		if err != nil {
+			return err
+		}
+		run := runFromRow(row)
+		if row.Revision != revision || !isTopLevelSOP(run) || !run.UsesConversationWorkspace() ||
+			(row.Status != "failed" && row.Status != "waiting") || row.AdmissionState == "unstarted" || row.AdmissionState == "released" ||
+			row.CleanupNotBefore != nil && now.Before(*row.CleanupNotBefore) {
+			return nil
+		}
+		var checkpoint WorkspaceCheckpoint
+		if err := tx.Omit("archive").Where("run_id = ?", runID).Take(&checkpoint).Error; err != nil && err != gorm.ErrRecordNotFound {
+			return err
+		}
+		if !sopWorkspaceIdleAt(run, checkpoint, now) {
+			return nil
+		}
+		active, err := r.hasActiveSOPTree(tx, run)
+		if err != nil || active {
+			return err
+		}
+		released = true
+		return releaseRunAdmission(tx, runID, "")
+	}, r.admissionTxOptions()...)
+	return released && err == nil, err
+}
+
+func releaseRunAdmission(tx *gorm.DB, runID, eventMessage string) error {
+	if err := tx.Model(&runRow{}).Where("id = ?", runID).Updates(map[string]any{
+		"admission_state": "released", "revision": gorm.Expr("revision + 1"),
+	}).Error; err != nil {
+		return err
+	}
+	if eventMessage != "" {
+		return appendAdmissionRunEvent(tx, runID, "workspace.reclaimed", eventMessage, time.Now().UTC())
+	}
+	return nil
+}
+
+func appendAdmissionRunEvent(tx *gorm.DB, runID, eventType, message string, now time.Time) error {
+	var seq int64
+	if err := tx.Model(&runEventRow{}).Select("COALESCE(MAX(seq), -1) + 1").Where("run_id = ?", runID).Scan(&seq).Error; err != nil {
+		return err
+	}
+	ev := domain.RunEvent{ID: fmt.Sprintf("adm-%d-%d", now.UnixNano(), seq), RunID: runID, Type: eventType, Message: message, Timestamp: now}
+	return tx.Create(&runEventRow{RunID: runID, Seq: seq, EventID: ev.ID, Type: ev.Type, Message: ev.Message, Payload: jsonBytes(ev), Ts: &now}).Error
+}
+
+func (r *RunsRepo) checkParentAdmission(tx *gorm.DB, run *domain.Run) error {
 	parentID := strings.TrimSpace(run.ExecutionContext.ParentRunID)
 	seen := map[string]bool{run.ID: true}
 	for parentID != "" {
@@ -341,104 +521,21 @@ func (r *RunsRepo) checkParentAdmission(tx *gorm.DB, run domain.Run) error {
 			return fmt.Errorf("cyclic parent run")
 		}
 		seen[parentID] = true
-		var parent runRow
-		if err := tx.Where("id = ?", parentID).Take(&parent).Error; err != nil {
+		// Idle cleanup and slot release lock the ancestor row to fence child
+		// activation against the final activity check.
+		parent, err := r.takeRunForUpdate(tx, parentID)
+		if err != nil {
 			return fmt.Errorf("parent run unavailable: %w", err)
 		}
-		if parent.Status == "succeeded" || parent.Status == "queued" || parent.AdmissionState == "unstarted" {
+		if parent.Status == "succeeded" || parent.Status == "queued" || parent.WorkspaceCleaned != nil || parent.AdmissionState == "unstarted" || parent.AdmissionState == "released" {
 			return fmt.Errorf("请从顶层 SOP 重新运行，父流程尚未获得运行名额")
+		}
+		if parentID == run.ExecutionContext.ParentRunID && run.ExecutionContext.ExecutionPool == domain.ExecutionPoolProjectAuto {
+			run.ConcurrencyExempt = parent.QuotaExempt != nil && *parent.QuotaExempt
 		}
 		parentID = strings.TrimSpace(runFromRow(parent).ExecutionContext.ParentRunID)
 	}
 	return nil
-}
-
-// PromoteQueuedRuns admits queued runs FIFO within each bucket, one short
-// transaction per bucket. A bucket whose limit was raised or cleared releases
-// its queue on the next pass. A failing bucket does not block the others.
-func (r *RunsRepo) PromoteQueuedRuns() ([]string, error) {
-	var raw []*string
-	if err := r.DB.Model(&runRow{}).Where("status = ?", "queued").Distinct("quota_bucket").Pluck("quota_bucket", &raw).Error; err != nil {
-		return nil, err
-	}
-	keys := make([]string, 0, len(raw))
-	for _, key := range raw {
-		if key != nil && *key != "" {
-			keys = append(keys, *key)
-		}
-	}
-	sort.Strings(keys)
-	var promoted []string
-	var firstErr error
-	for _, key := range keys {
-		ids, err := r.promoteBucket(key)
-		promoted = append(promoted, ids...)
-		if err != nil && firstErr == nil {
-			firstErr = fmt.Errorf("promote %s: %w", key, err)
-		}
-	}
-	return promoted, firstErr
-}
-
-func (r *RunsRepo) promoteBucket(key string) ([]string, error) {
-	var promoted []string
-	err := r.DB.Transaction(func(tx *gorm.DB) error {
-		promoted = nil
-		if err := lockAdmissionGate(r.deps, tx, key); err != nil {
-			return err
-		}
-		s := newAdmissionScope(tx)
-		limit, err := s.limit(key)
-		if err != nil {
-			return err
-		}
-		occupied := 0
-		if limit > 0 {
-			if occupied, err = s.occupied(key, ""); err != nil {
-				return err
-			}
-			if occupied >= limit {
-				return nil
-			}
-		}
-		var queued []runRow
-		if err := tx.Select("id", "queue_entered_at", "created_at").Where("quota_bucket = ? AND status = ?", key, "queued").
-			Order("queue_entered_at, created_at, id").Find(&queued).Error; err != nil {
-			return err
-		}
-		for _, row := range queued {
-			if limit > 0 && occupied >= limit {
-				break
-			}
-			now := time.Now().UTC()
-			// A concurrent cancel holds the run row; re-check the status here.
-			res := tx.Model(&runRow{}).Where("id = ? AND status = ?", row.ID, "queued").Updates(map[string]any{
-				"status": "running", "admission_state": "held", "revision": gorm.Expr("revision + 1"), "updated_at": now,
-				"cancel_requested": false, "pause_requested": false, "owner_instance_id": "", "lease_until": nil,
-			})
-			if res.Error != nil {
-				return res.Error
-			}
-			if res.RowsAffected == 0 {
-				continue
-			}
-			var seq int64
-			if err := tx.Model(&runEventRow{}).Select("COALESCE(MAX(seq), -1) + 1").Where("run_id = ?", row.ID).Scan(&seq).Error; err != nil {
-				return err
-			}
-			ev := domain.RunEvent{ID: fmt.Sprintf("adm-%d-%d", now.UnixNano(), seq), RunID: row.ID, Type: "run.started", Message: "获得运行名额，开始执行", Timestamp: now}
-			if err := tx.Create(&runEventRow{RunID: row.ID, Seq: seq, EventID: ev.ID, Type: ev.Type, Message: ev.Message, Payload: jsonBytes(ev), Ts: &now}).Error; err != nil {
-				return err
-			}
-			occupied++
-			promoted = append(promoted, row.ID)
-		}
-		return nil
-	}, r.admissionTxOptions()...)
-	if err != nil {
-		return nil, err
-	}
-	return promoted, nil
 }
 
 // CancelQueuedRun settles a queued run as cancelled-before-start. It takes

@@ -20,6 +20,8 @@ export function queuedMessage({
   attachments = [],
   references = [],
   approvalMode = "confirm",
+  approvalUserId,
+  approvalProjectId,
 }) {
   return {
     id: localId("queued"),
@@ -27,7 +29,18 @@ export function queuedMessage({
     attachments,
     references,
     approvalMode,
+    approvalUserId,
+    approvalProjectId,
     queuedAt: new Date().toISOString(),
+  };
+}
+
+export function queuedApproval({ approvalMode, approvalUserId, approvalProjectId }, userId, projectId = "") {
+  return {
+    // A message queued before its approval scope was recorded, or before
+    // the conversation changed projects, needs confirmation when resumed.
+    approvalMode: approvalUserId && approvalProjectId === projectId ? approvalMode || "confirm" : "confirm",
+    approvalUserId: approvalUserId ?? userId,
   };
 }
 

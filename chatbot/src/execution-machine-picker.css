@@ -7,7 +7,8 @@
   color: var(--muted);
   font-size: 12px;
 }
-.machine-context > svg,
+.machine-name > svg,
+.machine-sandbox > svg,
 .machine-picker > svg,
 .machine-picker > .connection-dot {
   flex: none;
@@ -21,12 +22,38 @@
   font: inherit;
   cursor: pointer;
 }
+.machine-name,
+.machine-sandbox {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+}
+.machine-name {
+  gap: 5px;
+}
 .machine-picker > span,
-.machine-fixed > span {
+.machine-name > span,
+.machine-sandbox > span {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.machine-sandbox {
+  gap: 4px;
+  padding: 3px 4px 3px 6px;
+  border: 0;
+  border-inline-start: 1px solid var(--line);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.machine-sandbox:hover {
+  color: var(--text);
+}
+.machine-sandbox-detail {
+  overflow-wrap: anywhere;
 }
 .machine-context .machine-picker:hover,
 .machine-context .machine-picker[aria-expanded="true"] {
@@ -37,7 +64,8 @@
   opacity: 0.5;
   cursor: not-allowed;
 }
-.machine-picker:focus-visible {
+.machine-picker:focus-visible,
+.machine-sandbox:focus-visible {
   outline: 2px solid var(--focus);
   outline-offset: 1px;
 }
@@ -45,6 +73,9 @@
   max-width: 160px;
   margin-right: 6px;
   font-size: 11px;
+}
+.header-actions .machine-context.has-sandbox {
+  max-width: 255px;
 }
 .composer-context > .machine-context {
   flex-shrink: 1;
@@ -56,5 +87,20 @@
   }
   .header-actions .machine-context {
     max-width: 110px;
+  }
+  .header-actions .machine-context.has-sandbox {
+    max-width: 145px;
+    margin-right: 2px;
+  }
+  .machine-fixed.has-sandbox .machine-name {
+    flex-shrink: 2;
+  }
+}
+@media (max-width: 520px) {
+  .machine-fixed.has-sandbox .machine-name > span {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    clip-path: inset(50%);
   }
 }

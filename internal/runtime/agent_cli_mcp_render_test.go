@@ -7,6 +7,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"agentflow/internal/domain"
 )
 
 func readAgentCLIMCPDoc(t *testing.T, home, rel string) any {
@@ -95,5 +97,57 @@ func TestWriteAgentCLIMCPConfigDeepSeekInserts(t *testing.T) {
 	}
 	if got := readAgentCLIMCPDoc(t, empty, rel); !reflect.DeepEqual(got, []any{}) {
 		t.Fatalf("deepseek empty mcp: %v", got)
+	}
+}
+
+// Kimi defaults to a 60s MCP tool timeout, shorter than a write approval may
+// wait; every server it gets carries the gateway's 10 minute budget.
+func TestWriteAgentCLIMCPConfigKimiToolTimeout(t *testing.T) {
+	home := t.TempDir()
+	entries := map[string]any{
+		"http":  map[string]any{"type": "http", "url": "http://127.0.0.1:1/mcp", "headers": map[string]any{"Authorization": "Bearer x"}},
+		"stdio": map[string]any{"command": "node", "args": []string{"a.js"}},
+	}
+	if err := WriteAgentCLIMCPConfig(AgentCLIKimi, HostAgentCLIHome(home), entries, AgentCLIMCPOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	got := readAgentCLIMCPDoc(t, home, ".kimi-code/mcp.json").(map[string]any)["mcpServers"]
+	want := normalizeJSON(t, map[string]any{
+		"http":  map[string]any{"url": "http://127.0.0.1:1/mcp", "headers": map[string]any{"Authorization": "Bearer x"}, "toolTimeoutMs": 600000},
+		"stdio": map[string]any{"command": "node", "args": []string{"a.js"}, "toolTimeoutMs": 600000},
+	})
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("kimi mcp:\n got %v\nwant %v", got, want)
+	}
+}
+
+func TestWriteAgentCLIMCPConfigStdioArgs(t *testing.T) {
+	entries, err := mcpConfigEntries([]domain.MCPServerDefinition{
+		{ID: gateMCPServerID, Command: "gate-mcp"},
+		{ID: "empty-args", Command: "tool", Args: []string{}},
+		{ID: "with-args", Command: "node", Args: []string{"server.js", "--stdio"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, kind := range []string{AgentCLIPi, AgentCLIKimi, AgentCLICursor, AgentCLIAntigravity} {
+		t.Run(kind, func(t *testing.T) {
+			home := t.TempDir()
+			if err := WriteAgentCLIMCPConfig(kind, HostAgentCLIHome(home), entries, AgentCLIMCPOptions{}); err != nil {
+				t.Fatal(err)
+			}
+			doc := readAgentCLIMCPDoc(t, home, agentCLIMCPPaths[kind]).(map[string]any)
+			servers := doc["mcpServers"].(map[string]any)
+			for _, id := range []string{gateMCPServerID, "empty-args"} {
+				server := servers[id].(map[string]any)
+				if args, ok := server["args"]; ok {
+					t.Errorf("%s should omit args, got %#v", id, args)
+				}
+			}
+			want := []any{"server.js", "--stdio"}
+			if got := servers["with-args"].(map[string]any)["args"]; !reflect.DeepEqual(got, want) {
+				t.Errorf("stdio args = %#v, want %#v", got, want)
+			}
+		})
 	}
 }

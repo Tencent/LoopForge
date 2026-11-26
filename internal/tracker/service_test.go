@@ -229,6 +229,10 @@ func (m *memIssueStore) PutIssue(v domain.Issue) error {
 	m.issues[v.ID] = v
 	return nil
 }
+
+func (m *memIssueStore) PutIssueWithCopiedImages(v domain.Issue, _ string) error {
+	return m.PutIssue(v)
+}
 func (m *memIssueStore) PutSyncedIssue(v domain.Issue) error {
 	if old, ok := m.Issue(v.ID); ok {
 		v.Status = old.Status

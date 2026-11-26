@@ -78,13 +78,17 @@ func TestQueryRunTelemetryFiltersAdapter(t *testing.T) {
 	}
 }
 
-func TestAdapterSQLKeepsLegacyAndCrossCLIHookEventsVisible(t *testing.T) {
+func TestAdapterSQLKeepsLegacyHooksAndOTLPVisible(t *testing.T) {
 	hooks := adapterSQLFilter("hooks")
 	if hooks.clause != " AND adapter IN (?, ?)" || len(hooks.args) != 2 {
 		t.Fatalf("hooks SQL filter = %+v", hooks)
 	}
+	otel := adapterSQLFilter("otel")
+	if otel.clause != " AND adapter IN (?, ?)" || len(otel.args) != 2 {
+		t.Fatalf("OTLP SQL filter = %+v", otel)
+	}
 	live := adapterSQLFilter("live")
-	if live.clause != " AND adapter NOT IN (?, ?, ?)" || len(live.args) != 3 {
+	if live.clause != " AND adapter NOT IN (?, ?, ?, ?)" || len(live.args) != 4 {
 		t.Fatalf("live SQL filter = %+v", live)
 	}
 }

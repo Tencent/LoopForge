@@ -14,7 +14,7 @@ func TestAssistantIncrementalPromptKeepsOnlyCurrentAttachmentNote(t *testing.T) 
 		{Role: "user", Content: "inspect this image", Attachments: []domain.AssistantAttachment{{ID: "new-file", Name: "new.png", MimeType: "image/png", Size: 12}}},
 	}
 	prompt := assistantIncrementalPrompt(assistantRequest{Messages: messages}, assistantNativeCheckpoint{MessageHashes: assistantMessageHashes(messages[:2])})
-	for _, want := range []string{"inspect this image", "new-file", "new.png", "workbench_attachment_read"} {
+	for _, want := range []string{"inspect this image", "new-file", "new.png", "原生可读路径"} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("incremental prompt missing %q: %s", want, prompt)
 		}

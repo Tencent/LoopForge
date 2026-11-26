@@ -19,6 +19,7 @@ func (h *assistantHandlers) deleteConversation(userID int64, id string) error {
 	}
 	if found {
 		h.settleDeletedConversation(conv)
+		h.queueConversationAttachments(conv)
 	}
 	return nil
 }
@@ -134,6 +135,9 @@ func (h *assistantHandlers) endConversationWorkspace(runID string) bool {
 	}
 	run, ok := h.repo.RunState(runID)
 	if !ok || !run.IsWorkspace() || run.PauseRequested {
+		return false
+	}
+	if inUse, err := h.repo.HasWorkspaceSOPRuns(runID); err != nil || inUse {
 		return false
 	}
 	if domain.TerminalRunStatus(run.Status) {

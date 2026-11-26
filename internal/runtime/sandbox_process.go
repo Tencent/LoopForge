@@ -2,6 +2,9 @@ package runtime
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -10,109 +13,12 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
+	"syscall"
+	"time"
 
 	"agentflow/internal/domain"
 )
-
-// projectAgentPaths are deliberately absent from the executor's filesystem
-// view. AgentFlow definitions are the only source of instructions, skills and
-// CLI configuration for unattended runs.
-var rootProjectAgentPaths = []string{
-	"AGENTS.md",
-	"AGENTS.override.md",
-	"CLAUDE.md",
-	"CLAUDE.local.md",
-	"CODEBUDDY.md",
-	".agents",
-	".codex",
-	".claude",
-	".codebuddy",
-	".mcp.json",
-}
-
-var projectAgentDirNames = map[string]bool{
-	".agents": true, ".codex": true, ".claude": true, ".codebuddy": true,
-}
-
-var projectAgentFileNames = map[string]bool{
-	"AGENTS.md": true, "AGENTS.override.md": true,
-	"CLAUDE.md": true, "CLAUDE.local.md": true,
-	"CODEBUDDY.md": true, ".mcp.json": true,
-}
-
-func discoverProjectAgentPaths(workspace string) ([]string, error) {
-	seen := map[string]bool{}
-	for _, rel := range rootProjectAgentPaths {
-		seen[filepath.Clean(rel)] = true
-	}
-	err := filepath.WalkDir(workspace, func(path string, entry os.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		rel, err := filepath.Rel(workspace, path)
-		if err != nil || rel == "." {
-			return err
-		}
-		name := entry.Name()
-		if projectAgentDirNames[name] {
-			seen[rel] = true
-			if entry.IsDir() {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if entry.IsDir() {
-			if name == ".git" || name == ".agentflow" || name == "node_modules" {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if projectAgentFileNames[name] {
-			seen[rel] = true
-		}
-		return nil
-	})
-	if err != nil {
-		return nil, err
-	}
-	out := make([]string, 0, len(seen))
-	for rel := range seen {
-		out = append(out, rel)
-	}
-	sort.Strings(out)
-	return out, nil
-}
-
-func validateAgentConfigTarget(workspace, rel string) (os.FileInfo, error) {
-	target := filepath.Join(workspace, rel)
-	info, err := os.Lstat(target)
-	if err != nil {
-		return nil, err
-	}
-	if info.Mode()&os.ModeSymlink == 0 {
-		return info, nil
-	}
-	if projectAgentDirNames[filepath.Base(rel)] {
-		return nil, fmt.Errorf("refusing symlinked Agent CLI directory: %s", target)
-	}
-	resolved, err := filepath.EvalSymlinks(target)
-	if err != nil {
-		return nil, err
-	}
-	root, err := filepath.Abs(workspace)
-	if err != nil {
-		return nil, err
-	}
-	resolved, err = filepath.Abs(resolved)
-	if err != nil {
-		return nil, err
-	}
-	inside, err := filepath.Rel(root, resolved)
-	if err != nil || inside == ".." || strings.HasPrefix(inside, ".."+string(os.PathSeparator)) || !projectAgentFileNames[filepath.Base(resolved)] {
-		return nil, fmt.Errorf("refusing Agent CLI configuration symlink outside the known project configuration set: %s", target)
-	}
-	return os.Stat(target)
-}
 
 func appendEnvironment(base []string, overlays ...map[string]string) []string {
 	values := map[string]string{}
@@ -149,13 +55,16 @@ func appendEnvironment(base []string, overlays ...map[string]string) []string {
 
 func controlledBaseEnvironment(base []string) []string {
 	blocked := []string{
-		"CODEBUDDY_API_KEY=",
+		"CODEBUDDY_API_KEY=", "CODEBUDDY_BASE_URL=",
 		"OPENAI_API_KEY=", "CODEX_API_KEY=", "OPENAI_BASE_URL=",
 		"ANTHROPIC_API_KEY=", "ANTHROPIC_AUTH_TOKEN=", "ANTHROPIC_BASE_URL=",
 		"CLAUDE_CODE_OAUTH_TOKEN=", "CODEX_HOME=", "CLAUDE_CONFIG_DIR=",
 		"CLAUDE_CODE_USE_BEDROCK=", "CLAUDE_CODE_USE_VERTEX=", "CLAUDE_CODE_USE_FOUNDRY=",
 		"CODEBUDDY_INTERNET_ENVIRONMENT=",
 		"AGENTFLOW_GIT_TOKEN=",
+		"AGENTFLOW_PROJECT_CREDENTIAL_KEY=",
+		"GH_TOKEN=",
+		"GITHUB_TOKEN=",
 		"AGENTFLOW_MCP_CONFIG=",
 		"AGENTFLOW_BIN=",
 		"GIT_CONFIG_COUNT=",
@@ -208,25 +117,87 @@ func createBwrap(id, workspace string, profile domain.SandboxProfile, requiremen
 	return createProcessSandbox("bwrap", "linux", "Linux", "bwrap", id, workspace, profile, requirements)
 }
 
+var nativeSandboxProbe struct {
+	sync.Mutex
+	binary    string
+	expires   time.Time
+	available bool
+}
+
+// NativeSandboxAvailable checks that the host can launch the requested
+// process sandbox. A binary alone is insufficient when user namespaces are
+// disabled. Cache the probe briefly for workspace choices and heartbeats.
+func NativeSandboxAvailable(driver string) bool {
+	driver, err := domain.ResolveSandboxDriver(driver, goruntime.GOOS)
+	if err != nil {
+		return false
+	}
+	var binary string
+	switch driver {
+	case domain.SandboxDriverSeatbelt:
+		binary, err = processSandboxBinary("seatbelt", "darwin", "macOS", "sandbox-exec")
+	case domain.SandboxDriverBwrap:
+		binary, err = processSandboxBinary("bwrap", "linux", "Linux", "bwrap")
+	default:
+		return false
+	}
+	if err != nil {
+		return false
+	}
+	nativeSandboxProbe.Lock()
+	defer nativeSandboxProbe.Unlock()
+	if nativeSandboxProbe.binary != binary || time.Now().After(nativeSandboxProbe.expires) {
+		nativeSandboxProbe.binary = binary
+		nativeSandboxProbe.available = probeNativeSandbox(driver, binary)
+		nativeSandboxProbe.expires = time.Now().Add(30 * time.Second)
+	}
+	return nativeSandboxProbe.available
+}
+
+func probeNativeSandbox(driver, binary string) bool {
+	workspace, err := os.MkdirTemp("", "loopforge-native-probe-")
+	if err != nil {
+		return false
+	}
+	defer os.RemoveAll(workspace)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	sandbox := processSandbox{workspace: workspace, driver: driver, binary: binary}
+	cmd, err := sandbox.command(ctx, CommandSpec{Argv: []string{"/usr/bin/true"}, OwnProcessGroup: true}, nil)
+	return err == nil && cmd.Run() == nil
+}
+
 // createProcessSandbox builds a processSandbox for driver once the host runs
 // requiredOS (named osName in errors) and binaryName is on PATH.
 func createProcessSandbox(driver, requiredOS, osName, binaryName, id, workspace string, profile domain.SandboxProfile, requirements SandboxRequirements) (Sandbox, error) {
-	if goruntime.GOOS != requiredOS {
-		return nil, fmt.Errorf("%s sandbox requires %s", driver, osName)
-	}
-	binary, err := exec.LookPath(binaryName)
+	binary, err := processSandboxBinary(driver, requiredOS, osName, binaryName)
 	if err != nil {
-		return nil, fmt.Errorf("%s sandbox unavailable: %w", driver, err)
+		return nil, err
 	}
 	return &processSandbox{id: id, workspace: workspace, driver: driver, profile: profile, requirements: requirements, binary: binary}, nil
 }
 
+func processSandboxBinary(driver, requiredOS, osName, binaryName string) (string, error) {
+	if goruntime.GOOS != requiredOS {
+		return "", fmt.Errorf("%s sandbox requires %s", driver, osName)
+	}
+	binary, err := exec.LookPath(binaryName)
+	if err != nil {
+		return "", fmt.Errorf("%s sandbox unavailable: %w", driver, err)
+	}
+	return binary, nil
+}
+
 func (s *processSandbox) Exec(ctx context.Context, command CommandSpec, sink EventSink) (string, error) {
+	command, err := projectCommandEnvironment(ctx, command, s.profile.Environment)
+	if err != nil {
+		return "", fmt.Errorf("%w: %w", errProcessNotStarted, err)
+	}
 	cmd, err := s.command(ctx, command, controlledBaseEnvironment(os.Environ()))
 	if err != nil {
 		return "", err
 	}
-	return runCommand(cmd, sink)
+	return runCommand(cmd, sink, command)
 }
 
 func (s *processSandbox) command(ctx context.Context, command CommandSpec, base []string) (*exec.Cmd, error) {
@@ -236,25 +207,68 @@ func (s *processSandbox) command(ctx context.Context, command CommandSpec, base 
 	var cmd *exec.Cmd
 	switch s.driver {
 	case "seatbelt":
-		profile, err := seatbeltProfileCommand(s.workspace, s.requirements, !trustedScriptCommand(command))
+		profile, err := seatbeltProfileCommand(s.workspace, s.requirements)
 		if err != nil {
 			return nil, err
+		}
+		if command.runnerLogin != nil {
+			for _, path := range command.runnerLogin.protected {
+				for _, variant := range seatbeltPathVariants(path) {
+					profile += fmt.Sprintf("\n(deny file-read* file-write* (subpath %s))\n", strconv.Quote(variant))
+				}
+			}
 		}
 		args := append([]string{"-p", profile}, command.Argv...)
 		cmd = exec.CommandContext(ctx, s.binary, args...)
 	case "bwrap":
-		args, err := bwrapArgsCommand(s.workspace, s.requirements, !trustedScriptCommand(command))
+		args, err := bwrapArgsCommand(s.workspace, s.requirements)
 		if err != nil {
 			return nil, err
 		}
-		args = bwrapPrivateBinds(args, command.privateBinds)
+		args = bwrapPrivateBinds(args, command.privateBinds, command.managedCLIInstall)
+		if command.runnerLogin != nil {
+			// Hide host sources and the private journal after all other binds.
+			// The managed CLI uses only its own private HOME and host callback.
+			masks := append([]string(nil), args[:len(args)-1]...)
+			for _, path := range command.runnerLogin.protected {
+				if info, err := os.Stat(path); err == nil {
+					if info.IsDir() {
+						masks = append(masks, "--tmpfs", path, "--remount-ro", path)
+					} else {
+						masks = append(masks, "--ro-bind", "/dev/null", path)
+					}
+				}
+			}
+			args = append(masks, "--")
+		}
+		if command.WorkingDir != "" {
+			args = bwrapChdir(args, command.WorkingDir)
+		}
 		args = append(args, command.Argv...)
 		cmd = exec.CommandContext(ctx, s.binary, args...)
 	default:
 		return nil, fmt.Errorf("unsupported process sandbox %q", s.driver)
 	}
 	cmd.Dir = s.workspace
-	cmd.Env = appendEnvironment(base, s.profile.Environment, command.environment)
+	cmd.Env = appendEnvironment(base, s.profile.Environment, command.environment, command.projectCredentialEnv)
+	cmd.Stdin = command.Stdin
+	if command.WorkingDir != "" {
+		cmd.Env = upsertEnv(cmd.Env, "PWD", command.WorkingDir)
+		if s.driver != "bwrap" {
+			cmd.Dir = command.WorkingDir
+		}
+	}
+	if command.OwnProcessGroup {
+		// A conversation CLI is stopped with its whole process group; bwrap's
+		// own PID namespace then takes every descendant down with it.
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+		cmd.Cancel = func() error {
+			if cmd.Process == nil {
+				return nil
+			}
+			return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		}
+	}
 	switch s.driver {
 	case "seatbelt":
 		cmd.Env = upsertEnv(cmd.Env, "TMPDIR", preferredSeatbeltTemp())
@@ -263,7 +277,72 @@ func (s *processSandbox) command(ctx context.Context, command CommandSpec, base 
 			cmd.Env = upsertEnv(cmd.Env, key, "/tmp")
 		}
 	}
+	if host := processDockerHost(cmd.Env); host != "" {
+		cmd.Env = upsertEnv(cmd.Env, "DOCKER_HOST", host)
+	}
 	return cmd, nil
+}
+
+func lookupEnvSlice(env []string, key string) string {
+	prefix := key + "="
+	for _, entry := range env {
+		if strings.HasPrefix(entry, prefix) {
+			return entry[len(prefix):]
+		}
+	}
+	return ""
+}
+
+// processDockerHost resolves the host Docker context's socket endpoint when the
+// sandbox redirects HOME away from ~/.docker and neither DOCKER_HOST nor
+// DOCKER_CONFIG was explicitly supplied. Only the endpoint URL is forwarded so
+// registry credentials in config.json remain untouched.
+func processDockerHost(env []string) string {
+	if strings.TrimSpace(lookupEnvSlice(env, "DOCKER_HOST")) != "" || strings.TrimSpace(lookupEnvSlice(env, "DOCKER_CONFIG")) != "" {
+		return ""
+	}
+	hostHome, err := os.UserHomeDir()
+	if err != nil || strings.TrimSpace(hostHome) == "" {
+		return ""
+	}
+	if childHome := strings.TrimSpace(lookupEnvSlice(env, "HOME")); childHome == "" || childHome == hostHome {
+		return ""
+	}
+	dockerDir := filepath.Join(hostHome, ".docker")
+	contextName := strings.TrimSpace(lookupEnvSlice(env, "DOCKER_CONTEXT"))
+	if contextName == "" {
+		raw, err := os.ReadFile(filepath.Join(dockerDir, "config.json"))
+		if err != nil {
+			return ""
+		}
+		var cfg struct {
+			CurrentContext string `json:"currentContext"`
+		}
+		if json.Unmarshal(raw, &cfg) != nil {
+			return ""
+		}
+		contextName = strings.TrimSpace(cfg.CurrentContext)
+	}
+	if contextName == "" || contextName == "default" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(contextName))
+	metaPath := filepath.Join(dockerDir, "contexts", "meta", hex.EncodeToString(sum[:]), "meta.json")
+	raw, err := os.ReadFile(metaPath)
+	if err != nil {
+		return ""
+	}
+	var meta struct {
+		Endpoints struct {
+			Docker struct {
+				Host string `json:"Host"`
+			} `json:"docker"`
+		} `json:"Endpoints"`
+	}
+	if json.Unmarshal(raw, &meta) != nil {
+		return ""
+	}
+	return strings.TrimSpace(meta.Endpoints.Docker.Host)
 }
 
 func seatbeltWritableTemps() []string {
@@ -340,11 +419,7 @@ func agentStateDirectories(requirements SandboxRequirements) ([]resolvedCLIState
 	return result, nil
 }
 
-func seatbeltProfileRequirements(workspace string, requirements SandboxRequirements) (string, error) {
-	return seatbeltProfileCommand(workspace, requirements, true)
-}
-
-func seatbeltProfileCommand(workspace string, requirements SandboxRequirements, maskAgentConfig bool) (string, error) {
+func seatbeltProfileCommand(workspace string, requirements SandboxRequirements) (string, error) {
 	root, err := filepath.Abs(workspace)
 	if err != nil {
 		return "", err
@@ -355,7 +430,9 @@ func seatbeltProfileCommand(workspace string, requirements SandboxRequirements, 
 	// A broad write denial plus a narrower workspace allowance keeps the host
 	// immutable while retaining the normal coding-agent workflow.
 	b.WriteString("(deny file-write*)\n")
-	fmt.Fprintf(&b, "(allow file-write* (subpath %s))\n", strconv.Quote(root))
+	for _, variant := range seatbeltPathVariants(root) {
+		fmt.Fprintf(&b, "(allow file-write* (subpath %s))\n", strconv.Quote(variant))
+	}
 	for _, temp := range seatbeltWritableTemps() {
 		fmt.Fprintf(&b, "(allow file-write* (subpath %s))\n", strconv.Quote(temp))
 	}
@@ -364,32 +441,80 @@ func seatbeltProfileCommand(workspace string, requirements SandboxRequirements, 
 		return "", err
 	}
 	for _, state := range stateDirs {
-		fmt.Fprintf(&b, "(allow file-write* (subpath %s))\n", strconv.Quote(state.path))
+		for _, variant := range seatbeltPathVariants(state.path) {
+			fmt.Fprintf(&b, "(allow file-write* (subpath %s))\n", strconv.Quote(variant))
+		}
 	}
-	b.WriteString("(allow file-write* (literal \"/dev/null\"))\n")
-	if !maskAgentConfig {
-		return b.String(), nil
-	}
-	maskedPaths, err := discoverProjectAgentPaths(root)
-	if err != nil {
-		return "", err
-	}
-	for _, rel := range maskedPaths {
-		path := filepath.Join(root, rel)
-		if _, err := os.Lstat(path); err == nil {
-			if _, err := validateAgentConfigTarget(root, rel); err != nil {
-				return "", err
-			}
-		} else if !os.IsNotExist(err) {
+	conversation := strings.TrimSpace(requirements.ConversationRoot)
+	if conversation != "" {
+		conversation, err = filepath.Abs(conversation)
+		if err != nil {
 			return "", err
 		}
-		if projectAgentDirNames[filepath.Base(rel)] {
-			fmt.Fprintf(&b, "(deny file-read* (subpath %s))\n", strconv.Quote(path))
-		} else {
-			fmt.Fprintf(&b, "(deny file-read* (literal %s))\n", strconv.Quote(path))
+		for _, variant := range seatbeltPathVariants(filepath.Join(conversation, "home")) {
+			fmt.Fprintf(&b, "(allow file-write* (subpath %s))\n", strconv.Quote(variant))
+		}
+	}
+	b.WriteString("(allow file-write* (literal \"/dev/null\"))\n")
+	if conversation != "" {
+		// Seatbelt evaluates rules last-match-wins: place guard file and parent
+		// denials after all subpath allowances (including conversation home and
+		// temp directories) so approval hooks cannot be overwritten or renamed.
+		parents, files, err := conversationGuardPaths(conversation)
+		if err != nil {
+			return "", err
+		}
+		for _, guarded := range append(parents, files...) {
+			for _, variant := range seatbeltPathVariants(guarded) {
+				fmt.Fprintf(&b, "(deny file-write* (literal %s))\n", strconv.Quote(variant))
+			}
+		}
+	}
+	// The cache is private to the host side even when a sandbox has access
+	// to the host's temporary directory.
+	b.WriteString(`(deny file-read* file-write* (regex #"^(/private)?/tmp/[.]loopforge-repository-cache-[0-9]+(/|$)"))` + "\n")
+	if gitTools, err := nativeGitToolsRoot(); err == nil {
+		for _, path := range seatbeltPathVariants(gitTools) {
+			fmt.Fprintf(&b, "(deny file-write* (subpath %s))\n", strconv.Quote(path))
 		}
 	}
 	return b.String(), nil
+}
+
+func seatbeltPathVariants(path string) []string {
+	abs, err := filepath.Abs(path)
+	if err != nil || strings.TrimSpace(abs) == "" {
+		return nil
+	}
+	variants := []string{abs}
+	if resolved := seatbeltResolvePath(abs); resolved != "" && resolved != abs {
+		variants = append(variants, resolved)
+	}
+	return variants
+}
+
+func seatbeltResolvePath(abs string) string {
+	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
+		return resolved
+	}
+	// Resolve symlinked ancestors (e.g. /var -> /private/var or /tmp -> /private/tmp)
+	// even when the target file does not yet exist.
+	cur := abs
+	var tail []string
+	for {
+		parent := filepath.Dir(cur)
+		if parent == cur {
+			return abs
+		}
+		tail = append(tail, filepath.Base(cur))
+		cur = parent
+		if resolved, err := filepath.EvalSymlinks(cur); err == nil {
+			for i := len(tail) - 1; i >= 0; i-- {
+				resolved = filepath.Join(resolved, tail[i])
+			}
+			return resolved
+		}
+	}
 }
 
 // bunFSMountPoint is the virtual root Bun-compiled CLIs (Claude Code,
@@ -412,25 +537,36 @@ func ensureBunFSMountPoint() bool {
 	return true
 }
 
-func bwrapArgsRequirements(workspace string, requirements SandboxRequirements) ([]string, error) {
-	return bwrapArgsCommand(workspace, requirements, true)
-}
-
 // bwrapPrivateBinds adds per-process binds before the "--" that ends the
 // bwrap options. They come after --tmpfs /tmp, so a directory under the host
 // /tmp is visible to this process only.
-func bwrapPrivateBinds(args, binds []string) []string {
-	if len(binds) == 0 || len(args) == 0 || args[len(args)-1] != "--" {
+func bwrapPrivateBinds(args, binds []string, managedInstall string) []string {
+	if (len(binds) == 0 && managedInstall == "") || len(args) == 0 || args[len(args)-1] != "--" {
 		return args
 	}
 	out := append([]string{}, args[:len(args)-1]...)
 	for _, dir := range binds {
 		out = append(out, "--bind", dir, dir)
 	}
+	if managedInstall != "" {
+		out = append(out, "--ro-bind", managedInstall, managedInstall)
+	}
 	return append(out, "--")
 }
 
-func bwrapArgsCommand(workspace string, requirements SandboxRequirements, maskAgentConfig bool) ([]string, error) {
+// bwrapChdir points the sandboxed process at dir instead of the workspace.
+func bwrapChdir(args []string, dir string) []string {
+	out := append([]string{}, args...)
+	for i := 0; i+1 < len(out); i++ {
+		if out[i] == "--chdir" {
+			out[i+1] = dir
+			return out
+		}
+	}
+	return out
+}
+
+func bwrapArgsCommand(workspace string, requirements SandboxRequirements) ([]string, error) {
 	root, err := filepath.Abs(workspace)
 	if err != nil {
 		return nil, err
@@ -439,11 +575,32 @@ func bwrapArgsCommand(workspace string, requirements SandboxRequirements, maskAg
 		"--die-with-parent", "--new-session",
 		"--unshare-user", "--unshare-pid", "--unshare-ipc", "--unshare-uts",
 		"--ro-bind", "/", "/",
+		// The private /tmp comes before the workspace bind, or it would hide a
+		// workspace under the host /tmp.
+		"--tmpfs", "/tmp",
 		"--bind", root, root,
 		"--chdir", root,
-		"--tmpfs", "/tmp",
 		"--proc", "/proc",
 		"--dev-bind", "/dev", "/dev",
+	}
+	if conversation := requirements.ConversationRoot; conversation != "" {
+		// Same layout as the Docker workspace: the native CLI keeps its HOME
+		// and cwd (<root>/ws, here the run workspace) across both modes.
+		args = append(args, "--bind", filepath.Join(conversation, "home"), filepath.Join(conversation, "home"), "--bind", root, filepath.Join(conversation, "ws"))
+		// The private /tmp can hide generated attachments under a conversation root.
+		attachments := filepath.Join(conversation, "attachments")
+		args = append(args, "--ro-bind-try", attachments, attachments)
+		// The approval hooks stay read-only, as in the Docker workspace.
+		parents, files, err := conversationGuardPaths(conversation)
+		if err != nil {
+			return nil, err
+		}
+		for _, dir := range parents {
+			args = append(args, "--bind", dir, dir)
+		}
+		for _, file := range files {
+			args = append(args, "--ro-bind", file, file)
+		}
 	}
 	if requirements.BunFS && ensureBunFSMountPoint() {
 		args = append(args, "--tmpfs", bunFSMountPoint)
@@ -459,148 +616,10 @@ func bwrapArgsCommand(workspace string, requirements SandboxRequirements, maskAg
 			return nil, statErr
 		}
 	}
-	if maskAgentConfig {
-		maskArgs, err := bwrapAgentConfigMasks(root)
-		if err != nil {
-			return nil, err
-		}
-		args = append(args, maskArgs...)
+	if gitTools, err := nativeGitToolsRoot(); err == nil {
+		args = append(args, "--ro-bind-try", gitTools, gitTools)
 	}
-	args = append(args, "--")
-	return args, nil
-}
-
-func isolationMaskSources(workspace string) (emptyDir, emptyFile string, err error) {
-	return isolationMaskSourcesAt(filepath.Join(workspace, ".agentflow", "isolation"))
-}
-
-func isolationMaskSourcesAt(root string) (emptyDir, emptyFile string, err error) {
-	if err = os.MkdirAll(filepath.Dir(root), 0o700); err != nil {
-		return "", "", err
-	}
-	if err = ensureDirectoryNoSymlink(root, 0o700); err != nil {
-		return "", "", err
-	}
-	emptyDir = filepath.Join(root, "empty-dir")
-	emptyFile = filepath.Join(root, "empty-file")
-	if err = ensureDirectoryNoSymlink(emptyDir, 0o700); err != nil {
-		return "", "", err
-	}
-	if info, statErr := os.Lstat(emptyFile); statErr == nil && (info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular()) {
-		return "", "", fmt.Errorf("sandbox mask path is not a regular file: %s", emptyFile)
-	} else if statErr != nil && !os.IsNotExist(statErr) {
-		return "", "", statErr
-	}
-	file, openErr := os.OpenFile(emptyFile, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
-	if openErr != nil {
-		return "", "", openErr
-	}
-	if err = file.Close(); err != nil {
-		return "", "", err
-	}
-	return emptyDir, emptyFile, nil
-}
-
-func bwrapAgentConfigMasks(workspace string) ([]string, error) {
-	emptyDir, emptyFile, err := isolationMaskSources(workspace)
-	if err != nil {
-		return nil, err
-	}
-	args := []string{"--ro-bind", emptyDir, emptyDir, "--ro-bind", emptyFile, emptyFile}
-	maskedPaths, err := discoverProjectAgentPaths(workspace)
-	if err != nil {
-		return nil, err
-	}
-	for _, rel := range maskedPaths {
-		target := filepath.Join(workspace, rel)
-		info, statErr := validateAgentConfigTarget(workspace, rel)
-		if os.IsNotExist(statErr) {
-			continue
-		}
-		if statErr != nil {
-			return nil, statErr
-		}
-		source := emptyFile
-		if info.IsDir() {
-			source = emptyDir
-		}
-		args = append(args, "--ro-bind", source, target)
-	}
-	return args, nil
-}
-
-func dockerIsolationMaskRoot(workspace string) string {
-	workspace = filepath.Clean(workspace)
-	return filepath.Join(filepath.Dir(workspace), ".isolation-masks", filepath.Base(workspace))
-}
-
-// ensureDockerMaskTargets creates the in-workspace mount targets for the
-// isolation mask sources: Docker Desktop cannot create missing nested mount
-// targets on a VirtioFS share.
-func ensureDockerMaskTargets(workspace string) error {
-	if _, err := EnsureControlDirectory(workspace, "isolation", "empty-dir"); err != nil {
-		return err
-	}
-	target := filepath.Join(workspace, ".agentflow", "isolation", "empty-file")
-	root, rel, err := openWorkspacePath(workspace, target)
-	if err != nil {
-		return err
-	}
-	defer root.Close()
-	file, err := root.OpenFile(rel, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
-	if err == nil {
-		return file.Close()
-	}
-	if !os.IsExist(err) {
-		return err
-	}
-	info, err := root.Lstat(rel)
-	if err != nil {
-		return err
-	}
-	if !info.Mode().IsRegular() {
-		return fmt.Errorf("sandbox mask target is not a regular file: %s", target)
-	}
-	return nil
-}
-
-func dockerAgentConfigMasks(workspace string, aliases ...string) ([]string, error) {
-	if err := ensureDockerMaskTargets(workspace); err != nil {
-		return nil, err
-	}
-	emptyDir, emptyFile, err := isolationMaskSourcesAt(dockerIsolationMaskRoot(workspace))
-	if err != nil {
-		return nil, err
-	}
-	emptyDirTarget := filepath.ToSlash(filepath.Join("/workspace", ".agentflow", "isolation", "empty-dir"))
-	emptyFileTarget := filepath.ToSlash(filepath.Join("/workspace", ".agentflow", "isolation", "empty-file"))
-	args := []string{
-		"--mount", "type=bind,src=" + emptyDir + ",dst=" + emptyDirTarget + ",readonly",
-		"--mount", "type=bind,src=" + emptyFile + ",dst=" + emptyFileTarget + ",readonly",
-	}
-	maskedPaths, err := discoverProjectAgentPaths(workspace)
-	if err != nil {
-		return nil, err
-	}
-	for _, rel := range maskedPaths {
-		info, statErr := validateAgentConfigTarget(workspace, rel)
-		if os.IsNotExist(statErr) {
-			continue
-		}
-		if statErr != nil {
-			return nil, statErr
-		}
-		source := emptyFile
-		if info.IsDir() {
-			source = emptyDir
-		}
-		containerTarget := filepath.ToSlash(filepath.Join("/workspace", rel))
-		args = append(args, "--mount", "type=bind,src="+source+",dst="+containerTarget+",readonly")
-		for _, alias := range aliases {
-			args = append(args, "--mount", "type=bind,src="+source+",dst="+filepath.ToSlash(filepath.Join(alias, rel))+",readonly")
-		}
-	}
-	return args, nil
+	return append(args, "--"), nil
 }
 
 // dockerAgentStateMount exposes only the state directory belonging to the CLI

@@ -5,6 +5,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -20,6 +22,9 @@ func TestConversationDraftMachineSelectionAndFirstTurnBinding(t *testing.T) {
 		if err := h.repo.PutRunner(runner); err != nil {
 			t.Fatal(err)
 		}
+	}
+	if err := h.repo.SetRunnerSharedProjects("mine", user.ID, []string{"workbench"}); err != nil {
+		t.Fatal(err)
 	}
 	put := func(target *domain.AssistantExecutionTarget, want int) {
 		draft, ok := h.repo.AssistantSession(user.ID, "machine-draft")
@@ -87,5 +92,118 @@ func TestDraftCloudAllocationIsServerOwned(t *testing.T) {
 	forged := &domain.AssistantExecutionTarget{Pool: domain.ExecutionModeCloud, RunnerID: "forged"}
 	if draftExecutionTarget(old, forged).RunnerID != "forged" {
 		t.Fatal("forged cloud runner silently accepted")
+	}
+}
+
+func TestOwnerResumesLegacyProjectConversationAfterSharingRunner(t *testing.T) {
+	h, owner := workbenchFixture(t)
+	h.generate = func(context.Context, string, domain.User) (string, error) {
+		return `{"message":"fixture reply","drafts":[]}`, nil
+	}
+	runner := domain.Runner{
+		ID: "owner-runner", OwnerUserID: owner.ID, Status: domain.RunnerStatusOnline,
+		RunnerVersion: domain.RunnerVersionConversationCLI,
+	}
+	if err := h.repo.PutRunner(runner); err != nil {
+		t.Fatal(err)
+	}
+	target := domain.AssistantExecutionTarget{Pool: domain.ExecutionModeRunner, RunnerID: runner.ID}
+	saved := domain.AssistantSession{
+		ID: "legacy-conversation", ProjectID: "workbench", ExecutionTarget: &target,
+		Messages: []assistantMessage{{Role: "user", Content: "before upgrading"}, {Role: "assistant", Content: "earlier reply"}},
+	}
+	if err := h.repo.PutAssistantSession(owner.ID, saved); err != nil {
+		t.Fatal(err)
+	}
+	body, err := json.Marshal(assistantRequest{
+		ProjectID: saved.ProjectID, SessionID: saved.ID,
+		Messages: append(saved.Messages, assistantMessage{Role: "user", Content: "after upgrading"}),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const path = "/api/assistant/chat"
+	c, rec := workbenchContext(owner, http.MethodPost, path, bytes.NewBuffer(body))
+	h.chat(c)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("unshared machine: %d %s", rec.Code, rec.Body)
+	}
+	if err := h.repo.SetRunnerSharedProjects(runner.ID, owner.ID, []string{saved.ProjectID}); err != nil {
+		t.Fatal(err)
+	}
+	c, rec = workbenchContext(owner, http.MethodPost, path, bytes.NewBuffer(body))
+	h.chat(c)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("resume after sharing: %d %s", rec.Code, rec.Body)
+	}
+	resumed, ok := h.repo.AssistantSession(owner.ID, saved.ID)
+	if !ok || resumed.Execution() != target || len(resumed.Messages) != 4 {
+		t.Fatalf("resumed conversation = %+v", resumed)
+	}
+}
+
+func TestLockedConversationRejectsTurnsAfterRunnerAccessChanges(t *testing.T) {
+	h, owner := workbenchFixture(t)
+	member := domain.User{ID: owner.ID + 1, LoginName: "shared-conversation-member", CodeBuddyAPIKey: "test-only"}
+	if err := h.repo.PutUser(member); err != nil {
+		t.Fatal(err)
+	}
+	h.generate = func(context.Context, string, domain.User) (string, error) { return "fixture", nil }
+	const projectID = "workbench"
+	setRole := func(t *testing.T, role string) {
+		t.Helper()
+		project, ok := h.repo.Project(projectID)
+		if !ok {
+			t.Fatal("workbench project not found")
+		}
+		project.Members = []domain.ProjectMember{{UserID: member.ID, Role: role}}
+		if err := h.repo.PutProject(project); err != nil {
+			t.Fatal(err)
+		}
+	}
+	target := &domain.AssistantExecutionTarget{Pool: domain.ExecutionModeRunner, RunnerID: "shared-locked"}
+	if err := h.repo.PutRunner(domain.Runner{ID: target.RunnerID, OwnerUserID: owner.ID,
+		Status: domain.RunnerStatusOnline, RunnerVersion: domain.RunnerVersionConversationCLI}); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"/api/assistant/chat", "/api/assistant/generations"} {
+		t.Run(path, func(t *testing.T) {
+			setRole(t, domain.ProjectRoleMember)
+			if err := h.repo.SetRunnerSharedProjects(target.RunnerID, owner.ID, []string{projectID}); err != nil {
+				t.Fatal(err)
+			}
+			for _, revoke := range []string{"share", "membership"} {
+				id := "locked-" + revoke + "-" + strings.TrimPrefix(path, "/api/assistant/")
+				if err := h.repo.PutAssistantSession(member.ID, domain.AssistantSession{
+					ID: id, ProjectID: projectID, ExecutionTarget: target, ExecutionTargetLocked: true,
+				}); err != nil {
+					t.Fatal(err)
+				}
+				if revoke == "share" {
+					if err := h.repo.SetRunnerSharedProjects(target.RunnerID, owner.ID, nil); err != nil {
+						t.Fatal(err)
+					}
+				} else {
+					if err := h.repo.SetRunnerSharedProjects(target.RunnerID, owner.ID, []string{projectID}); err != nil {
+						t.Fatal(err)
+					}
+					setRole(t, domain.ProjectRoleViewer)
+				}
+				body, _ := json.Marshal(assistantRequest{SessionID: id, ProjectID: projectID,
+					Messages: []assistantMessage{{Role: "user", Content: "fixture"}}})
+				c, rec := workbenchContext(member, http.MethodPost, path, bytes.NewBuffer(body))
+				if strings.HasSuffix(path, "/chat") {
+					h.chat(c)
+				} else {
+					h.startGeneration(c)
+				}
+				if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "会话绑定的执行机器") {
+					t.Errorf("%s: got %d %s, want 403 with a machine access error", revoke, rec.Code, rec.Body.String())
+				}
+				if _, ok := h.repo.AssistantGeneration(member.ID, id); ok {
+					t.Errorf("%s: a generation was created after losing access", revoke)
+				}
+			}
+		})
 	}
 }

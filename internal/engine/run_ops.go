@@ -34,6 +34,10 @@ func (e *Engine) persistControlDecision(runID string, r domain.Run, expected ...
 		return err
 	}
 	e.publish(runID)
+	if current, ok := e.repo.RunState(runID); ok && current.Status == "queued" {
+		e.PromoteQueuedRunsAsync()
+		return nil
+	}
 	if e.executes() {
 		e.resume(runID)
 		return nil
@@ -51,6 +55,7 @@ func (e *Engine) Cancel(runID string) error {
 	}
 	if cancelled {
 		e.publish(runID)
+		e.PromoteQueuedRunsAsync()
 		return nil
 	}
 	r, ok := e.repo.RunState(runID)
@@ -376,6 +381,16 @@ func (e *Engine) RetryContext(ctx context.Context, runID, nodeID, reason, humanC
 	return nil
 }
 
+// ShouldDeferRestoreUntilAdmitted avoids opening a reclaimed checkout for a
+// run likely to queue. Execution rechecks the cleanup marker after admission.
+func (e *Engine) ShouldDeferRestoreUntilAdmitted(run domain.Run) bool {
+	if run.WorkspaceCleanedAt.IsZero() {
+		return false
+	}
+	queued, err := e.repo.RunWouldQueueOnAdmission(run)
+	return err == nil && queued
+}
+
 // cancelLiveChildRuns stops child SOP runs whose parent node was reset and no
 // longer references them, so they neither keep working nor hold a workspace.
 // Callers hold stateMu and Cancel settles through updateRun, which takes it
@@ -497,31 +512,18 @@ func (e *Engine) retryContext(ctx context.Context, runID, nodeID, reason, humanC
 		return fmt.Errorf("cannot replay node %s: an upstream node has not succeeded", nodeID)
 	}
 	cleaned := !r.WorkspaceCleanedAt.IsZero()
-	if (r.Status == "cancelled" || cleaned) && !explicitNode && !replaySucceeded {
+	if !explicitNode && !replaySucceeded && (r.Status == "cancelled" || cleaned && !e.hasSavedWorkspaceCheckpoint(runID)) {
 		return fmt.Errorf("run workspace has been cleaned or scheduled for cleanup; this run can no longer be retried")
 	}
 	if err := e.validateExecutionReconnect(r, nodeID); err != nil {
 		return err
 	}
-	if cleaned {
+	deferRestore := e.ShouldDeferRestoreUntilAdmitted(r)
+	if cleaned && !deferRestore {
 		if err := e.restoreCheckpointBeforeExecution(ctx, r); err != nil {
 			return err
 		}
 		r, _ = e.repo.RunState(runID)
-
-		if runnerID := e.defaultExecutionRunner(r); runnerID != "" {
-			cleanupID := "rt-cleanup-" + safeRunnerPath(runID)
-			if task, exists := e.repo.RunnerTask(cleanupID); exists {
-				switch task.Status {
-				case domain.RunnerTaskQueued:
-					if err := e.repo.CancelRunnerTask(cleanupID, time.Now().UTC()); err != nil {
-						return err
-					}
-				case domain.RunnerTaskLeased, domain.RunnerTaskRunning:
-					return fmt.Errorf("run workspace cleanup is still active; retry after it finishes")
-				}
-			}
-		}
 		if err := e.repo.ResetRunWorkspaceCleanup(runID); err != nil {
 			return err
 		}
@@ -550,7 +552,7 @@ func (e *Engine) retryContext(ctx context.Context, runID, nodeID, reason, humanC
 	}
 	reset := descendants(r.WorkflowSnapshot, nodeID)
 	reset[nodeID] = true
-	if e.executes() && !modelCredentialRetry && len(reset) >= len(r.WorkflowSnapshot.Nodes) {
+	if e.executes() && !deferRestore && !modelCredentialRetry && len(reset) >= len(r.WorkflowSnapshot.Nodes) {
 		// Replaying the whole SOP against the previous attempt's container
 		// inherits whatever that attempt broke or filled up, and the container
 		// would otherwise survive until the run finally succeeds. Dropping the
@@ -643,24 +645,22 @@ func (e *Engine) retryContext(ctx context.Context, runID, nodeID, reason, humanC
 // ResumePaused continues every node interrupted by an operator pause. It is a
 // separate operation from Retry so ordinary approval gates remain untouched.
 // Child SOP runs paused together with the parent are resumed with it.
-// Children are resumed first so a resumed parent never waits on a child that
-// is still paused.
+// Children resume immediately when the parent still holds its slot. After
+// idle reclaim, the parent resumes them once it is admitted again.
 func (e *Engine) ResumePaused(runID, humanContext string, expected ...NodeExpectation) error {
 	return e.ResumePausedContext(context.Background(), runID, humanContext, expected...)
 }
 
 // ResumePausedContext retains workspace ownership while restoring a paused SOP.
 func (e *Engine) ResumePausedContext(ctx context.Context, runID, humanContext string, expected ...NodeExpectation) error {
-	if len(expected) > 0 {
-		r, ok := e.repo.RunState(runID)
-		if !ok {
-			return fmt.Errorf("run not found")
-		}
-		if err := checkNodeExpectation(r, expected); err != nil {
-			return err
-		}
+	r, ok := e.repo.RunState(runID)
+	if !ok {
+		return fmt.Errorf("run not found")
 	}
-	if r, ok := e.repo.RunState(runID); ok && r.Status == "waiting" && r.PauseRequested {
+	if err := checkNodeExpectation(r, expected); err != nil {
+		return err
+	}
+	if r.Status == "waiting" && r.PauseRequested {
 		for _, nr := range r.Nodes {
 			if !isUserPausedNode(nr) || nr.ChildRunID == "" {
 				continue
@@ -673,17 +673,27 @@ func (e *Engine) ResumePausedContext(ctx context.Context, runID, humanContext st
 			case "running":
 				return fmt.Errorf("子 SOP %s 仍在停止当前任务，请稍后再继续", child.ID)
 			case "waiting":
-				if err := e.ResumePausedContext(ctx, child.ID, humanContext); err != nil {
-					return fmt.Errorf("继续子 SOP %s：%w", child.ID, err)
+				if !resumeChildrenAfterAdmission(r) {
+					if err := e.ResumePausedContext(ctx, child.ID, humanContext); err != nil {
+						return fmt.Errorf("继续子 SOP %s：%w", child.ID, err)
+					}
 				}
 			}
 		}
 	}
-	if err := e.RestoreConversationWorkspaceIfNeeded(ctx, runID); err != nil {
-		return err
+	if !e.ShouldDeferRestoreUntilAdmitted(r) {
+		if err := e.RestoreConversationWorkspaceIfNeeded(ctx, runID); err != nil {
+			return err
+		}
 	}
 	return e.resumePaused(runID, humanContext, expected...)
 }
+
+func resumeChildrenAfterAdmission(run domain.Run) bool {
+	return run.AdmissionState == "released" || run.AdmissionState == "unstarted" || !run.WorkspaceCleanedAt.IsZero()
+}
+
+const resumePausedChildActivity = "等待继续子 SOP"
 
 // childRunIDs lists the child SOP runs referenced by the run's SOP nodes.
 func childRunIDs(r domain.Run) []string {
@@ -802,6 +812,9 @@ func (e *Engine) resumePaused(runID, humanContext string, expected ...NodeExpect
 		nr.Status = "pending"
 		nr.Error = ""
 		nr.Activity = ""
+		if nr.ChildRunID != "" && resumeChildrenAfterAdmission(r) {
+			nr.Activity = resumePausedChildActivity
+		}
 		nr.FinishedAt = time.Time{}
 		nr.Feedback = ""
 		nr.ResumeSessionID = ""
@@ -854,8 +867,12 @@ func (e *Engine) RefreshRunSOP(runID string) error {
 	// A graph/role update must not silently replace the environment underneath
 	// an existing workspace. A new Run will pick up the latest sandbox asset.
 	latest.SandboxProfileID = r.WorkflowSnapshot.SandboxProfileID
+	latest.AutoSelectSandbox = r.WorkflowSnapshot.AutoSelectSandbox
 	latest.SandboxSnapshot = r.WorkflowSnapshot.SandboxSnapshot
-	var err error
+	latest, err := configureBaselineAlignCLI(latest)
+	if err != nil {
+		return err
+	}
 	latest, err = domain.AttachPreviewBuild(latest)
 	if err != nil {
 		return err
@@ -988,6 +1005,9 @@ func overlayLatestNodeBindings(st *repo.Store, r *domain.Run, nodeIDs map[string
 		src, ok := byID[n.ID]
 		if !ok {
 			continue
+		}
+		if n.AgentID != src.AgentID || n.ExecutorID != src.ExecutorID {
+			delete(r.WorkflowSnapshot.ExecutorDefaults, n.ID)
 		}
 		n.AgentID, n.ExecutorID = src.AgentID, src.ExecutorID
 		n.ArtifactOutputs = src.ArtifactOutputs

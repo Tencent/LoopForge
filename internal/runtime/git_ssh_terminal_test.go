@@ -52,7 +52,7 @@ func TestTerminalGitSSHAgentStaysOutOfWorkspace(t *testing.T) {
 				sb = &processSandbox{workspace: workspace, driver: "bwrap"}
 			}
 			command := CommandSpec{environment: map[string]string{}}
-			stop, err := BindTerminalGitSSH(sb, &command, keys)
+			stop, err := BindTerminalGitSSH(t.Context(), sb, &command, keys)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -101,20 +101,24 @@ func TestTerminalGitSSHAgentStaysOutOfWorkspace(t *testing.T) {
 // every other bwrap process of the workspace sees an empty tmpfs there.
 func TestBwrapPrivateBindsReachOnlyTheirProcess(t *testing.T) {
 	workspace := t.TempDir()
-	base, err := bwrapArgsCommand(workspace, SandboxRequirements{}, false)
+	base, err := bwrapArgsCommand(workspace, SandboxRequirements{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	owner := bwrapPrivateBinds(base, []string{"/tmp/lf-term-ssh-1"})
+	owner := bwrapPrivateBinds(base, []string{"/tmp/lf-term-ssh-1"}, "")
 	if owner[len(owner)-1] != "--" || !slices.Equal(owner[len(owner)-4:len(owner)-1], []string{"--bind", "/tmp/lf-term-ssh-1", "/tmp/lf-term-ssh-1"}) {
 		t.Fatalf("owner args: %q", owner)
 	}
 	if tmpfs, bind := slices.Index(owner, "/tmp"), slices.Index(owner, "/tmp/lf-term-ssh-1"); tmpfs < 0 || bind < tmpfs {
 		t.Fatalf("private bind must follow --tmpfs /tmp: %q", owner)
 	}
-	other := bwrapPrivateBinds(base, nil)
+	other := bwrapPrivateBinds(base, nil, "")
 	if slices.Contains(other, "/tmp/lf-term-ssh-1") {
 		t.Fatalf("another process got the terminal's agent: %q", other)
+	}
+	args := []string{"--tmpfs", "/tmp"}
+	if got := bwrapPrivateBinds(args, nil, "/tmp/managed"); !slices.Equal(got, args) {
+		t.Fatalf("managed install binding changed args without a separator: %q", got)
 	}
 }
 
@@ -125,7 +129,7 @@ func TestTerminalGitSSHWithoutPrivateFilesystemOffersNoKey(t *testing.T) {
 	for _, sb := range []Sandbox{&dockerSandbox{workspace: t.TempDir()}, &processSandbox{workspace: t.TempDir(), driver: "seatbelt"}} {
 		before, _ := filepath.Glob("/tmp/lf-term-ssh-*")
 		command := CommandSpec{environment: map[string]string{}}
-		stop, err := BindTerminalGitSSH(sb, &command, keys)
+		stop, err := BindTerminalGitSSH(t.Context(), sb, &command, keys)
 		if err != nil {
 			t.Fatal(err)
 		}

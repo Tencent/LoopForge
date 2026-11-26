@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -26,7 +27,6 @@ func BaselineAlignResolverAgent() domain.AgentDefinition {
 		Shared:      true,
 		Description: "全平台共用：把默认分支合入集成分支并解决冲突。不跑项目测试，不写修复报告，不发 MR。",
 		Prompt:      "你只做基线对齐，不是需求修复。\n1. 在当前工作分支执行 git fetch 并 merge 默认分支\n2. 逐块解决冲突，保留双方有效实现；拿不准时选对业务影响更小的一侧并在提交说明里写清\n3. git add 冲突文件并创建合并提交，提交说明列出冲突文件与取舍\n4. 不要 push，不要改默认分支，不要跑项目单测或 E2E，不要写 fix-plan.md / fix-report.md / review-report.md\n5. 结束后用几句话说明每个冲突文件的取舍即可",
-		ExecutorID:  "codebuddy",
 	}
 }
 
@@ -166,14 +166,21 @@ func (r *CatalogRepo) DeleteSkill(id string) error {
 }
 
 func (r *CatalogRepo) MCPServers() []domain.MCPServerDefinition {
-	return payloadList[domain.MCPServerDefinition](r.DB, "mcp_servers", "")
+	servers := payloadList[domain.MCPServerDefinition](r.DB, "mcp_servers", "")
+	for i := range servers {
+		servers[i].Scope = strings.TrimSpace(servers[i].Scope)
+	}
+	return servers
 }
 
 func (r *CatalogRepo) MCPServer(id string) (domain.MCPServerDefinition, bool) {
-	return payloadOne[domain.MCPServerDefinition](r.DB, "mcp_servers", id)
+	server, found := payloadOne[domain.MCPServerDefinition](r.DB, "mcp_servers", id)
+	server.Scope = strings.TrimSpace(server.Scope)
+	return server, found
 }
 
 func (r *CatalogRepo) PutMCPServer(v domain.MCPServerDefinition) error {
+	v.Scope = strings.TrimSpace(v.Scope)
 	// Uploaded contents and their manifest are owned by the mcp_files API.
 	// Definition-only updates (including JSON import) must not orphan existing
 	// rows merely because fileRefs was omitted by an older client.
@@ -185,10 +192,90 @@ func (r *CatalogRepo) PutMCPServer(v domain.MCPServerDefinition) error {
 	if err := domain.ValidateMCPServer(v); err != nil {
 		return err
 	}
+	row := mcpDefinitionRow(&v)
+	return upsert(r.DB, "mcp_servers", map[string]any{"id": row.ID, "name": row.Name, "payload": row.Payload, "updated_at": row.Updated})
+}
+
+func mcpDefinitionRow(v *domain.MCPServerDefinition) mcpServerRow {
 	v.UpdatedAt = time.Now().UTC()
-	return upsert(r.DB, "mcp_servers", map[string]any{
-		"id": v.ID, "name": v.Name, "payload": mustJSON(v), "updated_at": timePtr(v.UpdatedAt),
+	return mcpServerRow{ID: v.ID, Name: v.Name, Payload: mustJSON(*v), Updated: timePtr(v.UpdatedAt)}
+}
+
+var ErrMCPServerChanged = errors.New("MCP 已被创建或更改，请刷新后重试")
+
+// MCPServerChange carries the stored definition used to authorize the write.
+// An empty Previous means the ID must be unused.
+type MCPServerChange struct {
+	Definition domain.MCPServerDefinition
+	Previous   domain.MCPServerDefinition
+}
+
+// SaveMCPServers checks the authorized scope and owner under the write lock.
+// An import either saves every definition or leaves the catalog untouched.
+func (r *CatalogRepo) SaveMCPServers(changes ...MCPServerChange) ([]domain.MCPServerDefinition, error) {
+	saved := make([]domain.MCPServerDefinition, 0, len(changes))
+	err := r.DB.Transaction(func(tx *gorm.DB) error {
+		for _, change := range changes {
+			v, err := r.saveMCPServer(tx, change)
+			if err != nil {
+				return err
+			}
+			saved = append(saved, v)
+		}
+		return nil
 	})
+	if err != nil {
+		return nil, err
+	}
+	return saved, nil
+}
+
+func (r *CatalogRepo) saveMCPServer(tx *gorm.DB, change MCPServerChange) (domain.MCPServerDefinition, error) {
+	v := change.Definition
+	v.Scope = strings.TrimSpace(v.Scope)
+	var row mcpServerRow
+	err := r.locking(tx).Where("id = ?", v.ID).Take(&row).Error
+	switch {
+	case errors.Is(err, gorm.ErrRecordNotFound):
+		if change.Previous.ID != "" {
+			return v, ErrMCPServerChanged
+		}
+	case err != nil:
+		return v, err
+	default:
+		var current domain.MCPServerDefinition
+		if err := json.Unmarshal(row.Payload, &current); err != nil {
+			return v, err
+		}
+		current.Scope = strings.TrimSpace(current.Scope)
+		previous := change.Previous
+		if previous.ID == "" || current.Scope != previous.Scope || current.ProjectID != previous.ProjectID ||
+			current.OwnerUserID != previous.OwnerUserID || current.MarketID != previous.MarketID {
+			return v, ErrMCPServerChanged
+		}
+		v.ID = row.ID
+		if v.Scope == current.Scope && v.ProjectID == current.ProjectID && v.OwnerUserID == current.OwnerUserID {
+			domain.RestoreMaskedMCPSecrets(&v, current)
+		}
+		if v.FileRefs == nil {
+			v.FileRefs = current.FileRefs
+		}
+	}
+	if err := domain.ValidateMCPServer(v); err != nil {
+		return v, err
+	}
+	newRow := mcpDefinitionRow(&v)
+	if row.ID != "" {
+		err = tx.Model(&mcpServerRow{}).Where("id = ?", row.ID).Updates(map[string]any{
+			"name": newRow.Name, "payload": newRow.Payload, "updated_at": newRow.Updated,
+		}).Error
+	} else {
+		err = tx.Create(&newRow).Error
+	}
+	if errors.Is(err, gorm.ErrDuplicatedKey) {
+		err = ErrMCPServerChanged
+	}
+	return v, err
 }
 
 func (r *CatalogRepo) DeleteMCPServer(id string) error {
@@ -265,60 +352,13 @@ func BuiltInExecutorForKind(kind string) (domain.ExecutorDefinition, bool) {
 	return domain.ExecutorDefinition{}, false
 }
 
-// ---------- Dockerfiles / Environments / Sandboxes ----------
-
-func (r *CatalogRepo) Dockerfiles() []domain.DockerfileDefinition {
-	return payloadList[domain.DockerfileDefinition](r.DB, "dockerfiles", "")
-}
-
-func (r *CatalogRepo) Dockerfile(id string) (domain.DockerfileDefinition, bool) {
-	return payloadOne[domain.DockerfileDefinition](r.DB, "dockerfiles", id)
-}
-
-func (r *CatalogRepo) PutDockerfile(v domain.DockerfileDefinition) error {
-	if err := domain.ValidateDockerfile(v); err != nil {
-		return err
-	}
-	v.UpdatedAt = time.Now().UTC()
-	return upsert(r.DB, "dockerfiles", map[string]any{
-		"id": v.ID, "name": v.Name, "payload": mustJSON(v), "updated_at": timePtr(v.UpdatedAt),
-	})
-}
-
-func (r *CatalogRepo) DeleteDockerfile(id string) error {
-	if _, ok := r.Dockerfile(id); !ok {
-		return fmt.Errorf("dockerfile not found")
-	}
-	return r.DB.Table("dockerfiles").Where("id = ?", id).Delete(nil).Error
-}
-
-func (r *CatalogRepo) Environments() []domain.EnvironmentDefinition {
-	return payloadList[domain.EnvironmentDefinition](r.DB, "environments", "")
-}
-
-func (r *CatalogRepo) Environment(id string) (domain.EnvironmentDefinition, bool) {
-	return payloadOne[domain.EnvironmentDefinition](r.DB, "environments", id)
-}
-
-func (r *CatalogRepo) PutEnvironment(v domain.EnvironmentDefinition) error {
-	if err := domain.ValidateEnvironment(v); err != nil {
-		return err
-	}
-	v.UpdatedAt = time.Now().UTC()
-	return upsert(r.DB, "environments", map[string]any{
-		"id": v.ID, "name": v.Name, "payload": mustJSON(v), "updated_at": timePtr(v.UpdatedAt),
-	})
-}
-
-func (r *CatalogRepo) DeleteEnvironment(id string) error {
-	if _, ok := r.Environment(id); !ok {
-		return fmt.Errorf("environment not found")
-	}
-	return r.DB.Table("environments").Where("id = ?", id).Delete(nil).Error
-}
+// ---------- Sandboxes ----------
 
 func (r *CatalogRepo) Sandboxes() []domain.SandboxProfile {
 	profiles := payloadList[domain.SandboxProfile](r.DB, "sandboxes", "")
+	profiles = slices.DeleteFunc(profiles, func(profile domain.SandboxProfile) bool {
+		return isDefaultSandboxID(profile.ID) && !platformSandboxOwner(profile.ProjectID)
+	})
 	for i := range profiles {
 		profiles[i] = platformSandboxProfile(profiles[i])
 	}
@@ -334,26 +374,74 @@ func (r *CatalogRepo) Sandboxes() []domain.SandboxProfile {
 }
 
 func (r *CatalogRepo) Sandbox(id string) (domain.SandboxProfile, bool) {
+	isDefault := isDefaultSandboxID(id)
+	if isDefault {
+		id = DefaultSandboxProfileID
+	}
 	var profile domain.SandboxProfile
-	var row payloadRow
-	err := r.DB.Table("sandboxes").Where("id = ?", id).Take(&row).Error
+	var row struct {
+		Payload         []byte
+		PlatformDefault bool
+	}
+	err := r.DB.Table("sandboxes").Select("payload, id = ? AS platform_default", DefaultSandboxProfileID).
+		Where("id = ?", id).Take(&row).Error
 	// A missing row may use the built-in default. Database failures or invalid
 	// stored configuration must not silently switch a run's execution policy.
-	if errors.Is(err, gorm.ErrRecordNotFound) && id == DefaultSandboxProfileID {
-		return DefaultSandboxProfile(), true
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		if reserved, err := r.IsReservedSandboxID(id); err == nil && reserved {
+			return GenericDockerSandbox(), true
+		}
+		return domain.SandboxProfile{}, false
 	}
 	if err != nil || json.Unmarshal(row.Payload, &profile) != nil {
 		return domain.SandboxProfile{}, false
 	}
+	if isDefault || row.PlatformDefault {
+		if !platformSandboxOwner(profile.ProjectID) {
+			// A project profile on an installation awaiting migration cannot
+			// replace the platform-wide default.
+			return GenericDockerSandbox(), true
+		}
+		profile.ID = DefaultSandboxProfileID
+	}
 	return platformSandboxProfile(profile), true
+}
+
+func isDefaultSandboxID(id string) bool {
+	return strings.EqualFold(strings.TrimSpace(id), DefaultSandboxProfileID)
+}
+
+// IsReservedSandboxID recognizes the default ID and its MySQL equivalents.
+// The catalog uses utf8mb4_unicode_ci for its primary keys.
+func (r *CatalogRepo) IsReservedSandboxID(id string) (bool, error) {
+	if isDefaultSandboxID(id) {
+		return true, nil
+	}
+	if id == "" || !r.isMySQL() {
+		return false, nil
+	}
+	var reserved bool
+	err := r.DB.Raw("SELECT CONVERT(? USING utf8mb4) COLLATE utf8mb4_unicode_ci = ?", id, DefaultSandboxProfileID).Scan(&reserved).Error
+	return reserved, err
+}
+
+// Stored platform defaults are projectless, including operator overrides.
+func platformSandboxOwner(projectID string) bool {
+	return projectID == ""
 }
 
 // platformSandboxProfile keeps the built-in generic Docker sandbox shared:
 // conversation workspaces fall back to it, and rows seeded before it carried
-// the shared flag would otherwise hide it from every project.
+// the shared flag would otherwise hide it from every project. A row still
+// marked local reads as native, never as the runtime's unisolated driver.
 func platformSandboxProfile(profile domain.SandboxProfile) domain.SandboxProfile {
-	if profile.ID == GenericDockerSandboxID {
+	if isDefaultSandboxID(profile.ID) && platformSandboxOwner(profile.ProjectID) {
+		profile.ID = DefaultSandboxProfileID
+		profile.ProjectID = "platform"
 		profile.Shared = true
+	}
+	if strings.TrimSpace(profile.Driver) == domain.SandboxDriverLocal {
+		profile = normalizeSandboxProfile(profile)
 	}
 	return profile
 }
@@ -362,27 +450,25 @@ func (r *CatalogRepo) PutSandbox(v domain.SandboxProfile) error {
 	if strings.TrimSpace(v.ID) == "" || strings.TrimSpace(v.Name) == "" {
 		return errors.New("sandbox id and name are required")
 	}
+	reserved, err := r.IsReservedSandboxID(v.ID)
+	if err != nil {
+		return err
+	}
+	if reserved {
+		if v.ProjectID != "" && v.ProjectID != "platform" {
+			return fmt.Errorf("沙箱标识 %s 保留给平台默认沙箱", DefaultSandboxProfileID)
+		}
+		v.ID, v.ProjectID = DefaultSandboxProfileID, ""
+	}
 	if err := domain.ValidateEnvironmentVariables(v.Environment); err != nil {
 		return fmt.Errorf("sandbox environment: %w", err)
 	}
-	switch strings.TrimSpace(v.Driver) {
-	case "local", "native", "seatbelt", "bwrap", "docker":
-	default:
-		return fmt.Errorf("unsupported sandbox driver %q", v.Driver)
+	if strings.TrimSpace(v.Driver) == domain.SandboxDriverLocal {
+		return errors.New("local 沙箱已移除，请改用 native 沙箱")
 	}
 	stored := normalizeSandboxProfile(v)
-	if stored.Driver == "docker" && stored.DockerfileID == "" {
-		return errors.New("docker sandbox requires a dockerfileId")
-	}
-	if stored.DockerfileID != "" {
-		if _, ok := r.Dockerfile(stored.DockerfileID); !ok {
-			return fmt.Errorf("dockerfile %q not found", stored.DockerfileID)
-		}
-	}
-	if stored.EnvironmentID != "" {
-		if _, ok := r.Environment(stored.EnvironmentID); !ok {
-			return fmt.Errorf("environment %q not found", stored.EnvironmentID)
-		}
+	if err := domain.ValidateSandboxAssets(stored); err != nil {
+		return err
 	}
 	return upsert(r.DB, "sandboxes", map[string]any{
 		"id": stored.ID, "name": stored.Name, "payload": mustJSON(stored),
@@ -390,7 +476,11 @@ func (r *CatalogRepo) PutSandbox(v domain.SandboxProfile) error {
 }
 
 func (r *CatalogRepo) DeleteSandbox(id string) error {
-	if id == DefaultSandboxProfileID {
+	reserved, err := r.IsReservedSandboxID(id)
+	if err != nil {
+		return err
+	}
+	if reserved {
 		return errors.New("默认运行沙箱不能删除；可编辑配置或新建其他沙箱")
 	}
 	if _, ok := r.Sandbox(id); !ok {
@@ -515,11 +605,10 @@ func (r *CatalogRepo) putWorkflow(v domain.WorkflowDefinition, publishing bool) 
 		return err
 	}
 	v = normalizeWorkflowDefinition(v)
-	if strings.TrimSpace(v.SandboxProfileID) == "" {
-		v.SandboxProfileID = "local"
-	}
-	if _, ok := r.Sandbox(v.SandboxProfileID); !ok {
-		return fmt.Errorf("sandbox profile %q not found", v.SandboxProfileID)
+	if !v.AutoSelectSandbox {
+		if _, ok := r.Sandbox(v.SandboxProfileID); !ok {
+			return fmt.Errorf("sandbox profile %q not found", v.SandboxProfileID)
+		}
 	}
 	now := time.Now().UTC()
 	old, ok := r.storedWorkflow(v.ID)
@@ -576,6 +665,30 @@ func (r *CatalogRepo) DeleteWorkflow(id string) error {
 }
 
 // ---------- Repositories ----------
+
+// NormalizeRepositoryWorkBranchNaming resolves the repository's CLI and stores
+// a raw model ID, so a model qualifier cannot select a different CLI at runtime.
+func NormalizeRepositoryWorkBranchNaming(naming domain.WorkBranchNaming) (domain.WorkBranchNaming, error) {
+	if naming.Mode != domain.WorkBranchNamingAI || strings.TrimSpace(naming.ExecutorID) == "" {
+		return naming.Normalize()
+	}
+	executor, ok := BuiltInExecutor(naming.ExecutorID)
+	if !ok {
+		return domain.WorkBranchNaming{}, fmt.Errorf("AI 分支命名不支持执行器 %q", naming.ExecutorID)
+	}
+	prefix, model, qualified := strings.Cut(strings.TrimSpace(naming.Model), ":")
+	if modelExecutor, known := BuiltInExecutorForKind(prefix); qualified && known {
+		if modelExecutor.Kind != executor.Kind {
+			return domain.WorkBranchNaming{}, fmt.Errorf("模型 ID 与所选 CLI 不匹配")
+		}
+		next, _, nested := strings.Cut(strings.TrimSpace(model), ":")
+		if _, known := BuiltInExecutorForKind(next); nested && known {
+			return domain.WorkBranchNaming{}, fmt.Errorf("请填写模型的原始 ID")
+		}
+		naming.Model = model
+	}
+	return naming.Normalize()
+}
 
 func (r *CatalogRepo) Repositories() []domain.Repository {
 	out := payloadList[domain.Repository](r.DB, "repositories", "")
@@ -688,11 +801,76 @@ func (r *CatalogRepo) PutScheduleJob(v domain.ScheduleJob) error {
 	})
 }
 
+// SetScheduleJobEnabled flips only a job's enabled flag, leaving its
+// configuration and the outcome of a run in progress untouched.
+func (r *CatalogRepo) SetScheduleJobEnabled(id string, enabled bool) (domain.ScheduleJob, error) {
+	var out domain.ScheduleJob
+	err := r.DB.Transaction(func(tx *gorm.DB) error {
+		var row scheduleJobRow
+		if err := r.locking(tx).Where("id = ?", id).First(&row).Error; err != nil {
+			return err
+		}
+		if err := json.Unmarshal(row.Payload, &out); err != nil {
+			return err
+		}
+		out.Enabled = enabled
+		out.UpdatedAt = time.Now().UTC()
+		flag := 0
+		if enabled {
+			flag = 1
+		}
+		return tx.Model(&row).Updates(map[string]any{"enabled": flag, "payload": mustJSON(out), "updated_at": timePtr(out.UpdatedAt)}).Error
+	})
+	return out, err
+}
+
+// ErrScheduleJobChanged reports that the stored job no longer matches what
+// the caller checked, e.g. it was edited or moved to another project.
+var ErrScheduleJobChanged = errors.New("任务已被其他人修改或移动，请刷新后重试")
+
+// DisableScheduleJob turns the job off only if unchanged accepts the row as
+// it is stored now, checked under the row lock, and returns the stored job.
+// Nothing else in the row is touched.
+func (r *CatalogRepo) DisableScheduleJob(id string, unchanged func(current domain.ScheduleJob) bool) (domain.ScheduleJob, error) {
+	var current domain.ScheduleJob
+	err := r.DB.Transaction(func(tx *gorm.DB) error {
+		var row scheduleJobRow
+		err := r.locking(tx).Where("id = ?", id).First(&row).Error
+		if err == gorm.ErrRecordNotFound {
+			return ErrScheduleJobChanged
+		}
+		if err != nil {
+			return err
+		}
+		if err := json.Unmarshal(row.Payload, &current); err != nil {
+			return err
+		}
+		if !unchanged(current) {
+			return ErrScheduleJobChanged
+		}
+		current.Enabled = false
+		current.UpdatedAt = time.Now().UTC()
+		return tx.Model(&row).Updates(map[string]any{"enabled": 0, "payload": mustJSON(current), "updated_at": timePtr(current.UpdatedAt)}).Error
+	})
+	if err != nil {
+		return domain.ScheduleJob{}, err
+	}
+	return current, nil
+}
+
 func (r *CatalogRepo) DeleteScheduleJob(id string) error {
 	if _, ok := r.ScheduleJob(id); !ok {
 		return fmt.Errorf("schedule job not found")
 	}
-	return r.DB.Table("schedule_jobs").Where("id = ?", id).Delete(nil).Error
+	return r.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Table("schedule_job_executions").Where("job_id = ?", id).Delete(nil).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("job_id = ?", id).Delete(&scheduleJobExecutionStatRow{}).Error; err != nil {
+			return err
+		}
+		return tx.Table("schedule_jobs").Where("id = ?", id).Delete(nil).Error
+	})
 }
 
 // ---------- Definition revisions ----------
@@ -775,6 +953,10 @@ func (r *CatalogRepo) RestoreWorkflowRevision(id string) (domain.WorkflowDefinit
 		return domain.WorkflowDefinition{}, fmt.Errorf("workflow %s not found", wf.ID)
 	}
 	wf.Revision = current.Revision
+	// Version numbers the published releases. The restored content is a new
+	// draft on top of the latest release, so publishing it must not reuse a
+	// version number that already names different content.
+	wf.Version = max(wf.Version, current.Version)
 	return wf, r.PutWorkflow(wf)
 }
 
@@ -862,27 +1044,30 @@ func ProjectIssueWorkflowID(projectID string) string {
 	return projectID + "-issue-fix"
 }
 
+// normalizeSandboxProfile keeps only what a driver uses; the removed local
+// driver becomes native.
 func normalizeSandboxProfile(profile domain.SandboxProfile) domain.SandboxProfile {
 	profile.Driver = strings.TrimSpace(profile.Driver)
-	profile.DockerfileID = strings.TrimSpace(profile.DockerfileID)
-	profile.EnvironmentID = strings.TrimSpace(profile.EnvironmentID)
+	profile.DockerfileID = ""
+	// Each driver keeps only its own recipe, so switching drivers drops the
+	// other one instead of failing the save.
+	if profile.Driver != domain.SandboxDriverDocker {
+		profile.Dockerfile = nil
+		profile.Privileged = false
+	}
 	switch profile.Driver {
-	case "local":
-		profile.DockerfileID = ""
-		profile.ReadOnlyRootFS = false
-	case "native", "seatbelt", "bwrap":
+	case domain.SandboxDriverLocal, domain.SandboxDriverNative, domain.SandboxDriverSeatbelt, domain.SandboxDriverBwrap:
 		profile.Driver = domain.SandboxDriverNative
-		profile.DockerfileID = ""
 		profile.ReadOnlyRootFS = false
-	case "docker":
-		profile.EnvironmentID = ""
 	}
 	return profile
 }
 
 func normalizeWorkflowDefinition(workflow domain.WorkflowDefinition) domain.WorkflowDefinition {
-	if strings.TrimSpace(workflow.SandboxProfileID) == "" {
-		workflow.SandboxProfileID = "local"
+	if workflow.AutoSelectSandbox {
+		workflow.SandboxProfileID = ""
+	} else if strings.TrimSpace(workflow.SandboxProfileID) == "" {
+		workflow.SandboxProfileID = DefaultSandboxProfileID
 	}
 	for index := range workflow.Nodes {
 		node := &workflow.Nodes[index]

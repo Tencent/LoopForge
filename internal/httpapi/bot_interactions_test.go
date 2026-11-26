@@ -6,7 +6,11 @@ import (
 	"agentflow/internal/engine"
 	"agentflow/internal/notification"
 	"agentflow/internal/repo"
+	"agentflow/internal/tracker"
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -32,12 +36,23 @@ func botFixture(t *testing.T) (*repo.Store, *assistantHandlers, domain.Notificat
 	d := &deps{repo: s, engine: e}
 	h := &assistantHandlers{deps: d, notifications: &notificationHandlers{deps: d, service: notification.New(s)}}
 	h.notifications.service.PublicURL = "http://platform.example"
-	h.identities = &botIdentityHandlers{deps: d, publicURL: h.notifications.service.PublicURL}
+	h.identities = &botIdentityHandlers{deps: d, publicURL: h.notifications.service.PublicAddress}
 	bindBotTestUser(t, s, bot, "new-wecom-user", 43)
 	bindBotTestUser(t, s, bot, "bound-member", 42)
 	return s, h, bot
 }
 func TestBotUsesBoundSenderIdentityAutoModeAndSharedChatContext(t *testing.T) {
+	t.Setenv("AGENTFLOW_ASSISTANT_MODEL", "")
+	t.Setenv("AGENTFLOW_ASSISTANT_MODELS", "")
+	stubCLIModelDiscovery(t)
+	discoveries := 0
+	discoverCLIModels = func(_ context.Context, environment, key string) []string {
+		discoveries++
+		if key != "other-key" || environment != "ioa" {
+			t.Fatal("model discovery did not use the sender's credentials")
+		}
+		return []string{"sender-model"}
+	}
 	s, h, bot := botFixture(t)
 	h.generate = func(ctx context.Context, prompt string, user domain.User) (string, error) {
 		if user.ID != 43 || user.CodeBuddyAPIKey != "other-key" || user.CodeBuddyInternetEnvironment != "ioa" {
@@ -60,17 +75,107 @@ func TestBotUsesBoundSenderIdentityAutoModeAndSharedChatContext(t *testing.T) {
 		session.commitFinal(AgentTerminalResult{Kind: AgentTerminalAssistant, Assistant: &assistantReply{Message: "查询完成 other-key"}})
 		return "", context.Canceled
 	}
-	reply, err := h.generateBotReply(context.Background(), bot, domain.BotConversation{SessionID: "session", ChatID: "new-group", ChatType: "group"}, []domain.BotInteraction{{SenderID: "first-member", Content: "历史提问", Reply: "历史回复"}}, domain.BotInteraction{SenderID: "new-wecom-user", Content: "现在有什么进展"})
-	if err != nil || reply != "查询完成 [redacted]" {
-		t.Fatal(reply, err)
+	for _, model := range []string{"", assistantDefaultModel, "sender-model"} {
+		bot.Model = model
+		reply, err := h.generateBotReply(context.Background(), bot, domain.BotConversation{SessionID: "session", ChatID: "new-group", ChatType: "group"}, []domain.BotInteraction{{SenderID: "first-member", Content: "历史提问", Reply: "历史回复"}}, domain.BotInteraction{SenderID: "new-wecom-user", Content: "现在有什么进展"})
+		if err != nil || reply != "查询完成 [redacted]" {
+			t.Fatalf("model %q: reply = %q, error = %v", model, reply, err)
+		}
+		if model != "sender-model" && discoveries != 0 {
+			t.Fatal("the CLI default should work with a cold cache")
+		}
+	}
+	if discoveries != 1 {
+		t.Fatalf("expected discovery for the concrete model, got %d", discoveries)
 	}
 	// No fallback to the Bot owner when the sender has a different identity.
 	bot.InteractionEnabled = false
 	s.SaveNotificationBot(bot, "")
-	if _, err = h.botExecutionUser(bot, "new-wecom-user"); err == nil {
+	if _, err := h.botExecutionUser(bot, "new-wecom-user"); err == nil {
 		t.Fatal("disabled Bot executed")
 	}
 }
+
+// In auto mode the Bot writes during the turn: a run it starts with a write
+// tool or a final draft reports back to the chat it was asked in.
+func TestAutoModeStartsRecordTheChat(t *testing.T) {
+	t.Setenv("AGENTFLOW_SESSION_SECRET", "bot-attribution-mcp-session-secret")
+	s, h, bot := botFixture(t)
+	if err := s.PutAgent(domain.AgentDefinition{ID: "dev-agent", Name: "开发"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.PutWorkflow(domain.WorkflowDefinition{ID: "wf-dev", Name: "研发交付", ProjectID: "p", Status: "published", Nodes: []domain.WorkflowNode{{ID: "n1", Name: "开发", Type: "agent", AgentID: "dev-agent"}}}); err != nil {
+		t.Fatal(err)
+	}
+	project, _ := s.Project("p")
+	project.WorkflowID = "wf-dev"
+	s.PutProject(project)
+	for _, id := range []string{"by-tool", "by-draft"} {
+		if err := s.PutIssue(domain.Issue{ID: id, ProjectID: "p", Title: id, Status: "open"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	item := domain.BotInteraction{ID: "auto-ask", BotID: bot.ID, SenderID: "new-wecom-user", Content: "启动这两个需求"}
+	if _, err := s.EnqueueBotInteraction(item, "group", "wr_team"); err != nil {
+		t.Fatal(err)
+	}
+	stored, _ := s.BotInteraction(item.ID)
+	conv, _ := s.BotConversation(stored.ConversationID)
+	h.api = New(s, h.engine, tracker.NewService(), "", "")
+	h.generate = func(ctx context.Context, prompt string, user domain.User) (string, error) {
+		session := botTestToolSession(t, user.ID)
+		for _, body := range []string{
+			`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"agentflow__issues_save","arguments":{"body":{"projectId":"p","title":"MCP 创建的需求"}}}}`,
+			`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"agentflow__issues_dispatch","arguments":{"path":{"id":"by-tool"}}}}`,
+		} {
+			req := httptest.NewRequest(http.MethodPost, "/internal/agent-tools/"+session.Token+"/mcp", strings.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			rec := httptest.NewRecorder()
+			h.api.ServeHTTP(rec, req)
+			var out struct {
+				Result *struct {
+					IsError bool `json:"isError"`
+				} `json:"result"`
+			}
+			if err := json.Unmarshal(rec.Body.Bytes(), &out); rec.Code != http.StatusOK || err != nil || out.Result == nil || out.Result.IsError {
+				t.Fatalf("native MCP write = %d %s", rec.Code, rec.Body.String())
+			}
+		}
+		session.commitFinal(AgentTerminalResult{Kind: AgentTerminalAssistant, Assistant: &assistantReply{Message: "已启动", Drafts: []assistantDraft{{Tool: "issues_dispatch", Path: map[string]any{"id": "by-draft"}}}}})
+		return "", context.Canceled
+	}
+	if _, err := h.generateBotReply(context.Background(), bot, conv, nil, stored); err != nil {
+		t.Fatal(err)
+	}
+	assertActor := func(op domain.IssueOperation) {
+		t.Helper()
+		if op.ActorUserID != 43 || op.ActorChannel != domain.BotChannelWeCom || op.ActorSender != "new-wecom-user" {
+			t.Fatalf("%s audit attribution = %+v", op.Action, op)
+		}
+	}
+	assertActor(latestIssueOperation(t, s, "create"))
+	for _, issueID := range []string{"by-tool", "by-draft"} {
+		issue, _ := s.Issue(issueID)
+		if len(issue.Operations) != 1 || issue.Operations[0].Action != "dispatch" {
+			t.Fatalf("%s audit operations = %+v", issueID, issue.Operations)
+		}
+		assertActor(issue.Operations[0])
+		var runID string
+		for _, task := range s.Tasks() {
+			if task.IssueID == issueID {
+				runID = task.RunID
+			}
+		}
+		if runID == "" {
+			t.Fatalf("%s: not dispatched", issueID)
+		}
+		run, _ := s.RunState(runID)
+		if run.ExecutionContext.BotOriginID != repo.BotIssueOriginID(conv.ID, issueID) {
+			t.Fatalf("%s: run start origin = %q", issueID, run.ExecutionContext.BotOriginID)
+		}
+	}
+}
+
 func TestCardActionsAreScopedAndCannotApproveAnotherAttempt(t *testing.T) {
 	s, h, bot := botFixture(t)
 	run := domain.Run{ID: "card-run", Status: "waiting", WorkflowID: "wf", ExecutionContext: domain.TelemetryContext{ProjectID: "p"}, WorkflowSnapshot: domain.WorkflowDefinition{ID: "wf", ProjectID: "p", Nodes: []domain.WorkflowNode{{ID: "gate", Type: "human", Name: "人工确认"}}}, Nodes: map[string]*domain.NodeRun{"gate": {NodeID: "gate", Status: "waiting_approval", Attempt: 1, ReworkCount: 0}}}
@@ -132,7 +237,7 @@ func TestBotMissingSubmissionRetriesOnlyTerminalStep(t *testing.T) {
 	h.generate = func(ctx context.Context, prompt string, user domain.User) (string, error) {
 		calls++
 		if calls == 1 {
-			return "查询结果已经准备好，但未提交终态", nil
+			return "请稍等，我正在查询项目的运行记录。", nil
 		}
 		if strings.Contains(prompt, "原始查询标记") || !strings.Contains(prompt, "不要重新查询") {
 			t.Fatal("retry restarted task", prompt)
@@ -157,10 +262,25 @@ func TestBotMissingSubmissionRetriesOnlyTerminalStep(t *testing.T) {
 	}
 }
 
+// A completed conversational answer needs no terminal tool call: the Bot
+// accepts it like the web assistant instead of retrying until it fails.
+func TestBotAcceptsNaturalAnswerWithoutTerminalCall(t *testing.T) {
+	_, h, bot := botFixture(t)
+	calls := 0
+	h.generate = func(ctx context.Context, prompt string, user domain.User) (string, error) {
+		calls++
+		return "项目当前有 2 个运行中的 SOP，均在实现节点。", nil
+	}
+	reply, err := h.generateBotReply(context.Background(), bot, domain.BotConversation{SessionID: "bot-session", ChatType: "single"}, nil, domain.BotInteraction{SenderID: "new-wecom-user", Content: "项目状态"})
+	if err != nil || calls != 1 || !strings.Contains(reply, "2 个运行中的 SOP") {
+		t.Fatal(reply, err, calls)
+	}
+}
+
 func bindBotTestUser(t *testing.T, s *repo.Store, bot domain.NotificationBot, sender string, userID int64) {
 	t.Helper()
 	now := time.Now().UTC()
-	token, err := s.NewBotBindingChallenge(bot.BotID, sender, now)
+	token, err := s.NewBotBindingChallenge(bot, sender, now, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -168,7 +288,7 @@ func bindBotTestUser(t *testing.T, s *repo.Store, bot domain.NotificationBot, se
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.ConfirmBotUserBinding(bot.BotID, sender, code, now); err != nil {
+	if _, err = s.ConfirmBotUserBinding(bot, sender, code, now); err != nil {
 		t.Fatal(err)
 	}
 }

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/repo"
 	"agentflow/internal/runtime"
 )
 
@@ -214,7 +215,7 @@ func TestModelRetryResumesAttemptWithoutResettingWorkspace(t *testing.T) {
 		t.Fatal(err)
 	}
 	initial, maximum := 1, 1
-	wf := domain.WorkflowDefinition{ID: "retry-workflow", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "n", Type: "agent", AgentID: "retry-agent", MaxAttempts: 1, ModelRetry: &domain.ModelRetryPolicy{InitialSeconds: &initial, MaxSeconds: &maximum}}}}
+	wf := domain.WorkflowDefinition{ID: "retry-workflow", SandboxProfileID: repo.TestNativeSandboxID, Nodes: []domain.WorkflowNode{{ID: "n", Type: "agent", AgentID: "retry-agent", MaxAttempts: 1, ModelRetry: &domain.ModelRetryPolicy{InitialSeconds: &initial, MaxSeconds: &maximum}}}}
 	run := domain.Run{ID: "retry-integration", WorkflowID: wf.ID, Status: "running", WorkflowSnapshot: wf, Nodes: map[string]*domain.NodeRun{"n": {NodeID: "n", Status: "waiting_retry", Attempt: 1, TransientRetries: 2, RetrySameAttempt: true, NextRetryAt: time.Now().Add(-time.Second)}}}
 	if err := store.PutRun(run); err != nil {
 		t.Fatal(err)
@@ -272,7 +273,7 @@ func TestModelRetryTwoRateLimitsThenRunnerSuccess(t *testing.T) {
 		}
 	})
 	initial, maximum := 1, 1
-	wf := domain.WorkflowDefinition{ID: "real-scheduler", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "n", Type: "agent", AgentID: "recovery-agent", MaxAttempts: 1, ModelRetry: &domain.ModelRetryPolicy{InitialSeconds: &initial, MaxSeconds: &maximum}}}}
+	wf := domain.WorkflowDefinition{ID: "real-scheduler", SandboxProfileID: repo.TestNativeSandboxID, Nodes: []domain.WorkflowNode{{ID: "n", Type: "agent", AgentID: "recovery-agent", MaxAttempts: 1, ModelRetry: &domain.ModelRetryPolicy{InitialSeconds: &initial, MaxSeconds: &maximum}}}}
 	run := domain.Run{ID: "two-limits", WorkflowID: wf.ID, Status: "running", WorkflowSnapshot: wf, ExecutionContext: domain.TelemetryContext{ExecutionMode: domain.ExecutionModeRunner, ExecutionRunnerID: "recovery-runner", RunnerWorkspaceLayout: domain.RunnerWorkspaceLayoutShared}, Nodes: map[string]*domain.NodeRun{"n": {NodeID: "n", Status: "pending"}}}
 	if err := store.PutRun(run); err != nil {
 		t.Fatal(err)
@@ -309,7 +310,7 @@ func TestModelRecoveryResetOnManualRetry(t *testing.T) {
 			if credentials {
 				status, n.Status, n.WaitReason = "waiting", "waiting_approval", "model_credentials"
 			}
-			wf := domain.WorkflowDefinition{ID: "reset-wf", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "n", Type: "agent"}}}
+			wf := domain.WorkflowDefinition{ID: "reset-wf", SandboxProfileID: repo.TestNativeSandboxID, Nodes: []domain.WorkflowNode{{ID: "n", Type: "agent"}}}
 			run := domain.Run{ID: "reset", WorkflowID: wf.ID, WorkflowSnapshot: wf, Status: status, Nodes: map[string]*domain.NodeRun{"n": n}}
 			if err := store.PutRun(run); err != nil {
 				t.Fatal(err)
@@ -361,7 +362,7 @@ func TestUnconfiguredModelErrorsKeepOrdinaryFailureBehavior(t *testing.T) {
 
 func TestDelayedRetryRunsWhileAnotherNodeWaitsForApproval(t *testing.T) {
 	e, store := newRecoveryEngine(t)
-	wf := domain.WorkflowDefinition{ID: "mixed-wait", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "retry", Type: "command", Command: "true"}, {ID: "gate", Type: "approval"}}}
+	wf := domain.WorkflowDefinition{ID: "mixed-wait", SandboxProfileID: repo.TestNativeSandboxID, Nodes: []domain.WorkflowNode{{ID: "retry", Type: "command", Command: "true"}, {ID: "gate", Type: "approval"}}}
 	run := domain.Run{ID: "mixed-wait", WorkflowID: wf.ID, Status: "waiting", WorkflowSnapshot: wf, Nodes: map[string]*domain.NodeRun{
 		"retry": {NodeID: "retry", Status: "waiting_retry", Attempt: 1, RetrySameAttempt: true, NextRetryAt: time.Now().Add(300 * time.Millisecond)},
 		"gate":  {NodeID: "gate", Status: "waiting_approval"},

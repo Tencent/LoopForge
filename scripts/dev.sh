@@ -8,6 +8,7 @@ source .env
 set +a
 mkdir -p .local/bin .local/workspaces
 docker compose up -d --wait mysql
+docker compose --profile platform run --rm --no-deps artifact-migration
 bash scripts/build-binaries.sh
 if [[ ! -f .local/admin-password ]]; then
   (umask 077; python3 -c 'import secrets; print(secrets.token_urlsafe(18))' > .local/admin-password)

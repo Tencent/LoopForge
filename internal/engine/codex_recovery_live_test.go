@@ -52,7 +52,7 @@ func TestRealCodexEngineWaitsOnCredentials(t *testing.T) {
 	if err := store.PutAgent(domain.AgentDefinition{ID: "codex-probe", Name: "Codex probe", ExecutorID: "codex", Model: "gpt-test", ModelRetry: &domain.ModelRetryPolicy{}}); err != nil {
 		t.Fatal(err)
 	}
-	wf := domain.WorkflowDefinition{ID: "codex-live", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "n", Type: "agent", AgentID: "codex-probe", MaxAttempts: 1}}}
+	wf := domain.WorkflowDefinition{ID: "codex-live", SandboxProfileID: repo.TestNativeSandboxID, Nodes: []domain.WorkflowNode{{ID: "n", Type: "agent", AgentID: "codex-probe", MaxAttempts: 1}}}
 	run := domain.Run{ID: "codex-real-auth", WorkflowID: wf.ID, Status: "running", WorkflowSnapshot: wf, ExecutionContext: domain.TelemetryContext{ResponsibleUserID: 3}, Nodes: map[string]*domain.NodeRun{"n": {NodeID: "n", Status: "pending"}}}
 	if err := store.PutRun(run); err != nil {
 		t.Fatal(err)
@@ -146,7 +146,7 @@ func TestRealCodexEngineRateLimitFallback(t *testing.T) {
 		t.Fatal(err)
 	}
 	initial, maximum := 1, 1
-	wf := domain.WorkflowDefinition{ID: "codex-fallback", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "n", Type: "agent", AgentID: "fallback-probe", MaxAttempts: 1, ModelRetry: &domain.ModelRetryPolicy{InitialSeconds: &initial, MaxSeconds: &maximum}}}}
+	wf := domain.WorkflowDefinition{ID: "codex-fallback", SandboxProfileID: repo.TestNativeSandboxID, Nodes: []domain.WorkflowNode{{ID: "n", Type: "agent", AgentID: "fallback-probe", MaxAttempts: 1, ModelRetry: &domain.ModelRetryPolicy{InitialSeconds: &initial, MaxSeconds: &maximum}}}}
 	run := domain.Run{ID: "codex-real-fallback", WorkflowID: wf.ID, Status: "running", WorkflowSnapshot: wf, ExecutionContext: domain.TelemetryContext{ResponsibleUserID: 3}, Nodes: map[string]*domain.NodeRun{"n": {NodeID: "n", Status: "pending"}}}
 	if err := store.PutRun(run); err != nil {
 		t.Fatal(err)
