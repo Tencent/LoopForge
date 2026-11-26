@@ -1552,8 +1552,7 @@ document.addEventListener('click',e=>{
   if(record){
     e.preventDefault();
     evoCloseFinding(false);switchView('runs');
-    if(record.hasAttribute('data-evo-run-eval'))state.runDetailTab='eval';
-    showRunDetail(record.dataset.evoRecordRun);
+    showRunDetail(record.dataset.evoRecordRun,{tab:record.hasAttribute('data-evo-run-eval')?'eval':''});
     return;
   }
   if(e.target.closest('[data-evo-record-retry]'))return evo.modal&&evoLoadFindingRuns(evo.modal);

@@ -354,16 +354,17 @@ function renderRuns(){
   if(focusedRow){const row=list.querySelector(`[data-id="${CSS.escape(focusedRow.dataset.id)}"]`);(focusedPart?row?.querySelector(focusedPart):row)?.focus({preventScroll:true})}
   syncQueuedRunRefresh();
 }
-function showRunDetail(id){
+// tab opens a specific detail tab; otherwise a newly opened run starts on its default tab.
+function showRunDetail(id,{tab=''}={}){
   if(!id)return;
   stopQueuedRunRefresh();
   if(state.selectedRun!==id){
     stopLiveRun();stopPreviewPoll();stopRunEvalStream();state.runWorkspace=null;
-    state.runDetailTab='';
+    state.runDetailTab=tab;
     state.runReviewNode=runRouteId()===id?routePart(2):'';
     state.selectedRunNode=state.runReviewNode||null;
     state.runObservationScope='';
-  }
+  }else if(tab)state.runDetailTab=tab;
   state.selectedRun=id;
   syncRunHash(id);
   $('#runsView')?.classList.add('detail-open');
