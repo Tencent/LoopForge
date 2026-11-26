@@ -101,7 +101,7 @@ func TestCheckpointAttemptRunsFromFreshCheckout(t *testing.T) {
 	}
 	defer store.Close()
 	node := domain.WorkflowNode{ID: "write", Type: "script", ScriptLanguage: "shell", ExecutionScope: domain.ExecutionScopeRepositories, Script: "printf written > result.txt", MaxAttempts: 1}
-	wf := domain.WorkflowDefinition{ID: "fresh-checkpoint", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{node}}
+	wf := domain.WorkflowDefinition{ID: "fresh-checkpoint", SandboxProfileID: repo.TestNativeSandboxID, Nodes: []domain.WorkflowNode{node}}
 	repository := domain.RepositoryContext{RepositoryID: "repo", Name: "repo", CloneURL: source, BaseBranch: "master", WorkBranch: "checkpoint-test", WorkspaceDir: "repo"}
 	run := domain.Run{ID: "fresh-checkpoint", Status: "running", Repository: repository, Repositories: []domain.RepositoryContext{repository}, WorkflowSnapshot: wf, ExecutionContext: domain.TelemetryContext{NodeCheckpointsEnabled: true}, Nodes: map[string]*domain.NodeRun{node.ID: {NodeID: node.ID, Status: "pending"}}}
 	if err := store.PutRun(run); err != nil {
@@ -138,7 +138,7 @@ func TestStartedRunCheckpointProjectPolicy(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	wf := domain.WorkflowDefinition{ID: "checkpoint-e2e", Name: "Checkpoint e2e", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "write", Name: "Write", Type: "script", ScriptLanguage: "shell", ExecutionScope: domain.ExecutionScopeRepositories, Script: "printf changed > result.txt", MaxAttempts: 1}}}
+	wf := domain.WorkflowDefinition{ID: "checkpoint-e2e", Name: "Checkpoint e2e", SandboxProfileID: repo.TestNativeSandboxID, Nodes: []domain.WorkflowNode{{ID: "write", Name: "Write", Type: "script", ScriptLanguage: "shell", ExecutionScope: domain.ExecutionScopeRepositories, Script: "printf changed > result.txt", MaxAttempts: 1}}}
 	if err := store.PutWorkflow(wf); err != nil {
 		t.Fatal(err)
 	}
