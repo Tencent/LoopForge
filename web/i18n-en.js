@@ -551,3 +551,9 @@ Object.assign(window.LF_I18N_EN, {
   "尚无运行": "No runs yet",
   "到需求列表启动一条需求后，运行记录会出现在这里。": "Start a requirement from the requirement list and its runs will appear here.",
 });
+Object.assign(window.LF_I18N_EN, {
+  "未找到与当前关键词匹配的需求": "No requirements match the current keyword",
+  "没有符合当前筛选条件的需求": "No requirements match the current filters",
+  "调整或清除筛选条件后再试。": "Adjust or clear the filters and try again.",
+  "暂无讨论。这里只展示该需求已有的评论，暂不能直接发表；需要沟通请到「会话」页签。": "No discussion yet. This only shows existing comments on the requirement and you cannot post here; use the Conversations tab to discuss.",
+});
