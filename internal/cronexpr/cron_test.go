@@ -1,6 +1,8 @@
 package cronexpr
 
 import (
+	"math"
+	"strconv"
 	"testing"
 	"time"
 )
@@ -163,5 +165,18 @@ func TestParseSetsEveryFieldInOrder(t *testing.T) {
 	want := Schedule{min: 1 << 5, hour: 1 << 6, day: 1 << 7, month: 1 << 8, dow: 1 << 2}
 	if sched != want {
 		t.Fatalf("Parse = %+v, want %+v", sched, want)
+	}
+}
+
+func TestParseLargeStepsStayWithinRange(t *testing.T) {
+	// If start+step wraps around, the next iteration can continue below
+	// the lower bound and silently add extra times to the schedule.
+	maxStep := strconv.Itoa(math.MaxInt)
+	sched, err := Parse("5-10/" + maxStep + " 9 * * *")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sched.min != 1<<5 {
+		t.Fatalf("minute mask = %#x, want only minute 5", sched.min)
 	}
 }

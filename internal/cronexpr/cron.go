@@ -103,8 +103,11 @@ func parseField(raw string, min, max int) (uint64, error) {
 		if start < min || end > max || start > end {
 			return 0, fmt.Errorf("超出 %d-%d", min, max)
 		}
-		for n := start; n <= end; n += step {
+		for n := start; ; n += step {
 			bits |= 1 << uint(n)
+			if step > end-n {
+				break
+			}
 		}
 	}
 	if bits == 0 {
