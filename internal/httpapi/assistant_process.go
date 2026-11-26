@@ -156,7 +156,7 @@ func (h *assistantHandlers) conversationExecutor(s *AgentToolSession, root strin
 				if !ok || !use || project.ID != s.ProjectID || run.ExecutionContext.ProjectID != s.ProjectID {
 					return "", fmt.Errorf("无权在该工作区使用项目凭据")
 				}
-				projectCredentialEnv, err = h.repo.ResolveProjectCredentialEnv(ctx, project.ID, s.projectCredentialIDs)
+				projectCredentialEnv, err = h.repo.ResolveAvailableProjectCredentialEnv(ctx, project.ID, s.projectCredentialIDs)
 				if err != nil {
 					return "", err
 				}

@@ -221,7 +221,7 @@ func (r *AssistantRepo) BeginAssistantGeneration(g domain.AssistantGeneration, p
 			} else if session.ID != "" {
 				item := decodeAssistantSession(session)
 				item.ExecutionTargetLocked = true
-				if err := tx.Model(&assistantSessionRow{}).Where("id = ?", session.ID).UpdateColumn("payload", mustJSON(item)).Error; err != nil {
+				if err := tx.Model(&assistantSessionRow{}).Where("id = ?", session.ID).UpdateColumn("payload", encodeAssistantSession(item)).Error; err != nil {
 					return err
 				}
 			}

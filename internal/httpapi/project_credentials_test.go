@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"maps"
 	"net/http"
 	"strings"
 	"testing"
 	"time"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/runtime"
 	"github.com/gin-gonic/gin"
 )
 
@@ -151,6 +153,125 @@ func TestSessionOwnerCanClearProjectCredentialsAfterLosingAccess(t *testing.T) {
 				t.Fatal("credential binding was not cleared")
 			}
 		})
+	}
+}
+
+func TestConversationContinuesWhenProjectCredentialsChange(t *testing.T) {
+	t.Setenv("AGENTFLOW_PROJECT_CREDENTIAL_KEY", base64.StdEncoding.EncodeToString(make([]byte, 32)))
+	h, user, target, workspaceID := workspaceStartupFixture(t, domain.RunnerVersionProjectCredentials)
+	session := domain.AssistantSession{ID: "credential-change", ProjectID: "workbench", WorkspaceRunID: workspaceID, ExecutionTarget: &target}
+	save := func(id, name, value string, create, disabled bool) {
+		t.Helper()
+		if _, err := h.repo.SaveProjectCredential(t.Context(), session.ProjectID, id, create, domain.ProjectCredentialInput{
+			Name: id, Kind: domain.ProjectCredentialToken, Disabled: disabled,
+			Fields: []domain.ProjectCredentialVariableInput{{Name: name, Value: &value}},
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	save("rotated", "ROTATED_TOKEN", "fixture-original", true, false)
+	save("deleted", "DELETED_TOKEN", "fixture-deleted", true, false)
+	save("disabled", "DISABLED_TOKEN", "fixture-disabled", true, false)
+	// This binding was removed before the deployment ever observed its name.
+	session.ProjectCredentialIDs = []string{"rotated", "deleted", "disabled", "legacy-missing"}
+	if err := h.repo.PutAssistantSession(user.ID, session); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.repo.SetAssistantRuntimeMode(user.ID, session.ID, session.ProjectID, domain.AssistantModeWorkspace); err != nil {
+		t.Fatal(err)
+	}
+	starts := make(chan runtime.ConversationCommand, 4)
+	prompts := make(chan string, 4)
+	var input strings.Builder
+	var inputComplete bool
+	fakeRunnerConnection(t, h.runnerControls, target.RunnerID, func(envelope domain.RunnerWorkspaceRequest) domain.RunnerWorkspaceResponse {
+		var req runtime.ConversationProcessRequest
+		if err := json.Unmarshal(envelope.Conversation, &req); err != nil {
+			return domain.RunnerWorkspaceResponse{Status: http.StatusBadRequest, Error: err.Error()}
+		}
+		result := runtime.ConversationProcessResult{ID: req.ID, Root: req.SourceRoot, PromptInputFiles: true}
+		switch req.Operation {
+		case "start":
+			if envelope.RunID != workspaceID || req.Command == nil {
+				return domain.RunnerWorkspaceResponse{Status: http.StatusBadRequest, Error: "unexpected workspace or command"}
+			}
+			input.Reset()
+			inputComplete = false
+			starts <- *req.Command
+		case "write":
+			input.WriteString(req.Data)
+			if req.EOF {
+				prompts <- input.String()
+				inputComplete = true
+			}
+		case "poll":
+			if inputComplete {
+				result.Done = true
+				result.Sequence = 1
+				result.Events = []domain.TelemetryEvent{{Name: "process.stdout", Message: `{"type":"result","result":"你好。"}`}}
+			}
+		}
+		payload, _ := json.Marshal(result)
+		return domain.RunnerWorkspaceResponse{Status: http.StatusOK, Payload: payload}
+	})
+	turn := func(wantEnv map[string]string, wantNote ...string) string {
+		t.Helper()
+		old, _ := h.repo.AssistantSession(user.ID, session.ID)
+		body, err := json.Marshal(assistantRequest{
+			ProjectID: session.ProjectID, SessionID: session.ID,
+			Messages: append(old.Messages, assistantMessage{Role: "user", Content: "你好"}),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		c, rec := workbenchContext(user, http.MethodPost, "/api/assistant/generations", bytes.NewBuffer(body))
+		h.startGeneration(c)
+		if rec.Code != http.StatusAccepted {
+			t.Fatalf("start: %d %s", rec.Code, rec.Body.String())
+		}
+		g := waitGeneration(t, h, user.ID, session.ID, func(g domain.AssistantGeneration) bool { return g.Status != "running" }, 10*time.Second)
+		if g.Status != "completed" || !strings.Contains(string(g.Reply), "你好。") {
+			t.Fatalf("credential change prevented a reply: %s (%s)", g.Status, g.Error)
+		}
+		var command runtime.ConversationCommand
+		select {
+		case command = <-starts:
+		default:
+			t.Fatal("no workspace CLI invocation")
+		}
+		if !maps.Equal(command.ProjectCredentialEnv, wantEnv) {
+			t.Fatal("workspace CLI received the wrong credential environment")
+		}
+		var prompt string
+		select {
+		case prompt = <-prompts:
+		default:
+			t.Fatal("workspace CLI did not receive turn input")
+		}
+		for _, note := range wantNote {
+			if !strings.Contains(prompt, note) {
+				t.Errorf("missing internal prompt note %q", note)
+			}
+		}
+		saved, _ := h.repo.AssistantSession(user.ID, session.ID)
+		public, _ := json.Marshal(saved)
+		if len(saved.Messages) != len(old.Messages)+2 || bytes.Contains(public, []byte("projectCredentialObservations")) ||
+			bytes.Contains(public, []byte("本轮不可用")) || bytes.Contains(public, []byte("fixture-")) {
+			t.Fatal("credential context or values leaked into the transcript or public session")
+		}
+		return prompt
+	}
+	turn(map[string]string{"ROTATED_TOKEN": "fixture-original", "DELETED_TOKEN": "fixture-deleted", "DISABLED_TOKEN": "fixture-disabled"},
+		"有已绑定的项目凭据本轮不可用", "继续处理用户请求")
+	save("rotated", "ROTATED_TOKEN", "fixture-replacement", false, false)
+	save("disabled", "DISABLED_TOKEN", "fixture-disabled", false, true)
+	if err := h.repo.DeleteProjectCredential(t.Context(), session.ProjectID, "deleted"); err != nil {
+		t.Fatal(err)
+	}
+	turn(map[string]string{"ROTATED_TOKEN": "fixture-replacement"},
+		"ROTATED_TOKEN 的配置已更新", "DELETED_TOKEN、DISABLED_TOKEN 本轮已不可用")
+	if prompt := turn(map[string]string{"ROTATED_TOKEN": "fixture-replacement"}, "DELETED_TOKEN、DISABLED_TOKEN 本轮已不可用"); strings.Contains(prompt, "配置已更新") {
+		t.Error("reported the same rotation on consecutive turns")
 	}
 }
 

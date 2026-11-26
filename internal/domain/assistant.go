@@ -235,6 +235,13 @@ type AssistantSession struct {
 	UpdatedAt          time.Time          `json:"updatedAt"`
 
 	ProjectCredentialIDs []string `json:"projectCredentialIds,omitempty"`
+	// ProjectCredentialObservations are server-owned and contain metadata only.
+	ProjectCredentialObservations map[string]AssistantProjectCredentialObservation `json:"-"`
+}
+
+type AssistantProjectCredentialObservation struct {
+	Variables []string  `json:"variables"`
+	UpdatedAt time.Time `json:"updatedAt"`
 }
 
 type AssistantTask struct {
