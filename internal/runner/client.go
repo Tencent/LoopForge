@@ -86,17 +86,11 @@ func (c *Client) do(ctx context.Context, method, path string, body any, out any)
 	}
 	responseLimit := int64(8 << 20)
 	if path == runnerTaskClaimPath {
-		responseLimit += domain.RunnerSSHKnownHostsWireLimit
+		responseLimit += domain.RunnerSSHKnownHostsWireLimit + domain.RunnerTaskAssetWireLimit
 	}
 	payload, _ := io.ReadAll(io.LimitReader(resp.Body, responseLimit))
 	if resp.StatusCode >= 400 {
-		var detail struct {
-			Error string `json:"error"`
-		}
-		if resp.StatusCode == http.StatusConflict && json.Unmarshal(payload, &detail) == nil && detail.Error == ErrTaskLeaseLost.Error() {
-			return ErrTaskLeaseLost
-		}
-		return fmt.Errorf("%s %s: %s", method, path, strings.TrimSpace(string(payload)))
+		return runnerResponseError(method, path, resp.StatusCode, payload)
 	}
 	if out != nil && len(payload) > 0 {
 		if err := json.Unmarshal(payload, out); err != nil {
@@ -104,6 +98,26 @@ func (c *Client) do(ctx context.Context, method, path string, body any, out any)
 		}
 	}
 	return nil
+}
+
+type runnerHTTPError struct {
+	status int
+	detail string
+}
+
+func (e *runnerHTTPError) Error() string { return e.detail }
+
+func runnerResponseError(method, path string, status int, payload []byte) error {
+	if status == http.StatusUnauthorized {
+		return ErrUnauthorized
+	}
+	var detail struct {
+		Error string `json:"error"`
+	}
+	if status == http.StatusConflict && json.Unmarshal(payload, &detail) == nil && detail.Error == ErrTaskLeaseLost.Error() {
+		return ErrTaskLeaseLost
+	}
+	return &runnerHTTPError{status: status, detail: fmt.Sprintf("%s %s (HTTP %d): %s", method, path, status, strings.TrimSpace(string(payload)))}
 }
 
 // ---------- endpoints ----------

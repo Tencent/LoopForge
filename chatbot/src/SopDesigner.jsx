@@ -44,12 +44,6 @@ function modelsFor(catalog, engine) {
   return engine === defaultEngine ? models.filter((m) => !m.engine || m.engine === defaultEngine) : engineModels(models, engine);
 }
 
-function enginesOf(catalog) {
-  if (catalog.engines?.length) return catalog.engines;
-  const ids = [...new Set((catalog.models || []).map((m) => m.engine || defaultEngine))];
-  return ids.map((id) => ({ id, name: id === defaultEngine ? "CodeBuddy" : id, configured: true }));
-}
-
 function DraftNote({ draft, onPlace, onConfigureRole }) {
   return (
     <div className="sop-designer-draft">
@@ -128,27 +122,42 @@ export default function SopDesigner({ search = location.search, canvas = window.
 
   useEffect(() => {
     let current = true;
-    api("/api/assistant/models")
-      .then((data) => current && setCatalog(data || {}))
-      .catch((e) => current && setError(e.message));
+    let revision = 0;
+    const load = () => {
+      const requested = ++revision;
+      api("/api/assistant/models")
+        .then((data) => current && requested === revision && setCatalog(data || {}))
+        .catch((e) => current && requested === revision && setError(e.message));
+    };
+    const onCredentialsChanged = (event) => {
+      if (event.source !== canvas || event.origin !== location.origin ||
+          event.data?.type !== "agentflow-credentials-changed") return;
+      setCatalog({});
+      setMenu(null);
+      load();
+    };
+    load();
+    window.addEventListener("message", onCredentialsChanged);
     return () => {
       current = false;
+      window.removeEventListener("message", onCredentialsChanged);
     };
-  }, []);
+  }, [canvas]);
 
   const engine = engineOfModel(model, catalog.models);
-  const engineList = enginesOf(catalog);
-  const models = modelsFor(catalog, engine);
-  // Fall back to the catalog default once it loads.
+  const engineList = useMemo(() => (catalog.engines || []).filter((item) =>
+    item.configured && modelsFor(catalog, item.id).length), [catalog]);
+  const models = engineList.some((item) => item.id === engine) ? modelsFor(catalog, engine) : [];
+  const modelAvailable = models.some((item) => item.id === model);
+  // Fall back to an available model when the saved model is no longer selectable.
   useEffect(() => {
-    if (!catalog.models?.length || catalog.models.some((m) => m.id === model)) return;
+    if (modelAvailable || !engineList.length) return;
     const preferredEngine = catalog.preferences?.executor;
     const preferredModel = catalog.preferences?.model;
-    const preferred = modelsFor(catalog, preferredEngine).find((m) =>
-      m.id === preferredModel || m.id === preferredEngine + ":" + preferredModel);
-    const configured = new Set(enginesOf(catalog).filter((item) => item.configured !== false).map((item) => item.id));
-    setModel(preferred?.id || catalog.models.find((m) => configured.has(m.engine || defaultEngine))?.id || catalog.models[0].id);
-  }, [catalog, model]);
+    const preferred = engineList.some((item) => item.id === preferredEngine) &&
+      modelsFor(catalog, preferredEngine).find((m) => m.id === preferredModel || m.id === preferredEngine + ":" + preferredModel);
+    setModel(preferred?.id || modelsFor(catalog, engineList[0].id)[0].id);
+  }, [catalog, engineList, modelAvailable]);
 
   useEffect(() => {
     let current = true;
@@ -299,6 +308,10 @@ export default function SopDesigner({ search = location.search, canvas = window.
       setError("先在顶栏选择项目");
       return;
     }
+    if (!modelAvailable) {
+      setError("请先在个人配置中添加可用的执行器和模型");
+      return;
+    }
     setError("");
     setStarting(true);
     let canvasRequested = false;
@@ -425,28 +438,23 @@ export default function SopDesigner({ search = location.search, canvas = window.
               label="CLI"
               options={engineList.map((item) => {
                 const brand = engineBrand(item.id);
-                const disabled = item.configured === false || !modelsFor(catalog, item.id).length;
                 return {
                   ...item,
                   icon: "terminal",
                   label: item.name,
-                  detail: item.configured === false ? "未配置 API Key，先到个人配置里添加" : disabled ? "暂无可用模型" : `使用 ${item.name} 与个人 API Key`,
-                  disabled,
+                  detail: `使用 ${item.name} 模型`,
                   glyph: hasProviderLogo(brand) ? <ModelProviderIcon brand={brand} size={16} /> : null,
                 };
               })}
               value={engine}
-              onSelect={(id) => {
-                const item = engineList.find((e) => e.id === id);
-                if (!busy && item?.configured !== false) selectEngine(id);
-              }}
+              onSelect={(id) => { if (!busy) selectEngine(id); }}
               open={menu === "engine"}
               onOpenChange={(open) => setMenu(open && !busy ? "engine" : null)}
             /> : null}
             <ModelPicker
               models={models}
               value={model}
-              label={models.find((m) => m.id === model)?.name || model || "模型"}
+              label={models.find((m) => m.id === model)?.name || "模型"}
               open={menu === "model"}
               onOpenChange={(open) => setMenu(open && !busy ? "model" : null)}
               onSelect={(id) => {
@@ -461,13 +469,13 @@ export default function SopDesigner({ search = location.search, canvas = window.
                 <HarnessIcon name="chat-stop" size={14} />
               </button>
             ) : (
-              <button type="submit" className="send-button" aria-label="发送编排要求" disabled={busy || !text.trim()}>
+              <button type="submit" className="send-button" aria-label="发送编排要求" disabled={busy || !text.trim() || !modelAvailable}>
                 <HarnessIcon name="chat-send" size={20} />
               </button>
             )}
           </footer>
         </div>
-        <small>仅生成草稿，确认后在画布上保存 · 切换 CLI 会开启新对话，画布保留</small>
+        <small>{catalog.engines?.length && !engineList.length ? "请先在个人配置中添加可用的执行器和模型" : "仅生成草稿，确认后在画布上保存 · 切换 CLI 会开启新对话，画布保留"}</small>
       </form>
     </div>
   );

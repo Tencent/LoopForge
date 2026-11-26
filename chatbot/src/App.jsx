@@ -8,6 +8,7 @@ import React, {
 } from "react";
 import { useChat } from "./useChat";
 import NativeApprovalPanel from "./NativeApprovalPanel";
+import { useNativeApprovals } from "./useNativeApprovals";
 import { AgentBrowserLinks } from "./agent-browser-links.js";
 import ActivityTrace, { ReplyTimeline } from "./ActivityTrace";
 import MessageInfo from "./MessageInfo";
@@ -255,7 +256,7 @@ function AssistantTurn({ message, steps, assets, projectId, sessionId, local, re
     </>
   );
 }
-function LiveMessage({ live, generation, finished = false, local = false, readOnly = false }) {
+function LiveMessage({ live, generation, finished = false, local = false, readOnly = false, approvals = [] }) {
   const steps = live.activity || [];
   const textual = hasTextSegments(steps);
   // A streamed paragraph followed by tool calls stays in the process above;
@@ -279,6 +280,7 @@ function LiveMessage({ live, generation, finished = false, local = false, readOn
           finishedAt={generation?.updatedAt}
           live={!finished}
           interrupted={finished}
+          approvals={approvals}
         />
       ) : (
         <div className="reply-heading">
@@ -288,6 +290,7 @@ function LiveMessage({ live, generation, finished = false, local = false, readOn
             finishedAt={generation?.updatedAt}
             live={!finished}
             interrupted={finished}
+            approvals={approvals}
           />
         </div>
       )}
@@ -310,10 +313,68 @@ function readIssueMention() {
   return issueId ? { issueId, projectId: params.get("projectId") || "" } : null;
 }
 
+function RenameSessionDialog({ session, rename, onClose }) {
+  const [value, setValue] = useState(session.title || "");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const title = value.trim();
+
+  async function save(event) {
+    event.preventDefault();
+    if (!title || saving) return;
+    setSaving(true);
+    setError("");
+    try {
+      if (await rename(session.id, title)) onClose();
+      else setError("保存会话名称失败");
+    } catch (error) {
+      setError(error.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Dialog
+      title="重命名会话"
+      onClose={onClose}
+      footer={
+        <>
+          <button className="quiet-button" onClick={onClose}>取消</button>
+          <button className="primary-button" type="submit" form="rename-session" disabled={!title || saving}>
+            {saving ? "保存中…" : "保存"}
+          </button>
+        </>
+      }
+    >
+      <form id="rename-session" onSubmit={save} aria-busy={saving}>
+        <label className="field">
+          会话名称
+          <input
+            value={value}
+            readOnly={saving}
+            aria-invalid={!!error}
+            aria-describedby={error ? "rename-session-error" : undefined}
+            onChange={(event) => {
+              setValue(event.target.value);
+              setError("");
+            }}
+          />
+        </label>
+        {error ? <div id="rename-session-error" className="chat-error" role="alert">{error}</div> : null}
+      </form>
+    </Dialog>
+  );
+}
+
 export default function App() {
   const realChat = useChat();
   const chat = useLocalConversations(realChat);
+  // One poll feeds the cards, the reply status and the tool rows alike.
+  const approvals = useNativeApprovals(chat);
+  const waitingApproval = Boolean(chat.busy) && approvals.count > 0;
   const sessionTitle = chat.session?.displayTitle || chat.session?.title || "新对话";
+  const canRenameSession = !chat.readOnly && !chat.session?.shared;
   const titleReveal = useTitleReveal(
     chat.session?.id,
     sessionTitle,
@@ -1101,6 +1162,7 @@ export default function App() {
       sessionReplyStatus(s, s.id === chat.activeId ? {
         generation: chat.generation,
         busy: chat.busy,
+        approvalCount: approvals.count,
       } : undefined),
       unreadReply(s, { activeId: chat.activeId, read: readReplies }),
     );
@@ -1188,16 +1250,18 @@ export default function App() {
             <HarnessIcon name="pin" size={15} />
             {pinned.includes(s.id) ? "取消置顶" : "置顶"}
           </button>
-          <button
-            role="menuitem"
-            onClick={() => {
-              setDialog({ type: "rename", session: s, value: s.title || "" });
-              closeMenu();
-            }}
-          >
-            <HarnessIcon name="edit" size={15} />
-            重命名
-          </button>
+          {!s.shared && !s.readOnly ? (
+            <button
+              role="menuitem"
+              onClick={() => {
+                setDialog({ type: "rename", session: s });
+                closeMenu();
+              }}
+            >
+              <HarnessIcon name="edit" size={15} />
+              重命名
+            </button>
+          ) : null}
           {!s.shared ? (
             <>
               <button
@@ -1280,10 +1344,16 @@ export default function App() {
                 status={sessionReplyStatus(chat.session, {
                   generation: chat.generation,
                   busy: chat.busy,
+                  approvalCount: approvals.count,
                 })}
               />
+              {waitingApproval ? (
+                <span className="conversation-status-chip" title="等待你批准外部写入">
+                  待审批
+                </span>
+              ) : null}
               <button
-                disabled={chat.readOnly}
+                disabled={!canRenameSession}
                 title={sessionTitle}
                 aria-label={sessionTitle}
                 className={titleReveal ? "title-typing" : undefined}
@@ -1299,7 +1369,6 @@ export default function App() {
                   setDialog({
                     type: "rename",
                     session: chat.session,
-                    value: chat.session.title,
                   })
                 }
               >
@@ -1316,14 +1385,13 @@ export default function App() {
                     ))
                   : sessionTitle}
               </button>
-              {!chat.readOnly ? (
+              {canRenameSession ? (
                 <IconButton
                   label="重命名会话"
                   onClick={() =>
                     setDialog({
                       type: "rename",
                       session: chat.session,
-                      value: chat.session.title,
                     })
                   }
                 >
@@ -1808,7 +1876,7 @@ export default function App() {
               {/* The live reply belongs right under its question. Alerts stay
                   last, so a finished reply does not jump above them. */}
               {chat.busy ? (
-                <LiveMessage live={chat.live} generation={chat.generation} local={chat.local} readOnly={chat.readOnly} />
+                <LiveMessage live={chat.live} generation={chat.generation} local={chat.local} readOnly={chat.readOnly} approvals={approvals.items} />
               ) : chat.generation &&
                 !generationStored(messages, chat.generation) &&
                 !["completed", "running"].includes(chat.generation.status) &&
@@ -1822,7 +1890,7 @@ export default function App() {
                   readOnly={chat.readOnly}
                 />
               ) : null}
-              <NativeApprovalPanel chat={chat} onChange={() => {
+              <NativeApprovalPanel approvals={approvals} onChange={() => {
                 if (follow.current && scroll.current)
                   scroll.current.scrollTop = scroll.current.scrollHeight;
               }} />
@@ -2296,12 +2364,18 @@ export default function App() {
         }}
         hideTrigger
       />
-      {dialog ? (
+      {dialog?.type === "rename" ? (
+        <RenameSessionDialog
+          key={dialog.session.id}
+          session={dialog.session}
+          rename={chat.rename}
+          onClose={() => setDialog((current) => current === dialog ? null : current)}
+        />
+      ) : dialog ? (
         <Dialog
           title={
             {
               search: "搜索会话",
-              rename: "重命名会话",
               delete: "删除会话",
               edit: dialog.fork ? "创建分支" : "编辑消息",
               settings: "设置",
@@ -2310,7 +2384,7 @@ export default function App() {
           }
           onClose={closeDialog}
           footer={
-            ["rename", "edit", "delete"].includes(dialog.type) ? (
+            ["edit", "delete"].includes(dialog.type) ? (
               <>
                 <button className="quiet-button" onClick={closeDialog}>
                   取消
@@ -2325,14 +2399,6 @@ export default function App() {
                     if (dialog.type === "delete") {
                       await chat.remove(dialog.session.id);
                       closeDialog();
-                    } else if (dialog.type === "rename") {
-                      if (
-                        await chat.rename(
-                          dialog.session.id,
-                          dialog.value.trim(),
-                        )
-                      )
-                        closeDialog();
                     } else {
                       const stored = await chat.edit(
                         dialog.index,
@@ -2350,11 +2416,9 @@ export default function App() {
                 >
                   {dialog.type === "delete"
                     ? "删除"
-                    : dialog.type === "rename"
-                      ? "保存"
-                      : dialog.fork
-                        ? "创建并继续"
-                        : "保存并重新生成"}
+                    : dialog.fork
+                      ? "创建并继续"
+                      : "保存并重新生成"}
                 </button>
               </>
             ) : dialog.type === "advanced" ? (
@@ -2407,25 +2471,6 @@ export default function App() {
                 ) : null}
               </div>
             </>
-          ) : dialog.type === "rename" ? (
-            <label className="field">
-              会话名称
-              <input
-                autoFocus
-                value={dialog.value}
-                onChange={(e) =>
-                  setDialog({ ...dialog, value: e.target.value })
-                }
-                onKeyDown={async (e) => {
-                  if (
-                    e.key === "Enter" &&
-                    dialog.value.trim() &&
-                    (await chat.rename(dialog.session.id, dialog.value.trim()))
-                  )
-                    closeDialog();
-                }}
-              />
-            </label>
           ) : dialog.type === "delete" ? (
             <p>
               删除“{dialog.session.title}”的聊天记录？本对话里还没提交 MR

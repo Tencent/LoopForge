@@ -118,15 +118,15 @@ test('runner cards expose runtime controls and persist limits, defaults, and aut
   assert.equal(limit.value, '10');
   assert.equal(limit.hasAttribute('max'), false);
   assert.match(list.querySelector('.runner-tip').dataset.tip, /失败、暂停、待确认.*空闲 1 小时.*释放名额.*自动恢复工作区/);
-  assert.match(app.evaluate(`runnerConcurrencyLabel(state.runners[0])`), /最多同时运行 10 条 SOP/);
+  assert.match(app.evaluate(`runnerConcurrencyLabel(state.runners[0])`), /最多同时运行 10 条/);
   limit.value = '250';
   limit.dispatchEvent(new app.window.Event('change', { bubbles: true }));
   await settle(6);
   assert.deepEqual(app.router.calls.find(c => c.path.endsWith('/run-limit')).body, { runLimit: 250 });
   await app.evaluate(`setDefaultRunner('runner-local');setRunnerRuntimeAuth('runner-local','codex','personal')`);
   await settle(6);
-  assert.ok(app.router.calls.some(c => c.path === '/api/runners/default' && c.body.runnerId === 'runner-local'));
-  assert.ok(app.router.calls.some(c => c.path === '/api/runners/runtimes' && c.body.authMode === 'personal'));
+  assert.ok(app.router.calls.some(c => c.method === 'PUT' && c.path === '/api/runners/default' && c.body.runnerId === 'runner-local'));
+  assert.ok(app.router.calls.some(c => c.method === 'PUT' && c.path === '/api/runners/runtimes' && c.body.authMode === 'personal'));
   await app.evaluate(`toggleRunnerRuntime('runner-local','codex',false)`);
   assert.ok(app.router.calls.some(c => c.path === '/api/runners/runtimes' && c.body.status === 'disabled'));
   app.evaluate(`window.__removeRunner=removeRunner('runner-local')`);
@@ -180,6 +180,7 @@ test('runner sharing saves multiple projects and offers project defaults for eli
   await app.evaluate(`saveRunnerRunLimit('desktop','25')`);
   const ownerChoice = app.document.querySelector('[data-set-project-default="desktop"]');
   assert.ok(ownerChoice, 'an eligible owned machine offers the project default action');
+  assert.equal(ownerChoice.textContent, '设为项目默认');
   ownerChoice.click();
   await settle();
   assert.equal(projectRunnerId, desktop.id);
@@ -198,4 +199,100 @@ test('runner sharing saves multiple projects and offers project defaults for eli
   assert.equal(app.document.querySelector('#runnerPoolStatus').textContent, '在平台云端执行');
   assert.equal(app.document.querySelector('.runner-card.is-default'), null);
   assert.match(app.document.querySelector('.runner-card').textContent, /个人默认/);
+});
+
+test('platform runner card and auto assignment respect project and admin permissions', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  const platform = {
+    name: '平台执行机器（云端）', status: 'online', runLimit: 10, canEditLimit: true,
+    cloudPool: true, cloudPoolOnline: 3, load: { runningRuns: 2, occupiedRuns: 4, queuedRuns: 1 },
+  };
+  const shared = [
+    { id: 'team', name: 'Team machine', ownerUserId: 2, status: 'online', runnerVersion: '0.10.2',
+      runLimit: 5, canUseInProject: true, load: { runningRuns: 1, occupiedRuns: 2, queuedRuns: 0 } },
+    { id: 'old', name: 'Older machine', ownerUserId: 1, status: 'online', runnerVersion: '0.4.0', canUseInProject: true },
+    { id: 'offline', name: 'Offline', ownerUserId: 1, status: 'offline', runnerVersion: '0.10.2', canUseInProject: true },
+    { id: 'private', name: 'Private', ownerUserId: 1, status: 'online', runnerVersion: '0.10.2' },
+  ];
+  let mode = '';
+  app.router.get('/api/runners', shared);
+  app.router.get('/api/runners/default', () => ({
+    runnerId: '', projectRunnerMode: mode, minRunnerVersion: '0.8.0', platformRunner: platform,
+  }));
+  app.router.put('/api/runners/default?projectId=write', ({ body }) => {
+    mode = body.mode;
+    return { runnerId: '', projectRunnerMode: mode };
+  });
+  app.router.put('/api/runners/platform/run-limit', ({ body }) => {
+    platform.runLimit = body.runLimit;
+    return platform;
+  });
+  app.evaluate(`
+    state.currentUser={id:1};
+    state.projectFilter='write';
+    state.data.projects=[
+      {id:'write',name:'Writable',ownerId:2,members:[{userId:1,role:'member'}]},
+      {id:'read',name:'Read only',ownerId:2,members:[{userId:1,role:'viewer'}]},
+    ];
+    state.runnerBindCode={code:'fixture',expiresAt:'2099-01-01T00:00:00Z'};
+  `);
+  await app.evaluate('refreshRunners()');
+  const section = app.document.querySelector('#platformRunnerSection');
+  const platformHost = app.document.querySelector('#platformRunnerHost');
+  const list = app.document.querySelector('#runnersList');
+  const card = () => platformHost.firstElementChild;
+  assert.equal(section.hidden, false);
+  assert.match(section.querySelector('h2').textContent, /平台机器/);
+  assert.equal(card().classList.contains('runner-platform-card'), true);
+  assert.equal(card().querySelector('.harness-icon[data-icon="server"]') !== null, true);
+  assert.match(card().textContent, /平台执行机器（云端）平台自带/);
+  assert.match(card().textContent, /运行中 2 · 已占 4 \/ 10 · 排队 1 · 云端池 3 台在线/);
+  assert.equal(card().querySelector('.runner-status').textContent, '在线');
+  assert.equal(card().querySelector('.runner-runtime-list, [data-runner-share], [data-remove-runner], [data-runner-check-update]'), null);
+  assert.equal(list.querySelector('.runner-platform-card'), null);
+  assert.equal(app.document.querySelector('#runnerCount').textContent, String(shared.length));
+  assert.match(list.children[0].textContent, /运行中 1 · 已占 2 \/ 5/);
+  const limit = card().querySelector('[data-platform-run-limit]');
+  assert.equal(limit.value, '10');
+  limit.value = '';
+  limit.dispatchEvent(new app.window.Event('change', { bubbles: true }));
+  await settle(8);
+  const limitCall = app.router.calls.find(c => c.method === 'PUT' && c.path === '/api/runners/platform/run-limit');
+  assert.deepEqual(limitCall.body, { runLimit: 0 });
+  assert.match(card().textContent, /运行中 2 · 不限/);
+
+  const poolStatus = app.document.querySelector('#runnerPoolStatus');
+  const toggle = app.document.querySelector('#runnerAutoAssign');
+  assert.equal(toggle.hidden, false);
+  toggle.click();
+  await settle(8);
+  assert.equal(toggle.getAttribute('aria-pressed'), 'true');
+  assert.match(poolStatus.textContent, /此项目 SOP 自动分配 · 2 台在线机器可用/);
+  toggle.click();
+  await settle(8);
+  assert.equal(toggle.getAttribute('aria-pressed'), 'false');
+
+  const platformDefaultBtn = () => card().querySelector('[data-runner-platform-default]');
+  assert.equal(platformDefaultBtn().textContent, '设为项目默认');
+  platformDefaultBtn().click();
+  await settle(8);
+  assert.match(card().textContent, /此项目默认/);
+  assert.equal(platformDefaultBtn().textContent, '清除项目默认');
+  assert.equal(poolStatus.textContent, '此项目默认 · 平台执行机器（云端）');
+  platformDefaultBtn().click();
+  await settle(8);
+  assert.doesNotMatch(card().textContent, /此项目默认/);
+  assert.equal(platformDefaultBtn().textContent, '设为项目默认');
+  const preferences = app.router.calls.filter(c => c.method === 'PUT' && c.path === '/api/runners/default');
+  assert.deepEqual(preferences.map(c => c.body), [{ mode: 'auto' }, { mode: '', runnerId: '' }, { mode: 'platform' }, { mode: '', runnerId: '' }]);
+  assert.ok(preferences.every(c => c.search === '?projectId=write'));
+
+  platform.canEditLimit = false;
+  platform.status = 'offline';
+  await app.evaluate(`state.projectFilter='read';refreshRunners()`);
+  assert.equal(toggle.hidden, true);
+  assert.equal(card().querySelector('[data-runner-platform-default], [data-platform-run-limit]'), null);
+  assert.match(card().textContent, /不限同时运行数/);
+  assert.equal(card().querySelector('.runner-status').textContent, '离线');
 });

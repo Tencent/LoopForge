@@ -38,6 +38,8 @@ class InstallerTests(unittest.TestCase):
         shutil.copyfile(ROOT / 'start.sh', self.root / 'start.sh')
         for name in ('001_run_obs_generated_columns.sql', '033_generic_sop_mr_node.sql', '038_generic_sop_host_credentials.sql', '041_native_sandbox_inline_assets.sql'):
             (self.root / 'migrations' / name).write_text((ROOT / 'migrations' / name).read_text())
+        artifact_migration = '042_run_artifacts_content_mediumtext.sql'
+        shutil.copyfile(ROOT / 'migrations' / artifact_migration, self.root / 'migrations' / artifact_migration)
         (self.root / 'migrations/seed/001_test.sql').write_text('INSERT IGNORE INTO agents (id) VALUES (1);\n')
         (self.root / 'mock').mkdir()
         self.executable('docker', '''#!/usr/bin/env bash

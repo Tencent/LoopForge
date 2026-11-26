@@ -68,3 +68,25 @@ func TestMCPServerCredentialsAreMaskedAndSurviveEdits(t *testing.T) {
 		t.Fatalf("token rotation not saved: %v", stored.Headers)
 	}
 }
+
+func TestPersonalMCPDefinitionAndImportUseSignedInOwner(t *testing.T) {
+	t.Setenv("AGENTFLOW_AUTH_REQUIRED", "true")
+	f := cvBNewHTTPFixture(t)
+	server := domain.MCPServerDefinition{
+		ID: "personal-notes", Name: "Personal notes", Scope: "personal",
+		Transport: "http", URL: "https://example.test/mcp",
+	}
+	create := cvBRequest(t, f, http.MethodPut, "/api/mcp-servers", server, true)
+	if create.Code != http.StatusOK {
+		t.Fatalf("create: %d %s", create.Code, create.Body.String())
+	}
+	server.Description = "Updated notes"
+	update := cvBRequest(t, f, http.MethodPost, "/api/mcp-servers/import", []domain.MCPServerDefinition{server}, true)
+	if update.Code != http.StatusOK {
+		t.Fatalf("import: %d %s", update.Code, update.Body.String())
+	}
+	saved, ok := f.s.MCPServer(server.ID)
+	if !ok || saved.OwnerUserID != f.user.ID || saved.Scope != "personal" || saved.Description != server.Description {
+		t.Fatalf("saved MCP = %+v", saved)
+	}
+}

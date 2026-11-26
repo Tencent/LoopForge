@@ -164,7 +164,8 @@ test('SkillHub market helpers, list, drawer, and install/update modal workflows'
     idOk: skillhubIdProblem('fresh-skill'),
     pages: skillhubPageList(3, 8),
     warnings: skillhubFileWarnings([
-      { path: 'huge.bin', size: 2 * 1024 * 1024 },
+      { path: 'supported.bin', size: 10 * 1024 * 1024 },
+      { path: 'huge.bin', size: 10 * 1024 * 1024 + 1 },
       ...Array.from({ length: 501 }, (_, i) => ({ path: 'f' + i, size: 200000 })),
     ]),
   })`);
@@ -184,6 +185,7 @@ test('SkillHub market helpers, list, drawer, and install/update modal workflows'
   assert.equal(helpers.idOk, '');
   assert.ok(helpers.pages.includes('…'));
   assert.equal(helpers.warnings.length, 3);
+  assert.match(helpers.warnings[0], /^huge\.bin 超过平台单文件 10MB/);
 
   // Configure installed skills in project-1: git-helper (older v1.0.0 -> update) and log-analyzer (v1.0.0 -> installed)
   app.evaluate(`
@@ -251,6 +253,7 @@ test('SkillHub market helpers, list, drawer, and install/update modal workflows'
   drawer.querySelector('[data-skillhub-file="big.bin"]')?.click();
   await settle(4);
   assert.match(drawer.textContent, /超过 1MB/);
+  assert.doesNotMatch(drawer.textContent, /安装会失败/);
 
   drawer.querySelector('[data-skillhub-tab="quality"]').click();
   await settle(4);

@@ -88,6 +88,22 @@ test('approval gate: reject reworks upstream in the same workspace, approve comp
   assert.equal(summary?.status, 'succeeded');
 });
 
+test('evaluation waits for the run to finish and leaves no partial history', async () => {
+  const workflow = await createWorkflow('eval-approval', [script('prepare', 'echo ready'), approval('gate', 'prepare')]);
+  const { id } = await startRun(workflow);
+  await waitRun(id, run => nodeStatus(run, 'gate') === 'waiting_approval');
+
+  const path = `/api/runs/${id}`;
+  await post(`${path}/eval`, {}, { expect: 409 });
+  assert.deepEqual(await get(`${path}/eval`), { runId: id, status: '' });
+  assert.deepEqual(await get(`${path}/evals`), []);
+  await get(`${path}/eval/stream`, { expect: 404 });
+  await post(`${path}/eval/apply`, { recommendationIds: ['missing'] }, { expect: 404 });
+
+  await post(`${path}/approve`, { nodeId: 'gate' });
+  await waitRun(id, run => run.status === 'succeeded');
+});
+
 test('failed script: retry from the node succeeds on the second attempt', {
   todo: 'POST /api/runs/:id/retry tears the failed attempt\'s sandbox down inside the request (docker rm -f of the agentflow-run-*-scripts sidecar, up to dockerTeardownTimeout=60s); under nested Docker that rm hangs, so the call outlives the 60s client timeout',
 }, async () => {
@@ -114,6 +130,8 @@ test('failed script: manual pass skips it and continues downstream', async () =>
   await api('POST', `/api/runs/${id}/pass`, { nodeId: 'after' }, { expect: [400, 409, 500] });
   await post(`/api/runs/${id}/pass`, { nodeId: 'broken', context: 'e2e 人工通过' });
   const run = await waitRun(id, r => r.status === 'succeeded', { label: 'succeeded after pass' });
+  const completed = await get(`/api/runs/${id}/wait?timeoutSec=25`);
+  assert.deepEqual(completed, { runId: id, projectId: cfg.projectId, status: 'succeeded', terminal: true, timedOut: false });
   assert.equal(nodeOf(run, 'broken').attempt, 1, 'pass must not re-execute the node');
   assert.match(await logsText(id), /AFTER_PASS/);
 });

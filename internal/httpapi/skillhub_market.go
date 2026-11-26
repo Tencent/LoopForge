@@ -20,9 +20,10 @@ import (
 )
 
 const (
-	skillhubDefaultPageSize = 24
-	skillhubMaxPageSize     = 50
-	skillhubMaxDescription  = 500
+	skillhubDefaultPageSize  = 24
+	skillhubMaxPageSize      = 50
+	skillhubMaxDescription   = 500
+	skillhubFilePreviewLimit = 1 << 20
 	// skillhubZipLimit bounds the downloaded archive; unpacked content is
 	// still checked against the per-file and total caps.
 	skillhubZipLimit = domain.SkillTotalMaxBytes + 1<<20
@@ -316,7 +317,7 @@ func (h *skillhubHandlers) file(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, map[string]string{"error": "无效的文件路径"})
 		return
 	}
-	content, err := h.client.file(c.Request.Context(), slug, namespace, version, filePath, h.userKey(c), domain.SkillFileMaxBytes)
+	content, err := h.client.file(c.Request.Context(), slug, namespace, version, filePath, h.userKey(c), skillhubFilePreviewLimit)
 	var se *skillhubError
 	if errors.As(err, &se) && se.Upstream == http.StatusRequestEntityTooLarge {
 		c.JSON(http.StatusOK, map[string]any{"path": filePath, "previewable": false, "reason": "文件超过 1MB，不支持预览"})
@@ -380,7 +381,7 @@ func (h *skillhubHandlers) skillhubPackage(c *gin.Context, slug, namespace, vers
 	if err != nil {
 		return nil, err
 	}
-	files, err := readSkillZipBytes(raw, slug+"-"+version+".zip", nil)
+	files, err := readSkillZipBytes(raw, slug+"-"+version+".zip", nil, domain.SkillFileMaxBytes)
 	if err != nil {
 		return nil, HTTPError{Status: http.StatusUnprocessableEntity, Message: "技能包无法安装：" + err.Error()}
 	}

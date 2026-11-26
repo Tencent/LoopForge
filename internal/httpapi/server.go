@@ -319,6 +319,7 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	api.botIdentities = &botIdentityHandlers{deps: d, publicURL: api.notifications.service.PublicAddress}
 	asst := &assistantHandlers{deps: d, runnerControls: runnerControls, sourceRoot: assistantSourceRoot(), notifications: api.notifications, identities: api.botIdentities, attachmentSweepWake: make(chan struct{}, 1), clarify: stream}
 	e.SelectSOPSandbox = asst.selectSOPSandbox
+	e.GenerateSOPWorkBranch = asst.generateSOPWorkBranch
 	if schedulerEnabled() {
 		d.schedule.StartAfter(bg.gate())
 		if bg != nil {
@@ -379,6 +380,7 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.POST("/api/assistant/sessions/:id/read", asst.markSessionRead)
 	g.POST("/api/assistant/sessions/:id/fork", asst.forkSession)
 	g.GET("/api/assistant/sessions/:id", asst.session)
+	g.PUT("/api/assistant/sessions/:id/title", asst.renameSession)
 	g.PUT("/api/assistant/sessions/:id/sandbox", asst.sessionSandbox)
 	g.PUT("/api/assistant/sessions/:id/project-credentials", asst.sessionProjectCredentials)
 	g.PUT("/api/assistant/sessions/:id/mode", asst.sessionMode)
@@ -430,6 +432,7 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	//（404 JSON），再按 (子路径, method) 分派，不匹配的组合兜底 404 text。
 	// gin 用 Any 注册 + handler 内方法分派复刻该语义。
 	g.Any("/api/issues/:id", api.issues.issue)
+	g.GET("/api/issues/:id/images/:imageId", api.issues.issue)
 	g.Any("/api/issues/:id/comments", api.issues.issue)
 	g.Any("/api/issues/:id/runs", api.issues.issue)
 	g.Any("/api/issues/:id/clarification", api.issues.issue)
@@ -645,6 +648,7 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.GET("/api/runners/default", api.runners.runnerDefault)
 	g.PUT("/api/runners/default", api.runners.runnerDefaultSet)
 	g.DELETE("/api/runners/:id", api.runners.runnerRemove)
+	g.PUT("/api/runners/platform/run-limit", api.runners.platformRunnerRunLimitSet)
 	g.PUT("/api/runners/:id/run-limit", api.runners.runnerRunLimitSet)
 	g.PUT("/api/runners/:id/shared-projects", api.runners.runnerSharedProjectsSet)
 	g.GET("/api/runners/:id/maintenance", api.runners.runnerMaintenance)
@@ -662,6 +666,8 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.GET("/api/runners/tasks/:id/events", api.runners.runnerTaskEventsOut)
 	g.POST("/api/runners/tasks/:id/events", api.runners.runnerTaskEventsIngest)
 	g.POST("/api/runners/tasks/:id/complete", api.runners.runnerTaskComplete)
+	g.PUT("/api/runners/tasks/:id/output-file", api.runners.runnerTaskOutputFile)
+	g.GET("/api/runners/tasks/:id/input-file", api.runners.runnerTaskInputFile)
 	g.GET("/api/runners/tasks/:id/control", api.runners.runnerTaskControl)
 	g.PUT("/api/runners/runtimes", api.runners.runnerRuntimeStatus)
 	g.POST("/api/runners/runtimes", api.runners.runnerRuntimeStatus)
@@ -684,6 +690,8 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.POST("/runners/tasks/:id/lease/renew", api.runners.runnerTaskLeaseRenew)
 	g.POST("/runners/tasks/:id/events", api.runners.runnerTaskEventsIngest)
 	g.POST("/runners/tasks/:id/complete", api.runners.runnerTaskComplete)
+	g.PUT("/runners/tasks/:id/output-file", api.runners.runnerTaskOutputFile)
+	g.GET("/runners/tasks/:id/input-file", api.runners.runnerTaskInputFile)
 	g.GET("/runners/tasks/:id/control", api.runners.runnerTaskControl)
 	g.Any(knowledge.ProxyPath, api.know.proxyMCP)
 	g.PUT("/runners/previews/:previewId/content", api.runners.runnerPreviewContent)

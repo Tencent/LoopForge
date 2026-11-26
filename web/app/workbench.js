@@ -1080,6 +1080,7 @@ function storeCredentialUser(saved){
 }
 function notifyCredentialsChanged(){
   $('#chatNextFrame')?.contentWindow?.postMessage({type:'agentflow-credentials-changed'},location.origin);
+  $('#aiOrchestratorFrame')?.contentWindow?.postMessage({type:'agentflow-credentials-changed'},location.origin);
   if(typeof window!=='undefined'){
     window.AgentFlowAssistantModels?.load?.({refresh:true})?.then(()=>{
       if(typeof renderAssistantSettings==='function'&&typeof document!=='undefined'&&document.querySelector('#assistantView.active'))renderAssistantSettings();

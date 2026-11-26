@@ -31,24 +31,14 @@ func (workspaceCheckpointChunk) TableName() string { return "run_workspace_check
 // cannot replace the previous archive. Crashed staging rows expire on the next
 // save; deleting a run also deletes all its chunks.
 func (r *RunsRepo) SaveWorkspaceCheckpointStream(runID, token string, now time.Time, source io.Reader) error {
-	// Keep the legacy representation for small archives, including during a
-	// rolling upgrade. The lookahead is bounded independently of archive size.
-	prefix, err := io.ReadAll(io.LimitReader(source, workspaceCheckpointInlineBytes+1))
-	if err != nil {
-		return err
-	}
-	if len(prefix) <= workspaceCheckpointInlineBytes {
-		return r.SaveWorkspaceCheckpoint(runID, token, now, prefix)
-	}
-	source = io.MultiReader(bytes.NewReader(prefix), source)
 	raw := make([]byte, 24)
 	if _, err := rand.Read(raw); err != nil {
 		return err
 	}
 	id := hex.EncodeToString(raw)
-	published := false
+	commitMayHavePublished := false
 	defer func() {
-		if !published {
+		if !commitMayHavePublished {
 			r.DB.Where("run_id = ? AND archive_id = ?", runID, id).Delete(&workspaceCheckpointChunk{})
 		}
 	}()
@@ -92,7 +82,7 @@ func (r *RunsRepo) SaveWorkspaceCheckpointStream(runID, token string, now time.T
 	if size == 0 {
 		return fmt.Errorf("empty workspace checkpoint")
 	}
-	err = r.DB.Transaction(func(tx *gorm.DB) error {
+	return r.DB.Transaction(func(tx *gorm.DB) error {
 		if _, err := r.takeRunForUpdate(tx, runID); err != nil {
 			return err
 		}
@@ -106,10 +96,13 @@ func (r *RunsRepo) SaveWorkspaceCheckpointStream(runID, token string, now time.T
 		if result.RowsAffected != 1 {
 			return ErrWorkspaceInUse
 		}
-		return tx.Where("run_id = ? AND archive_id <> ?", runID, id).Delete(&workspaceCheckpointChunk{}).Error
+		if err := tx.Where("run_id = ? AND archive_id <> ?", runID, id).Delete(&workspaceCheckpointChunk{}).Error; err != nil {
+			return err
+		}
+		// A lost commit reply does not prove that the manifest was rolled back.
+		commitMayHavePublished = true
+		return nil
 	})
-	published = err == nil
-	return err
 }
 
 func (r *RunsRepo) OpenWorkspaceCheckpointArchive(runID string) (io.ReadCloser, error) {

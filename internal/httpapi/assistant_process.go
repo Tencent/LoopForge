@@ -21,7 +21,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"unicode/utf8"
 )
 
 type assistantHelperExecutionKey struct{}
@@ -298,6 +297,13 @@ func (h *assistantHandlers) conversationExecutor(s *AgentToolSession, root strin
 			if err != nil {
 				return "", err
 			}
+			if !prepared.PromptInputFiles {
+				for _, file := range files {
+					if runtime.ConversationPromptInputAsset(file.Path) {
+						return "", fmt.Errorf("执行机器需要升级以支持该执行器的长对话输入")
+					}
+				}
+			}
 			if _, err = call(ctx, runtime.ConversationProcessRequest{Operation: "resetAssets"}); err != nil {
 				return "", err
 			}
@@ -351,6 +357,9 @@ func (h *assistantHandlers) conversationExecutor(s *AgentToolSession, root strin
 				stopOnce.Do(func() {}) // confirmed failure before process execution
 			}
 			return "", err
+		}
+		if acp, ok := command.Stdin.(*assistantACP); ok && started.WorkingDir != "" {
+			acp.cwd = started.WorkingDir
 		}
 
 		ioCtx, stopIO := context.WithCancel(ctx)
@@ -447,24 +456,7 @@ func (h *assistantHandlers) conversationExecutor(s *AgentToolSession, root strin
 const maxConversationInputChunk = 1 << 20
 
 func conversationInputChunkLen(data string, paths ...string) int {
-	if len(data) <= maxConversationInputChunk {
-		return len(data)
-	}
-	end := maxConversationInputChunk
-	for end > maxConversationInputChunk-utf8.UTFMax && !utf8.RuneStart(data[end]) {
-		end--
-	}
-	// The runner remaps paths separately in each write request.
-	for _, path := range paths {
-		if len(path) > 1 && len(path) < end {
-			start := end - len(path) + 1
-			windowEnd := min(len(data), end+len(path)-1)
-			if i := strings.Index(data[start:windowEnd], path); i >= 0 && start+i < end {
-				end = start + i
-			}
-		}
-	}
-	return end
+	return runtime.ConversationTextChunkLen(data, maxConversationInputChunk, paths...)
 }
 
 func assistantEngineBinary(kind string) string {

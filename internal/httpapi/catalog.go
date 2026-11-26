@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
 
@@ -94,11 +93,22 @@ func (h *catalogHandlers) repositories(c *gin.Context) {
 	v.WebURL = strings.TrimSpace(v.WebURL)
 	v.CloneURL = strings.TrimSpace(v.CloneURL)
 	v.IntegrateBranch = domain.NormalizeIntegrateBranch(v.IntegrateBranch)
-	if existing, ok := h.repo.Repository(v.ID); ok && !h.canManageProjectRepositories(c, existing.ProjectID) {
+	existing, exists := h.repo.Repository(v.ID)
+	if exists && !h.canManageProjectRepositories(c, existing.ProjectID) {
 		return
 	}
 	if !h.canManageProjectRepositories(c, v.ProjectID) {
 		return
+	}
+	if v.WorkBranchNaming != nil {
+		naming, err := repo.NormalizeRepositoryWorkBranchNaming(*v.WorkBranchNaming)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		v.WorkBranchNaming = &naming
+	} else if exists {
+		v.WorkBranchNaming = existing.WorkBranchNaming
 	}
 	// localPath copies a directory from the executing host into the task
 	// workspace, so only platform administrators may set it.
@@ -488,36 +498,50 @@ func (h *catalogHandlers) agent(c *gin.Context) {
 			c.JSON(400, map[string]string{"error": "id and name are required"})
 			return
 		}
-		v, _ := h.repo.Agent(id)
-		if _, ok := h.repo.Project(strings.TrimSpace(req.ProjectID)); !ok {
+		v := current
+		targetProject := strings.TrimSpace(req.ProjectID)
+		if _, ok := h.repo.Project(targetProject); !ok {
 			c.JSON(http.StatusNotFound, map[string]string{"error": "project not found"})
 			return
 		}
 		taken, _ := h.repo.Agent(req.ID)
-		if !h.requireProjectWriter(c, strings.TrimSpace(req.ProjectID), taken.ProjectID) {
+		if !h.requireProjectWriter(c, targetProject, taken.ProjectID) {
 			return
 		}
-		if v.Shared {
+		userID := int64(0)
+		if user, ok := h.requestUser(c.Request, true); ok {
+			userID = user.ID
+		}
+		sourceWritable := h.projectWriterAllowed(c, v.ProjectID, userID)
+		if !v.Shared && !sourceWritable {
+			project, ok := h.repo.Project(v.ProjectID)
+			if !ok || userID <= 0 || !slices.ContainsFunc(project.Members, func(member domain.ProjectMember) bool {
+				return member.UserID == userID
+			}) {
+				c.JSON(http.StatusForbidden, gin.H{"error": "无权复制源项目中未共享的角色"})
+				return
+			}
+		}
+		if v.Shared && sourceWritable {
 			if err := h.shareAgentAssets(v); err != nil {
 				respond(c, err)
 				return
 			}
 		}
-		userID := int64(0)
-		if current, ok := h.requestUser(c.Request, true); ok {
-			userID = current.ID
-		}
-		mcpServers, err := h.cloneAgentMCPServers(v.MCPServers, strings.TrimSpace(req.ProjectID), userID)
+		mcpServers, err := h.cloneAgentMCPServers(v.MCPServers, targetProject, userID, func(projectID string) bool {
+			_, exists := h.repo.Project(projectID)
+			return exists && h.projectWriterAllowed(c, projectID, userID)
+		})
 		if err != nil {
 			if errors.Is(err, errPersonalMCPCloneRequiresLogin) {
-				c.JSON(http.StatusUnauthorized, map[string]string{"error": err.Error()})
+				c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
 			} else {
-				respond(c, err)
+				respondMCPWriteError(c, err)
 			}
 			return
 		}
 		v.ID, v.Name = req.ID, req.Name
-		v.ProjectID = strings.TrimSpace(req.ProjectID)
+		v.ProjectID = targetProject
 		v.MCPServers = mcpServers
 		v.Shared = false
 		v.Version = 1
@@ -533,54 +557,75 @@ func (h *catalogHandlers) agent(c *gin.Context) {
 	}
 }
 
-var errPersonalMCPCloneRequiresLogin = errors.New("复制包含个人 MCP 的角色前请先登录")
-
 func (h *catalogHandlers) shareAgentAssets(agent domain.AgentDefinition) error {
 	return h.repo.ShareAgentAssets(agent)
 }
 
-func (h *catalogHandlers) cloneAgentMCPServers(ids []string, projectID string, userID int64) ([]string, error) {
+var errPersonalMCPCloneRequiresLogin = errors.New("复制包含个人 MCP 的角色前请先登录")
+
+func (h *catalogHandlers) cloneAgentMCPServers(ids []string, projectID string, userID int64, canCopyProject func(string) bool) ([]string, error) {
 	out := make([]string, 0, len(ids))
+	var changes []repo.MCPServerChange
 	for _, id := range ids {
 		source, ok := h.repo.MCPServer(id)
-		if !ok || source.Scope == "" {
+		if !ok {
 			continue
 		}
-		ownerKey := projectID
-		if source.Scope == "project" {
-			if source.ProjectID == projectID {
-				out = append(out, source.ID)
-				continue
-			}
-			for _, existing := range h.repo.MCPServers() {
-				if source.MarketID != "" && existing.Scope == "project" && existing.ProjectID == projectID && existing.MarketID == source.MarketID {
-					out = append(out, existing.ID)
-					goto nextMCP
-				}
-			}
-			source.ProjectID, source.OwnerUserID = projectID, 0
-		} else if source.Scope == "personal" {
+		switch source.Scope {
+		case "personal":
 			if userID <= 0 {
 				return nil, errPersonalMCPCloneRequiresLogin
 			}
 			if source.OwnerUserID == userID {
 				out = append(out, source.ID)
+			}
+			continue
+		case "project":
+			if source.ProjectID == projectID {
+				out = append(out, source.ID)
 				continue
 			}
-			ownerKey = strconv.FormatInt(userID, 10)
-			source.ProjectID, source.OwnerUserID, source.MarketID = "", userID, ""
-		} else {
+		default:
 			continue
 		}
-		source.ID = mcpInstallID("clone-"+id, source.Scope, ownerKey)
-		source.UpdatedAt = time.Time{}
-		if _, exists := h.repo.MCPServer(source.ID); !exists {
-			if err := h.repo.PutMCPServer(source); err != nil {
-				return nil, fmt.Errorf("clone MCP %q: %w", id, err)
+		if source.MarketID != "" {
+			servers := h.repo.MCPServers()
+			index := slices.IndexFunc(servers, func(existing domain.MCPServerDefinition) bool {
+				return existing.Scope == "project" && existing.ProjectID == projectID && existing.MarketID == source.MarketID
+			})
+			if index >= 0 {
+				out = append(out, servers[index].ID)
+				continue
 			}
 		}
+		if !canCopyProject(source.ProjectID) {
+			// A market entry carries no project settings. Install it from
+			// the catalog when the source project's copy is not readable.
+			if source.MarketID != "" {
+				if installed, _, err := installMarketMCP(h.repo, source.MarketID, projectID); err == nil {
+					if !slices.Contains(out, installed.ID) {
+						out = append(out, installed.ID)
+					}
+				} else if !errors.Is(err, errMCPMarketItemMissing) {
+					return nil, err
+				}
+			}
+			continue
+		}
+		source.ID = destinationMCPInstallID(h.repo, h.mcpInstallIDKey(), "clone-"+source.ID, "project", projectID)
+		if slices.Contains(out, source.ID) {
+			continue
+		}
+		if _, exists := h.repo.MCPServer(source.ID); !exists {
+			source.ProjectID, source.OwnerUserID = projectID, 0
+			changes = append(changes, repo.MCPServerChange{Definition: source})
+		}
 		out = append(out, source.ID)
-	nextMCP:
+	}
+	if len(changes) > 0 {
+		if _, err := h.repo.SaveMCPServers(changes...); err != nil {
+			return nil, err
+		}
 	}
 	return out, nil
 }

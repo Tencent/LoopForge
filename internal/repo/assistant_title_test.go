@@ -130,3 +130,112 @@ func TestGeneratedTitleSurvivesPromptRewrite(t *testing.T) {
 		t.Fatalf("rename lost: %+v", got)
 	}
 }
+
+func TestGenerationWritesKeepTheLatestManualTitle(t *testing.T) {
+	st, err := OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(st.Close)
+	const owner = int64(93)
+	const id = "title-racing-with-turn"
+	if err := st.PutAssistantSession(owner, domain.AssistantSession{ID: id, Title: "问题"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetAssistantSessionGeneratedTitle(owner, id, "自动生成的名称"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetAssistantSessionTitle(owner, id, "", "第一个手动名称"); err != nil {
+		t.Fatal(err)
+	}
+	pending, _ := st.AssistantSession(owner, id)
+	if !pending.TitleEdited || pending.TitleGenerated {
+		t.Fatalf("title flags after rename: edited=%v generated=%v", pending.TitleEdited, pending.TitleGenerated)
+	}
+	pending.Messages = []domain.AssistantMessage{{Role: "user", Content: "问题"}}
+
+	if err := st.SetAssistantSessionTitle(owner, id, "", "第二个手动名称"); err != nil {
+		t.Fatal(err)
+	}
+	turn := domain.AssistantGeneration{ID: "turn", SessionID: id, UserID: owner, Status: "running"}
+	if err := st.BeginAssistantGeneration(turn, pending); err != nil {
+		t.Fatal(err)
+	}
+	reply, _ := st.AssistantSession(owner, id)
+	if reply.Title != "第二个手动名称" {
+		t.Fatalf("starting the turn restored an older title: %q", reply.Title)
+	}
+	reply.Messages = append(reply.Messages, domain.AssistantMessage{Role: "assistant", Content: "回答"})
+
+	if err := st.SetAssistantSessionTitle(owner, id, "", "第三个手动名称"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.PutAssistantGenerationReply(owner, turn.ID, reply); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetAssistantSessionGeneratedTitle(owner, id, "迟到的自动标题"); err != nil {
+		t.Fatal(err)
+	}
+	stored, _ := st.AssistantSession(owner, id)
+	if stored.Title != "第三个手动名称" || len(stored.Messages) != 2 {
+		t.Fatalf("generation did not preserve the latest title and reply: %+v", stored)
+	}
+}
+
+func TestRenameAssistantSessionKeepsLegacyScheduledSource(t *testing.T) {
+	st, err := OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(st.Close)
+	const owner = int64(93)
+	const id = "legacy-scheduled-title"
+	title := scheduledAssistantTitlePrefix + " 定时巡检"
+	if err := st.DB.Create(&assistantSessionRow{
+		ID: id, UserID: owner, Title: title, Payload: mustJSON(domain.AssistantSession{Title: title}),
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetAssistantSessionTitle(owner, id, "", "新的巡检名称"); err != nil {
+		t.Fatal(err)
+	}
+	scheduled := st.ListAssistantSessionsBySource(domain.AssistantSourceScheduled)
+	if len(scheduled) != 1 || scheduled[0].ID != id || scheduled[0].Title != "新的巡检名称" {
+		t.Fatalf("renaming changed the conversation's legacy origin: %+v", scheduled)
+	}
+}
+
+// A rename keeps updated_at, so a proposal write read before it still passes
+// the unchanged check; it must not put the earlier manual title back.
+func TestProposalWriteKeepsConcurrentRename(t *testing.T) {
+	st, err := OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(st.Close)
+	const owner = int64(94)
+	const id = "proposal-title-race"
+	if err := st.PutAssistantSession(owner, domain.AssistantSession{ID: id, Title: "问题", Messages: []domain.AssistantMessage{
+		{Role: "user", Content: "问题"}, {Role: "assistant", Content: `{"message":"建议","drafts":[]}`},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetAssistantSessionTitle(owner, id, "", "第一个手动名称"); err != nil {
+		t.Fatal(err)
+	}
+	read, _ := st.AssistantSession(owner, id)
+	renamed := strings.Repeat("新名称", 20)
+	if err := st.SetAssistantSessionTitle(owner, id, "", renamed); err != nil {
+		t.Fatal(err)
+	}
+	next := read
+	next.Messages = append([]domain.AssistantMessage(nil), read.Messages...)
+	next.Messages[1].Content = `{"message":"建议","drafts":[{"decision":"accepted"}]}`
+	if err := st.PutAssistantSessionIfUnchanged(owner, next, read); err != nil {
+		t.Fatal(err)
+	}
+	stored, _ := st.AssistantSession(owner, id)
+	if stored.Title != renamed || !stored.TitleEdited || stored.Messages[1].Content != next.Messages[1].Content {
+		t.Fatalf("proposal write restored an earlier title: %q edited=%v", stored.Title, stored.TitleEdited)
+	}
+}

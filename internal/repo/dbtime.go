@@ -60,6 +60,13 @@ func (d *deps) dbNowUS(tx *gorm.DB) (int64, error) {
 // victim (error 1213), for example two creates locking the same missing index
 // gap. Only that explicit error is retried: the whole transaction was undone.
 func retryBotDeadlock(transaction func() error) error {
+	return RetryDeadlock(transaction)
+}
+
+// RetryDeadlock reruns a write that MySQL rolled back as a deadlock victim
+// (error 1213), up to six attempts with 5–160ms backoff. Other errors return
+// immediately.
+func RetryDeadlock(transaction func() error) error {
 	var err error
 	for attempt := 0; attempt < 6; attempt++ {
 		err = transaction()
