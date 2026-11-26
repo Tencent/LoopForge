@@ -70,7 +70,7 @@ test('requirement composer: create, find and dispatch a requirement from its dra
   const runHeader = page.locator('.run-detail-header');
   await expect(runHeader.getByRole('heading', { level: 2 })).toHaveText(title);
   const runInfo = runHeader.locator('.run-info');
-  await runInfo.locator('summary').click();
+  await runInfo.locator(':scope > summary').click();
   await expect(runInfo.locator('.run-header-copy')).toHaveText(description);
   await runInfo.getByText('展开全文', { exact: true }).click();
   await expect(runInfo.getByText('收起全文', { exact: true })).toBeVisible();
