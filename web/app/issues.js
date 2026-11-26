@@ -184,7 +184,7 @@ function issueKanbanCard(i){
   const cardTone=needsConfirm?' needs-confirm':(isFailed?' needs-attention':'');
   return `<article class="kanban-card${cardTone}" draggable="true" data-id="${escapeHTML(i.id)}">
     <div class="kanban-card-top"><b>${escapeHTML(key)}</b>${issueSelectionCheckbox(i)}</div>
-    <h4 title="${escapeHTML(i.title)}">${issueTitleMarkup(i.title)}</h4>
+    <h4 title="${escapeHTML(i.title)}" data-i18n-data>${issueTitleMarkup(i.title)}</h4>
     <div class="kanban-card-meta">
       ${issuePriorityMarkup(i.priority)}
       <span class="kanban-stage ${stage.key}" title="${escapeHTML(stage.hint||'')}">${issueStageBadge(stage)}</span>

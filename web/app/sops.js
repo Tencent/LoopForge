@@ -473,11 +473,8 @@ async function adoptGenericTemplate(){
   const button=$('#confirmGenericTemplate');button.disabled=true;button.textContent='复制中…';
   try{
     const copied=await api(`/api/workflows/${encodeURIComponent(src.id)}/clone`,{method:'POST',body:JSON.stringify({id:uid('sop'),name:src.name.replace(/^通用/,''),owner:src.owner||'',projectId:state.projectFilter})});
-    state.data.workflows.unshift(copied);
+    await reloadCatalogAfterAdoption(copied);
     state.workflow=clone(copied);state.selectedNode=null;state.sopScope='project';markWorkflowClean();
-    // The clone endpoint also copies the template roles into the project; the
-    // canvas resolves node roles from this list, so refresh it before drawing.
-    try{const agents=await api('/api/agents',{silent:true});if(Array.isArray(agents))state.data.agents=agents}catch{}
     $('#genericTemplateModal').classList.remove('open');
     renderAll();switchView('flow');
     const missing=genericRequirementRows(copied).filter(r=>!r.ok);

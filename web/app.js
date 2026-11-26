@@ -1595,6 +1595,20 @@ function openIssueInChat(issue){
 function reloadShellProjects(){
   return api('/api/bootstrap',{silent:true}).then(shell=>{Object.assign(state.data,shell);renderAll();return state.data.projects||[]});
 }
+// Adopting a built-in template copies its roles, rules, skills and default MCPs
+// into the project on the server. Reload the catalog lists the designer and the
+// role editor read from: otherwise every node of the new SOP shows an
+// unavailable role, and saving one of the new roles drops the project rules it
+// cannot see. The adopted SOP is kept even if the reload fails.
+async function reloadCatalogAfterAdoption(adopted){
+  try{
+    const shell=await api('/api/bootstrap',{silent:true});
+    for(const key of ['workflows','agents','rules','skills','mcpServers'])if(Array.isArray(shell?.[key]))state.data[key]=shell[key];
+  }catch{}
+  const workflows=state.data.workflows||(state.data.workflows=[]);
+  const index=workflows.findIndex(w=>w.id===adopted?.id);
+  if(index>=0)workflows[index]=adopted;else if(adopted?.id)workflows.unshift(adopted);
+}
 function mountNativeChat(){
   const frame=$('#chatNextFrame');
   if(!frame)return;
