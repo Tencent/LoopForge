@@ -927,7 +927,11 @@ func (e *Engine) RefreshRunSOP(runID string) error {
 			continue
 		}
 		if len(nr.GateResult.Route) > 0 {
-			if conditionalSources[node.ID] {
+			// A submitted value refers to the graph that was frozen when it was
+			// produced. Either graph carrying conditions means the swap could keep
+			// a stale intent or silently select a branch in the new one, so both
+			// sides are checked here.
+			if conditionalSources[node.ID] || latestConditionalSources[node.ID] {
 				return fmt.Errorf("节点 %s 存在待处理的路由决策，不能刷新 SOP；请先审批原 SOP 或重新开始运行", node.ID)
 			}
 			continue
