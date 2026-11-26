@@ -204,3 +204,28 @@ func TestSplitSOPVersionsByAssetHistoryHandlesMultipleEditsRollbackAndReadOnly(t
 		}
 	}
 }
+
+func TestComputeRunHeuristicScoreContinuousDistinction(t *testing.T) {
+	mk := func(status string, tokens int64, tools int, durSec int64, rework int) domain.Run {
+		return domain.Run{
+			ID:        "r",
+			Status:    status,
+			Usage:     domain.TokenUsage{TotalTokens: tokens},
+			ToolCalls: tools,
+			Timing:    &domain.RunTiming{ExecutionMs: durSec * 1000},
+			Nodes:     map[string]*domain.NodeRun{"n1": {Status: status, ReworkCount: rework, Attempt: 1 + rework}},
+		}
+	}
+
+	heavy := ComputeRunHeuristicScore(mk("succeeded", 312_000, 9, 120, 0))
+	midHigh := ComputeRunHeuristicScore(mk("succeeded", 160_000, 4, 70, 0))
+	midLow := ComputeRunHeuristicScore(mk("succeeded", 140_000, 3, 45, 0))
+	lean := ComputeRunHeuristicScore(mk("succeeded", 35_000, 2, 15, 0))
+	reworked := ComputeRunHeuristicScore(mk("succeeded", 140_000, 3, 45, 1))
+	failed := ComputeRunHeuristicScore(mk("failed", 120_000, 3, 45, 0))
+
+	if !(failed < reworked && reworked < heavy && heavy < midHigh && midHigh < midLow && midLow < lean && lean <= 100) {
+		t.Fatalf("expected strictly ordered continuous scores, got failed=%d reworked=%d heavy=%d midHigh=%d midLow=%d lean=%d",
+			failed, reworked, heavy, midHigh, midLow, lean)
+	}
+}

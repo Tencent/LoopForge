@@ -270,21 +270,28 @@ func FormatSOPVersion(v int) string {
 	return fmt.Sprintf("v%d", v)
 }
 
-// ComputeRunHeuristicScore produces a transparent 0-100 score for a terminal run
-// when no RunEvalRecord exists:
-//   - Outcome (45): clean=45, reworked=28, failed=8
-//   - Step efficiency (20): minus 5 per rework/retry
-//   - Tool reliability (15): minus 4 per failed tool call
-//   - Tool economy (10): <=12->10, <=24->8, <=40->5, else 2
-//   - Token economy (10): unknown->7, <=50k->10, <=120k->8, <=250k->5, else 2
+// ComputeRunHeuristicScore produces a transparent, continuous 0-100 score for a
+// terminal run when no RunEvalRecord exists:
+//   - Outcome & reliability (65):
+//   - Outcome (40): clean=40, reworked=24, failed=6
+//   - Step efficiency (15): minus 5 per rework/retry
+//   - Tool reliability (10): minus 3 per failed tool call
+//   - Continuous efficiency (35): smooth rational decay (max / (1 + (v / half)^1.2))
+//   - Token economy (15): half-point 120k tokens (unknown -> 10.5)
+//   - Tool economy (10): half-point 10 tool calls (0 -> 10.0)
+//   - Duration economy (10): half-point 60s execution time (unknown -> 7.0)
 func ComputeRunHeuristicScore(run domain.Run) int {
+	return int(math.Round(computeRunHeuristicScoreFloat(run)))
+}
+
+func computeRunHeuristicScoreFloat(run domain.Run) float64 {
 	rs := RunScore(run)
-	score := 8
+	score := 6.0
 	switch rs {
 	case 2:
-		score = 45
+		score = 40.0
 	case 1:
-		score = 28
+		score = 24.0
 	}
 
 	repeats := 0
@@ -293,7 +300,7 @@ func ComputeRunHeuristicScore(run domain.Run) int {
 			repeats += nr.ReworkCount + max(0, nr.Attempt-1)
 		}
 	}
-	score += max(0, 20-repeats*5)
+	score += float64(max(0, 15-repeats*5))
 
 	toolFails := 0
 	for _, ev := range run.Telemetry {
@@ -301,32 +308,24 @@ func ComputeRunHeuristicScore(run domain.Run) int {
 			toolFails++
 		}
 	}
-	score += max(0, 15-toolFails*4)
+	score += float64(max(0, 10-toolFails*3))
 
-	tools := RunToolCalls(run)
-	switch {
-	case tools <= 12:
-		score += 10
-	case tools <= 24:
-		score += 8
-	case tools <= 40:
-		score += 5
-	default:
-		score += 2
+	if tokens := RunTokens(run); tokens <= 0 {
+		score += 10.5
+	} else {
+		score += smoothDecayScore(15.0, float64(tokens), 120_000.0)
 	}
 
-	tokens := RunTokens(run)
-	switch {
-	case tokens <= 0:
-		score += 7
-	case tokens <= 50_000:
-		score += 10
-	case tokens <= 120_000:
-		score += 8
-	case tokens <= 250_000:
-		score += 5
-	default:
-		score += 2
+	if tools := RunToolCalls(run); tools <= 0 {
+		score += 10.0
+	} else {
+		score += smoothDecayScore(10.0, float64(tools), 10.0)
+	}
+
+	if durMs := RunDurationMs(run); durMs <= 0 {
+		score += 7.0
+	} else {
+		score += smoothDecayScore(10.0, float64(durMs)/1000.0, 60.0)
 	}
 
 	if score < 0 {
@@ -338,13 +337,20 @@ func ComputeRunHeuristicScore(run domain.Run) int {
 	return score
 }
 
+func smoothDecayScore(maxPts, value, halfPoint float64) float64 {
+	if value <= 0 || halfPoint <= 0 {
+		return maxPts
+	}
+	return maxPts / (1.0 + math.Pow(value/halfPoint, 1.2))
+}
+
 // SummarizeSOPRuns computes core execution metrics and weighted SOP score over terminal runs.
 func SummarizeSOPRuns(runs []domain.Run, evals map[string]domain.RunEvalRecord) domain.EvoSOPMetrics {
 	var m domain.EvoSOPMetrics
 	var totalDurMs int64
 	var durRuns int
 	var evalSum, evalCount int
-	var heurSum int
+	var heurSum float64
 
 	for _, run := range runs {
 		rs := RunScore(run)
@@ -367,7 +373,7 @@ func SummarizeSOPRuns(runs []domain.Run, evals map[string]domain.RunEvalRecord) 
 				evalCount++
 			}
 		}
-		heurSum += ComputeRunHeuristicScore(run)
+		heurSum += computeRunHeuristicScoreFloat(run)
 	}
 	if m.Runs == 0 {
 		return m
@@ -386,7 +392,7 @@ func SummarizeSOPRuns(runs []domain.Run, evals map[string]domain.RunEvalRecord) 
 		m.ScoredRuns = evalCount
 		m.ScoreSource = "eval"
 	} else {
-		s := int(math.Round(float64(heurSum) / float64(m.Runs)))
+		s := int(math.Round(heurSum / float64(m.Runs)))
 		m.Score = &s
 		m.ScoredRuns = m.Runs
 		m.ScoreSource = "heuristic"

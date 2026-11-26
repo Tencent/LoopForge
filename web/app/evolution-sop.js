@@ -710,7 +710,7 @@ function evoSOPCalloutHTML(d) {
 function evoSOPMetricsGridHTML(cur, prev, primaryPref = '') {
   const runs = cur.runs || 0;
   const scoreNote = runs > 0
-    ? (cur.scoreSource === 'eval' ? `近 ${cur.scoredRuns || runs} 次运行评测均分` : `综合一次成功、返工与工具效率加权（0–100）`)
+    ? (cur.scoreSource === 'eval' ? `近 ${cur.scoredRuns || runs} 次运行评测均分` : `结果稳定性 65 分 + Token/工具/耗时连续效率 35 分`)
     : '完成至少 1 次运行后自动计算';
   const cards = [
     {
@@ -789,7 +789,7 @@ function evoSOPTrendTabHTML(view, d) {
     <details class="evo-sop-method">
       <summary>指标与 SOP 评分是怎么算出来的？</summary>
       <ul>
-        <li><b>SOP 评分（0–100）</b>：当运行存在自动评测结果（RunEval）时，直接取该批次评测均分；暂无评测时按透明规则加权：一次成功占 45 分、无返工/重复步骤占 20 分、工具无失败占 15 分、工具调用精简占 10 分、Token 消耗精简占 10 分。</li>
+        <li><b>SOP 评分（0–100）</b>：当运行存在自动评测结果（RunEval）时，直接取该批次评测均分；暂无评测时按连续公式加权：结果与稳定性占 65 分（一次成功 40 分、无返工重试 15 分、工具无报错 10 分），资源效率占 35 分（Token 消耗 15 分、工具调用 10 分、执行耗时 10 分，按平滑曲线连续计分，避免同档位同分）。</li>
         <li><b>核心指标口径</b>：所有统计仅包含非回放的终态业务运行；每个正式版本取该版本最近一轮（最多 N 次）运行的均值，灰度数据则按同一时间窗内的旧版对照组与候选版分流运行分别汇总。</li>
       </ul>
     </details>
