@@ -164,10 +164,12 @@ func DropSOPDeliverablesFromIndex(ctx context.Context, w string) {
 	}
 }
 
-// CommitStaged commits the index when it differs from HEAD.
+// CommitStaged commits staged changes or completes an in-progress merge.
 func CommitStaged(ctx context.Context, w, msg string) error {
 	if _, err := C(ctx, w, "diff", "--cached", "--quiet"); err == nil {
-		return nil
+		if _, err := C(ctx, w, "rev-parse", "--verify", "MERGE_HEAD"); err != nil {
+			return nil
+		}
 	}
 	_, err := C(ctx, w, "commit", "-m", msg, "--quiet")
 	return err
