@@ -89,6 +89,11 @@ func parseField(raw string, min, max int) (uint64, error) {
 					return 0, fmt.Errorf("不是数字")
 				}
 				start, end = n, n
+				if strings.Contains(part, "/") {
+					// A start/step field continues through the field's upper
+					// bound; a bare start still selects just that value.
+					end = max
+				}
 			} else if len(bounds) == 2 {
 				a, err1 := strconv.Atoi(bounds[0])
 				b, err2 := strconv.Atoi(bounds[1])
