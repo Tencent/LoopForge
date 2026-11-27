@@ -96,7 +96,7 @@ func TestAntigravityCatalogFollowsCredentialSource(t *testing.T) {
 	user := domain.User{AgentCLICredentials: map[string]domain.AgentCLICredential{
 		"agy": {APIKey: "fixture-key", Protocol: domain.AgentCLIProtocolGemini},
 	}}
-	builtin, _ := assistantEngineModels(ctx, user, nil)
+	builtin, _ := assistantEngineModels(ctx, user, nil, nil)
 	for id, efforts := range map[string][]string{
 		"gemini-4-neon-high":     {"low", "medium", "high", "xhigh"},
 		"gemini-4-carbon-medium": {"low", "medium", "high"},
@@ -129,13 +129,13 @@ func TestAntigravityCatalogFollowsCredentialSource(t *testing.T) {
 	cred := user.AgentCLICredentials["agy"]
 	cred.BaseURL = service.URL
 	user.AgentCLICredentials["agy"] = cred
-	custom, _ := assistantEngineModels(ctx, user, nil)
+	custom, _ := assistantEngineModels(ctx, user, nil, nil)
 	if len(custom) != 1 || custom[0].ID != "agy:gemini-gateway" {
 		t.Fatalf("custom endpoint models = %+v", custom)
 	}
 	cred.Protocol = domain.AgentCLIProtocolChat
 	user.AgentCLICredentials["agy"] = cred
-	if fallback, _ := assistantEngineModels(ctx, user, nil); len(fallback) != 0 {
+	if fallback, _ := assistantEngineModels(ctx, user, nil, nil); len(fallback) != 0 {
 		t.Fatalf("an unavailable gateway offered native models: %+v", fallback)
 	}
 }

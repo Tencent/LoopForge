@@ -507,11 +507,12 @@ func (h issuesHandlers) clarifyModels(c *gin.Context, issue domain.Issue) {
 	}
 	ctx := c.Request.Context()
 	catalog := personalCodeBuddyCatalog(ctx, user)
-	catalog.Engines = assistantEngineOptions(user, false)
+	sharedModels := assistantSharedEngineModels(h.repo, user)
+	catalog.Engines = assistantEngineOptions(user, sharedModels)
 	if user.AssistantDefaults != (domain.AssistantDefaults{}) {
 		catalog.Preferences = &user.AssistantDefaults
 	}
-	models, _ := assistantEngineModels(ctx, user, nil)
+	models, _ := assistantEngineModels(ctx, user, nil, sharedModels)
 	catalog.Models = append(selectableCodeBuddyModels(catalog.Models), models...)
 	c.Header("Cache-Control", "private, no-store")
 	c.JSON(http.StatusOK, catalog)

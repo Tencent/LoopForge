@@ -54,7 +54,7 @@ func TestModelEffortsSurviveProbeSaveAndSelection(t *testing.T) {
 		t.Fatal(err)
 	}
 	owner, _ = h.repo.User(owner.ID)
-	models, _ := assistantEngineModels(context.Background(), owner, nil)
+	models, _ := assistantEngineModels(context.Background(), owner, nil, nil)
 	for id, efforts := range map[string][]string{
 		"codex:gateway-reasoner": {"low", "xhigh"},
 		"codex:gpt-5.5":          {"low", "medium", "high", "xhigh"},
@@ -150,7 +150,7 @@ func TestAutomaticDiscoveryUsesSameEffortsForColdValidation(t *testing.T) {
 	user := domain.User{CodexAPIKey: "fixture-key", CodexBaseURL: gateway.URL}
 	key := assistantDiscoveryKey("", user.CodexAPIKey, user.CodexBaseURL)
 	t.Cleanup(func() { assistantDiscoveryCache.Delete(key) })
-	catalog, _ := assistantEngineModels(ctx, user, nil)
+	catalog, _ := assistantEngineModels(ctx, user, nil, nil)
 	if !slices.ContainsFunc(catalog, func(model assistantModel) bool {
 		return model.ID == "codex:remote" && slices.Equal(model.Efforts, []string{"xhigh"})
 	}) {
@@ -184,7 +184,7 @@ func TestKimiThinkingSwitchSurvivesSavedCatalog(t *testing.T) {
 		t.Fatal(err)
 	}
 	owner, _ = h.repo.User(owner.ID)
-	chat, _ := assistantEngineModels(context.Background(), owner, nil)
+	chat, _ := assistantEngineModels(context.Background(), owner, nil, nil)
 	if !slices.ContainsFunc(chat, func(model assistantModel) bool {
 		return model.ID == "kimi:kimi-for-coding-highspeed" && slices.Equal(model.Efforts, levels)
 	}) {
@@ -198,7 +198,7 @@ func TestKimiThinkingSwitchSurvivesSavedCatalog(t *testing.T) {
 		t.Fatal(err)
 	}
 	owner, _ = h.repo.User(owner.ID)
-	chat, _ = assistantEngineModels(context.Background(), owner, nil)
+	chat, _ = assistantEngineModels(context.Background(), owner, nil, nil)
 	if !slices.ContainsFunc(chat, func(model assistantModel) bool {
 		return model.ID == "kimi:kimi-for-coding-highspeed" && len(model.Efforts) == 0
 	}) {

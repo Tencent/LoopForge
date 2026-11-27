@@ -85,9 +85,15 @@ type RunCredentials struct {
 }
 
 type ProviderCredential struct {
-	APIKey   string
-	BaseURL  string
-	Protocol string
+	APIKey  string
+	BaseURL string
+	// Sponsored is set when the responsible user has no key of their own and
+	// the platform's shared key for this CLI is used; such runs are limited
+	// to SponsoredModels (the default first). A sponsored credential always
+	// comes from the platform, never from a runner login.
+	Sponsored       bool
+	SponsoredModels []string
+	Protocol        string
 	// Models is the user's saved model catalog for an agent CLI; Cursor
 	// resolves folded families from it (CursorModelID).
 	Models []domain.CLIModel

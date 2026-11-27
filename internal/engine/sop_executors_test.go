@@ -90,8 +90,8 @@ func TestGenericSOPCopyUsesPersonalDefaultForUnpinnedRoles(t *testing.T) {
 
 func TestGenericSOPExecutorPrefersRunnerLoginOverSharedKey(t *testing.T) {
 	access := sopExecutorAccess{
-		usesRunner:      true,
-		sharedCodeBuddy: true,
+		usesRunner: true,
+		shared:     map[string]bool{"codebuddy": true},
 		runner: domain.Runner{Runtimes: []domain.RunnerRuntime{
 			{Provider: "codebuddy", AuthMode: domain.RuntimeAuthPersonal, Status: domain.RuntimeStatusOnline},
 			{Provider: "codex", AuthMode: domain.RuntimeAuthLocal, Status: domain.RuntimeStatusOnline},

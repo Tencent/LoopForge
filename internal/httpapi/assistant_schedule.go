@@ -347,7 +347,7 @@ func scheduledAssistantDefault(r *repo.Store, user domain.User, projectID, model
 	if preferred := personalDefaultModel(user); preferred != "" {
 		return preferred
 	}
-	for _, option := range assistantEngineOptions(user, false) {
+	for _, option := range assistantEngineOptions(user, nil) {
 		if !scheduleHasPersonalCredential(r, user, projectID, option.ID) {
 			continue
 		}

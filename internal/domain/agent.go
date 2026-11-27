@@ -34,6 +34,34 @@ func IsAgentCLIKind(kind string) bool {
 	})
 }
 
+// Shared model credential engines: the CLIs whose API Key a platform
+// administrator may share with members who configured none of their own
+// (平台管理 → 共享模型 Key). The agent CLIs above are excluded because their
+// model configuration lives in a private HOME that only personal credentials
+// fill. The order is the switch order on that page.
+const (
+	SharedModelProviderCodeBuddy = "codebuddy"
+	SharedModelProviderCodex     = "codex"
+	SharedModelProviderClaude    = "claude-code"
+)
+
+var SharedModelProviders = []string{SharedModelProviderCodeBuddy, SharedModelProviderCodex, SharedModelProviderClaude}
+
+// NormalizeSharedModelProvider accepts the shared-credential engine names,
+// including the "claude" alias older personal settings used, and returns the
+// canonical one.
+func NormalizeSharedModelProvider(raw string) (string, bool) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "", SharedModelProviderCodeBuddy:
+		return SharedModelProviderCodeBuddy, true
+	case SharedModelProviderCodex:
+		return SharedModelProviderCodex, true
+	case "claude", SharedModelProviderClaude:
+		return SharedModelProviderClaude, true
+	}
+	return "", false
+}
+
 // ValidateAgentEffort checks a role's reasoning-effort choice against the
 // levels published for the resolved executor kind.
 func ValidateAgentEffort(effort, executorKind string) error {

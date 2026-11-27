@@ -124,11 +124,11 @@ func TestSponsoredExecutorKeepsAllowedRoleModel(t *testing.T) {
 	e := New(st, runtime.NewManager(t.TempDir()))
 	var observed []domain.TelemetryEvent
 	sink := func(event domain.TelemetryEvent) { observed = append(observed, event) }
-	got := e.sponsoredExecutor("missing-run", domain.ExecutorDefinition{Kind: "codebuddy", Model: "kimi-k2.6"}, []string{"glm-5.1", "kimi-k2.6"}, sink)
+	got := e.sponsoredExecutor("missing-run", domain.ExecutorDefinition{Kind: "codebuddy", Model: "kimi-k2.6"}, domain.SharedModelProviderCodeBuddy, []string{"glm-5.1", "kimi-k2.6"}, sink)
 	if got.Model != "kimi-k2.6" || len(observed) != 1 || strings.Contains(observed[0].Message, "不生效") {
 		t.Fatalf("allowed role model = %+v, notice %+v", got, observed)
 	}
-	got = e.sponsoredExecutor("missing-run", domain.ExecutorDefinition{Kind: "codebuddy"}, []string{"glm-5.1", "kimi-k2.6"}, sink)
+	got = e.sponsoredExecutor("missing-run", domain.ExecutorDefinition{Kind: "codebuddy"}, domain.SharedModelProviderCodeBuddy, []string{"glm-5.1", "kimi-k2.6"}, sink)
 	if got.Model != "glm-5.1" {
 		t.Fatalf("role without a model uses the shared default, got %+v", got)
 	}
@@ -156,7 +156,7 @@ func TestSponsoredExecutorPinsModelAndExplains(t *testing.T) {
 	var observed []domain.TelemetryEvent
 	sink := func(event domain.TelemetryEvent) { observed = append(observed, event) }
 	for range 2 {
-		got := e.sponsoredExecutor(run.ID, domain.ExecutorDefinition{ID: "codebuddy", Kind: "codebuddy", Model: "claude-opus-5", Effort: "high"}, []string{repo.SponsoredCodeBuddyModel}, sink)
+		got := e.sponsoredExecutor(run.ID, domain.ExecutorDefinition{ID: "codebuddy", Kind: "codebuddy", Model: "claude-opus-5", Effort: "high"}, domain.SharedModelProviderCodeBuddy, []string{repo.SponsoredCodeBuddyModel}, sink)
 		if got.Model != repo.SponsoredCodeBuddyModel || got.Effort != "high" || got.Kind != "codebuddy" {
 			t.Fatalf("executor = %+v", got)
 		}
@@ -173,5 +173,114 @@ func TestSponsoredExecutorPinsModelAndExplains(t *testing.T) {
 	}
 	if notes != 1 {
 		t.Fatalf("run notes = %d, events %+v", notes, current.Events)
+	}
+}
+
+// A user without a Codex or Claude Code key of their own runs on the shared
+// key of that CLI, marked sponsored so the node is limited to its models.
+func TestResolveProviderCredentialFallsBackToTheSharedKey(t *testing.T) {
+	s, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.Close() })
+	t.Setenv(repo.CodeBuddySponsorLoginEnv, "")
+	for _, user := range []domain.User{
+		{ID: 31, LoginName: "owner", CodexAPIKey: "sk_own", ClaudeCodeAPIKey: "sk_own_claude"},
+		{ID: 32, LoginName: "newcomer"},
+	} {
+		if err := s.PutUser(user); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, update := range []repo.PlatformModelKeyUpdate{
+		{Provider: domain.SharedModelProviderCodex, APIKey: "sk_codex", BaseURL: "https://gateway.example.com/v1", Models: []string{"gpt-6.1-terra", "gpt-6.1-sol"}},
+		{Provider: domain.SharedModelProviderClaude, APIKey: "sk_claude", Models: []string{"claude-opus-5"}},
+	} {
+		if err := s.SetPlatformModelKey(update, 31); err != nil {
+			t.Fatal(err)
+		}
+	}
+	codex := resolveProviderCredential(s, 32, domain.SharedModelProviderCodex, runtime.ProviderCredential{})
+	if codex.APIKey != "sk_codex" || codex.BaseURL != "https://gateway.example.com/v1" || !codex.Sponsored || strings.Join(codex.SponsoredModels, ",") != "gpt-6.1-terra,gpt-6.1-sol" {
+		t.Fatalf("shared codex credential = %+v", codex)
+	}
+	claude := resolveProviderCredential(s, 32, domain.SharedModelProviderClaude, runtime.ProviderCredential{})
+	if claude.APIKey != "sk_claude" || claude.BaseURL != "" || !claude.Sponsored || len(claude.SponsoredModels) != 1 {
+		t.Fatalf("shared claude credential = %+v", claude)
+	}
+	if own := resolveProviderCredential(s, 31, domain.SharedModelProviderCodex, runtime.ProviderCredential{APIKey: "sk_own"}); own.Sponsored || own.APIKey != "sk_own" {
+		t.Fatalf("a personal key wins, got %+v", own)
+	}
+	if missing := resolveProviderCredential(s, 999, domain.SharedModelProviderCodex, runtime.ProviderCredential{}); missing.APIKey != "" || missing.Sponsored {
+		t.Fatalf("unknown user must not borrow, got %+v", missing)
+	}
+	if none := resolveProviderCredential(s, 32, "kimi", runtime.ProviderCredential{}); none.APIKey != "" {
+		t.Fatalf("agent CLIs have no shared credential, got %+v", none)
+	}
+}
+
+// A Codex or Claude Code node on the shared key runs an allowed model and says
+// why the role's model did not apply.
+func TestSponsoredExecutorPinsModelsForEverySharedCLI(t *testing.T) {
+	st, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	e := New(st, runtime.NewManager(t.TempDir()))
+	var observed []domain.TelemetryEvent
+	sink := func(event domain.TelemetryEvent) { observed = append(observed, event) }
+	got := e.sponsoredExecutor("missing-run", domain.ExecutorDefinition{Kind: "codex", Model: "gpt-5.5"}, domain.SharedModelProviderCodex, []string{"gpt-6.1-terra", "gpt-6.1-sol"}, sink)
+	if got.Model != "gpt-6.1-terra" || !strings.Contains(observed[0].Message, "个人 Codex API Key") || !strings.Contains(observed[0].Message, "gpt-5.5") || !strings.Contains(observed[0].Message, "不生效") {
+		t.Fatalf("codex executor = %+v, notice %+v", got, observed)
+	}
+	observed = nil
+	got = e.sponsoredExecutor("missing-run", domain.ExecutorDefinition{Kind: "claude-code", Model: "claude-opus-5"}, domain.SharedModelProviderClaude, []string{"claude-opus-5", "claude-haiku-5-5"}, sink)
+	if got.Model != "claude-opus-5" || !strings.Contains(observed[0].Message, "Claude Code") || strings.Contains(observed[0].Message, "不生效") {
+		t.Fatalf("claude executor = %+v, notice %+v", got, observed)
+	}
+
+	// The snapshot decides: a personal or runner-login credential is kept.
+	sponsored := runtime.RunCredentials{Codex: runtime.ProviderCredential{APIKey: "sk", Sponsored: true, SponsoredModels: []string{"gpt-6.1-sol"}}}
+	if ex := e.applySponsoredExecutor("missing-run", domain.ExecutorDefinition{Kind: "codex", Model: "gpt-5.5"}, sponsored, sink); ex.Model != "gpt-6.1-sol" {
+		t.Fatalf("sponsored snapshot must pin the model, got %+v", ex)
+	}
+	if ex := e.applySponsoredExecutor("missing-run", domain.ExecutorDefinition{Kind: "codex", Model: "gpt-5.5"}, runtime.RunCredentials{}, sink); ex.Model != "gpt-5.5" {
+		t.Fatalf("an own credential keeps the role model, got %+v", ex)
+	}
+}
+
+// A LOOP node can be scheduled onto a CLI the platform lends a key for.
+func TestSharedKeyCountsAsExecutorCredential(t *testing.T) {
+	st, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	t.Setenv(repo.CodeBuddySponsorLoginEnv, "")
+	for _, user := range []domain.User{
+		{ID: 41, LoginName: "owner"},
+		{ID: 42, LoginName: "newcomer"},
+	} {
+		if err := st.PutUser(user); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := st.SetPlatformModelKey(repo.PlatformModelKeyUpdate{
+		Provider: domain.SharedModelProviderCodex, APIKey: "sk_codex",
+		BaseURL: "https://gateway.example.com/v1", Models: []string{"gpt-6.1-terra"},
+	}, 41); err != nil {
+		t.Fatal(err)
+	}
+	access := newSOPExecutorAccess(st, domain.TelemetryContext{ResponsibleUserID: 42})
+	if !access.hasCredential(domain.SharedModelProviderCodex) {
+		t.Fatal("a shared Codex key must count as a credential")
+	}
+	if access.hasCredential(domain.SharedModelProviderClaude) {
+		t.Fatal("a CLI without a shared key must stay unconfigured")
+	}
+	if got := access.defaults().Executor; got != domain.SharedModelProviderCodex {
+		t.Fatalf("default executor = %q, want codex", got)
 	}
 }

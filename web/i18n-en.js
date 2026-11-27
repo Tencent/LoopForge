@@ -1095,3 +1095,10 @@ Object.assign(window.LF_I18N_EN, {
   "在对话里澄清和改代码": "Clarify and change code in chat",
   "这条需求不使用 LOOP，在对话里澄清需求、直接改代码；定时任务不会自动认领它。": "This requirement uses no LOOP: clarify and change code in chat; scheduled jobs won't pick it up.",
 });
+Object.assign(window.LF_I18N_EN, {
+  "共享模型 Key": "Shared model keys",
+  "成员没配自己的 API Key 时，对话和 LOOP 会用这里对应 CLI 的共享 Key，并且只能用下面勾选的模型。成员配了自己的 Key 就用自己的，不受限制。": "Members without their own API key chat and run LOOPs on the shared key of the matching CLI, limited to the models checked below. Members with their own key keep using it without limits.",
+  "获取可用模型": "Fetch models",
+  "还没有读到模型，可以点「获取可用模型」或直接填模型 ID。": "No models read yet; fetch them or type model IDs below.",
+  "共享 Key 对应的 CLI": "CLI of the shared key",
+});

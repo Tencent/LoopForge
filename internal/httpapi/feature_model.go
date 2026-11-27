@@ -53,7 +53,7 @@ func resolveFeatureModel(user domain.User, requested string) (string, error) {
 		if preferred := personalDefaultModel(user); preferred != "" {
 			return preferred, nil
 		}
-		for _, option := range assistantEngineOptions(user, false) {
+		for _, option := range assistantEngineOptions(user, nil) {
 			if option.Configured {
 				return featureDefaultModel(user, option.ID), nil
 			}

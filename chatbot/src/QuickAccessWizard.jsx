@@ -695,6 +695,7 @@ export default function QuickAccessWizard({
   projectId = "",
   sponsoredModel = "",
   sponsoredModels = [],
+  sharedEngines = {},
   onClose,
   onCompleted,
   onCredentialsSaved,
@@ -1103,7 +1104,12 @@ export default function QuickAccessWizard({
   const selectedRepo = (bindRepoNow && parsedRepo) || parseSavedRepo(defaultRepo, gongfengHost);
   const repoAccess = gitAccess(selectedRepo);
   const readyCLIs = EXECUTORS.filter(cli => personalEngineConfigured(storedUser, cli.id));
-  const cliReady = readyCLIs.length > 0 || Boolean(sponsoredModel);
+  // CLIs the platform lends a key for, so a member without their own can run.
+  const sharedCLIs = EXECUTORS.filter(cli => (sharedEngines?.[cli.id] || []).length > 0);
+  const sharedCLIText = sponsoredModel
+    ? `平台共享模型（${sharedModelNames(sponsoredModels, sponsoredModel)}）`
+    : sharedCLIs.length ? `平台共享 ${sharedCLIs.map(cli => cli.label).join("、")} 凭据` : "";
+  const cliReady = readyCLIs.length > 0 || Boolean(sharedCLIText);
   const nodes =
     activeWorkflow?.nodes?.filter((node) => node.type === "agent") ||
     FALLBACK_NODES;
@@ -1559,13 +1565,12 @@ export default function QuickAccessWizard({
                               : "未配置，克隆/推送私有仓库前可在个人配置补齐"}
                           </span>
                         </li>
-                        <li className={completedSummary?.cliNames?.length || sponsoredModel ? "is-ok" : "is-warn"}>
+                        <li className={completedSummary?.cliNames?.length || cliReady ? "is-ok" : "is-warn"}>
                           <HarnessIcon name={completedSummary?.cliNames?.length ? "check" : "info"} size={14} />
                           <span>
                             模型 CLI · {completedSummary?.cliNames?.join("、") ||
-                              (sponsoredModel
-                                ? `平台共享模型（${sharedModelNames(sponsoredModels, sponsoredModel)}）`
-                                : "可在个人配置或执行机器设置中准备")}
+                              sharedCLIText ||
+                              "可在个人配置或执行机器设置中准备"}
                           </span>
                         </li>
                         <li className="is-ok">
@@ -1662,8 +1667,8 @@ export default function QuickAccessWizard({
                       <p className="qa-lede">
                         {hasGit || readyCLIs.length
                           ? "可以继续选择项目和仓库，也可以先补齐下面的配置。"
-                          : sponsoredModel
-                            ? "平台共享模型可用，可直接继续。需要操作私有仓库时，可以在这里添加 Git 凭据。"
+                          : cliReady
+                            ? `${sharedCLIText}可用，可直接继续。需要操作私有仓库时，可以在这里添加 Git 凭据。`
                             : "配置任意一项即可继续。下一步选择项目和仓库。"}
                       </p>
                     ) : null}
@@ -1719,7 +1724,7 @@ export default function QuickAccessWizard({
                         <header className="qa-cred-head">
                           <div>
                             <strong id="qa-executors-title">执行器</strong>
-                            <span>{readyCLIs.length ? readyCLIs.map(cli => cli.label).join("、") : sponsoredModel ? "可使用平台共享模型" : "尚未配置执行器"}</span>
+                            <span>{readyCLIs.length ? readyCLIs.map(cli => cli.label).join("、") : sharedCLIText || "尚未配置执行器"}</span>
                           </div>
                           <StatusPill ok={cliReady} />
                         </header>
@@ -2124,7 +2129,7 @@ export default function QuickAccessWizard({
                               <span>
                                 {repoAccess.label} {repoAccess.ready ? "已配置" : "未配置"} ·
                                 CLI · {readyCLIs.length ? readyCLIs.map(cli => cli.label).join("、") :
-                                  sponsoredModel ? "使用平台共享模型" : "未配置"}
+                                  sharedCLIText || "未配置"}
                               </span>
                             </dd>
                           </div>

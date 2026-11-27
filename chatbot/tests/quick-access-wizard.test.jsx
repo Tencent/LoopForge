@@ -329,8 +329,30 @@ describe("QuickAccessWizard", () => {
       />,
     );
     await screen.findByRole("dialog");
-    expect(screen.getByText(/平台共享模型可用，可直接继续/)).toBeVisible();
-    expect(screen.getByText("可使用平台共享模型")).toBeVisible();
+    expect(screen.getByText(/平台共享模型（m1）可用，可直接继续/)).toBeVisible();
+    expect(screen.getAllByText(/平台共享模型（m1）/).length).toBeGreaterThan(1);
+    await userAction.click(screen.getByRole("button", { name: "下一步" }));
+    expect(await screen.findByText("项目与仓库", { selector: "h3" })).toBeInTheDocument();
+    mockState.unconfigured = false;
+  });
+
+  test("a shared CLI key lets new users skip credentials too", async () => {
+    mockState.unconfigured = true;
+    const userAction = userEvent.setup();
+    render(
+      <QuickAccessWizard
+        open
+        user={{ id: 1, loginName: "tester", chineseName: "测试" }}
+        projects={[project]}
+        projectId="p1"
+        sharedEngines={{ codex: ["gpt-6.1-terra"] }}
+        onClose={vi.fn()}
+        onCompleted={vi.fn()}
+        onOpenView={vi.fn()}
+      />,
+    );
+    await screen.findByRole("dialog");
+    expect(screen.getByText(/平台共享 Codex 凭据可用，可直接继续/)).toBeVisible();
     await userAction.click(screen.getByRole("button", { name: "下一步" }));
     expect(await screen.findByText("项目与仓库", { selector: "h3" })).toBeInTheDocument();
     mockState.unconfigured = false;

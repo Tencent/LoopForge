@@ -58,6 +58,9 @@ type assistantEngineOption struct {
 	Configured bool   `json:"configured"`
 	Personal   bool   `json:"personal"`
 	Credential string `json:"credential"`
+	// Shared is set when the platform's shared key for this CLI stands in for
+	// a personal one.
+	Shared bool `json:"shared,omitempty"`
 	// Missing and installable are reported only for a cloud chat hosted by this platform.
 	ServerMissing     bool `json:"serverMissing,omitempty"`
 	ServerInstallable bool `json:"serverInstallable,omitempty"`
@@ -77,19 +80,22 @@ func assistantEngineCredentialField(engine string) string {
 }
 
 // assistantEngineOptions lists every CLI, configured or not, so the switch
-// also shows where to add a key. CodeBuddy counts as configured when the
-// platform sponsors chats without one.
-func assistantEngineOptions(user domain.User, sponsored bool) []assistantEngineOption {
+// also shows where to add a key. shared holds the CLIs whose key the platform
+// lends to this user (see assistantSharedEngineModels): such a CLI counts as
+// configured without a personal key.
+func assistantEngineOptions(user domain.User, shared map[string][]string) []assistantEngineOption {
 	engines := append([]string{assistantEngineCodeBuddy}, assistantCLIEngines()...)
 	out := make([]assistantEngineOption, 0, len(engines))
 	for _, engine := range engines {
 		key, _ := assistantEngineCredential(user, engine)
+		sponsored := key == "" && len(shared[engine]) > 0
 		out = append(out, assistantEngineOption{
 			ID:         engine,
 			Name:       assistantEngineLabel(engine),
-			Configured: key != "" || (engine == assistantEngineCodeBuddy && sponsored),
+			Configured: key != "" || len(shared[engine]) > 0,
 			Personal:   key != "",
 			Credential: assistantEngineCredentialField(engine),
+			Shared:     sponsored,
 		})
 	}
 	return out
@@ -256,7 +262,8 @@ func assistantEngineMissingKey(engine string) string {
 	return fmt.Sprintf("请先在个人配置中配置 %s API Key 后再使用 %s 模型", assistantEngineLabel(engine), assistantEngineLabel(engine))
 }
 
-// assistantTurnUser checks personal credentials or the chosen runner login.
+// assistantTurnUser checks personal credentials, the chosen runner login, or
+// the platform's shared key for the chosen CLI.
 func (h *assistantHandlers) assistantTurnUser(stored domain.User, model string, runnerLogin bool) (domain.User, string, string) {
 	engine, id := assistantModelEngine(model)
 	if engine != assistantEngineCodeBuddy {
@@ -266,10 +273,21 @@ func (h *assistantHandlers) assistantTurnUser(stored domain.User, model string, 
 		if !assistantValidEngineModel(id) {
 			return stored, "", "模型 ID 无效"
 		}
-		if key, _ := assistantEngineCredential(stored, engine); !runnerLogin && key == "" {
+		if runnerLogin {
+			return stored, engine + ":" + id, ""
+		}
+		user, shared, ok := h.assistantChatUserForEngine(stored, engine)
+		if !ok {
 			return stored, "", assistantEngineMissingKey(engine)
 		}
-		return stored, engine + ":" + id, ""
+		if len(shared) > 0 {
+			forced, allowed := assistantSponsoredModelFor(shared, id)
+			if !allowed {
+				return stored, "", errAssistantSponsoredModel(assistantEngineLabel(engine), shared)
+			}
+			return user, engine + ":" + forced, ""
+		}
+		return user, engine + ":" + id, ""
 	}
 	user, shared, ok := h.assistantChatUser(stored)
 	if !ok {
@@ -278,7 +296,7 @@ func (h *assistantHandlers) assistantTurnUser(stored domain.User, model string, 
 	if len(shared) > 0 {
 		forced, allowed := assistantSponsoredModelFor(shared, id)
 		if !allowed {
-			return stored, "", errAssistantSponsoredModel(shared)
+			return stored, "", errAssistantSponsoredModel(assistantEngineLabel(engine), shared)
 		}
 		model = forced
 	}
@@ -363,9 +381,22 @@ func assistantSavedModels(user domain.User, engine string) []assistantDiscovered
 	return listed
 }
 
-func assistantEngineModels(ctx context.Context, user domain.User, runnerLogin map[string]bool) (models []assistantModel, cursorModelsPending bool) {
+func assistantEngineModels(ctx context.Context, user domain.User, runnerLogin map[string]bool, shared map[string][]string) (models []assistantModel, cursorModelsPending bool) {
 	for _, engine := range assistantCLIEngines() {
 		key, baseURL := assistantEngineCredential(user, engine)
+		if key == "" && !runnerLogin[engine] && len(shared[engine]) > 0 {
+			// The platform's shared key stands in for this CLI: offer exactly
+			// the models its administrator allowed.
+			for _, id := range shared[engine] {
+				models = append(models, assistantModel{
+					ID:     engine + ":" + id,
+					Name:   id,
+					Family: assistantModelFamily(id, engine),
+					Engine: engine,
+				})
+			}
+			continue
+		}
 		listed := assistantSavedModels(user, engine)
 		if key == "" && !runnerLogin[engine] && len(listed) == 0 {
 			continue
@@ -729,6 +760,9 @@ func (h *assistantHandlers) assistantChatRequestModel(req assistantRequest, save
 		if preferred := personalDefaultModel(user); preferred != "" {
 			return preferred
 		}
+		if shared := h.assistantSharedDefaultModel(user); shared != "" {
+			return shared
+		}
 		if _, _, codeBuddyAvailable := h.assistantChatUser(user); !codeBuddyAvailable {
 			if model, err := resolveFeatureModel(user, ""); err == nil {
 				return model
@@ -736,6 +770,24 @@ func (h *assistantHandlers) assistantChatRequestModel(req assistantRequest, save
 		}
 	}
 	return assistantRequestModel(req.Executor, req.Model)
+}
+
+// assistantSharedDefaultModel is the model a new conversation starts on when
+// the caller configured no key of their own: the shared CodeBuddy default
+// first, then the default of another CLI the platform shares.
+func (h *assistantHandlers) assistantSharedDefaultModel(user domain.User) string {
+	shared := assistantSharedEngineModels(h.repo, user)
+	for _, engine := range domain.SharedModelProviders {
+		models := shared[engine]
+		if len(models) == 0 {
+			continue
+		}
+		if engine == domain.SharedModelProviderCodeBuddy {
+			return models[0]
+		}
+		return engine + ":" + models[0]
+	}
+	return ""
 }
 
 // assistantRequestModel maps a legacy executor field onto the model prefix

@@ -924,9 +924,7 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 				options.GateResultPath = gateResultPath(nodeControlKey(current, node.ID), attempt)
 			}
 			ex := ex
-			if cb := sb.credentialSnapshot().CodeBuddy; ex.Kind == "codebuddy" && cb.Sponsored {
-				ex = e.sponsoredExecutor(runID, ex, cb.SponsoredModels, sink)
-			}
+			ex = e.applySponsoredExecutor(runID, ex, sb.credentialSnapshot(), sink)
 			if execMachine := e.defaultExecutionRunner(current); execMachine != "" {
 				// 执行机器 mode (bind-cli): the responsible user selected a default
 				// execution machine, so the compiled task book, asset bundle, and

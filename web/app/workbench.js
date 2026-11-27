@@ -1661,7 +1661,7 @@ function renderPlatformNav(){
 const PLATFORM_TABS=[
   {id:'accounts',zh:'成员账号',en:'Accounts'},
   {id:'admins',zh:'平台管理员',en:'Admins'},
-  {id:'sharedKey',zh:'共享 CodeBuddy Key',en:'Shared CodeBuddy Key'},
+  {id:'sharedKey',zh:'共享模型 Key',en:'Shared Model Key'},
   {id:'gitHostTrust',zh:'Git 主机信任',en:'Git Host Trust'},
   {id:'publicUrl',zh:'外部访问地址',en:'Public Address'},
 ];
@@ -1886,21 +1886,32 @@ function platformAccountsHTML(){
       <div id="platformAccountList" class="platform-admin-list platform-account-list"></div>
     </section>`;
 }
+// The CLIs whose API Key the platform may share. Order matches
+// domain.SharedModelProviders.
+const SHARED_KEY_PROVIDERS=[
+  {id:'codebuddy',label:'CodeBuddy',keyPlaceholder:'ck_ 开头的 CodeBuddy API Key'},
+  {id:'codex',label:'Codex',keyPlaceholder:'Codex API Key，例如 sk-…',baseURLPlaceholder:'留空用官方地址；自建网关如 https://gateway.example.com/v1'},
+  {id:'claude-code',label:'Claude Code',keyPlaceholder:'Claude Code API Key',baseURLPlaceholder:'留空用官方地址；自建网关如 https://gateway.example.com'},
+];
+function sharedProviderMeta(id){return SHARED_KEY_PROVIDERS.find(p=>p.id===id)||SHARED_KEY_PROVIDERS[0]}
 function platformSharedKeyHTML(){
   const envOptions=CODEBUDDY_ENVIRONMENTS.map(env=>`<option value="${escapeHTML(env.value)}">${escapeHTML(env.label)} · ${escapeHTML(env.site)}</option>`).join('');
+  const providers=SHARED_KEY_PROVIDERS.map(p=>`<button type="button" role="tab" class="platform-filter-btn${p.id==='codebuddy'?' active':''}" data-shared-provider="${p.id}" aria-selected="${p.id==='codebuddy'}">${escapeHTML(p.label)}<span class="platform-provider-state" data-shared-provider-state="${p.id}" hidden></span></button>`).join('');
   return `
     <section class="platform-admin-main-card" id="platformSharedKeyCard">
       <div class="platform-admin-head">
         <div class="platform-admin-head-meta">
           <h2>给没配 Key 的成员用</h2>
-          <p>成员没配自己的 CodeBuddy API Key 时，对话和 LOOP 会用这里的 Key，并且只能用下面勾选的模型。成员配了自己的 Key 就用自己的，不受限制。</p>
+          <p>成员没配自己的 API Key 时，对话和 LOOP 会用这里对应 CLI 的共享 Key，并且只能用下面勾选的模型。成员配了自己的 Key 就用自己的，不受限制。</p>
         </div>
         <span class="platform-admin-count-pill platform-status-pill" data-shared-key-badge>${lfT('加载中','Loading')}</span>
       </div>
+      <div class="platform-filter-tabs platform-shared-key-providers" id="platformSharedKeyProviders" role="tablist" aria-label="共享 Key 对应的 CLI">${providers}</div>
       <form id="platformSharedKeyForm" class="platform-shared-key-form" autocomplete="off">
         <div class="platform-shared-key-grid">
           <div class="platform-shared-key-col">
-            <label class="platform-field"><span>网络环境</span><select name="internetEnvironment">${envOptions}</select></label>
+            <label class="platform-field" data-shared-env-field><span>网络环境</span><select name="internetEnvironment">${envOptions}</select></label>
+            <label class="platform-field" data-shared-baseurl-field hidden><span>Base URL</span><input name="baseUrl" autocomplete="off" spellcheck="false" placeholder="留空用官方地址"></label>
             <div class="platform-field-group">
               <label class="platform-field"><span>API Key</span><input name="apiKey" type="password" autocomplete="new-password" spellcheck="false" placeholder="ck_ 开头的 CodeBuddy API Key"></label>
               <a class="platform-shared-key-link" data-shared-key-link target="_blank" rel="noopener noreferrer"></a>
@@ -1912,6 +1923,7 @@ function platformSharedKeyHTML(){
             <div class="platform-field">
               <div class="platform-field-head"><span>允许使用的模型</span><small data-shared-models-count></small></div>
               <div class="platform-model-list" data-shared-models><p class="prop-hint">正在读取可用模型…</p></div>
+              <button type="button" class="button ghost small platform-shared-key-probe" data-shared-probe hidden>${lfT('获取可用模型','Fetch models')}</button>
             </div>
             <label class="platform-field"><span>列表里没有的模型</span><input name="extraModels" placeholder="模型 ID，多个用逗号分隔" autocomplete="off" spellcheck="false"></label>
           </div>
@@ -2011,24 +2023,31 @@ async function loadPlatformAccounts(host){
 async function loadPlatformSharedKey(host){
   const card=host.querySelector('#platformSharedKeyCard');if(!card)return;
   const form=card.querySelector('#platformSharedKeyForm');
-  const env=form.elements.internetEnvironment,key=form.elements.apiKey,extra=form.elements.extraModels,defaultSelect=form.elements.defaultModel;
+  const env=form.elements.internetEnvironment,key=form.elements.apiKey,baseURL=form.elements.baseUrl,extra=form.elements.extraModels,defaultSelect=form.elements.defaultModel;
   const modelsHost=card.querySelector('[data-shared-models]'),badge=card.querySelector('[data-shared-key-badge]'),meta=card.querySelector('[data-shared-key-meta]');
   const link=card.querySelector('[data-shared-key-link]'),warning=card.querySelector('[data-shared-key-warning]'),clear=card.querySelector('[data-shared-key-clear]');
-  let status=null,catalog=[],selected=[];
+  const envField=card.querySelector('[data-shared-env-field]'),baseURLField=card.querySelector('[data-shared-baseurl-field]'),probe=card.querySelector('[data-shared-probe]');
+  const modelCount=card.querySelector('[data-shared-models-count]'),tabState=host.querySelector('[data-platform-tab-state]');
+  const statuses={};
+  let provider='codebuddy',status=null,catalog=[],selected=[];
+  const labelOf=id=>sharedProviderMeta(id).label;
+  const endpoint=id=>`/api/platform/model-keys/${encodeURIComponent(id)}`;
   const extraIDs=()=>String(extra.value||'').split(/[,，\s]+/).map(s=>s.trim()).filter(Boolean);
   const chosen=()=>{const all=[...selected];for(const id of extraIDs())if(!all.includes(id))all.push(id);return all};
-  const modelCount=card.querySelector('[data-shared-models-count]'),tabState=host.querySelector('[data-platform-tab-state]');
   const renderDefault=()=>{
     const models=chosen(),current=defaultSelect.value;
     if(modelCount)modelCount.textContent=models.length?lfT(`已选 ${models.length} 个`,`${models.length} selected`):'';
-    defaultSelect.innerHTML=models.length?models.map(id=>`<option value="${escapeHTML(id)}">${escapeHTML(sharedModelLabel(id))}</option>`).join(''):'<option value="">请先勾选模型</option>';
+    defaultSelect.innerHTML=models.length?models.map(id=>`<option value="${escapeHTML(id)}">${escapeHTML(sharedModelLabel(id))}</option>`).join(''):`<option value="">${lfT('请先勾选模型','Pick a model first')}</option>`;
     defaultSelect.value=models.includes(current)?current:(models[0]||'');
   };
   const renderModels=()=>{
     const listed=catalog.filter(m=>m&&m.id&&m.id!=='default');
     const ids=new Set(listed.map(m=>m.id));
     for(const id of selected)if(!ids.has(id)){listed.push({id,name:id});ids.add(id)}
-    modelsHost.innerHTML=listed.length?listed.map(m=>`<label class="platform-check platform-model-option"><input type="checkbox" value="${escapeHTML(m.id)}"${selected.includes(m.id)?' checked':''}><span>${escapeHTML(m.name&&m.name!==m.id?`${m.name}（${m.id}）`:sharedModelLabel(m.id))}</span>${m.credits?`<small>${escapeHTML(m.credits)}</small>`:''}</label>`).join(''):'<p class="prop-hint">这个网络环境暂时没有读到模型列表，可以在下面直接填模型 ID。</p>';
+    const empty=provider==='codebuddy'
+      ?lfT('这个网络环境暂时没有读到模型列表，可以在下面直接填模型 ID。','No models read for this network environment yet; type model IDs below.')
+      :lfT('还没有读到模型，可以点「获取可用模型」或直接填模型 ID。','No models read yet; fetch them or type model IDs below.');
+    modelsHost.innerHTML=listed.length?listed.map(m=>`<label class="platform-check platform-model-option"><input type="checkbox" value="${escapeHTML(m.id)}"${selected.includes(m.id)?' checked':''}><span>${escapeHTML(m.name&&m.name!==m.id?`${m.name}（${m.id}）`:sharedModelLabel(m.id))}</span>${m.credits?`<small>${escapeHTML(m.credits)}</small>`:''}</label>`).join(''):`<p class="prop-hint">${escapeHTML(empty)}</p>`;
     modelsHost.querySelectorAll('input[type="checkbox"]').forEach(box=>box.onchange=()=>{
       selected=box.checked?[...selected.filter(id=>id!==box.value),box.value]:selected.filter(id=>id!==box.value);
       renderDefault();
@@ -2036,73 +2055,131 @@ async function loadPlatformSharedKey(host){
     renderDefault();
   };
   const renderLink=()=>{link.href=codeBuddyKeyURL(env.value);link.textContent=`${codeBuddyKeyLinkLabel(env.value)} ↗`};
+  const renderTabs=()=>{
+    card.querySelectorAll('[data-shared-provider]').forEach(btn=>{
+      const on=btn.dataset.sharedProvider===provider;
+      btn.classList.toggle('active',on);btn.setAttribute('aria-selected',String(on));
+      const state=btn.querySelector('[data-shared-provider-state]');
+      if(state){const configured=!!statuses[btn.dataset.sharedProvider]?.configured;state.hidden=!configured;state.className='platform-provider-state'+(configured?' is-on':'');state.title=configured?lfT('已配置','Configured'):''}
+    });
+    const anyConfigured=SHARED_KEY_PROVIDERS.some(p=>statuses[p.id]?.configured);
+    const legacy=!!statuses.codebuddy?.legacySponsor;
+    const tone=anyConfigured?'on':legacy?'legacy':'off';
+    if(tabState){tabState.className=`platform-tab-state is-${tone}`;tabState.title=anyConfigured?lfT('已启用','Enabled'):lfT('未启用','Not enabled');tabState.hidden=false}
+  };
   const renderStatus=()=>{
-    const on=!!status?.configured,envInfo=CODEBUDDY_ENVIRONMENTS.find(e=>e.value===(status?.internetEnvironment||''))||CODEBUDDY_ENVIRONMENTS[0];
-    const tone=on?'on':status?.legacySponsor?'legacy':'off';
-    badge.textContent=on?'已启用':status?.legacySponsor?'使用旧配置':'未启用';
+    const active=status||{},on=!!active.configured,legacy=!!active.legacySponsor;
+    const tone=on?'on':legacy?'legacy':'off';
+    badge.textContent=on?lfT('已启用','Enabled'):legacy?lfT('使用旧配置','Legacy config'):lfT('未启用','Not enabled');
     badge.classList.remove('is-on','is-legacy','is-off');badge.classList.add(`is-${tone}`);
-    if(tabState){tabState.className=`platform-tab-state is-${tone}`;tabState.title=badge.textContent;tabState.hidden=false}
-    key.placeholder=on?'已配置，留空保持不变':'ck_ 开头的 CodeBuddy API Key';
-    clear.hidden=!on;
     const parts=[];
     if(on){
-      const n=(status.models||[]).length,first=sharedModelLabel(status.models?.[0]),by=status.updatedBy||'';
-      parts.push(lfT(`当前：${envInfo.label}，${n} 个模型，默认 ${first}${by?`，${by} 最后修改`:''}。`,`Current: ${envInfo.label}, ${n} model${n===1?'':'s'}, default ${first}${by?`, last changed by ${by}`:''}.`));
+      const n=(active.models||[]).length,first=sharedModelLabel(active.models?.[0]),by=active.updatedBy||'';
+      const where=provider==='codebuddy'
+        ?(CODEBUDDY_ENVIRONMENTS.find(e=>e.value===(active.internetEnvironment||''))||CODEBUDDY_ENVIRONMENTS[0]).label
+        :(active.baseUrl||lfT('官方地址','official endpoint'));
+      parts.push(lfT(`当前：${where}，${n} 个模型，默认 ${first}${by?`，${by} 最后修改`:''}。`,`Current: ${where}, ${n} model${n===1?'':'s'}, default ${first}${by?`, last changed by ${by}`:''}.`));
+    }else{
+      parts.push(lfT(`还没有配置 ${labelOf(provider)} 的共享 Key，没配 Key 的成员需要先配自己的 Key 才能用 ${labelOf(provider)} 对话和跑 LOOP。`,`No shared ${labelOf(provider)} key yet; members without their own key must add one before chatting or running LOOPs on ${labelOf(provider)}.`));
     }
-    else parts.push(lfT('还没有配置共享 Key，没配 Key 的成员需要先配自己的 Key 才能对话和跑 LOOP。','No shared key yet; members without their own key must add one before chatting or running LOOPs.'));
-    const sponsor=status?.legacySponsor;
-    if(sponsor)parts.push(on
-      ?lfT(`配置后不再使用环境变量 AGENTFLOW_ASSISTANT_SPONSOR_LOGIN 指定的账号 ${sponsor} 的 Key。`,`The key of ${sponsor} (AGENTFLOW_ASSISTANT_SPONSOR_LOGIN) is no longer used.`)
-      :lfT(`现在沿用环境变量 AGENTFLOW_ASSISTANT_SPONSOR_LOGIN 指定的账号 ${sponsor} 的 Key，只能用 ${sharedModelLabel(status.legacySponsorModel)}。`,`For now the key of ${sponsor} (AGENTFLOW_ASSISTANT_SPONSOR_LOGIN) is shared, limited to ${sharedModelLabel(status.legacySponsorModel)}.`));
+    if(provider==='codebuddy'&&legacy){
+      const sponsor=active.legacySponsor;
+      parts.push(on
+        ?lfT(`配置后不再使用环境变量 AGENTFLOW_ASSISTANT_SPONSOR_LOGIN 指定的账号 ${sponsor} 的 Key。`,`The key of ${sponsor} (AGENTFLOW_ASSISTANT_SPONSOR_LOGIN) is no longer used.`)
+        :lfT(`现在沿用环境变量 AGENTFLOW_ASSISTANT_SPONSOR_LOGIN 指定的账号 ${sponsor} 的 Key，只能用 ${sharedModelLabel(active.legacySponsorModel)}。`,`For now the key of ${sponsor} (AGENTFLOW_ASSISTANT_SPONSOR_LOGIN) is shared, limited to ${sharedModelLabel(active.legacySponsorModel)}.`));
+    }
     meta.textContent=parts.join(lfT('',' '));
+  };
+  const renderFields=()=>{
+    const info=sharedProviderMeta(provider),codeBuddy=provider==='codebuddy',on=!!status?.configured;
+    envField.hidden=!codeBuddy;baseURLField.hidden=codeBuddy;probe.hidden=codeBuddy;link.hidden=!codeBuddy;
+    if(codeBuddy){renderLink();env.value=status?.internetEnvironment||''}
+    else{baseURL.value=status?.baseUrl||'';baseURL.placeholder=info.baseURLPlaceholder||'留空用官方地址'}
+    key.placeholder=on?lfT('已配置，留空保持不变','Configured; leave blank to keep'):info.keyPlaceholder;
+    clear.hidden=!on;
   };
   const syncBootstrap=()=>{
     if(!state.data)return;
-    const models=status?.configured?(status.models||[]):(status?.legacySponsor?[status.legacySponsorModel]:[]);
+    const cb=statuses.codebuddy;
+    const models=cb?.configured?(cb.models||[]):(cb?.legacySponsor?[cb.legacySponsorModel]:[]);
     state.data.sponsoredModels=models;state.data.sponsoredModel=models[0]||'';
   };
-  const fetchStatus=async environment=>{
-    const query=environment===undefined?'':`?environment=${encodeURIComponent(environment)}`;
-    const result=await api('/api/platform/codebuddy-key'+query);
-    catalog=Array.isArray(result?.catalog)?result.catalog:[];
+  const loadProvider=async(id,{keepSelection=false}={})=>{
+    const query=id==='codebuddy'&&env.value!==undefined&&card.dataset.sharedLoaded==='1'?`?environment=${encodeURIComponent(env.value)}`:'';
+    const result=await api(endpoint(id)+query);
+    statuses[id]=result;
+    status=result;catalog=Array.isArray(result?.catalog)?result.catalog:[];
+    if(!keepSelection){
+      selected=result?.configured?[...(result.models||[])]:(id==='codebuddy'&&result?.legacySponsorModel?[result.legacySponsorModel]:[]);
+      key.value='';extra.value='';warning.hidden=true;
+    }
     return result;
   };
   try{
-    status=await fetchStatus();
-    env.value=status?.internetEnvironment||'';
-    selected=status?.configured?[...(status.models||[])]:(status?.legacySponsorModel?[status.legacySponsorModel]:[]);
-    renderStatus();renderLink();renderModels();
+    const list=await api('/api/platform/model-keys');
+    for(const item of (Array.isArray(list?.keys)?list.keys:[]))if(item?.provider)statuses[item.provider]=item;
+    await loadProvider(provider);
+    card.dataset.sharedLoaded='1';
+    renderTabs();renderFields();renderStatus();renderModels();
   }catch(e){
-    badge.textContent='加载失败';modelsHost.innerHTML=`<p class="prop-hint">${escapeHTML(e.message||'加载共享 Key 失败')}</p>`;
+    badge.textContent=lfT('加载失败','Load failed');modelsHost.innerHTML=`<p class="prop-hint">${escapeHTML(e.message||'加载共享 Key 失败')}</p>`;
     return;
   }
+  card.querySelectorAll('[data-shared-provider]').forEach(btn=>btn.onclick=async()=>{
+    if(provider===btn.dataset.sharedProvider)return;
+    provider=btn.dataset.sharedProvider;
+    modelsHost.innerHTML='<p class="prop-hint">正在读取可用模型…</p>';
+    try{await loadProvider(provider)}catch(e){status=null;catalog=[];toast(e.message,'err')}
+    renderTabs();renderFields();renderStatus();renderModels();
+  });
   env.onchange=async()=>{
     renderLink();
     modelsHost.innerHTML='<p class="prop-hint">正在读取可用模型…</p>';
-    try{await fetchStatus(env.value)}catch(e){catalog=[]}
-    renderModels();
+    try{await loadProvider('codebuddy',{keepSelection:true})}catch(e){catalog=[]}
+    renderStatus();renderModels();
+  };
+  probe.onclick=async()=>{
+    probe.disabled=true;
+    try{
+      const result=await api(`${endpoint(provider)}/probe`,{method:'POST',body:JSON.stringify({apiKey:key.value.trim(),baseUrl:baseURL.value.trim()})});
+      if(result?.error){toast(result.error,'err');return}
+      const ids=(result?.models||[]).map(m=>String(m?.id||'')).filter(Boolean);
+      if(!ids.length){toast('没有读到模型，可以手动填写模型 ID','err');return}
+      const listed=ids.map(id=>({id,name:(result.models.find(m=>m?.id===id)?.name)||id}));
+      catalog=[...listed,...catalog.filter(m=>m&&m.id&&!ids.includes(m.id))];
+      renderModels();
+      toast(lfT(`读到 ${ids.length} 个模型`,`${ids.length} models fetched`),'ok');
+    }catch(err){toast(err.message,'err')}
+    finally{probe.disabled=false}
   };
   extra.oninput=renderDefault;
-  key.oninput=()=>{const text=credentialSecretWarning(credentialKind('codeBuddyApiKey'),key.value);warning.textContent=text;warning.hidden=!text};
+  key.oninput=()=>{const text=credentialSecretWarning(credentialKind(provider==='codex'?'codexApiKey':provider==='claude-code'?'claudeCodeApiKey':'codeBuddyApiKey'),key.value);warning.textContent=text;warning.hidden=!text};
   form.onsubmit=async e=>{
     e.preventDefault();
     const models=chosen();
     if(!models.length)return toast('请至少勾选一个允许使用的模型','err');
-    if(!status?.configured&&!key.value.trim())return toast('请填写 CodeBuddy API Key','err');
+    if(!status?.configured&&!key.value.trim())return toast(`请填写 ${labelOf(provider)} API Key`,'err');
     const first=defaultSelect.value&&models.includes(defaultSelect.value)?defaultSelect.value:models[0];
     const ordered=[first,...models.filter(id=>id!==first)];
+    const body={apiKey:key.value.trim(),models:ordered};
+    if(provider==='codebuddy')body.internetEnvironment=env.value;else body.baseUrl=baseURL.value.trim();
     const submit=form.querySelector('button[type="submit"]');if(submit)submit.disabled=true;
     try{
-      status=await api('/api/platform/codebuddy-key',{method:'PUT',body:JSON.stringify({apiKey:key.value.trim(),internetEnvironment:env.value,models:ordered})});
+      status=await api(endpoint(provider),{method:'PUT',body:JSON.stringify(body)});
+      statuses[provider]=status;
       key.value='';warning.hidden=true;extra.value='';selected=[...(status.models||ordered)];
-      renderStatus();renderModels();syncBootstrap();toast('共享 Key 已保存','ok');
+      renderTabs();renderFields();renderStatus();renderModels();syncBootstrap();toast('共享 Key 已保存','ok');
     }catch(err){toast(err.message,'err')}
     finally{if(submit)submit.disabled=false}
   };
   clear.onclick=async()=>{
-    if(!await afConfirm({title:'停用共享 Key',message:'停用后，没配自己 Key 的成员将不能再用共享 Key 对话和跑 LOOP。确定停用？',danger:true,confirmText:'停用'}))return;
-    try{status=await api('/api/platform/codebuddy-key',{method:'DELETE'});renderStatus();syncBootstrap();toast('共享 Key 已停用','ok')}
-    catch(err){toast(err.message,'err')}
+    const label=labelOf(provider);
+    if(!await afConfirm({title:'停用共享 Key',message:`停用后，没配自己 Key 的成员将不能再用 ${label} 的共享 Key 对话和跑 LOOP。确定停用？`,danger:true,confirmText:'停用'}))return;
+    try{
+      status=await api(endpoint(provider),{method:'DELETE'});
+      statuses[provider]=status;selected=[];
+      renderTabs();renderFields();renderStatus();renderModels();syncBootstrap();toast('共享 Key 已停用','ok');
+    }catch(err){toast(err.message,'err')}
   };
 }
 async function loadPlatformAdmins(host){

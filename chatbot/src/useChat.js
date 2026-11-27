@@ -144,6 +144,7 @@ export function useChat() {
     [selection, setSelection] = useState(() => ({ executor: storedExecutor(), model: null, effort: null })),
     [codeBuddyDefault, setCodeBuddyDefault] = useState({ id: "default", name: "默认" }),
     [sponsoredModels, setSponsoredModels] = useState([]),
+    [sharedEngines, setSharedEngines] = useState({}),
     [providerCatalogs, setProviderCatalogs] = useState({}),
     [generation, setGeneration] = useState(null),
     [stopRequest, setStopRequest] = useState(null),
@@ -304,6 +305,7 @@ export function useChat() {
     setCatalogEngines(catalog.engines || []);
     setCodeBuddyDefault({ id: catalog.default || "default", name: "默认", efforts: catalog.defaultEfforts });
     setSponsoredModels(sponsoredModelList(catalog));
+    setSharedEngines(catalog.sharedEngines || {});
   }, []);
   useEffect(() => {
     if (!user?.id || user.isGuest) {
@@ -1698,6 +1700,7 @@ export function useChat() {
     sponsored,
     sponsoredModel,
     sponsoredModels,
+    sharedEngines,
     generation,
     live,
     error,

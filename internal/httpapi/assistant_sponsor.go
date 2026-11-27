@@ -9,32 +9,38 @@ import (
 	"agentflow/internal/repo"
 )
 
-// Users who have not configured their own CodeBuddy API Key can still chat
-// with the platform's shared key (see repo.SharedCodeBuddyKey), limited to
-// the models a platform administrator allowed. LOOP runs use it the same way
-// through the engine, and AI scheduled tasks through scheduleCredentialUser;
-// clarification, reports and bots keep requiring the user's own key.
+// Users who have not configured their own API Key for a CLI can still chat
+// with the platform's shared key for that CLI (see repo.SharedModelKey),
+// limited to the models a platform administrator allowed. LOOP runs use it the
+// same way through the engine, and AI scheduled tasks through
+// scheduleCredentialUser for CodeBuddy; clarification, reports and bots keep
+// requiring the user's own key.
 const (
 	assistantSponsorLoginEnv = repo.CodeBuddySponsorLoginEnv
 	assistantSponsoredModel  = repo.SponsoredCodeBuddyModel
 )
 
-func errAssistantSponsoredModel(models []string) string {
-	return "未配置个人 CodeBuddy API Key 时只能使用平台管理员允许的模型（" + strings.Join(models, "、") + "）。要使用其他模型，请先在个人配置中配置自己的 CodeBuddy API Key"
+func errAssistantSponsoredModel(label string, models []string) string {
+	return "未配置个人 " + label + " API Key 时只能使用平台管理员允许的模型（" + strings.Join(models, "、") + "）。要使用其他模型，请先在个人配置中配置自己的 " + label + " API Key"
 }
 
-// assistantSharedKey returns the key users without their own borrow.
-func (h *assistantHandlers) assistantSharedKey() (repo.SharedCodeBuddyKey, bool) {
+// assistantSharedKey returns the CodeBuddy key users without their own borrow.
+func (h *assistantHandlers) assistantSharedKey() (repo.SharedModelKey, bool) {
+	return h.assistantSharedModelKey(domain.SharedModelProviderCodeBuddy)
+}
+
+// assistantSharedModelKey returns the shared credential of one CLI.
+func (h *assistantHandlers) assistantSharedModelKey(provider string) (repo.SharedModelKey, bool) {
 	if h == nil || h.deps == nil || h.repo == nil {
-		return repo.SharedCodeBuddyKey{}, false
+		return repo.SharedModelKey{}, false
 	}
-	return h.repo.SharedCodeBuddyKey()
+	return h.repo.SharedModelKey(provider)
 }
 
-// assistantChatUser returns the identity a chat turn runs as. Users with
-// their own key are returned unchanged. Other turns use the shared key,
-// its environment and catalog while keeping the caller's identity,
-// permissions and Git credentials.
+// assistantChatUser returns the identity a CodeBuddy chat turn runs as. Users
+// with their own key are returned unchanged. Other turns use the shared key,
+// its environment and catalog while keeping the caller's identity, permissions
+// and Git credentials.
 func (h *assistantHandlers) assistantChatUser(user domain.User) (chatUser domain.User, shared []string, ok bool) {
 	if strings.TrimSpace(user.CodeBuddyAPIKey) != "" {
 		return user, nil, true
@@ -50,14 +56,67 @@ func (h *assistantHandlers) assistantChatUser(user domain.User) (chatUser domain
 	return user, key.Models, true
 }
 
+// assistantChatUserForEngine is assistantChatUser for any shared CLI: it
+// substitutes that CLI's shared key and Base URL when the user configured
+// none, and reports the models the shared key allows.
+func (h *assistantHandlers) assistantChatUserForEngine(user domain.User, engine string) (chatUser domain.User, shared []string, ok bool) {
+	if engine == assistantEngineCodeBuddy {
+		return h.assistantChatUser(user)
+	}
+	if key, _ := assistantEngineCredential(user, engine); key != "" {
+		return user, nil, true
+	}
+	if !sharedEngine(engine) {
+		return user, nil, false
+	}
+	key, found := h.assistantSharedModelKey(engine)
+	if !found || strings.TrimSpace(key.APIKey) == "" || len(key.Models) == 0 || (key.SponsorID != 0 && key.SponsorID == user.ID) {
+		return user, nil, false
+	}
+	switch engine {
+	case assistantEngineCodex:
+		user.CodexAPIKey, user.CodexBaseURL, user.CodexModels = key.APIKey, key.BaseURL, nil
+	case assistantEngineClaude:
+		user.ClaudeCodeAPIKey, user.ClaudeCodeBaseURL, user.ClaudeCodeModels = key.APIKey, key.BaseURL, nil
+	}
+	return user, key.Models, true
+}
+
+// sharedEngine reports whether a CLI's key can be shared platform-wide.
+func sharedEngine(engine string) bool {
+	_, ok := domain.NormalizeSharedModelProvider(engine)
+	return ok && engine != domain.SharedModelProviderCodeBuddy
+}
+
+// assistantSharedEngineModels lists, per CLI, the models the platform shares
+// with this user: none for a CLI the user configured, and none they lend
+// themselves.
+func assistantSharedEngineModels(r *repo.Store, user domain.User) map[string][]string {
+	shared := map[string][]string{}
+	if r == nil || user.ID <= 0 {
+		return shared
+	}
+	for _, engine := range domain.SharedModelProviders {
+		if key, _ := assistantEngineCredential(user, engine); key != "" {
+			continue
+		}
+		key, found := r.SharedModelKey(engine)
+		if !found || strings.TrimSpace(key.APIKey) == "" || len(key.Models) == 0 || (key.SponsorID != 0 && key.SponsorID == user.ID) {
+			continue
+		}
+		shared[engine] = key.Models
+	}
+	return shared
+}
+
 // assistantSponsoredModelFor limits shared-key turns to the allowed models.
 // An empty request picks the default; any other model is refused.
 func assistantSponsoredModelFor(shared []string, requested string) (string, bool) {
-	return repo.SharedCodeBuddyKey{Models: shared}.Model(requested)
+	return repo.SharedModelKey{Models: shared}.Model(requested)
 }
 
-// usesSharedKey reports whether a chat turn for user runs on the shared key:
-// the stored account has no key of its own.
+// usesSharedKey reports whether a CodeBuddy chat turn for user runs on the
+// shared key: the stored account has no key of its own.
 func (h *assistantHandlers) usesSharedKey(user domain.User) bool {
 	if h == nil || h.deps == nil || h.repo == nil || user.ID <= 0 {
 		return false
