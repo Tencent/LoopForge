@@ -1,6 +1,7 @@
-// Package repo is the gorm-backed persistence layer of AgentFlow. MySQL is the
-// only production datasource; tests open an in-process sqlite database through
-// the same gorm code paths. There is no second in-memory implementation.
+// Package repo is the gorm-backed persistence layer of AgentFlow. The database
+// is the only production datasource: the DSN scheme picks the dialect (MySQL
+// or Postgres); tests open an in-process sqlite database through the same gorm
+// code paths. There is no second in-memory implementation.
 package repo
 
 import (
@@ -16,10 +17,8 @@ import (
 	"agentflow/internal/credcrypt"
 	"agentflow/internal/domain"
 
-	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
-	"gorm.io/gorm/logger"
 )
 
 var (
@@ -35,7 +34,7 @@ type deps struct {
 }
 
 func (d *deps) isMySQL() bool {
-	return d.DB != nil && d.DB.Dialector.Name() == "mysql"
+	return d.DB != nil && d.DB.Dialector.Name() == dialectMySQL
 }
 
 // sqlJSONText returns a portable "extract text at JSON path" expression.
@@ -239,36 +238,49 @@ func newStore(db *gorm.DB) *Store {
 	return s
 }
 
-// Open connects the store to MySQL, which is where all state lives. An empty
-// DSN is a configuration error, not a reason to invent state somewhere else.
+// Open connects the store to the configured database, which is where all
+// state lives. The DSN scheme selects the dialect: a postgres:// URL opens a
+// Postgres connection, anything else is the MySQL DSN form. An empty DSN is a
+// configuration error, not a reason to invent state somewhere else.
 func Open(dsn string) (*Store, error) {
 	dsn = strings.TrimSpace(dsn)
+	if dsn == "" {
+		dsn = strings.TrimSpace(os.Getenv("AGENTFLOW_DATABASE_URL"))
+	}
 	if dsn == "" {
 		dsn = strings.TrimSpace(os.Getenv("AGENTFLOW_MYSQL_DSN"))
 	}
 	if dsn == "" {
-		return nil, errors.New("AGENTFLOW_MYSQL_DSN 未配置：MySQL 是唯一数据源，缺少 DSN 时拒绝启动")
+		return nil, errors.New("AGENTFLOW_DATABASE_URL 未配置：数据库是唯一数据源，缺少 DSN 时拒绝启动")
 	}
-	if !strings.Contains(dsn, "charset=") {
-		if strings.Contains(dsn, "?") {
-			dsn += "&charset=utf8mb4&collation=utf8mb4_unicode_ci"
-		} else {
-			dsn += "?charset=utf8mb4&collation=utf8mb4_unicode_ci"
+	if dsnDialect(dsn) == dialectMySQL {
+		if !strings.Contains(dsn, "charset=") {
+			if strings.Contains(dsn, "?") {
+				dsn += "&charset=utf8mb4&collation=utf8mb4_unicode_ci"
+			} else {
+				dsn += "?charset=utf8mb4&collation=utf8mb4_unicode_ci"
+			}
+		}
+		if !strings.Contains(dsn, "parseTime=") {
+			dsn += "&parseTime=true&loc=UTC"
 		}
 	}
-	if !strings.Contains(dsn, "parseTime=") {
-		dsn += "&parseTime=true&loc=UTC"
-	}
-	db, err := gorm.Open(mysql.Open(dsn), &gorm.Config{TranslateError: true, Logger: logger.Default.LogMode(logger.Silent)})
+	db, err := openDB(dsn)
 	if err != nil {
-		return nil, fmt.Errorf("mysql open: %w", err)
+		return nil, err
 	}
 	if sqlDB, err := db.DB(); err == nil {
-		sqlDB.SetMaxOpenConns(32)
+		maxOpen := 32
+		if dsnDialect(dsn) == dialectPostgres {
+			// Supavisor session mode: every pooled connection owns one real
+			// backend, so the pool stays small.
+			maxOpen = 10
+		}
+		sqlDB.SetMaxOpenConns(maxOpen)
 		sqlDB.SetMaxIdleConns(8)
 		sqlDB.SetConnMaxLifetime(30 * time.Minute)
 		if err := sqlDB.Ping(); err != nil {
-			return nil, fmt.Errorf("mysql ping: %w", err)
+			return nil, fmt.Errorf("database ping: %w", err)
 		}
 	}
 	s := newStore(db)
