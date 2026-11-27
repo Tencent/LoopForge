@@ -30,3 +30,17 @@ func TestAssistantSessionExecutionLocked(t *testing.T) {
 		}
 	}
 }
+
+func TestClonedPageReferencesAreIndependent(t *testing.T) {
+	source := []AssistantReference{{Element: &AssistantPageElement{Selector: "old", Rect: &ElementRect{Width: 12}, Viewport: &ElementRect{Height: 20}, Styles: map[string]string{"color": "red"}}}, {}}
+	copied := CloneAssistantReferences(source)
+	element := copied[0].Element
+	element.Selector = "new"
+	element.Rect.Width = 10
+	element.Viewport.Height = 15
+	element.Styles["color"] = "blue"
+	original := source[0].Element
+	if original.Selector != "old" || original.Rect.Width != 12 || original.Viewport.Height != 20 || original.Styles["color"] != "red" || copied[1].Element != nil {
+		t.Fatalf("clone changed source reference: %+v", original)
+	}
+}

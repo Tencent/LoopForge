@@ -2,6 +2,7 @@ package domain
 
 import (
 	"encoding/json"
+	"maps"
 	"time"
 )
 
@@ -105,6 +106,22 @@ func CloneAssistantReferences(refs []AssistantReference) []AssistantReference {
 	}
 	out := make([]AssistantReference, len(refs))
 	copy(out, refs)
+	for i, ref := range refs {
+		if ref.Element == nil {
+			continue
+		}
+		element := *ref.Element
+		if element.Rect != nil {
+			rect := *element.Rect
+			element.Rect = &rect
+		}
+		if element.Viewport != nil {
+			viewport := *element.Viewport
+			element.Viewport = &viewport
+		}
+		element.Styles = maps.Clone(element.Styles)
+		out[i].Element = &element
+	}
 	return out
 }
 
