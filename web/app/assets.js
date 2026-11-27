@@ -211,7 +211,7 @@ function scrollAssetTop(){
 }
 async function confirmAssetLeave(){
   if(!state.selectedAsset||!state.assetDirty||!isProjectSharedAsset(activeViewName()))return true;
-  const ok=await afConfirm({title:'未保存的修改',message:lfT(`当前${assetKindLabel()}有未保存修改，离开将放弃这些修改。继续？`,`This ${assetKindLabelEn()} has unsaved changes. Leaving discards them. Continue?`),confirmText:'放弃并离开',danger:true});
+  const ok=await afConfirm({title:lfT('未保存的修改','Unsaved changes'),message:lfT(`当前${assetKindLabel()}有未保存修改，离开将放弃这些修改。继续？`,`This ${assetKindLabelEn()} has unsaved changes. Leaving discards them. Continue?`),confirmText:'放弃并离开',danger:true});
   if(ok)state.assetDirty=false;
   return ok;
 }
@@ -322,7 +322,7 @@ function syncSandboxDriverFields(select){
 }
 function resolveAssetSaveIdentity(items,selectedID,requestedID){if(selectedID!=='__new__'){const existing=(items||[]).find(item=>item.id===selectedID);return existing?{id:existing.id,existing,created:false}:{error:'选中的资产已不存在，请刷新后重试'}}if((items||[]).some(item=>item.id===requestedID))return {error:'该标识已存在，请换一个标识，或回到列表打开已有资产修改'};return {id:requestedID,existing:null,created:true}}
 function assetPaneTabs(type=state.assetType){return ({rules:[['edit','编辑'],['preview','预览']],skills:[['files','文件']],sandboxes:[['setup','配置']]})[type]||[['edit','编辑']]}
-function assetPaneHint(type=state.assetType){return ({rules:'支持 Markdown',skills:'每次上传都会完整替换现有文件',sandboxes:'隔离方式决定沙箱在哪里、怎样执行'})[type]||''}
+function assetPaneHint(type=state.assetType){return ({rules:lfT('支持 Markdown','Markdown supported'),skills:'每次上传都会完整替换现有文件',sandboxes:'隔离方式决定沙箱在哪里、怎样执行'})[type]||''}
 function assetFieldLabel(text,help,forId=''){return `<div class="asset-field-label">${forId?`<label for="${forId}">${escapeHTML(text)}</label>`:`<span>${escapeHTML(text)}</span>`}${help?`<button type="button" class="field-help" aria-label="${escapeHTML(/说明$/.test(text)?text:`${text}说明`)}" title="${escapeHTML(help)}">?</button>`:''}</div>`}
 function sandboxSetupHTML(a){
   const driver=sandboxDriverOption(a.driver);

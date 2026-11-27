@@ -187,6 +187,29 @@ test('afConfirm marks a message that quotes user data, and clears the mark for t
   assert.equal(msg().hasAttribute('data-i18n-data'), false);
   app.document.querySelector('#confirmCancelBtn').click();
   await second;
+  // afPrompt / afAlert write the shared message node without going through afConfirm.
+  for (const open of [`afPrompt({message:'粘贴内容包含 2 个 server'},'')`, `afAlert({message:'粘贴内容包含 2 个 server'})`]) {
+    const marked = app.evaluate(`afConfirm({message:'确认删除规则「规则」？',messageData:true})`);
+    await settle(2);
+    app.document.querySelector('#confirmCancelBtn').click();
+    await marked;
+    const next = app.evaluate(open);
+    await settle(2);
+    assert.equal(msg().hasAttribute('data-i18n-data'), false, `${open} is translated normally after a messageData confirm`);
+    app.document.querySelector('#confirmCancelBtn').hidden ? app.document.querySelector('#confirmOkBtn').click() : app.document.querySelector('#confirmCancelBtn').click();
+    await next;
+  }
+});
+
+// Keys of 6+ characters are replaced inside any sentence, so this PR must not add
+// ones that other pages embed in longer copy without a whole-sentence entry.
+test('asset copy adds no dictionary fragments that split other pages\' sentences', async (t) => {
+  const en = await englishPage();
+  t.after(() => en.close());
+  for (const zh of ['放弃未保存的修改？', '已放弃未保存的修改', '跳过会放弃本步骤未保存的修改。', '支持 Markdown 和粘贴图片']) {
+    const out = en.lfTranslate(zh);
+    assert.ok(out === zh || !HAN.test(out), `${zh} -> ${out}`);
+  }
 });
 
 // A name or description that is itself a dictionary key («沙箱», «代码审查»)
