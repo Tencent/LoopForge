@@ -46,7 +46,7 @@ func newFake(t *testing.T, respond func(w http.ResponseWriter, id int64)) (*fake
 	fake := &fakeMCP{respond: respond}
 	srv := httptest.NewServer(fake)
 	t.Cleanup(srv.Close)
-	return fake, New(srv.URL, map[string]string{"Authorization": "Bearer tok"})
+	return fake, New(srv.URL, map[string]string{"Authorization": "Bearer tok"}).WithTransport(srv.Client().Transport)
 }
 
 func writeJSON(w http.ResponseWriter, body string) {

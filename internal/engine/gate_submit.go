@@ -124,5 +124,5 @@ func appendSubmitGateInstruction(prompt, rejectTarget string, retry bool) string
 - fail：本节点无法完成或出现不可恢复错误；平台会直接标记失败，不打回上游；
 - human：无法可靠自动判断，或必须由人决策；平台会暂停并等待人工确认，此时 actionRequired 必填，必须明确说明需要人确认或决定什么。
 
-必须根据当前真实情况选择，不要把 fail 当成 rework，也不要用 human 掩盖明确失败。reason 必须解释作出该终态的事实依据；rework 可用 actionRequired 写清返工要求；可附带 findings 和 evidence。不要用报告文本或最终回复代替工具调用。只有该工具调用成功，本节点才算完成。`, reworkInstruction)
+必须根据当前真实情况选择，不要把 fail 当成 rework，也不要用 human 掩盖明确失败。reason 必须解释作出该终态的事实依据；rework 可用 actionRequired 写清返工要求；可附带 findings 和 evidence。不要用报告文本或最终回复代替工具调用。若节点未配置自定义交付物文件且结论引用了知识库，请将含 [[knowledge:<id>]] 标记的完整结论作为最终回复输出，不要在提交终态后仅回复简短确认语覆盖前文。只有该工具调用成功，本节点才算完成。`, reworkInstruction)
 }
