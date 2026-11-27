@@ -390,6 +390,32 @@
   background: var(--starter-color);
   border-color: var(--starter-color);
 }
+.home-starter-action {
+  margin-top: 10px;
+  color: var(--starter-color);
+  font-size: 11px;
+  line-height: 1.5;
+}
+/* Notice above the composer when a starter card pre-filled the question:
+   outside the input so it does not disturb typing, retired on send/clear. */
+.home-shell .starter-notice {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 22px 8px;
+  color: var(--home-secondary);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.home-shell .starter-notice svg {
+  flex: none;
+  color: var(--starter-color, var(--home-blue));
+}
+@media (prefers-reduced-motion: reduce) {
+  .home-shell .starter-notice {
+    transition: none;
+  }
+}
 .home-footnote {
   display: flex;
   align-items: center;
