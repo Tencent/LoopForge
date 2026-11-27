@@ -39,7 +39,9 @@ test('approval helpers explain gates, failures, pauses, and contextual payloads'
   assert.match(result.reason, /确认后继续「发布」/);
   assert.match(result.sections, /检查截图|视觉差异|按钮颜色|截图 1/);
   assert.match(result.buttons, /退回上游「构建」/);
-  assert.match(result.context.reason, /人工补充上下文/);
+  // The server composes reason + context, so the payload keeps them apart.
+  assert.equal(result.context.reason, '人工确认');
+  assert.equal(result.context.context, '请保留日志');
   assert.match(result.paused, /运行已暂停/);
   assert.match(result.recovery, /手动通过，继续下游/);
   assert.match(result.agentRecovery, /补充信息，重跑当前节点/);
