@@ -46,6 +46,13 @@ func (r *DeliveryRepo) LockIntegration(ctx context.Context, repositoryID string,
 			// The statement runs through database/sql, so the placeholder is
 			// Postgres' own $1 — gorm's ? rewriting does not apply here.
 			if err := conn.QueryRowContext(ctx, "SELECT pg_try_advisory_lock(hashtext($1))", name).Scan(&got); err != nil {
+				// The statement may have reached the server and the lock may
+				// have been granted even though the result could not be read
+				// back — a cancelled context in the microseconds between the
+				// two, say. Closing a pooled connection hands the session back
+				// to the pool with the lock still held, so the lock has to be
+				// released on this very connection first.
+				releasePostgresAdvisoryLock(conn, name)
 				_ = conn.Close()
 				return nil, err
 			}
@@ -65,6 +72,10 @@ func (r *DeliveryRepo) LockIntegration(ctx context.Context, repositoryID string,
 	}
 	var got sql.NullInt64
 	if err := conn.QueryRowContext(ctx, "SELECT GET_LOCK(?, ?)", name, int(wait/time.Second)).Scan(&got); err != nil {
+		// Same shape as the Postgres branch above: the lock may have been
+		// granted even though the result could not be read back, and the
+		// connection goes back to the pool with the lock still held.
+		releaseMySQLNamedLock(conn, name)
 		_ = conn.Close()
 		return nil, err
 	}
@@ -89,4 +100,31 @@ func integrationLockName(repositoryID string) string {
 		return name
 	}
 	return "agentflow:integrate:" + hexSHA256(id)[:40]
+}
+
+// releasePostgresAdvisoryLock releases the session-level advisory lock on
+// conn. It is best-effort: the caller is closing the connection anyway and
+// has an error of its own to report.
+//
+// The statement runs with a context of its own, because the caller reaches
+// this when the lock could not be read back — which is exactly the case
+// where the caller's context may already be cancelled and cannot deliver it.
+func releasePostgresAdvisoryLock(conn *sql.Conn, name string) {
+	_ = execWithFreshContext(conn, "SELECT pg_advisory_unlock(hashtext($1))", name)
+}
+
+// releaseMySQLNamedLock releases the named lock on conn. It is best-effort,
+// like releasePostgresAdvisoryLock. Releasing a lock this session does not
+// hold is a no-op on MySQL, so it is safe to call without knowing whether the
+// lock was actually taken.
+func releaseMySQLNamedLock(conn *sql.Conn, name string) {
+	_ = execWithFreshContext(conn, "SELECT RELEASE_LOCK(?)", name)
+}
+
+// execWithFreshContext runs stmt under a short-lived context of its own.
+func execWithFreshContext(conn *sql.Conn, stmt string, args ...any) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	_, err := conn.ExecContext(ctx, stmt, args...)
+	return err
 }

@@ -3,6 +3,7 @@ package repo
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"strings"
 	"sync"
 	"testing"
@@ -28,20 +29,23 @@ import (
 // postgresSQLRecorder captures the SQL the store sends to Postgres, so a test
 // can assert that a rewritten statement — and not its MySQL original — really
 // reached the database.
+//
+// The statements live behind a pointer, so a logger derived through LogMode
+// keeps appending to the same list the test reads.
 type postgresSQLRecorder struct {
 	logger.Interface
-	mu    sync.Mutex
-	stmts []string
+	mu    *sync.Mutex
+	stmts *[]string
 }
 
 func (l *postgresSQLRecorder) LogMode(level logger.LogLevel) logger.Interface {
-	return &postgresSQLRecorder{Interface: l.Interface.LogMode(level)}
+	return &postgresSQLRecorder{Interface: l.Interface.LogMode(level), mu: l.mu, stmts: l.stmts}
 }
 
 func (l *postgresSQLRecorder) Trace(ctx context.Context, begin time.Time, fc func() (string, int64), err error) {
 	sql, _ := fc()
 	l.mu.Lock()
-	l.stmts = append(l.stmts, sql)
+	*l.stmts = append(*l.stmts, sql)
 	l.mu.Unlock()
 }
 
@@ -49,7 +53,7 @@ func (l *postgresSQLRecorder) Trace(ctx context.Context, begin time.Time, fc fun
 func (l *postgresSQLRecorder) contains(fragment string) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	for _, stmt := range l.stmts {
+	for _, stmt := range *l.stmts {
 		if strings.Contains(stmt, fragment) {
 			return true
 		}
@@ -62,7 +66,7 @@ func (l *postgresSQLRecorder) contains(fragment string) bool {
 func postgresStore(t *testing.T) (*Store, *postgresSQLRecorder) {
 	t.Helper()
 	store := OpenPostgresTest(t)
-	rec := &postgresSQLRecorder{Interface: logger.Discard}
+	rec := &postgresSQLRecorder{Interface: logger.Discard, mu: &sync.Mutex{}, stmts: &[]string{}}
 	return newStore(store.DB.Session(&gorm.Session{Logger: rec})), rec
 }
 
@@ -78,6 +82,20 @@ func postgresFixtureStore(t *testing.T) (*Store, *postgresSQLRecorder) {
 	}
 	t.Cleanup(func() { _ = tx.Rollback() })
 	return newStore(tx), rec
+}
+
+// The recorder has to survive gorm deriving a logger from it: the derived
+// logger has to keep appending to the same statement list, or every
+// assertion on the recorded SQL would silently stop seeing the statements.
+func TestPostgresSQLRecorderLogModeKeepsTheStatements(t *testing.T) {
+	rec := &postgresSQLRecorder{Interface: logger.Discard, mu: &sync.Mutex{}, stmts: &[]string{}}
+	derived := rec.LogMode(logger.Info)
+	derived.Trace(context.Background(), time.Now(), func() (string, int64) {
+		return "SELECT 1", 0
+	}, nil)
+	if !rec.contains("SELECT 1") {
+		t.Fatal("the derived logger did not record its statement")
+	}
 }
 
 // insertIgnore is MySQL's INSERT IGNORE: the row is skipped when it conflicts
@@ -228,6 +246,11 @@ func TestPostgresUpsertRaisesOnASecondaryUniqueConflict(t *testing.T) {
 	if err == nil {
 		t.Fatal("the upsert silently overwrote the row that owns the login")
 	}
+	// The store runs with TranslateError, so the unique violation reaches the
+	// caller as gorm's duplicated-key error and not as a raw driver error.
+	if !errors.Is(err, gorm.ErrDuplicatedKey) {
+		t.Fatalf("the upsert failed with %v, want a duplicated key error", err)
+	}
 	var name string
 	if err := store.DB.Table("users").Select("chinese_name").Where("id = ?", 910003).Scan(&name).Error; err != nil {
 		t.Fatalf("read back: %v", err)
@@ -284,6 +307,49 @@ func TestPostgresIntegrationLockTimesOut(t *testing.T) {
 	if !strings.Contains(err.Error(), "等待仓库") {
 		t.Fatalf("timeout error = %q, want the MySQL wording", err.Error())
 	}
+}
+
+// The advisory lock is session-level, so it can only be released by the
+// session that took it. When the caller could not read the result back, the
+// lock has to be released on that very connection before it goes back to the
+// pool — a pooled connection keeps its session, and the session keeps the
+// lock until the connection expires.
+func TestPostgresAdvisoryLockIsReleasedOnTheSameConnection(t *testing.T) {
+	store := OpenPostgresTest(t)
+	ctx := t.Context()
+	sqlDB, err := store.DB.DB()
+	if err != nil {
+		t.Fatalf("sql handle: %v", err)
+	}
+	conn, err := sqlDB.Conn(ctx)
+	if err != nil {
+		t.Fatalf("connection: %v", err)
+	}
+	defer conn.Close()
+	name := integrationLockName("pg-lock-release")
+	var got bool
+	if err := conn.QueryRowContext(ctx, "SELECT pg_try_advisory_lock(hashtext($1))", name).Scan(&got); err != nil {
+		t.Fatalf("take the advisory lock: %v", err)
+	}
+	if !got {
+		t.Fatal("the advisory lock was not taken")
+	}
+	releasePostgresAdvisoryLock(conn, name)
+	// Another session can take the lock now, so the first one really let go
+	// of it instead of leaving it behind in the pool.
+	other, err := sqlDB.Conn(ctx)
+	if err != nil {
+		t.Fatalf("second connection: %v", err)
+	}
+	defer other.Close()
+	var otherGot bool
+	if err := other.QueryRowContext(ctx, "SELECT pg_try_advisory_lock(hashtext($1))", name).Scan(&otherGot); err != nil {
+		t.Fatalf("advisory lock probe: %v", err)
+	}
+	if !otherGot {
+		t.Fatal("the advisory lock was not released on the connection that took it")
+	}
+	_, _ = other.ExecContext(ctx, "SELECT pg_advisory_unlock(hashtext($1))", name)
 }
 
 // The heartbeat age has to be measured on the clock that stamped the
@@ -523,6 +589,54 @@ func TestPostgresPayloadContainsFindsTheFailureText(t *testing.T) {
 	}
 	if !rec.contains("strpos(lower(payload::text), lower(") {
 		t.Fatal("the payload search did not use the jsonb text")
+	}
+}
+
+// The production shape of wherePayloadHas passes the engine-specific sentence
+// and the generic one, so the query carries two needles and the OR of both
+// expressions. Every payload that keeps either sentence has to come back —
+// the same rows MySQL's branch returns.
+func TestPostgresPayloadSearchMatchesBothNeedles(t *testing.T) {
+	store, rec := postgresFixtureStore(t)
+	fixtures := []struct {
+		sessionID string
+		payload   string
+	}{
+		{"pg-two-missing", `{"error":"the CLI is not installed"}`},
+		{"pg-two-generic", `{"error":"the engine could not be started"}`},
+		{"pg-two-other", `{"error":"something else entirely"}`},
+	}
+	for _, fixture := range fixtures {
+		if err := store.DB.Exec("INSERT INTO assistant_generations (session_id, user_id, generation_id, status, payload, updated_at) VALUES (?, 1, ?, 'failed', ?::jsonb, clock_timestamp())",
+			fixture.sessionID, fixture.sessionID, fixture.payload).Error; err != nil {
+			t.Fatalf("insert the generation %s: %v", fixture.sessionID, err)
+		}
+	}
+	// The needles are spelled in a different case than the payloads: MySQL's
+	// collation makes INSTR case-insensitive, so Postgres has to be too.
+	missing := "the cli is not installed"
+	generic := "the ENGINE could not be started"
+	var found []struct{ SessionID string }
+	query := wherePayloadHas(store.DB.Table("assistant_generations").Select("session_id"), store.DB, missing, generic)
+	if err := query.Find(&found).Error; err != nil {
+		t.Fatalf("search the payload: %v", err)
+	}
+	matched := map[string]bool{}
+	for _, row := range found {
+		matched[row.SessionID] = true
+	}
+	if len(found) != 2 || !matched["pg-two-missing"] || !matched["pg-two-generic"] {
+		t.Fatalf("the payload search matched %+v, want the two generations that keep one of the two sentences", found)
+	}
+	if matched["pg-two-other"] {
+		t.Fatal("the generation that keeps neither sentence was matched")
+	}
+	// Both needles have to be bound, and in order: the engine-specific
+	// sentence first, the generic one second. gorm's Explain renders the
+	// bound values into the statement, so the recorded SQL shows which
+	// needle went into which side of the OR.
+	if !rec.contains("strpos(lower(payload::text), lower('the cli is not installed')) > 0 OR strpos(lower(payload::text), lower('the ENGINE could not be started')) > 0") {
+		t.Fatal("the payload search did not bind both needles")
 	}
 }
 
