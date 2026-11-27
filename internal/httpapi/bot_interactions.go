@@ -186,6 +186,7 @@ func (h *assistantHandlers) generateBotReply(ctx context.Context, bot domain.Not
 			botinteraction.ReportProgress(ctx, "正在提交回复")
 			session.SetTerminalOnly()
 		}
+		activity.startRound()
 		raw, cliErr := generate(modelCtx, prompt, user)
 		final, ok := session.takeFinal()
 		if !ok || final.Assistant == nil {
@@ -194,7 +195,7 @@ func (h *assistantHandlers) generateBotReply(ctx context.Context, bot domain.Not
 			// from a successful run is accepted: output carrying protocol
 			// JSON (a draft attempt, possibly filtered during parsing) and
 			// progress-only text still go through the terminal retry.
-			if cand, recovered := recoverNativeAssistantReply(raw, bot.ProjectID); cliErr == nil && recovered && !assistantProtocolJSONPresent(raw) && len(cand.Drafts) == 0 && !assistantProgressOnly(assistantProgressText(cand.Message, activity.snapshot()), messages) {
+			if cand, recovered := recoverNativeAssistantReply(raw, bot.ProjectID); cliErr == nil && recovered && !assistantProtocolJSONPresent(raw) && len(cand.Drafts) == 0 && !assistantProgressOnly(assistantProgressText(cand.Message, activity.roundEvents()), messages) {
 				final, ok = AgentTerminalResult{Kind: AgentTerminalAssistant, Assistant: &cand}, true
 			}
 		}

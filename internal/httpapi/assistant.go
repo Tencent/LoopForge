@@ -810,6 +810,7 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 			fail(504, "生成已取消或超时，请重试")
 			return
 		}
+		activity.startRound()
 		raw, err := generate(modelCtx, turn, user)
 		if err == nil && modelCtx.Err() != nil {
 			err = modelCtx.Err()
@@ -881,7 +882,7 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 				continue
 			}
 		}
-		if len(reply.Drafts) == 0 && assistantProgressOnly(assistantProgressText(reply.Message, activity.snapshot()), req.Messages) {
+		if len(reply.Drafts) == 0 && assistantProgressOnly(assistantProgressText(reply.Message, activity.roundEvents()), req.Messages) {
 			if progressRetries >= 2 {
 				fail(502, "模型连续只返回进度说明，尚未完成请求；执行记录已保留，请核对后继续。")
 				return
@@ -1129,17 +1130,17 @@ func assistantNativeRetryPrompt() string {
 // their last tool call as the result, but Cursor joins every paragraph of the
 // turn, so a reply that opened with "我先…" before calling tools still starts
 // with that plan after the answer followed. Judge Main Bot's text after its
-// last tool call, as the other CLIs report it; without a tool call, or with
-// no text after it, the whole reply is judged.
+// last tool call, as the other CLIs report it; without a tool call, the text
+// Main Bot wrote in events is judged, and without any such text the whole
+// reply is. events are those of the current CLI run: a continuation that
+// answers without tools must not be read together with the plan the previous
+// run ended with, which a streamed reply still carries.
 func assistantProgressText(message string, events []domain.AssistantActivityEvent) string {
 	last := -1
 	for i, event := range events {
 		if event.Kind == "tool" && event.Parent == "" {
 			last = i
 		}
-	}
-	if last < 0 {
-		return message
 	}
 	var parts []string
 	for _, event := range events[last+1:] {
@@ -1412,14 +1413,14 @@ func assistantPlanProse(line string) bool {
 	if assistantReportsDoneWork(strings.TrimSpace(line)) || assistantPlanHasPerfective(line) || assistantPlanStatesVerdict(line) || assistantPlanReportHeader.MatchString(line) {
 		return false
 	}
-	// A plan lead-in opens a step even when the line goes on to name a state
-	// or a count ("先确认服务是否正常", "先查看最近的 3 次提交"), as long as an
-	// action comes before it. "检查结果：共 3 处问题" and "最后结论：可以合并。"
-	// open with a lead-in but report what was found.
+	// A plan lead-in ("先…", "最后…", "第一步：…", "Step 1: …") opens a step
+	// unless the line is one of the forms that report what was found: a
+	// report header, a stated total, a status that closes a clause, a
+	// verdict or work already done. Its action may come after a count or a
+	// result word, as in "先拉取最新的 5 条记录" or "最后给出结论。".
 	for _, lead := range assistantPlanLeadIn {
-		if rest, ok := strings.CutPrefix(line, lead); ok {
-			limit := assistantPlanResultStart(rest, true)
-			return limit == len(rest) || assistantPlanNamesAction(rest[:limit])
+		if strings.HasPrefix(line, lead) {
+			return !assistantPlanStatesTotal(line) && !assistantPlanStatesStatus(line)
 		}
 	}
 	// An action word names a step only before any result it might be
@@ -1431,6 +1432,26 @@ func assistantPlanProse(line string) bool {
 		return assistantPlanOpensWithAction(line) && assistantPlanNamesAction(line[:assistantPlanResultStart(line, true)])
 	}
 	return assistantPlanNamesAction(line[:assistantPlanResultStart(line, false)])
+}
+
+// assistantPlanTotal states how many there are: "共 3 个提交", "范围只有
+// internal/httpapi 一个包", "仓库有两个分支".
+var assistantPlanTotal = regexp.MustCompile(`(?:共|只有|仅有|有)[^，,。；;]*?(?:\d+|[一二两三四五六七八九十]+)\s*[个条位项次处份家包件种组台]`)
+
+// assistantPlanStatus is a state that closes a clause, as in "最近一次成功。"
+// or "接口看着正常".
+var assistantPlanStatus = regexp.MustCompile(`(?:成功|正常|失败|异常|报错|超时)(?:了)?(?:[，,。；;！!]|$)`)
+
+// assistantPlanStatesTotal reports whether line states a total. "看看有没有
+// 3 个以上的失败" still checks for one.
+func assistantPlanStatesTotal(line string) bool {
+	return assistantPlanTotal.MatchString(strings.ReplaceAll(line, "有没有", "")) && !assistantPlanCheckIntentIn(line)
+}
+
+// assistantPlanStatesStatus reports whether line states a status rather than
+// one still to be checked ("先确认服务是否正常").
+func assistantPlanStatesStatus(line string) bool {
+	return assistantPlanStatus.MatchString(line) && !assistantPlanCheckIntentIn(line)
 }
 
 // assistantPlanResultStart returns where the first result word of line

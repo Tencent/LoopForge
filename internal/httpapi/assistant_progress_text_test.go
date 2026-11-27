@@ -419,6 +419,25 @@ func TestAssistantProgressOnlyRequiresPlanLines(t *testing.T) {
 		{"我先看一下日志。\n11 月 26 日的任务失败了两次。", false},
 		{"我先看一下仓库。\n仓库有 2 个分支，查看 main 即可。", false},
 		{"我先看一下。\n日志里先看报错，再读配置。", true},
+		// A lead-in opens a step even when its action comes after a count or
+		// a result word; only the forms that report what was found end the
+		// plan (a header, a stated total, a closing status).
+		{"我先看一下。\n最后给出结论。", true},
+		{"我先确认一下。\n步骤：1. 读取配置；2. 运行测试。", true},
+		{"我先整理一下。\n先把结果整理成表格。", true},
+		{"我先看一下。\n先拉取最新的 5 条记录。", true},
+		{"Let me first check the repo.\nStep 1: read the config.", true},
+		{"我先看一下。\n先跟目前线上的配置做对比。", true},
+		{"我先看一下。\n先打印返回值，再核对文档。", true},
+		{"我先看一下。\n首先在 11 月 30 日之前确认窗口。", true},
+		{"我先看一下。\n先在两个分支上分别跑测试。", true},
+		{"我先看一下。\n最后把结论写进文档。", true},
+		{"我先看一下。\n第一步：把 2 个服务的日志拉下来。", true},
+		{"我先看一下。\n最后输出结果。", true},
+		{"Let me first check the repo.\nFirst, pull the 3 latest runs.", true},
+		{"我先看一下。\n先看看有没有 3 个以上的报错。", true},
+		{"我先看一下。\n最后，测试全部成功。", false},
+		{"我先看一下。\n首先，接口返回正常。", false},
 		{"", false},
 		{"   \n\n  ", false},
 	}
@@ -427,4 +446,80 @@ func TestAssistantProgressOnlyRequiresPlanLines(t *testing.T) {
 			t.Errorf("assistantProgressOnly(%q) = %v, want %v", tc.text, got, tc.progress)
 		}
 	}
+}
+
+// A continuation is judged by its own output. The first run ended with only
+// a plan after its tools; the continuation answers without tools. Joined with
+// that plan, the answer read as more of it and was retried until 502 (Studio)
+// or rejected (Bot).
+func TestAssistantContinuationAnswerIsJudgedOnItsOwn(t *testing.T) {
+	const answer = `- LOOP：后端研发\n- 状态：运行中`
+	script := func(counter string) string {
+		return `#!/bin/sh
+if [ "$1" = "--version" ]; then echo "1.0.0"; exit 0; fi
+n=0
+if [ -f '` + counter + `' ]; then read -r n < '` + counter + `'; fi
+n=$((n + 1))
+echo "$n" > '` + counter + `'
+if [ "$n" -gt 1 ]; then
+cat <<'JSON'
+{"type":"assistant","message":{"content":[{"type":"text","text":"` + answer + `"}]}}
+{"type":"result","result":"` + answer + `"}
+JSON
+exit 0
+fi
+cat <<'JSON'
+{"type":"assistant","message":{"content":[{"type":"tool_use","id":"list-1","name":"mcp__agentflow__workflows_list","input":{}}]}}
+{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"list-1","content":"[]"}]}}
+{"type":"assistant","message":{"content":[{"type":"text","text":"我先查看项目里的 LOOP。"}]}}
+{"type":"result","result":"我先查看项目里的 LOOP。"}
+JSON
+`
+	}
+	t.Run("studio generation", func(t *testing.T) {
+		h, user := workbenchFixture(t)
+		h.titleSummary = func(context.Context, domain.User, string) (string, error) { return "", nil }
+		dir := t.TempDir()
+		counter, bin := filepath.Join(dir, "calls"), filepath.Join(dir, "codebuddy")
+		if err := os.WriteFile(bin, []byte(script(counter)), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("AGENTFLOW_CODEBUDDY_BIN", bin)
+		h.generate = nil
+		c, rec := workbenchContext(user, "POST", "/api/assistant/generations", bytes.NewBufferString(`{"projectId":"workbench","sessionId":"continued","clientRequestId":"continued-1","messages":[{"role":"user","content":"查看已有 LOOP 并给出结果"}]}`))
+		h.startGeneration(c)
+		if rec.Code != 202 {
+			t.Fatalf("start: %s", rec.Body.String())
+		}
+		deadline := time.Now().Add(20 * time.Second)
+		for {
+			g, _ := h.repo.AssistantGeneration(user.ID, "continued")
+			if g.Status != "running" {
+				calls, _ := os.ReadFile(counter)
+				if g.Status != "completed" || strings.TrimSpace(string(calls)) != "2" || !strings.Contains(string(g.Reply), "后端研发") {
+					t.Fatalf("calls=%s status=%s error=%s reply=%s", strings.TrimSpace(string(calls)), g.Status, g.Error, g.Reply)
+				}
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatal("generation timed out")
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+	})
+	t.Run("bot", func(t *testing.T) {
+		stubCLIModelDiscovery(t)
+		_, h, bot := botFixture(t)
+		dir := t.TempDir()
+		counter, bin := filepath.Join(dir, "calls"), filepath.Join(dir, "codebuddy")
+		if err := os.WriteFile(bin, []byte(script(counter)), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("AGENTFLOW_CODEBUDDY_BIN", bin)
+		reply, err := h.generateBotReply(context.Background(), bot, domain.BotConversation{SessionID: "bot-continued", ChatType: "single"}, nil, domain.BotInteraction{SenderID: "new-wecom-user", Content: "项目里的 LOOP"})
+		calls, _ := os.ReadFile(counter)
+		if err != nil || strings.TrimSpace(string(calls)) != "2" || !strings.Contains(reply, "后端研发") {
+			t.Fatalf("calls=%s err=%v reply=%q", strings.TrimSpace(string(calls)), err, reply)
+		}
+	})
 }

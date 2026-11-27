@@ -17,6 +17,11 @@ type assistantActivityLog struct {
 	leadingSpace string
 	bytes        int
 	truncated    bool
+	// round and roundText mark where the current CLI run began: events from
+	// index round on, plus text appended to a text event that ended at
+	// roundText, belong to it. See startRound.
+	round     int
+	roundText string
 }
 
 func (l *assistantActivityLog) add(event assistantStreamEvent) {
@@ -167,14 +172,18 @@ func (l *assistantActivityLog) appendTextLocked(event assistantStreamEvent) {
 
 func (l *assistantActivityLog) dropTextLocked() {
 	kept := make([]domain.AssistantActivityEvent, 0, len(l.events))
-	used := 0
-	for _, event := range l.events {
+	used, round := 0, 0
+	for i, event := range l.events {
 		if event.Kind == "text" {
 			continue
 		}
 		kept = append(kept, event)
 		used += len(event.Text) + len(event.Detail)
+		if i < l.round {
+			round++
+		}
 	}
+	l.round, l.roundText = round, ""
 	l.events = kept
 	l.bytes = used
 	l.leadingSpace = ""
@@ -328,6 +337,38 @@ func transcriptWorthKeeping(text string, events []domain.AssistantActivityEvent)
 	}
 	return false
 }
+
+// startRound marks the start of another CLI run in the same turn, such as
+// the continuation after a progress-only reply. Text the CLI streams next may
+// still be appended to the last text event.
+func (l *assistantActivityLog) startRound() {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.round, l.roundText = len(l.events), ""
+	if n := len(l.events); n > 0 && l.events[n-1].Kind == "text" {
+		l.roundText = l.events[n-1].Text
+	}
+}
+
+// roundEvents returns what the current CLI run recorded. A continuation is
+// judged by its own text and tools: joined with the plan the previous run
+// ended with, its answer would read as more of that plan.
+func (l *assistantActivityLog) roundEvents() []domain.AssistantActivityEvent {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	start := min(l.round, len(l.events))
+	var out []domain.AssistantActivityEvent
+	if start > 0 && l.roundText != "" {
+		if last := l.events[start-1]; last.Kind == "text" {
+			if rest, ok := strings.CutPrefix(last.Text, l.roundText); ok && strings.TrimSpace(rest) != "" {
+				last.Text = rest
+				out = append(out, last)
+			}
+		}
+	}
+	return append(out, l.events[start:]...)
+}
+
 func (l *assistantActivityLog) snapshot() []domain.AssistantActivityEvent {
 	l.mu.Lock()
 	defer l.mu.Unlock()
