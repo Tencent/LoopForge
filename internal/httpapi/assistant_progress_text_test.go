@@ -197,16 +197,22 @@ func TestAssistantMultiLinePlanBeforeToolsStillContinues(t *testing.T) {
 	for _, tc := range []struct {
 		name, session, plan string
 	}{
-		{"numbered list", "multi-line-plan", `我先查看项目里的 LOOP：\\n1. 读取工作流配置\\n2. 汇总节点状态`},
-		{"prose steps", "prose-plan", `我先看一下仓库：\\n先确认分支，再读取提交记录。`},
+		{"numbered list", "multi-line-plan", `我先查看项目里的 LOOP：\n1. 读取工作流配置\n2. 汇总节点状态`},
+		{"prose steps", "prose-plan", `我先看一下仓库：\n先确认分支，再读取提交记录。`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			runMultiLinePlanCase(t, tc.session, tc.plan)
+			runMultiLinePlanCase(t, tc.session, tc.plan, "2", "均在正常运行")
 		})
 	}
 }
 
-func runMultiLinePlanCase(t *testing.T, session, plan string) {
+// A reply that opens like a plan but states a verdict ("测试全过。") is the
+// answer: it is delivered as is, without running the CLI again.
+func TestAssistantPlanOpeningWithVerdictIsTheAnswer(t *testing.T) {
+	runMultiLinePlanCase(t, "verdict-answer", `我先跑测试。\n测试全过。`, "1", "测试全过")
+}
+
+func runMultiLinePlanCase(t *testing.T, session, plan, wantCalls, wantBody string) {
 	t.Helper()
 	h, user := workbenchFixture(t)
 	h.titleSummary = func(context.Context, domain.User, string) (string, error) { return "", nil }
@@ -241,7 +247,7 @@ JSON
 	c, rec := workbenchContext(user, "POST", "/api/assistant/chat", bytes.NewBuffer(body))
 	h.chat(c)
 	calls, _ := os.ReadFile(counter)
-	if rec.Code != 200 || strings.TrimSpace(string(calls)) != "2" || !strings.Contains(rec.Body.String(), "均在正常运行") {
+	if rec.Code != 200 || strings.TrimSpace(string(calls)) != wantCalls || !strings.Contains(rec.Body.String(), wantBody) {
 		t.Fatalf("calls=%s code=%d body=%s", strings.TrimSpace(string(calls)), rec.Code, rec.Body.String())
 	}
 }
@@ -323,6 +329,20 @@ func TestAssistantProgressOnlyRequiresPlanLines(t *testing.T) {
 		{"我先看一下仓库。\n共有 2 个成员：alice、bob。", false},
 		{"我先看一下仓库。\n先确认分支，再读取提交记录。\n最近提交是 abc1234。", false},
 		{"我先看一下仓库。\n先看看仓库，查了 README。", false},
+		// A line stating a verdict is an answer unless it is still to be
+		// checked; English verbs count only as whole words.
+		{"我先跑测试。\n测试全过。", false},
+		{"我先跑测试。\n单元测试都通过，lint 也干净。", false},
+		{"我先看下日志。\n接口没问题。", false},
+		{"我先跑测试。\n- 单元测试全过\n- lint 干净", false},
+		{"我先跑测试。\n然后测试全过。", false},
+		{"Let me first check the file.\nIt reads the config on start.", false},
+		{"我先检查配置。\n跑一遍测试看看有没有异常。", true},
+		{"我先跑测试。\n确认单元测试都通过。", true},
+		{"我先跑测试。\n先运行测试，再检查 lint 是否干净。", true},
+		{"我先跑测试。\n- 确认测试全部通过\n- 看看日志有没有问题", true},
+		{"Let me first check the file.\nThen read the config and run the tests.", true},
+		{"Let me first look around.\nCheck the config, then run the tests.", true},
 		{"", false},
 		{"   \n\n  ", false},
 	}

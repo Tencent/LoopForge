@@ -1215,11 +1215,11 @@ func assistantProgressSentence(text string) bool {
 // it: a "然后…" step or a list item naming a step still to take.
 func assistantPlanStep(line string) bool {
 	if rest, ok := cutAssistantListMarker(line); ok {
-		return rest != "" && !assistantReportsDoneWork(rest)
+		return rest != "" && !assistantReportsDoneWork(rest) && !assistantPlanStatesVerdict(rest)
 	}
 	for _, prefix := range []string{"然后", "接着", "随后", "之后", "再", "Then", "Next"} {
 		if rest, ok := strings.CutPrefix(line, prefix); ok {
-			return !assistantReportsDoneWork(rest)
+			return !assistantReportsDoneWork(rest) && !assistantPlanStatesVerdict(rest)
 		}
 	}
 	return false
@@ -1234,7 +1234,36 @@ var assistantPlanLeadIn = []string{"首先", "先", "第一步", "第二步", "�
 
 // assistantPlanVerb is an action a plan step is made of, without the
 // perfective 了 ("先确认分支" plans the check; "先确认了分支" reports it).
-var assistantPlanVerb = []string{"读", "看", "查", "搜", "运行", "执行", "检查", "确认", "汇总", "整理", "对比", "分析", "测试", "验证", "修改", "实现", "记录", "列出", "定位", "复现", "review", "read", "check", "run", "test"}
+var assistantPlanVerb = []string{"读", "看", "查", "搜", "运行", "执行", "检查", "确认", "汇总", "整理", "对比", "分析", "测试", "验证", "修改", "实现", "记录", "列出", "定位", "复现"}
+
+// assistantPlanVerbEN is the English counterpart of assistantPlanVerb, matched
+// as whole words: "It reads the config on start." describes the code, it does
+// not plan a read.
+var assistantPlanVerbEN = regexp.MustCompile(`(?i)\b(?:review|read|check|run|test)\b`)
+
+// assistantPlanVerdictMark states how things are ("测试全过", "接口没问题").
+// A plan names such a state only as something still to verify, so a line
+// carrying it without a check intent is an answer.
+var assistantPlanVerdictMark = []string{"全过", "都过", "通过", "没问题", "没有问题", "无异常", "没有异常", "干净"}
+
+// assistantPlanCheckIntent marks a verdict as still to be verified, as in
+// "确认测试都通过" or "看看有没有异常".
+var assistantPlanCheckIntent = []string{"确认", "检查", "验证", "看看", "看下", "看一下", "是否", "有没有", "能否", "会不会"}
+
+func assistantPlanStatesVerdict(line string) bool {
+	for _, mark := range assistantPlanVerdictMark {
+		if !strings.Contains(line, mark) {
+			continue
+		}
+		for _, intent := range assistantPlanCheckIntent {
+			if strings.Contains(line, intent) {
+				return false
+			}
+		}
+		return true
+	}
+	return false
+}
 
 // assistantPlanResultMark is a word a plan line does not carry: it reports
 // what was found (conclusions) instead of what is next.
@@ -1274,7 +1303,7 @@ func assistantPlanProse(line string) bool {
 	if assistantPlanCJKNumber.MatchString(line) || assistantPlanDigitsOrDate.MatchString(line) || assistantPlanHasPerfective(line) {
 		return false
 	}
-	if assistantReportsDoneWork(line) {
+	if assistantReportsDoneWork(line) || assistantPlanStatesVerdict(line) {
 		return false
 	}
 	for _, lead := range assistantPlanLeadIn {
@@ -1287,7 +1316,7 @@ func assistantPlanProse(line string) bool {
 			return true
 		}
 	}
-	return false
+	return assistantPlanVerbEN.MatchString(line)
 }
 
 func cutAssistantListMarker(line string) (string, bool) {
