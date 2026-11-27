@@ -733,3 +733,40 @@ test('AI schedule model picker loads account login CLI models for its project an
   assert.equal(engine.value, 'codex');
   assert.equal(form.elements.assistantModel.value, 'codex:gpt-6-sol');
 });
+
+test('Escape closes the AI job model menu first and keeps the editor and its draft open', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  const $ = (s) => app.document.querySelector(s);
+  app.router.get('/api/assistant/models', {
+    default: 'glm-test',
+    models: [{ id: 'glm-test', name: 'GLM Test', family: 'glm' }, { id: 'claude-test', name: 'Claude Test', family: 'claude' }],
+    engines: [{ id: 'codebuddy', name: 'CodeBuddy', configured: true }],
+  });
+  app.evaluate("state.projectFilter='project-1'");
+  await app.evaluate("openScheduleJobModal('assistant')");
+  await settle(4);
+  const form = $('#scheduleJobForm');
+  assert.ok($('#scheduleModal').classList.contains('open'));
+  form.elements.name.value = '未保存的草稿';
+  const toggle = $('#scheduleModelPicker [data-model-toggle]');
+  const menu = $('#scheduleModelPicker .ai-model-menu');
+  toggle.click();
+  assert.equal(menu.hidden, false);
+  assert.equal(toggle.getAttribute('aria-expanded'), 'true');
+  const esc = () => {
+    const event = new app.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
+    (app.document.activeElement || app.document.body).dispatchEvent(event);
+    return event;
+  };
+  toggle.focus();
+  assert.equal(esc().defaultPrevented, true);
+  assert.equal(menu.hidden, true, 'the first Escape closes the model menu');
+  assert.equal(toggle.getAttribute('aria-expanded'), 'false');
+  assert.ok($('#scheduleModal').classList.contains('open'), 'the editor stays open');
+  assert.equal(form.elements.name.value, '未保存的草稿');
+  assert.equal(app.document.activeElement, toggle, 'focus returns to the model button');
+  esc();
+  await settle(2);
+  assert.equal($('#scheduleModal').classList.contains('open'), false, 'a second Escape closes the editor as before');
+});

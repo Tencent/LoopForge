@@ -328,7 +328,14 @@ function bindScheduleModelPicker(){
     if(next)paintScheduleModel(next);
   };
   document.addEventListener('click',e=>{if(!host.contains(e.target))closeScheduleModelMenu()});
-  document.addEventListener('keydown',e=>{if(e.key==='Escape')closeScheduleModelMenu()});
+  // Esc closes only the open menu. Capture runs before the page-level Esc
+  // handler that would otherwise close the whole editor and drop the draft.
+  document.addEventListener('keydown',e=>{
+    if(e.key!=='Escape'||menu.hidden)return;
+    e.preventDefault();e.stopImmediatePropagation();
+    closeScheduleModelMenu();
+    toggle.focus({preventScroll:true});
+  },true);
   // A fixed menu would drift from its toggle; close it when anything else scrolls.
   document.addEventListener('scroll',e=>{if(!menu.contains(e.target))closeScheduleModelMenu()},true);
   window.addEventListener('resize',closeScheduleModelMenu);
