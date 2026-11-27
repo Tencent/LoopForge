@@ -342,6 +342,18 @@ func TestAssistantProgressOnlyRequiresPlanLines(t *testing.T) {
 		{"我先跑测试。\n先运行测试，再检查 lint 是否干净。", true},
 		{"我先跑测试。\n- 确认测试全部通过\n- 看看日志有没有问题", true},
 		{"Let me first check the file.\nThen read the config and run the tests.", true},
+		// 通过 as "via" and 干净 as a complement are steps, not verdicts;
+		// plan lead-ins still open a step that names a state or a count.
+		{"我先看一下仓库：\n先读取配置，再通过 API 拉取提交记录。", true},
+		{"稍等，我先确认环境。\n然后通过数据库查看运行记录。", true},
+		{"我先整理一下工作区。\n先删掉临时文件，再清理干净，最后运行测试。", true},
+		{"我先看一下仓库。\n先读取 README，再把临时文件清理干净。", true},
+		{"让我先看一下仓库：\n先把测试目录清理干净，再运行测试。", true},
+		{"我先看一下环境。\n先确认服务是否正常，再读取日志。", true},
+		{"我先看一下仓库：\n先查看最近的 3 次提交，再汇总变更。", true},
+		{"我先看一下仓库。\n重点关注 store.py 和 handler 的调用关系。", true},
+		{"我先跑测试。\n测试都通过，可以合并。", false},
+		{"我先跑测试。\n单测都通过。", false},
 		{"Let me first look around.\nCheck the config, then run the tests.", true},
 		{"", false},
 		{"   \n\n  ", false},
