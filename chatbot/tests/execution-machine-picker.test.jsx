@@ -16,6 +16,7 @@ function fixture(overrides = {}) {
     machines,
     availableMachines: machines,
     defaultRunnerId: "mac",
+    executionSelection: "runner:mac",
     selectMachine: vi.fn(),
     refreshMachines: vi.fn(),
     ...overrides,
@@ -23,7 +24,7 @@ function fixture(overrides = {}) {
 }
 
 async function openPicker() {
-  const trigger = screen.getByRole("button", { name: /^执行机器：/ });
+  const trigger = screen.getByRole("button", { name: /^执行位置：/ });
   trigger.getBoundingClientRect = () => ({
     top: 500,
     bottom: 528,
@@ -39,9 +40,15 @@ async function openPicker() {
 
 describe("execution machine picker", () => {
   test("an existing empty cloud draft still offers machine selection", async () => {
-    render(<ExecutionMachinePicker chat={fixture({session:{id:"draft",messages:[],executionTarget:{pool:"cloud"}}})} />);
+    const chat = fixture({
+      defaultRunnerId: "",
+      executionSelection: "cloud",
+      session: { id: "draft", messages: [], executionTarget: { pool: "cloud" } },
+    });
+    render(<ExecutionMachinePicker chat={chat} />);
     const { user } = await openPicker();
     await user.click(screen.getByRole("option", { name: /测试 Linux 离线/ }));
+    expect(chat.selectMachine).toHaveBeenCalledWith("runner:linux");
   });
   test("shows the real personal default, searches bound machines and persists the choice", async () => {
     const chat = fixture();
@@ -60,11 +67,11 @@ describe("execution machine picker", () => {
     ).not.toBeInTheDocument();
     await user.clear(screen.getByRole("combobox"));
     await user.type(screen.getByRole("combobox"), "没有这台机器");
-    expect(screen.getByText("没有匹配的执行机器")).toBeInTheDocument();
+    expect(screen.getByText("没有匹配的执行位置")).toBeInTheDocument();
     await user.clear(screen.getByRole("combobox"));
     await user.type(screen.getByRole("combobox"), "Linux");
     await user.click(screen.getByRole("option", { name: /测试 Linux 离线/ }));
-    expect(chat.selectMachine).toHaveBeenCalledWith("linux");
+    expect(chat.selectMachine).toHaveBeenCalledWith("runner:linux");
     expect(trigger).toHaveAttribute("aria-expanded", "false");
   });
 
@@ -74,7 +81,7 @@ describe("execution machine picker", () => {
     render(<ExecutionMachinePicker chat={chat} onManage={manage} />);
     const { user } = await openPicker();
     await user.click(screen.getByRole("option", { name: /LoopForge 云端/ }));
-    expect(chat.selectMachine).toHaveBeenCalledWith("");
+    expect(chat.selectMachine).toHaveBeenCalledWith("cloud");
     await openPicker();
     await user.click(screen.getByRole("option", { name: "管理执行机器" }));
     expect(manage).toHaveBeenCalledOnce();
@@ -82,7 +89,7 @@ describe("execution machine picker", () => {
 
   test("offers only cloud and selectable project machines", async () => {
     const shared = { id: "shared", name: "项目机器", status: "online", ownerUserId: 2 };
-    const chat = fixture({ defaultRunnerId: "", availableMachines: [shared] });
+    const chat = fixture({ defaultRunnerId: "", executionSelection: "cloud", availableMachines: [shared] });
     chat.machines = [...chat.machines, shared];
     render(<ExecutionMachinePicker chat={chat} />);
     await openPicker();
@@ -107,7 +114,7 @@ describe("execution machine picker", () => {
     expect(screen.getByText("开发 Mac")).toBeInTheDocument();
     expect(screen.queryByText("测试 Linux")).not.toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: /^执行机器：/ }),
+      screen.queryByRole("button", { name: /^执行位置：/ }),
     ).not.toBeInTheDocument();
   });
 
@@ -162,7 +169,7 @@ describe("execution machine picker", () => {
     (flag) => {
       render(<ExecutionMachinePicker chat={fixture({ [flag]: true })} />);
       expect(
-        screen.getByRole("button", { name: /^执行机器：/ }),
+        screen.getByRole("button", { name: /^执行位置：/ }),
       ).toBeDisabled();
     },
   );
@@ -171,7 +178,7 @@ describe("execution machine picker", () => {
     const chat = fixture({ machinesReady: false, machineError: "连接失败" });
     render(<ExecutionMachinePicker chat={chat} />);
     const { user, trigger } = await openPicker();
-    expect(trigger).toHaveTextContent("执行机器加载失败");
+    expect(trigger).toHaveTextContent("执行位置加载失败");
     expect(
       screen.queryByRole("option", { name: /LoopForge 云端/ }),
     ).not.toBeInTheDocument();

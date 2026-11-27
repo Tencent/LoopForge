@@ -13,6 +13,24 @@ function targetForSelection(selection) {
   return { pool: selection || "cloud" };
 }
 
+function canSelectTarget(target, machines, clusters, projectId) {
+  switch (target?.pool) {
+    case "runner":
+      return machines.some((row) => row.id === target.runnerId);
+    case "cluster":
+      return clusters.some((row) => row.id === target.clusterId);
+    case "cluster-auto":
+      return clusters.length > 0;
+    case "machine-auto":
+    case "project":
+      return !!projectId;
+    case "cloud":
+      return true;
+    default:
+      return false;
+  }
+}
+
 // Execution selection belongs to the local draft until its first turn starts.
 export function useExecutionMachines(userId, busy, readOnly, onError, bindMachine, draftTarget, projectId = "") {
   const [loaded, setLoaded] = useState(null);
@@ -24,9 +42,13 @@ export function useExecutionMachines(userId, busy, readOnly, onError, bindMachin
   const availableClusters = machinesReady ? loaded.availableClusters : [];
   const cloudPool = machinesReady ? loaded.cloudPool : null;
   const projectTarget = machinesReady ? loaded.projectTarget : null;
-  const selection = machinesReady
-    ? chosen ?? (selectionForTarget(draftTarget) || (projectId ? "project" : selectionForTarget(projectTarget) || "cloud"))
-    : "";
+  let selection = "";
+  if (machinesReady) {
+    const savedSelection = canSelectTarget(draftTarget, availableMachines, availableClusters, projectId)
+      ? selectionForTarget(draftTarget)
+      : "";
+    selection = chosen || savedSelection || (projectId ? "project" : selectionForTarget(projectTarget) || "cloud");
+  }
   const draftExecutionTarget = targetForSelection(selection);
   const effectiveTarget = selection === "project" ? projectTarget : draftExecutionTarget;
   const selectedClusterId = effectiveTarget?.clusterId || "";
@@ -56,17 +78,23 @@ export function useExecutionMachines(userId, busy, readOnly, onError, bindMachin
       const availableMachines = machines.filter((row) =>
         row.supportsConversation !== false && (!projectId || row.canUseInConversation),
       );
+      const availableClusters = clusters?.available || [];
       const hasMachine = (id) => availableMachines.some((row) => row.id === id);
       let projectTarget = clusters?.projectTarget;
       if (!projectTarget?.pool || projectTarget.pool === "personal") {
         const runnerId = projectTarget?.pool === "personal" ? selected.personalRunnerId : selected.runnerId;
         projectTarget = hasMachine(runnerId) ? { pool: "runner", runnerId } : { pool: "cloud" };
       }
+      setChosen((current) =>
+        current && !canSelectTarget(targetForSelection(current), availableMachines, availableClusters, projectId)
+          ? null
+          : current,
+      );
       setLoaded({
         scope,
         machines,
         availableMachines,
-        availableClusters: clusters?.available || [],
+        availableClusters,
         projectTarget,
         cloudPool: selected.cloudPool || null,
       });
@@ -100,17 +128,13 @@ export function useExecutionMachines(userId, busy, readOnly, onError, bindMachin
 
   async function selectMachine(value) {
     const target = targetForSelection(value);
-    const available = target.clusterId ? availableClusters.some((row) => row.id === target.clusterId) :
-      target.runnerId ? availableMachines.some((row) => row.id === target.runnerId) :
-      target.pool === "cluster-auto" ? availableClusters.length > 0 :
-      target.pool === "cloud" || (!!projectId && ["project", "machine-auto"].includes(target.pool));
     if (
       !userId ||
       busy ||
       readOnly ||
       !machinesReady ||
       machineSavingRef.current ||
-      !available
+      !canSelectTarget(target, availableMachines, availableClusters, projectId)
     )
       return false;
     machineSavingRef.current = true;
@@ -120,7 +144,7 @@ export function useExecutionMachines(userId, busy, readOnly, onError, bindMachin
     try {
       await bindMachine(target.runnerId || "");
       if (request !== revision.current) return false;
-      setChosen(value);
+      setChosen(selectionForTarget(target));
       setMachineError("");
       return true;
     } catch (e) {

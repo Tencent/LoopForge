@@ -336,16 +336,16 @@ describe("conversation hooks", () => {
       await waitFor(() => expect(result.current).toMatchObject({ ready: true, machinesReady: true }));
       act(() => result.current.setExecutor(executor));
       await waitFor(() => expect(result.current.model).toBe(gatewayModel.id));
-      await act(() => result.current.selectMachine(localRunner.id));
+      await act(() => result.current.selectMachine("runner:" + localRunner.id));
       const accountModelID = saved ? `${executor}:${accountID}` : accountID;
       await waitFor(() => expect(result.current.models.map(model => model.id)).toEqual([accountModelID]));
       expect(result.current.modelDetails.efforts).toEqual(["high"]);
 
-      await act(() => result.current.selectMachine(keyRunner.id));
+      await act(() => result.current.selectMachine("runner:" + keyRunner.id));
       expect(result.current.models).toEqual([gatewayModel]);
       expect(result.current.modelDetails.efforts).toEqual(["low"]);
       act(() => result.current.setEffort("low"));
-      await act(() => result.current.selectMachine(localRunner.id));
+      await act(() => result.current.selectMachine("runner:" + localRunner.id));
       act(() => result.current.setEffort("high"));
       await act(async () => expect(await result.current.send({ text: "使用账号登录" })).toBe(true));
       expect(writeMock).toHaveBeenCalledWith("/api/assistant/generations", expect.objectContaining({
@@ -716,7 +716,7 @@ describe("conversation hooks", () => {
       act(() => result.current.setExecutor("agy"));
       await waitFor(() => expect(result.current.model).toBe(gemini));
       act(() => result.current.setModel(gemini));
-      await act(async () => result.current.selectMachine("runner-b"));
+      await act(async () => result.current.selectMachine("runner:runner-b"));
       await waitFor(() => expect(completeProbe).toBeTypeOf("function"));
       expect(result.current.model).toBe(gemini);
       let request;
@@ -1190,8 +1190,8 @@ describe("conversation hooks", () => {
     try {
       const { result } = renderHook(() => useChat());
       await waitFor(() => expect(result.current.machinesReady).toBe(true));
-      await act(() => result.current.selectMachine(""));
-      await act(() => result.current.selectMachine("mac"));
+      await act(() => result.current.selectMachine("cloud"));
+      await act(() => result.current.selectMachine("runner:mac"));
       await act(() => result.current.refreshMachines());
       expect(result.current.defaultRunnerId).toBe("mac");
       expect(result.current.session).toBeNull();
@@ -1200,7 +1200,7 @@ describe("conversation hooks", () => {
       expect(writeMock).not.toHaveBeenCalled();
       await act(() => result.current.send({text:"开始"}));
       expect(writeMock).toHaveBeenCalledWith("/api/assistant/generations",expect.objectContaining({executionTarget:{pool:"runner",runnerId:"mac"}}));
-      await act(async () => expect(await result.current.selectMachine("")).toBe(false));
+      await act(async () => expect(await result.current.selectMachine("cloud")).toBe(false));
     } finally {
       apiMock.mockImplementation(original);
     }
@@ -1219,7 +1219,7 @@ describe("conversation hooks", () => {
       const {result}=renderHook(()=>useChat());
       await waitFor(()=>expect(result.current.ready).toBe(true));
       await act(async()=>expect(await result.current.send({text:"开始"})).toBe(false));
-      expect(result.current.error).toBe("执行机器仍在加载，请稍后发送。");
+      expect(result.current.error).toBe("执行位置仍在加载，请稍后发送。");
       expect(writeMock).not.toHaveBeenCalled();
       await act(async()=>{release({runnerId:"mac"});});
       await waitFor(()=>expect(result.current.defaultRunnerId).toBe("mac"));
