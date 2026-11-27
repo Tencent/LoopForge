@@ -37,6 +37,7 @@ func cvAPNG(t *testing.T) []byte {
 }
 
 func TestWorkbenchImagesDecksAttachments(t *testing.T) {
+	idle := func() bool { return true }
 	root := t.TempDir()
 	t.Setenv("AGENTFLOW_ASSISTANT_SESSION_DIR", root)
 	const owner = int64(81001)
@@ -98,14 +99,14 @@ func TestWorkbenchImagesDecksAttachments(t *testing.T) {
 		t.Fatal(err)
 	}
 	message := assistantMessage{Role: "assistant", Content: `{"message":"PPT 已完成","drafts":[]}`, CreatedAt: time.Now()}
-	if !attachWorkspaceDeck(owner, &message, map[string]bool{}) || len(message.Attachments) != 1 || !strings.Contains(message.Content, "```slides") {
+	if !attachWorkspaceDeck(owner, &message, map[string]bool{}, idle) || len(message.Attachments) != 1 || !strings.Contains(message.Content, "```slides") {
 		t.Fatalf("attached deck=%+v", message)
 	}
-	if attachWorkspaceDeck(owner, nil, map[string]bool{}) {
+	if attachWorkspaceDeck(owner, nil, map[string]bool{}, idle) {
 		t.Fatal("nil message changed")
 	}
 	already := assistantMessage{Content: "```slides\nx\n```"}
-	if attachWorkspaceDeck(owner, &already, map[string]bool{}) {
+	if attachWorkspaceDeck(owner, &already, map[string]bool{}, idle) {
 		t.Fatal("existing slides changed")
 	}
 	autoImageDir := filepath.Join(assistantCLIWorkspaceForUser(owner), "generated-images")
@@ -118,10 +119,10 @@ func TestWorkbenchImagesDecksAttachments(t *testing.T) {
 	conv := assistantConversation{ProjectID: "wb-p", Messages: []assistantMessage{{
 		Role: "assistant", Content: `{"message":"saved /tmp/generated-images/auto.png","drafts":[]}`, CreatedAt: time.Now(),
 	}}}
-	if !materializeWorkspaceImages(owner, &conv) || len(conv.Messages[0].Attachments) == 0 || strings.Contains(conv.Messages[0].Content, "/tmp/generated-images") {
+	if !materializeWorkspaceImages(owner, &conv, idle) || len(conv.Messages[0].Attachments) == 0 || strings.Contains(conv.Messages[0].Content, "/tmp/generated-images") {
 		t.Fatalf("materialized conversation=%+v", conv)
 	}
-	if materializeWorkspaceImages(owner, nil) {
+	if materializeWorkspaceImages(owner, nil, idle) {
 		t.Fatal("nil conversation changed")
 	}
 

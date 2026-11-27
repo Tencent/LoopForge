@@ -229,6 +229,24 @@ func (r *AssistantRepo) backfillAssistantParticipants(rows []assistantSessionRow
 	return updated
 }
 
+// SetAssistantSessionMedia writes back legacy attachments discovered when a
+// complete transcript is opened. Preserve concurrent edits and running turns.
+func (r *AssistantRepo) SetAssistantSessionMedia(userID int64, id string, expected time.Time, messages []domain.AssistantMessage) (bool, error) {
+	updated := time.Now().UTC().Truncate(time.Millisecond)
+	if !updated.After(expected) {
+		updated = expected.Add(time.Millisecond)
+	}
+	arg := "CAST(? AS JSON)"
+	if r.DB.Dialector.Name() == "sqlite" {
+		arg = "json(?)"
+	}
+	result := r.DB.Model(&assistantSessionRow{}).
+		Where("id = ? AND user_id = ? AND updated_at = ?", id, userID, expected).
+		Where("NOT EXISTS (SELECT 1 FROM assistant_generations WHERE session_id = ? AND status = 'running')", id).
+		UpdateColumns(map[string]any{"payload": gorm.Expr("JSON_SET(payload, '$.messages', "+arg+")", string(mustJSON(messages))), "updated_at": updated})
+	return result.RowsAffected == 1, result.Error
+}
+
 func (r *AssistantRepo) PutAssistantSession(userID int64, v domain.AssistantSession) error {
 	return r.retryAssistantDeadlock(func() error {
 		return r.DB.Transaction(func(tx *gorm.DB) error {

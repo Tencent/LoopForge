@@ -46,6 +46,14 @@ export const attachmentURL = (attachment, sessionId) =>
   /^data:[^,]*;base64,/.test(attachment.localDataUrl || "")
     ? attachment.localDataUrl
     : `/api/assistant/attachments/${encodeURIComponent(attachment.id)}?sessionId=${encodeURIComponent(sessionId)}`;
+export function attachmentThumbnailURL(url, mimeType) {
+  if (!url?.startsWith("/api/assistant/attachments/") ||
+      !["image/png", "image/jpeg", "image/webp"].includes(mimeType)) return url;
+  const preview = new URL(url, window.location.origin);
+  preview.searchParams.set("view", "thumbnail");
+  return preview.pathname + preview.search;
+}
+
 export function newId() {
   const bytes = crypto.getRandomValues(new Uint8Array(16));
   return (

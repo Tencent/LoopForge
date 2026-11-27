@@ -1067,46 +1067,61 @@ describe("App", () => {
     Object.assign(chat, previous);
   });
 
-  test("previews a pasted screenshot in the composer instead of only a filename", async () => {
+  test("keeps a pasted screenshot visible through sending and transcript refresh", async () => {
+    const previous = { ...chat };
     const originalFetch = globalThis.fetch;
-    const originalCreate = globalThis.URL.createObjectURL;
-    const originalRevoke = globalThis.URL.revokeObjectURL;
-    globalThis.URL.createObjectURL = vi.fn(() => "blob:composer-preview");
-    globalThis.URL.revokeObjectURL = vi.fn();
+    const originalCreate = URL.createObjectURL;
+    const originalRevoke = URL.revokeObjectURL;
+    URL.createObjectURL = vi.fn(() => "blob:composer-preview");
+    URL.revokeObjectURL = vi.fn();
+    const attachment = { id: "shot-1", name: "shot.png", mimeType: "image/png", size: 2048 };
     globalThis.fetch = vi.fn(async () => ({
-      ok: true,
-      status: 200,
-      json: async () => ({ id: "shot-1", name: "shot.png", mimeType: "image/png", size: 2048 }),
+      ok: true, status: 200, json: async () => attachment,
     }));
-    Object.assign(chat, {
-      local: false,
-      activeId: null,
-      session: null,
-      projectId: "p1",
-      readOnly: false,
-    });
+    const session = { id: "sent-screenshot", projectId: "p1", messages: [] };
+    Object.assign(chat, { local: false, activeId: session.id, session, projectId: "p1", readOnly: false });
     const view = render(<App />);
-    fireEvent.paste(screen.getByLabelText("消息"), {
-      clipboardData: {
-        items: [
-          {
-            kind: "file",
-            getAsFile: () => new File(["png"], "shot.png", { type: "image/png" }),
-          },
-        ],
-      },
-    });
-    const thumb = await screen.findByAltText("shot.png");
-    expect(thumb.getAttribute("src")).toBe("blob:composer-preview");
-    expect(thumb.closest(".composer-attachment-thumb")).toBeTruthy();
-    fireEvent.click(screen.getByLabelText("查看图片 shot.png"));
-    expect(screen.getByLabelText("查看大图 shot.png")).toBeInTheDocument();
-    view.unmount();
-    globalThis.fetch = originalFetch;
-    if (originalCreate) globalThis.URL.createObjectURL = originalCreate;
-    else delete globalThis.URL.createObjectURL;
-    if (originalRevoke) globalThis.URL.revokeObjectURL = originalRevoke;
-    else delete globalThis.URL.revokeObjectURL;
+    let acknowledge;
+    try {
+      fireEvent.paste(screen.getByLabelText("消息"), {
+        clipboardData: {
+          items: [{ kind: "file", getAsFile: () => new File(["png"], "shot.png", { type: "image/png" }) }],
+        },
+      });
+      const composerImage = await screen.findByLabelText("查看图片 shot.png");
+      expect(within(composerImage).getByAltText("shot.png")).toHaveAttribute("src", "blob:composer-preview");
+      fireEvent.click(composerImage);
+      const lightbox = screen.getByLabelText("查看大图 shot.png");
+      fireEvent.click(within(lightbox).getByRole("button", { name: "关闭大图" }));
+
+      chat.send.mockImplementationOnce(({ attachments }) => {
+        expect(attachments).toEqual([attachment]);
+        chat.session = { ...session, messages: [{ role: "user", content: "截图", attachments }] };
+        return new Promise((resolve) => { acknowledge = resolve; });
+      });
+      fireEvent.click(screen.getByRole("button", { name: "发送消息" }));
+      view.rerender(<App />);
+      const messageImage = () => view.container.querySelector(".message-attachments img");
+      expect(messageImage()).toHaveAttribute("src", "blob:composer-preview");
+      await act(async () => acknowledge(true));
+      expect(screen.queryByLabelText("查看图片 shot.png")).toBeNull();
+      chat.session = JSON.parse(JSON.stringify(chat.session));
+      view.rerender(<App />);
+      expect(messageImage()).toHaveAttribute("src", "blob:composer-preview");
+      expect(URL.revokeObjectURL).not.toHaveBeenCalledWith("blob:composer-preview");
+    } finally {
+      view.unmount();
+      Object.assign(chat, previous);
+      globalThis.fetch = originalFetch;
+      try {
+        expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:composer-preview");
+      } finally {
+        if (originalCreate) URL.createObjectURL = originalCreate;
+        else delete URL.createObjectURL;
+        if (originalRevoke) URL.revokeObjectURL = originalRevoke;
+        else delete URL.revokeObjectURL;
+      }
+    }
   });
 
   test("uploads a pasted screenshot over plain HTTP, where crypto.randomUUID is missing", async () => {

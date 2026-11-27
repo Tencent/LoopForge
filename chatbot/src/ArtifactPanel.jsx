@@ -8,6 +8,7 @@ import ChangesPanel from "./ChangesPanel";
 import AgentBrowser from "./AgentBrowser";
 import WorkspaceIDE from "./WorkspaceIDE";
 import { SubagentSession, subagentName, subagentStatus } from "./SubagentSession";
+import { DeferredActivity } from "./ActivityTrace";
 import { collectSubagents, resumeMissed } from "./activity";
 import { IconButton } from "./ui";
 import { definitionTarget, actionName } from "./platform.js";
@@ -647,6 +648,8 @@ export default function ArtifactPanel({
               onSelectNode={setNodeId}
               onClose={() => setSelected(null)}
             />
+          ) : selectedAgent?.deferredActivity ? (
+            <DeferredActivity {...selectedAgent.deferredActivity} sessionId={chat.session.id} loadActivity={chat.loadActivity} />
           ) : selectedAgent ? (
             <SubagentSession
               agent={selectedAgent}

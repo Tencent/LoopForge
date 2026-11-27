@@ -856,9 +856,24 @@ paths:
       tags: [Assistant]
       operationId: getAssistantSession
       summary: Load one assistant conversation
+      parameters:
+        - name: view
+          in: query
+          schema: {type: string, enum: [recent, transcript, activity, title]}
+          description: Omit for the complete stored conversation. Both recent (last 40 messages) and transcript (all messages) may return an activityRef in place of a large execution trace. Echo that reference when continuing the conversation. Use title for title metadata alone.
+        - name: index
+          in: query
+          schema: {type: integer, minimum: 0}
+          description: Stored message index for the activity view. Add messagesOffset to the position in a recent window.
+        - name: ref
+          in: query
+          schema: {type: string}
+          description: The activityRef returned for that message, required with view=activity.
       responses:
         "200":
-          description: Conversation including messages
+          description: Conversation, title metadata, or the requested execution trace
+        "409":
+          description: The referenced execution trace has changed
         "401":
           $ref: "#/components/responses/Unauthorized"
         "404":

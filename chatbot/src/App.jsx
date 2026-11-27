@@ -25,6 +25,7 @@ import {
 import {
   api,
   attachmentURL,
+  attachmentThumbnailURL,
   parseReply,
   collectArtifacts,
   messageOffset,
@@ -110,6 +111,7 @@ const environmentVisibilityKey = "agentflow.native-chat.environmentVisibility.v1
 const sessionApprovalScope = ({ id, projectId }) => `approval.session:${JSON.stringify([id, projectId || ""])}`;
 const draftApprovalScope = (slot, projectId) =>
   slot.startsWith("issue:") ? `approval.${JSON.stringify([slot, projectId])}` : `approval.${slot}`;
+const maxMessageAttachments = 8;
 const draftSnapshot = ({ text, attachments, references }) => JSON.stringify({ text, attachments, references });
 const sidebarWidthKey = "agentflow.sidebarWidth";
 const sidebarLayoutKey = "agentflow.sidebarLayoutVersion";
@@ -232,7 +234,7 @@ function copiedReply(message, generation, live) {
   }
   return reply;
 }
-function ReplyHeading({ message, steps }) {
+function ReplyHeading({ message, steps, deferredActivity }) {
   return (
     <div className="reply-heading">
       <ActivityTrace
@@ -240,11 +242,12 @@ function ReplyHeading({ message, steps }) {
         startedAt={message.startedAt}
         finishedAt={message.createdAt}
         interrupted={!!message.unfinished}
+        deferredActivity={deferredActivity}
       />
     </div>
   );
 }
-function AssistantTurn({ message, steps, assets, projectId, sessionId, local, readOnly, onCLIInstall }) {
+function AssistantTurn({ message, steps, deferredActivity, assets, projectId, sessionId, local, readOnly, onCLIInstall }) {
   const reply = parseReply(message);
   const answer = hasTextSegments(steps)
     ? finalReply(reply.message, steps)
@@ -278,12 +281,13 @@ function AssistantTurn({ message, steps, assets, projectId, sessionId, local, re
           steps={steps}
           startedAt={message.startedAt}
           finishedAt={message.createdAt}
+          deferredActivity={deferredActivity}
           knowledgeReads={message.knowledgeReads}
           knowledgeSummary={knowledgeSummary}
           onCitationClick={handleCitationClick}
         />
       ) : (
-        <ReplyHeading message={message} steps={steps} />
+        <ReplyHeading message={message} steps={steps} deferredActivity={deferredActivity} />
       )}
       <div className="message-body">
         <RichContent
@@ -509,8 +513,14 @@ export default function App() {
     draftOrigin = useRef(null),
     savingDraftApproval = useRef(null),
     previousArtifacts = useRef({ id: null, ids: new Set(), baselined: false }),
-    dialogInput = useRef(),
-    composerPreviews = useRef(new Map());
+    dialogInput = useRef();
+  const previews = useMemo(() => ({ uploaded: new Map(), pending: new Set() }), [chat.user?.id]);
+  useEffect(() => () => {
+    for (const url of previews.uploaded.values()) URL.revokeObjectURL(url);
+    for (const url of previews.pending) URL.revokeObjectURL(url);
+    previews.uploaded.clear();
+    previews.pending.clear();
+  }, [previews]);
   // A requirement handed over by the workbench drafts in its own slot so the
   // project's unsent new-conversation draft and attachments stay untouched.
   const newDraftSlot = issueDraft && issueDraft.projectId === chat.projectId ? "issue:" + issueDraft.issueId : "new:" + chat.projectId;
@@ -1004,12 +1014,10 @@ export default function App() {
     if (ok) {
       const clearedDraft = clearDraftIfUnchanged(draftKey, snapshot);
       if (clearedDraft && savedDraftKey) clearDraftApproval(draftApproval.scope, savedApprovalMode);
-      let clearedVisible = clearedDraft && visible.key === draftKey;
       if (copiedFrom?.snapshot === snapshot && /^(new|issue):/.test(copiedFrom.slot)) {
         const originKey = draftKeyPrefix + copiedFrom.slot;
         if (clearDraftIfUnchanged(originKey, snapshot)) {
           if (copiedFrom.approvalScope) clearDraftApproval(copiedFrom.approvalScope, copiedFrom.mode);
-          clearedVisible ||= visible.key === originKey;
         }
       }
       if (!clearedDraft && copiedFrom) {
@@ -1023,10 +1031,6 @@ export default function App() {
           const { text, attachments, references } = stored;
           persistDraft(draftKey, { text, attachments, references });
         }
-      }
-      for (const attachment of attachments) {
-        if (clearedVisible || !visible.attachments.some((current) => current.id === attachment.id))
-          releaseComposerPreview(attachment.id);
       }
     } else if (visible.key === savedDraftKey && draftReady.current === savedDraftKey &&
         !visible.text && !visible.attachments.length && !visible.references.length) {
@@ -1059,23 +1063,23 @@ export default function App() {
   }
   function composerPreviewURL(a) {
     return (
-      composerPreviews.current.get(a.id) ||
+      previews.uploaded.get(a.id) ||
       attachmentURL(a, chat.session?.id || chat.activeId || "")
     );
   }
-  function releaseComposerPreview(id) {
-    const url = composerPreviews.current.get(id);
+  function releaseUploadedPreview(id) {
+    const url = previews.uploaded.get(id);
     if (!url) return;
     URL.revokeObjectURL(url);
-    composerPreviews.current.delete(id);
+    previews.uploaded.delete(id);
   }
   function removeAttachment(a) {
-    releaseComposerPreview(a.id);
+    releaseUploadedPreview(a.id);
     setAttachments((old) => old.filter((x) => x.id !== a.id));
   }
   async function upload(files) {
     if (!files.length) return;
-    if (files.length + attachments.length > 8) {
+    if (files.length + attachments.length > maxMessageAttachments) {
       chat.setError("每轮最多上传 8 个文件。");
       return;
     }
@@ -1099,7 +1103,10 @@ export default function App() {
               previewURL,
             }
           : null;
-        if (slot) setPendingAttachments((old) => [...old, slot]);
+        if (slot) {
+          previews.pending.add(previewURL);
+          setPendingAttachments((old) => [...old, slot]);
+        }
         try {
           if (chat.local) {
             const localDataUrl = await new Promise((resolve, reject) => {
@@ -1125,10 +1132,18 @@ export default function App() {
             method: "POST",
             body,
           });
-          if (previewURL) composerPreviews.current.set(uploaded.id, previewURL);
+          if (previewURL) {
+            // A disposed view already revoked its pending URLs.
+            if (!previews.pending.delete(previewURL)) return;
+            // Keep a full turn of recent screenshots through optimistic sends
+            // and transcript refreshes, without persisting browser-local URLs.
+            if (previews.uploaded.size >= maxMessageAttachments)
+              releaseUploadedPreview(previews.uploaded.keys().next().value);
+            previews.uploaded.set(uploaded.id, previewURL);
+          }
           results.push(uploaded);
         } catch (err) {
-          if (previewURL) URL.revokeObjectURL(previewURL);
+          if (previews.pending.delete(previewURL)) URL.revokeObjectURL(previewURL);
           throw err;
         } finally {
           if (slot)
@@ -1813,6 +1828,10 @@ export default function App() {
                     {message.role === "assistant" ? (
                       <AssistantTurn
                         message={message}
+                        deferredActivity={message.activityRef ? {
+                          sessionId: chat.session.id, index: messageBase + index,
+                          activityRef: message.activityRef, loadActivity: chat.loadActivity,
+                        } : null}
                         steps={activityForReply(
                           message,
                           chat.generation,
@@ -1910,6 +1929,7 @@ export default function App() {
                           <Attachment
                             key={a.id}
                             attachment={a}
+                            localPreviewURL={previews.uploaded.get(a.id)}
                             sessionId={chat.session.id}
                             onOpen={openArtifact}
                           />
@@ -2148,7 +2168,7 @@ export default function App() {
                                 setImagePreview({ src: url, name: a.name })
                               }
                             >
-                              <img src={url} alt={a.name} />
+                              <img src={attachmentThumbnailURL(url, a.mimeType)} alt={a.name} />
                             </button>
                             <button
                               type="button"

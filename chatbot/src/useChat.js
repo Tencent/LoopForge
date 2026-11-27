@@ -3,6 +3,7 @@ import {
   api,
   write,
   sessionPath,
+  messageOffset,
   newId,
   mergeEvents,
   projectChange,
@@ -206,11 +207,31 @@ export function useChat() {
       ? withSessionTitle(stored, renamed)
       : stored;
   }, []);
-  const readSession = useCallback(async (id, { recent = false } = {}) => {
+  const readSession = useCallback(async (id, { recent = false, view = "" } = {}) => {
     const titlesAtRequest = renamedTitles.current;
-    const path = sessionPath(id) + (recent ? "?view=recent" : "");
+    const mode = recent ? "recent" : view;
+    const path = sessionPath(id) + (mode ? `?view=${mode}` : "");
     return mergeRenamedTitle(await api(path), titlesAtRequest);
   }, [mergeRenamedTitle]);
+  const activityRequests = useRef(new Map());
+  const loadActivity = useCallback((id, index, ref) => {
+    const path = sessionPath(id) + `?view=activity&index=${index}&ref=${encodeURIComponent(ref)}`;
+    const pending = activityRequests.current.get(path);
+    if (pending) return pending;
+    const request = api(path).then((activity) => {
+      if (currentId.current !== id) return;
+      setSession((current) => {
+        if (current?.id !== id) return current;
+        const offset = index - messageOffset(current);
+        if (current.messages[offset]?.activityRef !== ref) return current;
+        const messages = current.messages.slice();
+        messages[offset] = { ...messages[offset], activity, activityRef: undefined };
+        return { ...current, messages };
+      });
+    }).finally(() => activityRequests.current.delete(path));
+    activityRequests.current.set(path, request);
+    return request;
+  }, []);
   const refreshSessions = useCallback(async () => {
     const titlesAtRequest = renamedTitles.current;
     const rows = (await api("/api/assistant/sessions") || [])
@@ -287,12 +308,20 @@ export function useChat() {
     });
     return choice;
   }
+  // History can arrive before the model catalog. Use the current catalog even
+  // for a read that started during boot, and restore older unprefixed models
+  // once the catalog becomes available.
+  const restoreReceivedModel = useRef(null);
+  restoreReceivedModel.current = ready ? restoreConversationModel : null;
+  useEffect(() => {
+    if (ready && sessionRef.current) restoreReceivedModel.current(sessionRef.current);
+  }, [ready]);
   function receiveSession(stored, running = false) {
     if (!stored || currentId.current !== stored.id) return;
     // A tail that arrives after the full transcript must not hide earlier turns.
     if (sessionRef.current?.id === stored.id && !sessionRef.current.messagesPartial && stored.messagesPartial) return;
     const opening = sessionRef.current?.id !== stored.id;
-    restoreConversationModel(stored, { running, preserveChoice: !opening });
+    restoreReceivedModel.current?.(stored, { running, preserveChoice: !opening });
     if (opening) {
       changeURL(stored.id);
       setProjectId(stored.projectId || "");
@@ -346,15 +375,16 @@ export function useChat() {
       connectionError = "";
     async function load() {
       try {
-        const [auth, projectRows, catalog, users, sandboxRows] = await Promise.all([
-          api("/api/auth/current"),
+        const [, projectRows, catalog, users, sandboxRows] = await Promise.all([
+          api("/api/auth/current").then((auth) => {
+            if (current) setIdentity(auth.user);
+          }),
           api("/api/projects"),
           api("/api/assistant/models"),
           api("/api/users"),
           api("/api/sandboxes"),
         ]);
         if (!current) return;
-        setIdentity(auth.user);
         setUsers(users || []);
         setProjects(projectRows || []);
         setSandboxes(sandboxRows || []);
@@ -381,8 +411,9 @@ export function useChat() {
       clearTimeout(timer);
     };
   }, [applyModelCatalog, refreshSessions]);
+  const identityKnown = !!identity;
   useEffect(() => {
-    if (!ready || !activeId) return;
+    if (!identityKnown || !activeId) return;
     // send/edit already supplied this session. Reloading it here can return an
     // older empty snapshot and erase the optimistic message during generation.
     if (sessionRef.current?.id === activeId) return;
@@ -401,7 +432,7 @@ export function useChat() {
           }
         }
         if (!current || currentId.current !== activeId || !sessionRef.current?.messagesPartial) return;
-        const stored = await readSession(activeId);
+        const stored = await readSession(activeId, { view: "transcript" });
         if (!current || currentId.current !== activeId) return;
         // This read only completes the tail. A write made meanwhile (binding a
         // project, sandbox, knowledge, linked issue) already replaced the tail
@@ -434,7 +465,7 @@ export function useChat() {
       current = false;
       clearTimeout(timer);
     };
-  }, [activeId, ready, readSession, syncProject]);
+  }, [activeId, identityKnown, readSession, syncProject]);
   useEffect(() => {
     if (!ready) return;
     const timer = setInterval(
@@ -450,7 +481,7 @@ export function useChat() {
     let cancelled = false;
     const timer = setInterval(async () => {
       try {
-        const stored = await readSession(session.id);
+        const stored = await readSession(session.id, { view: "title" });
         if (cancelled || currentId.current !== session.id || !stored?.title) return;
         if (stored.title === sessionRef.current?.title && !stored.titleGenerated && !stored.titleEdited) return;
         setSession((prev) =>
@@ -476,8 +507,9 @@ export function useChat() {
       clearTimeout(stop);
     };
   }, [readSession, ready, session?.id, session?.title, session?.titleEdited, session?.titleGenerated, titlePrompt]);
+  const openedId = session?.id;
   useEffect(() => {
-    if (!ready || !activeId) return;
+    if (!ready || !activeId || openedId !== activeId) return;
     let cancelled = false,
       timer,
       source,
@@ -501,7 +533,10 @@ export function useChat() {
         setError((current) => (current === recovered ? "" : current));
       }
       const running = g.status === "running";
-      const needsTranscript = running ? genId !== g.id : loaded !== g.id;
+      const staleTranscript = !!g.sessionUpdatedAt && sessionRef.current?.updatedAt !== g.sessionUpdatedAt;
+      const needsTranscript = running ? genId !== g.id : loaded !== g.id || staleTranscript;
+      const sameTranscript = !running && !!g.sessionUpdatedAt && !staleTranscript &&
+        sessionRef.current?.messages?.at(-1)?.generationId === g.id;
       if (needsTranscript) {
         // Pause sends until the transcript and CLI for this turn are loaded.
         // A new turn can come from steering or from another member.
@@ -510,9 +545,11 @@ export function useChat() {
           source?.close();
           source = null;
         }
-        const stored = await readSession(activeId);
-        if (!isCurrent(revision)) return;
-        receiveSession(stored, running);
+        if (!sameTranscript) {
+          const stored = await readSession(activeId, { view: "transcript" });
+          if (!isCurrent(revision)) return;
+          receiveSession(stored, running);
+        }
         if (!running) {
           loaded = g.id;
           setSettledId(g.id);
@@ -545,7 +582,7 @@ export function useChat() {
         });
       }
       if (!running && needsTranscript) {
-        await refreshSessions();
+        if (!sameTranscript) await refreshSessions();
         if (isCurrent(revision) && g.error && !["canceled", "cancelled"].includes(g.status))
           setError(g.error);
       }
@@ -597,8 +634,14 @@ export function useChat() {
           schedulePoll(500);
           return;
         }
+        // Older replies may have their only surviving trace in /generation.
+        // Ask for just the status when this exact reply already owns a trace.
+        const reply = sessionRef.current?.messages?.at(-1);
+        const saved = reply?.role === "assistant" && (reply.activityRef || reply.activity?.length)
+          ? reply.generationId : "";
+        const condition = saved ? "&savedReply=" + encodeURIComponent(saved) : "";
         const g = await api(
-          `${sessionPath(activeId)}/generation?after=${cursor}`,
+          `${sessionPath(activeId)}/generation?after=${cursor}${condition}`,
         );
         if (!isCurrent(revision)) return schedulePoll(200);
         generationFound = true;
@@ -623,7 +666,7 @@ export function useChat() {
       clearTimeout(timer);
       source?.close();
     };
-  }, [activeId, readSession, ready, refreshSessions, setGenerationKnown]);
+  }, [activeId, openedId, readSession, ready, refreshSessions, setGenerationKnown]);
   const selectProject = useCallback(
     async (id, { external = false } = {}) => {
       const current = sessionRef.current;
@@ -708,6 +751,8 @@ export function useChat() {
         return;
       }
       if (e.data?.type !== "agentflow-project-context") return;
+      // A restored shell default is only a default for a new conversation.
+      if (e.data.initial && currentId.current) return;
       const id = e.data.projectId || "";
       if (id === globalProject.current) return;
       globalProject.current = id;
@@ -722,6 +767,11 @@ export function useChat() {
         );
     return () => window.removeEventListener("message", listener);
   }, [ready]);
+  const transcriptVisible = !!session && session.id === activeId;
+  useEffect(() => {
+    if (transcriptVisible && window.parent !== window)
+      window.parent.postMessage({ type: "agentflow-chat-visible" }, location.origin);
+  }, [transcriptVisible]);
   const missingKey = !!user && !user.codeBuddyApiKeyConfigured;
   // Without their own key users chat on the platform's shared key, limited to
   // the models the administrator allowed (the first is the default).
@@ -1309,7 +1359,7 @@ export function useChat() {
         setGeneration(g);
         setGenerationKnown(s.id);
       }
-      await refreshSessions().catch(() => {});
+      void refreshSessions().catch(() => {});
       return true;
     } catch (e) {
       if (clientRequestId) {
@@ -1710,6 +1760,7 @@ export function useChat() {
   }, []);
   return {
     user,
+    loadActivity,
     defaultApproval: accountDefaults?.approval,
     refreshCredentials,
     users,

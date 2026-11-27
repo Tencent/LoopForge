@@ -292,7 +292,7 @@ export function collectSubagents(messages = [], liveSteps = [], liveModel = "", 
   // messageIndex is the saved reply that holds the dispatch (its stored index,
   // see messageOffset); a live one has none yet, and its collected files are
   // not attachments until it is saved.
-  const add = (step, messageIndex = null, replyModel = "") => {
+  const add = (step, messageIndex = null, replyModel = "", activityRef) => {
     const key = step.agentId || step.id;
     let agent = agents.find((item) => item.key === key || (step.agentId && item.agentId === step.agentId));
     if (!agent) {
@@ -306,6 +306,7 @@ export function collectSubagents(messages = [], liveSteps = [], liveModel = "", 
     if (model) agent.models[step.id] = model;
     agent.model = model || agent.model;
     agent.dispatches.push(step);
+    if (activityRef && !agent.deferredActivity) agent.deferredActivity = { index: messageIndex, activityRef };
     // What it published, and the role deliverables the platform collected
     // when it finished (a required one it did not write is marked missing).
     // A later dispatch that delivers the same file replaces the earlier row.
@@ -324,7 +325,7 @@ export function collectSubagents(messages = [], liveSteps = [], liveModel = "", 
     if (message.role !== "assistant") return;
     savedActivity(message)
       .filter(isDispatch)
-      .forEach((step) => add(step, offset + index, message.model));
+      .forEach((step) => add(step, offset + index, message.model, message.activityRef));
   });
   liveSteps.filter(isDispatch).forEach((step) => add(step, null, liveModel));
   return agents;
@@ -429,7 +430,7 @@ export const savedActivity = (message) =>
     (message.activity || []).map((data, sequence) => ({ data, sequence })),
   );
 export function activityForReply(message, generation, liveSteps = []) {
-  if (message.activity?.length) return savedActivity(message);
+  if (message.activityRef || message.activity?.length) return savedActivity(message);
   if (message.generationId && message.generationId !== generation?.id) return [];
   // The old implementation retained only the most recent generation. Recover
   // that visible stream only when its text AND start time match this exact reply.

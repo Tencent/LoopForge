@@ -1560,7 +1560,7 @@ function nativeChatProjectId(){
   return chosen?($('#projectSwitcher')?.value||state.projectFilter||''):'';
 }
 function postNativeChatProject(frame){
-  frame.contentWindow?.postMessage({type:'agentflow-project-context',projectId:nativeChatProjectId()},location.origin);
+  frame.contentWindow?.postMessage({type:'agentflow-project-context',projectId:nativeChatProjectId(),initial:true},location.origin);
   frame.contentWindow?.postMessage({type:'agentflow-environments-changed'},location.origin);
 }
 // A requirement handed to the chat opens a new conversation with the
@@ -1618,6 +1618,7 @@ function mountNativeChat(){
     window.addEventListener('message',event=>{
       if(event.origin!==location.origin||event.source!==frame.contentWindow)return;
       const message=event.data||{};
+      if(message.type==='agentflow-chat-visible')finishBootLoader();
       if(message.type==='agentflow-chat-ready'){
         nativeChatReady=true;
         postPendingChatIssueMention(frame);

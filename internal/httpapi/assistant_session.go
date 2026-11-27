@@ -3,6 +3,7 @@ package httpapi
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -316,10 +317,21 @@ func (h *assistantHandlers) session(c *gin.Context) {
 	}
 	switch c.Request.Method {
 	case "GET":
-		recent := c.Query("view") == "recent"
+		mode := c.Query("view")
+		recent := mode == "recent"
 		var item assistantConversation
 		var messageTotal int
 		var err error
+		if mode == "title" {
+			session, found := h.repo.AssistantSessionMetadata(id)
+			if !found || session.UserID != ownerID {
+				c.JSON(404, gin.H{"error": "对话不存在"})
+				return
+			}
+			header := decorateRunSessionView(h.repo, session)
+			c.JSON(200, gin.H{"id": header.ID, "title": header.Title, "displayTitle": header.DisplayTitle, "titleEdited": header.TitleEdited, "titleGenerated": header.TitleGenerated})
+			return
+		}
 		if recent {
 			item, messageTotal, err = loadAssistantConversationRecent(h.repo, ownerID, id, assistantRecentMessages)
 		} else {
@@ -337,17 +349,39 @@ func (h *assistantHandlers) session(c *gin.Context) {
 		if partial {
 			offset = messageTotal - len(item.Messages)
 		}
-		if !recent && !item.Shared && !readOnly {
-			if job, ok := h.readGeneration(ownerID, id); !ok || job.Status != "running" {
-				if materializeWorkspaceImages(ownerID, &item) {
-					updated := item
-					updated.TitleEdited = false
-					if err := saveAssistantConversation(h.repo, ownerID, updated); err == nil {
-						if stored, err := loadAssistantConversation(h.repo, ownerID, id); err == nil {
-							item = stored
-						}
-					}
-				}
+		if mode == "activity" {
+			index, err := strconv.Atoi(c.Query("index"))
+			if err != nil || index < 0 || index >= len(item.Messages) {
+				c.JSON(404, gin.H{"error": "执行记录不存在"})
+				return
+			}
+			raw, _ := json.Marshal(item.Messages[index].Activity)
+			if assistantActivityRef(raw) != c.Query("ref") {
+				c.JSON(409, gin.H{"error": "执行记录已更新，请重新打开会话"})
+				return
+			}
+			c.Data(200, "application/json; charset=utf-8", raw)
+			return
+		}
+		if !partial && !item.Shared && !readOnly && materializeWorkspaceImages(ownerID, &item, func() bool {
+			job, ok := h.readGeneration(ownerID, id)
+			return !ok || job.Status != "running"
+		}) {
+			// Another tab can send a turn during the filesystem scan. Publish
+			// the recovered media only if we still have that exact transcript.
+			saved, err := h.repo.SetAssistantSessionMedia(ownerID, id, item.UpdatedAt, item.Messages)
+			if err != nil || !saved {
+				h.queueConversationAttachments(item)
+			}
+			item, err = loadAssistantConversation(h.repo, ownerID, id)
+			if err != nil {
+				c.JSON(404, gin.H{"error": "对话不存在"})
+				return
+			}
+		}
+		if recent || mode == "transcript" {
+			for i := range item.Messages {
+				previewAssistantActivity(&item.Messages[i])
 			}
 		}
 		item.Executor = h.forkExecutor(c, item, current.ID)
@@ -388,6 +422,10 @@ func (h *assistantHandlers) session(c *gin.Context) {
 			return
 		}
 		conv := body.assistantConversation
+		if !restoreAssistantActivities(conv.Messages, existing.Messages) {
+			c.JSON(409, gin.H{"error": "会话执行记录已更新，请重新打开后保存"})
+			return
+		}
 		if conv.Messages == nil && existing.ID != "" {
 			// A metadata update (such as binding a project) may omit messages;
 			// the stored transcript stays as it is.
