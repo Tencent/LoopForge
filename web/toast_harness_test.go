@@ -72,3 +72,42 @@ func TestToastHarnessTheme(t *testing.T) {
 		}
 	}
 }
+
+// Page headers keep their primary actions in the top-right corner (发布版本,
+// 新建需求, 添加连接器…). A toast stacked there sat on the button the user was
+// about to press, and the hover pause kept it alive, so the stack lives at the
+// bottom-right and only lifts above sticky footers.
+func TestToastStackStaysOffPageHeaderActions(t *testing.T) {
+	read := func(name string) string {
+		data, err := os.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(data)
+	}
+	platform := read("platform.css")
+	rule := func(src, selector string) string {
+		i := strings.Index(src, selector+"{")
+		if i < 0 {
+			t.Fatalf("missing rule %q", selector)
+		}
+		rest := src[i:]
+		return rest[:strings.Index(rest, "}")+1]
+	}
+	container := rule(platform, ".toast-container")
+	for _, want := range []string{"position:fixed", "right:24px", "bottom:24px"} {
+		if !strings.Contains(container, want) {
+			t.Errorf(".toast-container must contain %q, got %s", want, container)
+		}
+	}
+	if strings.Contains(container, "top:") {
+		t.Errorf(".toast-container must not be anchored to the top, got %s", container)
+	}
+	if strings.Contains(read("preferences.css"), ".toast-container") {
+		t.Error("preferences.css must not move .toast-container back over the page header")
+	}
+	lift := "body:has(#settingsView.active, #kbConnDrawer.open, #kbDrawer.open, #repoDrawer.open, #skillhubDrawer.open) #toastContainer{bottom:84px}"
+	if !strings.Contains(platform, lift) {
+		t.Errorf("platform.css must lift the toast stack above sticky footers: %s", lift)
+	}
+}

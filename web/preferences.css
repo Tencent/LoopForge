@@ -88,7 +88,6 @@ html.lang-enter #bootLoader { display: none !important; }
   html.lang-enter.lang-shown .app-shell,
   html.lang-enter.lang-shown .login-card { opacity: 1; transition: none; }
 }
-.toast-container { top:72px }
 .login-page { display:grid;place-items:center;min-height:100vh;margin:0;background:var(--bg);color:var(--text);font-family:ui-sans-serif,system-ui,sans-serif }
 .login-card { width:min(420px,calc(100vw - 48px));padding:36px;border:1px solid var(--line);border-radius:20px;background:var(--panel);box-shadow:var(--shadow) }
 .login-card h1 { font-size:28px;letter-spacing:-1px;margin:14px 0 8px }
