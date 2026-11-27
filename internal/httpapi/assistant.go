@@ -1413,6 +1413,13 @@ func assistantPlanProse(line string) bool {
 	if assistantReportsDoneWork(strings.TrimSpace(line)) || assistantPlanHasPerfective(line) || assistantPlanStatesVerdict(line) || assistantPlanReportHeader.MatchString(line) {
 		return false
 	}
+	// A goal ("确保 lint 干净", "保证构建通过") names the state a step is to
+	// reach, not one already found.
+	for _, goal := range assistantPlanGoal {
+		if strings.HasPrefix(line, goal) {
+			return true
+		}
+	}
 	// A plan lead-in ("先…", "最后…", "第一步：…", "Step 1: …") opens a step
 	// unless the line is one of the forms that report what was found: a
 	// report header, a stated total, a status that closes a clause, a
@@ -1433,6 +1440,9 @@ func assistantPlanProse(line string) bool {
 	}
 	return assistantPlanNamesAction(line[:assistantPlanResultStart(line, false)])
 }
+
+// assistantPlanGoal opens a line that names the state the work is to reach.
+var assistantPlanGoal = []string{"确保", "保证", "务必", "Make sure", "make sure", "Ensure", "ensure"}
 
 // assistantPlanTotal states how many there are: "共 3 个提交", "范围只有
 // internal/httpapi 一个包", "仓库有两个分支".
