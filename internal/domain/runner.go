@@ -264,6 +264,12 @@ const RunnerVersionEvolutionReplay = "0.13.1"
 
 const RunnerResultReportError = "执行结果回传失败"
 
+// RunnerResultTurnOutcomeUnknown prefixes the failure a personal Runner
+// reports for an external Agent turn whose prompt was already sent but whose
+// remote outcome it could not observe (for example a turn-budget timeout).
+// The control plane must fail the node instead of resending the turn.
+const RunnerResultTurnOutcomeUnknown = "托管 Agent 轮次结果未知"
+
 func (r Runner) SupportsArtifactTransfer() bool {
 	return versionAtLeast(r.RunnerVersion, RunnerVersionArtifactTransfer)
 }

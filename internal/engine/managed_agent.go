@@ -180,6 +180,13 @@ func (e *Engine) dispatchExternalAgent(ctx context.Context, runID, nodeID, runne
 		return completed.Result, nil
 	}
 	if completed.Error != "" {
+		// A personal Runner reports a turn whose remote outcome it could not
+		// observe with a structured marker. The prompt already reached the
+		// remote Agent, so keep the sentinel: the engine must fail this
+		// attempt instead of consuming MaxAttempts by resending it.
+		if rest, ok := strings.CutPrefix(completed.Error, domain.RunnerResultTurnOutcomeUnknown+"："); ok {
+			return "", fmt.Errorf("%w：%s", managedagent.ErrTurnTimedOut, rest)
+		}
 		return "", errors.New(completed.Error)
 	}
 	return "", fmt.Errorf("个人执行器 A2A 任务结束于 %s", completed.Status)

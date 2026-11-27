@@ -2,8 +2,11 @@ package runner
 
 import (
 	"context"
+	"errors"
+	"fmt"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/managedagent"
 )
 
 func (d *Daemon) executeExternalAgent(ctx context.Context, task domain.RunnerTask) execResult {
@@ -33,6 +36,14 @@ func (d *Daemon) executeExternalAgent(ctx context.Context, task domain.RunnerTas
 		return execResult{status: domain.RunnerTaskCanceled}
 	}
 	if err != nil {
+		// The prompt was already sent. A turn that ran past its budget has an
+		// unknown remote outcome — the cancellation is only advisory — so
+		// report a structured marker and let the control plane fail the node
+		// instead of resending the same turn on its retry path.
+		if errors.Is(err, managedagent.ErrTurnTimedOut) {
+			return execResult{status: domain.RunnerTaskFailed,
+				errMsg: fmt.Sprintf("%s：%v", domain.RunnerResultTurnOutcomeUnknown, err)}
+		}
 		return execResult{status: domain.RunnerTaskFailed, errMsg: err.Error()}
 	}
 	return execResult{status: domain.RunnerTaskSuccess, result: output}
