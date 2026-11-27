@@ -483,7 +483,7 @@ git commit -m "feat(db): Postgres 列类型修正（json→jsonb、blob→bytea�
   - `func (d *deps) jsonTypeLiteral(column, path string) string` → JSON 类型名
   - `func (d *deps) jsonBuildObject(pairs ...string) string` → 偶数个参数，key/value 交替
   - `func (d *deps) likeOperator() string` → `"LIKE"` / `"ILIKE"`
-  - `func (d *deps) nowMillisLiteral() string` → `"UTC_TIMESTAMP(3)"` / `"now()"`
+  - `func (d *deps) nowMillisLiteral() string` → `"UTC_TIMESTAMP(3)"` / `"clock_timestamp()"`
   - `func (d *deps) nowUSLiteral() string` → 纪元微秒
 
 - [ ] **Step 1: 写失败测试**
@@ -578,12 +578,15 @@ func (d *deps) jsonTextParam(column string) string {
 	return "json_extract(" + column + ", ?)"
 }
 
-// jsonLengthLiteral counts the elements of the JSON array at a path. A
-// missing or non-array value counts as zero.
+// jsonLengthLiteral measures the JSON value at a path the way MySQL's
+// JSON_LENGTH does: an array counts its elements, an object counts its
+// members, a scalar counts as one, and a missing path or a JSON null has no
+// length. A missing value counts as zero, which is what every caller of the
+// MySQL expression gets from its COALESCE wrapper.
 func (d *deps) jsonLengthLiteral(column, path string) string {
 	if d.isPostgres() {
 		inner := column + "::jsonb #> '" + jsonPathToPGArray(path) + "'"
-		return "COALESCE(CASE WHEN jsonb_typeof(" + inner + ") = 'array' THEN jsonb_array_length(" + inner + ") END, 0)"
+		return "COALESCE(CASE WHEN " + inner + " IS NULL THEN NULL WHEN jsonb_typeof(" + inner + ") = 'array' THEN jsonb_array_length(" + inner + ") WHEN jsonb_typeof(" + inner + ") = 'object' THEN (SELECT count(*) FROM jsonb_object_keys(" + inner + ")) WHEN jsonb_typeof(" + inner + ") = 'null' THEN NULL ELSE 1 END, 0)"
 	}
 	if d.isMySQL() {
 		return "JSON_LENGTH(JSON_EXTRACT(" + column + ", '" + path + "'))"
@@ -591,11 +594,15 @@ func (d *deps) jsonLengthLiteral(column, path string) string {
 	return "json_array_length(" + column + ", '" + path + "')"
 }
 
-// jsonTypeLiteral names the JSON type at a path ("STRING", "OBJECT", ...).
+// jsonTypeLiteral names the JSON type at a path the way MySQL's JSON_TYPE
+// does: "STRING", "INTEGER", "DOUBLE", "BOOLEAN", "OBJECT", "ARRAY" or
+// "NULL".
 func (d *deps) jsonTypeLiteral(column, path string) string {
 	if d.isPostgres() {
 		inner := column + "::jsonb #> '" + jsonPathToPGArray(path) + "'"
-		return "CASE WHEN jsonb_typeof(" + inner + ") IS NULL THEN NULL WHEN jsonb_typeof(" + inner + ") = 'string' THEN 'STRING' WHEN jsonb_typeof(" + inner + ") = 'number' THEN 'INTEGER' WHEN jsonb_typeof(" + inner + ") = 'boolean' THEN 'BOOLEAN' WHEN jsonb_typeof(" + inner + ") = 'object' THEN 'OBJECT' WHEN jsonb_typeof(" + inner + ") = 'array' THEN 'ARRAY' ELSE 'NULL' END"
+		// jsonb keeps every number as a numeric, so an integer has to be
+		// recognised by its text form to tell MySQL's INTEGER from DOUBLE.
+		return "CASE WHEN " + inner + " IS NULL THEN NULL WHEN jsonb_typeof(" + inner + ") = 'string' THEN 'STRING' WHEN jsonb_typeof(" + inner + ") = 'number' THEN (CASE WHEN (" + inner + ")::text ~ '^-?[0-9]+$' THEN 'INTEGER' ELSE 'DOUBLE' END) WHEN jsonb_typeof(" + inner + ") = 'boolean' THEN 'BOOLEAN' WHEN jsonb_typeof(" + inner + ") = 'object' THEN 'OBJECT' WHEN jsonb_typeof(" + inner + ") = 'array' THEN 'ARRAY' ELSE 'NULL' END"
 	}
 	if d.isMySQL() {
 		return "JSON_TYPE(JSON_EXTRACT(" + column + ", '" + path + "'))"
@@ -625,9 +632,15 @@ func (d *deps) likeOperator() string {
 }
 
 // nowMillisLiteral returns the current timestamp in milliseconds.
+//
+// MySQL's UTC_TIMESTAMP(3) is the wall clock at the moment the statement runs.
+// Postgres' now() is the transaction timestamp — frozen when the transaction
+// started — so a write that commits much later would be stamped with the
+// transaction's start time. clock_timestamp() is the wall clock and advances
+// inside a transaction, which is what the commit-time clock needs.
 func (d *deps) nowMillisLiteral() string {
 	if d.isPostgres() {
-		return "now()"
+		return "clock_timestamp()"
 	}
 	return "UTC_TIMESTAMP(3)"
 }
@@ -933,8 +946,8 @@ git commit -m "feat(db): JSON 调用点增加 Postgres 分支
 | `catalog.go:80` | `CAST(payload AS CHAR) = CAST(? AS CHAR)` | Postgres 用 `payload = ?::jsonb`：`CAST(x AS CHAR)` 在 Postgres 是 `bpchar(1)`，只比首字符，会把「乐观并发」守卫退化成几乎恒真、静默丢失并发更新；jsonb 规范化也会让文本等值不成立（键序/空白被重排） |
 | `integration_lock.go:37` | `SELECT GET_LOCK(?, ?)` | `SELECT pg_try_advisory_lock(?)` 循环直到超时 |
 | `integration_lock.go:46` | `SELECT RELEASE_LOCK(?)` | `SELECT pg_advisory_unlock(?)` |
-| `assistant_generations.go:152,179` | `UTC_TIMESTAMP(3)` | `now()`（用 `d.nowMillisLiteral()`） |
-| `assistant_generations.go:171` | `UTC_TIMESTAMP(3) - INTERVAL ? MICROSECOND` | `now() - (? \|\| ' microseconds')::interval` |
+| `assistant_generations.go:152,179` | `UTC_TIMESTAMP(3)` | `clock_timestamp()`（用 `d.nowMillisLiteral()`）。**不能用 `now()`**：那是事务开始时刻（冻结），而这里要的是提交时刻的时钟 |
+| `assistant_generations.go:171` | `UTC_TIMESTAMP(3) - INTERVAL ? MICROSECOND` | `clock_timestamp() - (? \|\| ' microseconds')::interval` |
 | `workspace_checkpoints.go:470,488` | 同上 | 同上 |
 | `catalog.go:481` | `CONVERT(? USING utf8mb4) COLLATE utf8mb4_unicode_ci = ?` | Postgres 直接 `? = ?`（Postgres 区分大小写，与 ID 语义一致） |
 | `run_evals.go:120` | `LIMIT 18446744073709551615 OFFSET ?` | `LIMIT ? OFFSET ?` 传 `math.MaxInt64`（PG 不接受 2^64-1） |
@@ -1123,7 +1136,7 @@ func payloadContainsExpr(db *gorm.DB) string {
 ```go
 func (r *AssistantRepo) staleGenerationFilter(q *gorm.DB) *gorm.DB {
 	if r.isPostgres() {
-		return q.Where("updated_at < now() - (? || ' microseconds')::interval", assistantHeartbeatTimeout.Microseconds())
+		return q.Where("updated_at < clock_timestamp() - (? || ' microseconds')::interval", assistantHeartbeatTimeout.Microseconds())
 	}
 	return q.Where("updated_at < UTC_TIMESTAMP(3) - INTERVAL ? MICROSECOND", assistantHeartbeatTimeout.Microseconds())
 }
@@ -1265,7 +1278,7 @@ Expected: PASS（sqlite 用例全绿；MySQL 用例因 `AGENTFLOW_TEST_MYSQL_DSN
 git add internal/repo/
 git commit -m "feat(db): 非 JSON 的 MySQL 专有点增加 Postgres 分支
 
-GET_LOCK→pg_advisory_lock、INSERT IGNORE→ON CONFLICT、UTC_TIMESTAMP→now()、
+GET_LOCK→pg_advisory_lock、INSERT IGNORE→ON CONFLICT、UTC_TIMESTAMP→clock_timestamp()、
 去掉 COLLATE 模拟、去掉 MySQL 的无限 LIMIT。"
 ```
 
