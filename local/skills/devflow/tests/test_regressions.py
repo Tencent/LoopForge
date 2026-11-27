@@ -368,6 +368,17 @@ class LifecycleTests(unittest.TestCase):
         self.assertIn("cleanup_team.py", adapter)
         self.assertIn("不得读取 Team 配置、成员、inbox 或状态", adapter)
 
+    def test_sql_profile_documents_readonly_audit_and_row_level_rules(self):
+        rules = (SKILL_ROOT / "rules/profiles/sql.md").read_text(encoding="utf-8")
+        self.assertIn("只读优先", rules)
+        self.assertIn("未确认写意图前不得执行 INSERT、UPDATE、DELETE 或 DDL", rules)
+        self.assertIn("行数上限和超时", rules)
+        self.assertIn("禁止无界读取", rules)
+        self.assertIn("审计记录只追加不改写", rules)
+        self.assertIn("行级隔离条件", rules)
+        self.assertIn("缺隔离条件就 fail-closed", rules)
+        self.assertIn("不得明文输出到日志、产物或审计记录", rules)
+
     def fill_stage_artifacts(self, state_path, stage):
         state = json.loads(state_path.read_text(encoding="utf-8"))
         artifact_root = Path(state["artifacts_dir"])
