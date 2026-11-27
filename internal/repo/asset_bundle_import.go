@@ -388,6 +388,9 @@ func (p *bundleImport) save(r *CatalogRepo, b domain.ProjectAssetBundle) error {
 		v.ID, v.ProjectID, v.Shared, v.Generic = p.id("sop", v.ID), p.target, false, false
 		v.Status, v.Version, v.Revision, v.PublishedRevision = "draft", 1, 0, 0
 		v.SandboxProfileID = p.sandboxID(v)
+		if v.Edges == nil {
+			v.Edges = []domain.WorkflowEdge{}
+		}
 		for i := range v.Nodes {
 			n := &v.Nodes[i]
 			if !domain.IsPreviewBuildAgent(n.AgentID) {

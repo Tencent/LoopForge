@@ -243,6 +243,9 @@ func TestProjectAssetBundlePreservesAutomaticExecutionSettings(t *testing.T) {
 			if !ok || !v.AutoSelectSandbox || v.SandboxProfileID != "" {
 				t.Fatal("the imported LOOP must select its sandbox at run time")
 			}
+			if v.Edges == nil || len(v.Edges) != 0 {
+				t.Fatalf("a LOOP without edges must keep an empty array, got %#v", v.Edges)
+			}
 		}
 	}
 }
