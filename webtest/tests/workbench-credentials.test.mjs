@@ -215,3 +215,14 @@ test('Git token verification rejects invalid tokens before save and accepts vali
   assert.equal(invalid.saved, false);
   assert.equal(valid.saved, true);
 });
+
+test('cursor credential guide names the grok_ key prefix used by current accounts', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  app.evaluate(`state.currentUser={...state.data.users[0],id:1,isGuest:false};state.data.users[0]=state.currentUser`);
+  const guide = app.evaluate(`CREDENTIAL_KINDS.find(k=>k.agentCli==='cursor').guide.flat()`);
+  const flat = guide.join('\n');
+  assert.ok(flat.includes('grok_'), 'guide should mention the current grok_ prefix');
+  assert.ok(flat.includes('crsr_'), 'guide should keep the legacy crsr_ prefix as valid');
+  assert.ok(!/<code>crsr_<\/code> 开头的 Key(?![（])/.test(flat), 'crsr_ must no longer be the only named prefix');
+});
