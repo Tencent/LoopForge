@@ -1095,3 +1095,13 @@ Object.assign(window.LF_I18N_EN, {
   "在对话里澄清和改代码": "Clarify and change code in chat",
   "这条需求不使用 LOOP，在对话里澄清需求、直接改代码；定时任务不会自动认领它。": "This requirement uses no LOOP: clarify and change code in chat; scheduled jobs won't pick it up.",
 });
+
+Object.assign(window.LF_I18N_EN, {
+  "资产包": "Asset bundles",
+  "项目资产包": "Project asset bundles",
+  "导出资产": "Export assets",
+  "下载资产包": "Download bundle",
+  "导入资产": "Import assets",
+  "选择 LoopForge 资产包": "Choose a LoopForge bundle",
+  "导入为项目私有副本": "Import as project copies",
+});

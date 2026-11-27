@@ -47,6 +47,7 @@
   <link rel="stylesheet" href="/app/requirement-wizard.css?v=20261116nosop">
   <link rel="stylesheet" href="/app/assets-harness.css">
   <link rel="stylesheet" href="/app/sops-harness.css">
+  <link rel="stylesheet" href="/app/asset-bundle.css">
   <link rel="stylesheet" href="/app/sop-catalog.css">
   <link rel="stylesheet" href="/app/observability-harness.css?v=20261030obs1">
   <link rel="stylesheet" href="/app/observability-dashboard.css">
@@ -408,7 +409,7 @@
           </div>
           <p class="eyebrow">生产流程</p><h1>LOOP 流程</h1><p class="sop-explainer"><b>LOOP</b> 是可复用的 AI 协作流程，由 Agent、脚本和人工审批节点组成：输入一条需求，按步骤产出文档、代码或 PR。</p><p>「本项目」的 LOOP 只在当前项目里用；共享后，其他项目可以在「团队共享」里选用；「内置」LOOP 由平台提供，复制到本项目后即可运行和修改。</p>
         </div>
-        <div class="heading-actions"><button id="refreshSOPs" class="button ghost" type="button">↻ 刷新</button><button id="newSOP" class="button primary" type="button">＋ 新建 LOOP</button></div>
+        <div class="heading-actions"><button id="assetBundleButton" class="button ghost" type="button">资产包</button><button id="refreshSOPs" class="button ghost" type="button">↻ 刷新</button><button id="newSOP" class="button primary" type="button">＋ 新建 LOOP</button></div>
       </div>
       <div class="sop-page">
         <div id="sopOverview" class="sop-overview"></div>
@@ -1446,6 +1447,27 @@
   <script src="/app/flow-palette.js?v=20261126publish"></script>
   <script src="/app/knowledge-refs.js"></script>
   <script src="/app/flows.js?v=20261125publish"></script>
+  <dialog id="assetBundleDialog" class="asset-bundle-dialog" aria-labelledby="assetBundleTitle">
+    <div class="asset-bundle-head">
+      <h2 id="assetBundleTitle">项目资产包</h2>
+      <p id="assetBundleProject" class="asset-bundle-project"></p>
+      <button id="closeAssetBundle" class="button ghost" type="button">关闭</button>
+    </div>
+    <section aria-labelledby="assetBundleExportTitle">
+      <h3 id="assetBundleExportTitle">导出资产</h3>
+      <div id="assetBundleChoices" class="asset-bundle-choices"></div>
+      <button id="exportAssetBundle" class="button" type="button" disabled>下载资产包</button>
+    </section>
+    <section aria-labelledby="assetBundleImportTitle">
+      <h3 id="assetBundleImportTitle">导入资产</h3>
+      <label class="asset-bundle-file">选择 LoopForge 资产包
+        <input id="assetBundleFile" type="file" accept=".json,application/json">
+      </label>
+      <button id="importAssetBundle" class="button primary" type="button" disabled>导入为项目私有副本</button>
+    </section>
+    <p id="assetBundleNotes" class="asset-bundle-notes" role="status"></p>
+  </dialog>
+  <script src="/app/asset-bundle.js"></script>
   <script src="/app/agents.js"></script>
   <script src="/app/mcp.js"></script>
   <script src="/app/assets.js"></script>

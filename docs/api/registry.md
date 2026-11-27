@@ -169,6 +169,30 @@ curl -u "$AGENTFLOW_USER:$AGENTFLOW_PASS" -X POST \
   "$AGENTFLOW_URL/api/mcp-servers/import"
 ```
 
+## 项目资产包
+
+LOOP 库右上角的「资产包」可单选或批量选择本项目的 Skill、MCP、角色和 LOOP。项目所有者、项目管理员和平台管理员可以导入导出。
+
+### `POST /api/projects/{id}/asset-bundles/export`
+
+请求体的 `assets` 为所选资产数组。`kind` 支持 `skill`、`mcp`、`agent`、`sop`。
+
+```json
+{"assets":[{"kind":"sop","id":"review-sop"},{"kind":"skill","id":"check-rules"}]}
+```
+
+返回 `loopforge.project-assets/v1` JSON 文件，包含当前定义、附件和同项目依赖，包括角色引用的规则、LOOP 引用的子 LOOP，以及自定义沙箱及其 Dockerfile 构建上下文。平台内置沙箱使用目标环境中的对应配置。其他项目资产和平台通用模板需要先复制到当前项目。
+
+### `POST /api/projects/{id}/asset-bundles/preview`
+
+请求体为整个资产包。成功时返回 `assets` 清单和 `bindings` 重配项（包含 `kind` 和 `assetId`），此请求不写入项目。附件校验 SHA‑256 和路径。包最多包含 200 项资产及依赖、64 MiB 附件和 96 MiB JSON。
+
+### `POST /api/projects/{id}/asset-bundles/import`
+
+请求体与预览相同。成功返回 `201`，`assets` 中包含各项的 `targetId`。资产包整体导入为项目私有副本并自动重绑包内引用。LOOP 保存为草稿，有子 LOOP 时按依赖顺序重配连接和发布。每次导入创建一套新副本。
+
+项目 MCP 的 Headers、环境变量值、URL 中的认证信息和查询参数，以及项目凭据、知识库和通知绑定需要在目标项目重配。Skill 与 MCP 附件按原始字节导出。只在受信任项目间交付经过审查的资产包，正文和可执行文件中的自带内容会随包迁移。
+
 ## 执行器
 
 ### `GET /api/executors`

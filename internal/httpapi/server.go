@@ -82,7 +82,8 @@ type Server struct {
 	credentials     *projectCredentialsHandlers
 	insights        *insightsHandlers
 	businessDomains *businessDomainsHandlers
-	catalog         *catalogHandlers  // catalog.go
+	catalog         *catalogHandlers // catalog.go
+	assetBundles    *assetBundleHandlers
 	mcp             *mcpHandlers      // mcp.go
 	market          *marketHandlers   // mcp_market.go
 	skillhub        *skillhubHandlers // skillhub_market.go
@@ -173,6 +174,7 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 		platformSetting: &platformSettingsHandlers{deps: d, envPublicURL: func() string { return notifications.PublicURL }},
 		httpHostTrust:   &gitHTTPHostTrustHandlers{deps: d, hosts: s.GitHTTPHostTrustRepo},
 		catalog:         &catalogHandlers{deps: d},
+		assetBundles:    &assetBundleHandlers{deps: d},
 		businessDomains: &businessDomainsHandlers{deps: d},
 		insights:        &insightsHandlers{deps: d},
 		projects:        &projectsHandlers{deps: d},
@@ -422,6 +424,9 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.PUT("/api/projects", api.projects.projects)
 	g.POST("/api/projects", api.projects.projects)
 	g.GET("/api/projects/:id", api.projects.project)
+	g.POST("/api/projects/:id/asset-bundles/export", api.assetBundles.export)
+	g.POST("/api/projects/:id/asset-bundles/preview", api.assetBundles.preview)
+	g.POST("/api/projects/:id/asset-bundles/import", api.assetBundles.importAssets)
 	g.GET("/api/projects/:id/credentials", api.credentials.list)
 	g.POST("/api/projects/:id/credentials", api.credentials.save)
 	g.PUT("/api/projects/:id/credentials/:credentialId", api.credentials.save)
