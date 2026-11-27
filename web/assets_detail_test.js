@@ -74,7 +74,7 @@ const shared = ctx.assetCardHTML(ctx.state.data.rules[1]);
 assert.ok(shared.includes('<span class="asset-status is-on"><i></i>已共享</span>'), shared);
 assert.ok(shared.includes('暂无说明') && shared.includes('未被引用'), shared);
 const foreign = ctx.assetCardHTML(ctx.state.data.rules[2]);
-assert.ok(foreign.includes('<span class="asset-status is-from"><i></i>来自 <span data-i18n-data>平台公共</span></span>'), foreign);
+assert.ok(foreign.includes('<span class="asset-status is-from"><i></i>来自 <span data-i18n-skip>平台公共</span></span>'), foreign);
 assert.ok(foreign.includes('查看<i data-icon="chevron-right">'), foreign);
 for (const html of [own, shared, foreign]) {
   assert.ok(!/<button/.test(html), 'cards carry no buttons');
@@ -144,7 +144,7 @@ assert.ok(!head.includes('asset-badge'), 'no status badge while creating');
 reset('rules', { rules: [{ id: 'tapd', name: 'TAPD', projectId: 'p2', shared: true }] });
 head = ctx.assetDetailHeadHTML(ctx.state.data.rules[0], {});
 assert.deepStrictEqual(buttons(head), ['back']);
-assert.ok(head.includes('来自 <span data-i18n-data>平台公共</span>') && head.includes('只读 · 可直接在本项目使用'));
+assert.ok(head.includes('来自 <span data-i18n-skip>平台公共</span>') && head.includes('只读 · 可直接在本项目使用'));
 
 // ---------- Routes ----------
 const route = hash => { ctx.location.hash = hash; return ctx.assetRouteId(); };

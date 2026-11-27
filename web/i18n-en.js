@@ -1097,7 +1097,7 @@ Object.assign(window.LF_I18N_EN, {
   "搜索资产": "Search assets",
   "未共享": "Not shared",
   "已共享": "Shared",
-  "未被引用": "Not used yet",
+  "其他项目共享":"Shared by another project","未被引用": "Not used yet",
   "维护当前项目的运行沙箱：隔离方式、Dockerfile 和环境变量。": "Maintain this project's run sandboxes: isolation, Dockerfile and environment variables.",
   "查看其他项目共享的沙箱；共享沙箱只读，可直接用于本项目。": "Sandboxes shared by other projects. They are read-only and can be used in this project directly.",
   "请在沙箱所属项目中共享。": "Share it from the project that owns the sandbox.",

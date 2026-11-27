@@ -188,3 +188,52 @@ test('afConfirm marks a message that quotes user data, and clears the mark for t
   app.document.querySelector('#confirmCancelBtn').click();
   await second;
 });
+
+// A name or description that is itself a dictionary key («沙箱», «代码审查»)
+// still has to stay as typed: data-i18n-data allows whole-string hits, so user
+// data is marked data-i18n-skip. Placeholders («暂无说明», «平台») still translate.
+test('English asset and MCP pages keep names that are dictionary keys as typed', async (t) => {
+  const app = await assetApp(t);
+  app.evaluate(`
+    state.data.projects=[{...state.data.projects[0],name:'测试'},{id:'project-2',name:'共享'}];
+    state.data.sandboxes=[{id:'dict-sbx',projectId:'project-1',name:'沙箱',description:'规则',driver:'native'},{id:'dict-shared',projectId:'project-2',shared:true,name:'代码审查',driver:'native'},{id:'plat',projectId:'platform',shared:true,name:'共享',driver:'native'}];
+    state.data.workflows=[{...state.data.workflows[0],name:'执行记录',sandboxProfileId:'dict-sbx'}];
+    state.data.mcpServers=[{id:'mcp-dict',scope:'project',projectId:'project-1',name:'代码审查',description:'测试',transport:'stdio',command:'echo'},{id:'mcp-nodesc',scope:'project',projectId:'project-1',name:'规则',transport:'stdio',command:'echo'}];
+    state.assetType='sandboxes';state.sandboxScope='project';switchView('sandboxes');renderAssets();
+  `);
+  const list = await inEnglish(t, pane(app, '#assetListPane'));
+  const card = list.querySelector('[data-asset-id="dict-sbx"]');
+  assert.equal(card.querySelector('h3').textContent, '沙箱');
+  assert.equal(card.querySelector('.asset-card-desc').textContent, '规则');
+  assert.equal(card.getAttribute('aria-label'), 'Edit sandbox "沙箱"');
+  assert.match(list.querySelector('#assetCount').textContent, /^Sandboxes in this project\d/);
+
+  app.evaluate(`state.sandboxScope='shared';renderAssets()`);
+  const shared = await inEnglish(t, pane(app, '#assetListPane'));
+  assert.match(shared.querySelector('#assetCount').textContent, /^Shared sandboxes\d/);
+  const foreign = shared.querySelector('[data-asset-id="dict-shared"]');
+  assert.equal(foreign.querySelector('h3').textContent, '代码审查');
+  assert.equal(foreign.querySelector('.asset-card-desc').textContent, 'No description', 'an empty description shows the translated placeholder');
+  assert.match(foreign.querySelector('.asset-status').textContent, /^From 共享$/, 'a project named 共享 is not renamed to Shared');
+  assert.match(shared.querySelector('[data-asset-id="plat"] .asset-status').textContent, /^From Platform$/, 'platform-owned assets read as Platform, not the raw id');
+
+  app.evaluate(`state.sandboxScope='project';openAssetDetail('dict-sbx')`);
+  await settle(2);
+  const detail = await inEnglish(t, pane(app, '#assetDetailPane'));
+  assert.equal(detail.querySelector('.asset-dname').textContent, '沙箱');
+  assert.equal(detail.querySelector('.asset-dtitle-text p').textContent, '规则');
+  assert.equal(detail.querySelector('#assetCrumbs .is-current').textContent, '沙箱');
+  assert.deepEqual([...detail.querySelectorAll('.asset-refs li span')].map((el) => el.textContent), ['执行记录']);
+
+  const overview = await inEnglish(t, app.evaluate(`assetOverviewCardHTML({id:'x',projectId:'project-2',shared:true})`));
+  assert.deepEqual([...overview.querySelectorAll('dd')].map((el) => el.textContent), ['共享', 'Shared by another project']);
+
+  app.evaluate(`state.mcpScope='project';switchView('mcp');renderMCPManagement()`);
+  const mcp = await inEnglish(t, pane(app, '#mcpView'));
+  const [dict, nodesc] = mcp.querySelectorAll('.mcp-market-card.is-installed');
+  assert.equal(dict.querySelector('h3').textContent, '代码审查');
+  assert.equal(dict.querySelector('p').textContent, '测试');
+  assert.equal(dict.querySelector('small').textContent, '测试', 'a project named 测试 is not renamed to Testing');
+  assert.equal(nodesc.querySelector('h3').textContent, '规则');
+  assert.equal(nodesc.querySelector('p').textContent, 'No description');
+});
