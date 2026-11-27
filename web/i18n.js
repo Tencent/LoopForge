@@ -116,22 +116,47 @@
     }],
   ];
   // Server errors wrapping ErrSharedScheduleReferences (internal/repo/shared_schedule_assets.go)
-  // read "共享任务引用资产不可用：<detail>", and the detail carries asset ids. No dictionary key
-  // can match such a message whole, and translating only the prefix leaves the detail Chinese,
-  // so each detail is translated as one sentence before the fragment pass runs.
+  // read "共享任务引用资产不可用：<detail>", and the detail carries asset ids and names. No
+  // dictionary key can match such a message whole, and translating only the prefix leaves the
+  // detail Chinese, so the whole message is translated here and the fragment passes never see it
+  // (they would rewrite a role named "代码审查" into "Code review"). An asset reference is
+  // "type/id" or a bare type: no spaces, no full-width colon.
   const SHARED_REF = 'A project asset referenced by the shared task is unavailable: ';
+  const REF = '([^\\s：]+)';
+  // Causes returned by the sharing path (internal/repo/catalog_sharing.go) when publishing a task
+  // shares a referenced LOOP; names in quotes are user data and stay as written.
+  const shareCauses = [
+    [/^共享 LOOP 只能使用已共享的沙箱$/, () => 'a shared LOOP can only use shared sandboxes'],
+    [/^沙箱不属于当前项目且尚未共享$/, () => "its sandbox isn't in this project and isn't shared yet"],
+    [/^角色 (".*") 不存在$/, (_, name) => `role ${name} doesn't exist`],
+    [/^角色 (".*") 不属于当前项目且尚未共享$/, (_, name) => `role ${name} isn't in this project and isn't shared yet`],
+  ];
+  const shareCause = cause => {
+    for (const [re, rep] of shareCauses) if (re.test(cause)) return cause.replace(re, rep);
+    return HAN.test(cause) ? translate(cause) : cause;
+  };
   const wrapped = [
-    [/共享任务引用资产不可用：(.+?) 不存在或尚未共享(?=\s*$)/, (_, ref) => `${SHARED_REF}${ref} doesn't exist or isn't shared yet`],
-    [/共享任务引用资产不可用：(.+?) 不属于当前项目且尚未共享(?=\s*$)/, (_, ref) => `${SHARED_REF}${ref} isn't in this project and isn't shared yet`],
-    [/共享任务引用资产不可用：(.+?) 不支持随 AI 定时任务共享(?=\s*$)/, (_, ref) => `${SHARED_REF}${ref} can't be shared with an AI scheduled task`],
-    [/共享任务引用资产不可用：(.+?) 的归属已变更，请发布新版本(?=\s*$)/, (_, ref) => `${SHARED_REF}the owner of ${ref} has changed. Publish a new version`],
-    [/共享任务引用资产不可用：(.+?) 的权限或归属已变更(?=\s*$)/, (_, ref) => `${SHARED_REF}the access or owner of ${ref} has changed`],
-    [/共享任务引用资产不可用：(.+?) 不存在(?=\s*$)/, (_, ref) => `${SHARED_REF}${ref} doesn't exist`],
+    // First, so a cause ending in 不存在 etc. is not taken for a reference by the rules below.
+    [new RegExp(`共享任务引用资产不可用：共享 ${REF} 失败：(.+?)(?=\\s*$)`), (_, ref, cause) => `${SHARED_REF}failed to share ${ref}: ${shareCause(cause)}`],
+    [new RegExp(`共享任务引用资产不可用：${REF} 不存在或尚未共享(?=\\s*$)`), (_, ref) => `${SHARED_REF}${ref} doesn't exist or isn't shared yet`],
+    [new RegExp(`共享任务引用资产不可用：${REF} 不属于当前项目且尚未共享(?=\\s*$)`), (_, ref) => `${SHARED_REF}${ref} isn't in this project and isn't shared yet`],
+    [new RegExp(`共享任务引用资产不可用：${REF} 不支持随 AI 定时任务共享(?=\\s*$)`), (_, ref) => `${SHARED_REF}${ref} can't be shared with an AI scheduled task`],
+    [new RegExp(`共享任务引用资产不可用：${REF} 的归属已变更，请发布新版本(?=\\s*$)`), (_, ref) => `${SHARED_REF}the owner of ${ref} has changed. Publish a new version`],
+    [new RegExp(`共享任务引用资产不可用：${REF} 的权限或归属已变更(?=\\s*$)`), (_, ref) => `${SHARED_REF}the access or owner of ${ref} has changed`],
+    [new RegExp(`共享任务引用资产不可用：${REF} 不存在(?=\\s*$)`), (_, ref) => `${SHARED_REF}${ref} doesn't exist`],
     [/共享任务引用资产不可用：最多引用 (\d+) 个资产(?=\s*$)/, (_, n) => `${SHARED_REF}a task can reference up to ${n} assets`],
     [/共享任务引用资产不可用：直接引用列表与共享版本不一致(?=\s*$)/, () => `${SHARED_REF}the referenced assets don't match the shared version`],
-    // The cause after the last colon comes from the sharing path and goes through the usual passes.
-    [/共享任务引用资产不可用：共享 (\S+) 失败：/, (_, ref) => `${SHARED_REF}failed to share ${ref}: `],
   ];
+  // Text before the wrapped error (a caller's own prefix) still goes through the usual passes.
+  function translateWrapped(text) {
+    for (const [re, rep] of wrapped) {
+      const m = re.exec(text);
+      if (!m) continue;
+      const head = translate(text.slice(0, m.index));
+      return head + (head && !/\s$/.test(head) ? ' ' : '') + text.slice(m.index).replace(re, rep);
+    }
+    return null;
+  }
   const cache = new Map();
 
   function translateExact(text) {
@@ -139,18 +164,27 @@
     return trimmed && Object.prototype.hasOwnProperty.call(dict, trimmed) ? text.replace(trimmed, dict[trimmed]) : text;
   }
 
+  // Output of translateWrapped can still hold user names in Chinese. Writing it back to a text
+  // node fires the observer again, and that second pass must not run the fragment rules over it.
+  const wrappedDone = new Set();
+
   function translate(text) {
-    if (!text || !HAN.test(text)) return text;
+    if (!text || !HAN.test(text) || wrappedDone.has(text)) return text;
     const hit = cache.get(text);
     if (hit !== undefined) return hit;
     const trimmed = text.trim();
     let out;
+    const whole = Object.prototype.hasOwnProperty.call(dict, trimmed) ? null : translateWrapped(text);
+    if (whole !== null) {
+      if (cache.size > 20000) { cache.clear(); wrappedDone.clear(); }
+      cache.set(text, whole);
+      if (HAN.test(whole)) wrappedDone.add(whole);
+      return whole;
+    }
     if (Object.prototype.hasOwnProperty.call(dict, trimmed)) {
       out = text.replace(trimmed, dict[trimmed]);
     } else {
-      out = text;
-      for (const [re, rep] of wrapped) out = out.replace(re, rep);
-      if (fragmentRE) out = out.replace(fragmentRE, m => dict[m]);
+      out = fragmentRE ? text.replace(fragmentRE, m => dict[m]) : text;
       if (sentenceRE && HAN.test(out)) out = out.replace(sentenceRE, m => dict[m]);
       for (const [re, rep] of patterns) out = out.replace(re, rep);
     }

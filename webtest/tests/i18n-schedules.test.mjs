@@ -290,10 +290,19 @@ test('English shared-task reference errors are translated whole, never half Engl
     ['共享任务引用资产不可用：agent/a1 的归属已变更，请发布新版本', 'the owner of agent/a1 has changed. Publish a new version'],
     ['共享任务引用资产不可用：sop/flow-1 的权限或归属已变更', 'the access or owner of sop/flow-1 has changed'],
     ['共享任务引用资产不可用：共享 agent/a1 失败：database is locked', 'failed to share agent/a1: database is locked'],
+    // Publishing shares a referenced LOOP; causes from internal/repo/catalog_sharing.go.
+    ['共享任务引用资产不可用：共享 sop/cr1506-flow 失败：共享 LOOP 只能使用已共享的沙箱', 'failed to share sop/cr1506-flow: a shared LOOP can only use shared sandboxes'],
+    ['共享任务引用资产不可用：共享 sop/wf 失败：沙箱不属于当前项目且尚未共享', "failed to share sop/wf: its sandbox isn't in this project and isn't shared yet"],
+    // A cause ending in 不存在 / 不属于… must not be read as a reference, and the role name is user data.
+    ['共享任务引用资产不可用：共享 sop/wf-nested 失败：角色 "ghost-role" 不存在', 'failed to share sop/wf-nested: role "ghost-role" doesn\'t exist'],
+    ['共享任务引用资产不可用：共享 sop/cr1506-flow3 失败：角色 "代码审查" 不属于当前项目且尚未共享', 'failed to share sop/cr1506-flow3: role "代码审查" isn\'t in this project and isn\'t shared yet'],
   ];
   for (const [zh, english] of cases) assert.equal(en.lfTranslate(zh), prefix + english, zh);
   // Wrapped once more by a caller, the reference error is still one English sentence.
   assert.equal(en.lfTranslate('执行失败：共享任务引用资产不可用：agent/ghost 不存在'), `Failed: ${prefix}agent/ghost doesn't exist`);
+  assert.equal(en.lfTranslate('执行失败：共享任务引用资产不可用：共享 sop/x 失败：角色 "代码审查" 不存在'), `Failed: ${prefix}failed to share sop/x: role "代码审查" doesn't exist`);
+  // Surrounding whitespace of a text node is kept.
+  assert.equal(en.lfTranslate('  共享任务引用资产不可用：agent/ghost 不存在\n'), `  ${prefix}agent/ghost doesn't exist\n`);
   // Sentences that only share the wording keep translating as before.
   assert.equal(en.lfTranslate('沙箱不属于当前项目且尚未共享'), '沙箱不属于当前项目且尚未共享');
   assert.equal(en.lfTranslate('共享任务使用的角色不属于当前项目且尚未共享'), '共享任务使用的角色不属于当前项目且尚未共享');
@@ -305,6 +314,12 @@ test('English shared-task reference errors are translated whole, never half Engl
   en.document.body.append(node);
   await new Promise((resolve) => en.setTimeout(resolve, 0));
   assert.equal(node.textContent, `${prefix}agent/ghost-agent doesn't exist`);
+  // The translated text still holds the role name in Chinese; writing it back to the node must
+  // not run the fragment rules over it ("代码审查" is also a dictionary key: Code review).
+  node.textContent = '共享任务引用资产不可用：共享 sop/cr1506-flow3 失败：角色 "代码审查" 不属于当前项目且尚未共享';
+  await new Promise((resolve) => en.setTimeout(resolve, 0));
+  await new Promise((resolve) => en.setTimeout(resolve, 0));
+  assert.equal(node.textContent, `${prefix}failed to share sop/cr1506-flow3: role "代码审查" isn't in this project and isn't shared yet`);
 });
 
 test('English publish toast names the Shared task market without mixing languages or rewriting the task name', async (t) => {
