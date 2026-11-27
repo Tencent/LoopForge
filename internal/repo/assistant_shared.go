@@ -153,13 +153,21 @@ func ProjectSharedAssistantSession(s domain.AssistantSession) bool {
 	return !s.Shared && s.RunID == "" && strings.TrimSpace(s.ProjectID) != "" && !strings.HasPrefix(s.ID, "sop-") && s.Source != domain.AssistantSourceSOPDesigner
 }
 
-const assistantSessionMetadataColumns = "id, user_id, project_id, title, model, source, task_id, created_at, updated_at, JSON_REMOVE(payload, '$.messages') AS payload"
+// assistantSessionMetadataColumns projects the session metadata without the
+// transcript. Postgres drops the key with #- instead of JSON_REMOVE, so the
+// column list depends on the dialect.
+func (d *deps) assistantSessionMetadataColumns() string {
+	if d.isPostgres() {
+		return "id, user_id, project_id, title, model, source, task_id, created_at, updated_at, " + d.jsonRemoveLiteral("payload", "$.messages") + " AS payload"
+	}
+	return "id, user_id, project_id, title, model, source, task_id, created_at, updated_at, JSON_REMOVE(payload, '$.messages') AS payload"
+}
 
 // AssistantSessionMetadata looks up a conversation without its transcript.
 // Callers authorize access using the returned owner and project.
 func (r *AssistantRepo) AssistantSessionMetadata(id string) (domain.AssistantSession, bool) {
 	var row assistantSessionRow
-	if r.DB.Select(assistantSessionMetadataColumns).Where("id = ?", assistantRecordID(id)).Take(&row).Error != nil {
+	if r.DB.Select(r.assistantSessionMetadataColumns()).Where("id = ?", assistantRecordID(id)).Take(&row).Error != nil {
 		return domain.AssistantSession{}, false
 	}
 	return decodeAssistantSession(row), true

@@ -233,6 +233,9 @@ func (r *AnalyticsRepo) analyticsDashboardDeliveries(filter domain.AnalyticsFilt
 		if r.isMySQL() {
 			snapshot = "JSON_OBJECT('collaborationMode', JSON_UNQUOTE(JSON_EXTRACT(snapshot, '$.collaborationMode'))) AS snapshot"
 		}
+		if r.isPostgres() {
+			snapshot = "jsonb_build_object('collaborationMode', " + r.jsonTextLiteral("snapshot", "$.collaborationMode") + ") AS snapshot"
+		}
 		// No nodes, artifacts, logs or telemetry are needed to identify the route.
 		if err := r.DB.Select("id", "kind", "execution_context", snapshot, "created_at").
 			Where(r.sqlExecutionContextJSONText("issueId")+" IN ?", batch).Find(&rows).Error; err != nil {

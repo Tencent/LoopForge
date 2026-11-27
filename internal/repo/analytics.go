@@ -744,6 +744,13 @@ func (r *AnalyticsRepo) accumulateToolSignals(out map[string]analyticsRunSignals
 		successExpr = "CASE WHEN JSON_EXTRACT(payload, '$.tool.success') IS NOT NULL THEN JSON_EXTRACT(payload, '$.tool.success') ELSE (LOWER(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(payload, '$.level')), '')) <> 'error') END"
 		filter = "JSON_UNQUOTE(JSON_EXTRACT(payload, '$.category')) = ? AND JSON_UNQUOTE(JSON_EXTRACT(payload, '$.name')) = ? AND JSON_UNQUOTE(JSON_EXTRACT(payload, '$.phase')) = ?"
 	}
+	if r.isPostgres() {
+		// The success flag is a JSON boolean, so it is read as a number the
+		// way MySQL reads a JSON value in an arithmetic context.
+		success := r.jsonValueLiteral("payload", "$.tool.success")
+		successExpr = "CASE WHEN " + success + " IS NOT NULL THEN (CASE jsonb_typeof(" + success + ") WHEN 'boolean' THEN (" + success + ")::text::boolean::int WHEN 'number' THEN (" + success + ")::text::numeric ELSE 0 END) ELSE (LOWER(COALESCE(" + r.jsonTextLiteral("payload", "$.level") + ", '')) <> 'error')::int END"
+		filter = r.jsonTextLiteral("payload", "$.category") + " = ? AND " + r.jsonTextLiteral("payload", "$.name") + " = ? AND " + r.jsonTextLiteral("payload", "$.phase") + " = ?"
+	}
 	var rows []toolRow
 	if err := r.DB.Table("run_telemetry").
 		Select("run_id, SUM("+successExpr+") AS succeeded, SUM(1-("+successExpr+")) AS failed").

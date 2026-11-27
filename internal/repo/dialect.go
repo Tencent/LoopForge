@@ -183,6 +183,29 @@ func (d *deps) jsonTextLiteral(column, path string) string {
 	return "json_extract(" + column + ", '" + path + "')"
 }
 
+// jsonValueLiteral extracts a JSON value at a path. The path is a code
+// constant, never user input. Unlike jsonTextLiteral the result keeps the
+// JSON shape: an object stays an object, a number stays a number, so the
+// value can be embedded in a JSON document as a JSON value.
+func (d *deps) jsonValueLiteral(column, path string) string {
+	if d.isPostgres() {
+		return column + "::jsonb #> '" + jsonPathToPGArray(path) + "'"
+	}
+	if d.isMySQL() {
+		return "JSON_EXTRACT(" + column + ", '" + path + "')"
+	}
+	return "json_extract(" + column + ", '" + path + "')"
+}
+
+// jsonRemoveLiteral removes the member at a path from a JSON document. The
+// path is a code constant, never user input.
+func (d *deps) jsonRemoveLiteral(column, path string) string {
+	if d.isPostgres() {
+		return "(" + column + "::jsonb #- '" + jsonPathToPGArray(path) + "')"
+	}
+	return "JSON_REMOVE(" + column + ", '" + path + "')"
+}
+
 // jsonTextParam extracts a text value at a path bound as a parameter. The
 // bound parameter keeps the MySQL path form ("$.runId"); the Postgres branch
 // converts it to a path array in SQL, so the call sites do not change.

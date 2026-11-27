@@ -38,6 +38,9 @@ func (r *RunsRepo) pendingSOPDetections(projectID string, includeWorkflowIDs, ex
 	if r.isMySQL() {
 		snapshotMode = "JSON_UNQUOTE(" + snapshotMode + ")"
 	}
+	if r.isPostgres() {
+		snapshotMode = r.jsonTextLiteral("snapshot", "$.collaborationMode")
+	}
 	var ids []string
 	q := r.DB.Table("runs").
 		Joins("LEFT JOIN run_evals AS checks ON checks.run_id = runs.id AND checks.id LIKE ?", sopDetectionIDPrefix+"%").
