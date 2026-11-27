@@ -92,11 +92,11 @@ func managedNodeKnowledgeUnsupported(node domain.WorkflowNode, provider string, 
 		return strings.Join(ids, "、")
 	}
 	if len(node.KnowledgeRefs) > 0 {
-		return fmt.Errorf("%s 节点 %q 关联了知识库连接器 %s，但托管 Agent 不支持知识库绑定，运行时会静默丢弃；请改用 CLI 执行器，或在该节点的角色上移除知识库关联",
+		return fmt.Errorf("%s 节点 %q 关联了知识库连接器 %s，但托管 Agent 不支持知识库绑定，该绑定不会生效；请改用 CLI 执行器，或在该节点的角色上移除知识库关联",
 			provider, node.Name, effector(node.KnowledgeRefs))
 	}
 	if runRefs != nil && len(*runRefs) > 0 {
-		return fmt.Errorf("%s 节点 %q 无法使用本次运行指定的知识库连接器 %s：托管 Agent 不支持知识库绑定，运行时会静默丢弃；请启动运行时不指定知识库，或把该节点改用 CLI 执行器",
+		return fmt.Errorf("%s 节点 %q 无法使用本次运行指定的知识库连接器 %s：托管 Agent 不支持知识库绑定；请启动运行时不指定知识库，或把该节点改用 CLI 执行器",
 			provider, node.Name, effector(*runRefs))
 	}
 	return nil
