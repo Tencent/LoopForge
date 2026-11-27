@@ -34,7 +34,7 @@ func TestMCPServerHTTPAndHandleBranches(t *testing.T) {
 		}
 	}
 	for _, method := range []string{"ping", "resources/list", "resources/templates/list", "unknown"} {
-		resp := s.handle(context.Background(), rpcRequest{JSONRPC: "2.0", ID: 1, Method: method})
+		resp := s.handle(context.Background(), rpcRequest{JSONRPC: "2.0", ID: json.RawMessage("1"), Method: method})
 		if resp == nil {
 			t.Fatalf("%s returned nil", method)
 		}
