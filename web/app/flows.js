@@ -136,7 +136,11 @@ function renderFlowHeader(){
     if(!wf)meta.innerHTML='<span>还没有打开流程</span>';
     else{
       const p=flowStatusPill(wf),version=workflowVersionLabel(wf);
-      meta.innerHTML=`<span class="fd-pill ${p.cls}"><span class="dot"></span>${p.label}</span>${version?`<span>${escapeHTML(version)}</span><span class="fd-dotsep"></span>`:''}<span class="v-step">${(wf.nodes||[]).length} 步</span><span class="fd-dotsep v-step-sep"></span>`;
+      // #1358: an unsaved working copy must read as a draft, not blend into
+      // the published version pill it is based on.
+      const unsaved=state.workflowDirty&&!flowReadOnly(wf);
+      const pillLabel=unsaved&&p.cls==='ok'?'已发布 · 有未保存草稿':p.label;
+      meta.innerHTML=`<span class="fd-pill ${p.cls}${unsaved?' is-unsaved':''}"><span class="dot"></span>${pillLabel}</span>${version?`<span>${escapeHTML(version)}</span><span class="fd-dotsep"></span>`:''}<span class="v-step">${(wf.nodes||[]).length} 步</span>${unsaved?'<span class="fd-dotsep v-step-sep"></span><span class="v-step fd-draft-flag">未保存草稿</span>':''}<span class="fd-dotsep v-step-sep"></span>`;
     }
   }
   const chip=$('#sandboxChip');

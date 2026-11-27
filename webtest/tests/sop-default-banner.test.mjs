@@ -31,8 +31,8 @@ test('project default SOP banner renders above the qualified project empty state
 
   const empty = app.document.querySelector('#sopCatalog .sop-empty');
   assert.ok(empty, 'empty state missing');
-  assert.match(empty.textContent, /还没有自建或复制的 SOP/);
-  assert.doesNotMatch(empty.textContent, /当前项目还没有 SOP。/);
+  assert.match(empty.textContent, /还没有自建或复制的 LOOP/);
+  assert.doesNotMatch(empty.textContent, /当前项目还没有 LOOP。/);
 
   // A shared SOP as the project default names its source project.
   app.evaluate(`
@@ -84,7 +84,7 @@ test('the banner disappears once the project has its own SOP cards and on other 
     renderSOPCatalog();
   `);
   assert.equal(app.document.querySelector('#sopCatalog .sop-default-banner'), null);
-  assert.match(app.document.querySelector('#sopCatalog .sop-empty').textContent, /还没有共享给当前项目的 SOP/);
+  assert.match(app.document.querySelector('#sopCatalog .sop-empty').textContent, /还没有共享给当前项目的 LOOP/);
 
   // No project selected: no banner even when the list is empty.
   app.evaluate(`

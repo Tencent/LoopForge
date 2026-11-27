@@ -1113,3 +1113,7 @@ Object.assign(window.LF_I18N_EN, {
   "换个关键词，或回到项目角色。": "Try another keyword, or go back to project Roles.",
   "请在角色所属项目中共享，或共享一个引用它的技能。": "Share the Role from its project, or share a skill that references it.",
 });
+Object.assign(window.LF_I18N_EN, {
+  "未保存草稿": "Unsaved draft",
+  "已发布 · 有未保存草稿": "Published · unsaved draft",
+});
