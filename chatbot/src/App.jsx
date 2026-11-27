@@ -175,10 +175,15 @@ const homeStarters = [
     title: "快速接入",
     description: "提供最低限度的鉴权与仓库，用默认角色与 LOOP 立即开始。",
     steps: ["鉴权", "仓库", "默认 LOOP"],
+    description: "提供最低限度的鉴权与仓库，用默认角色与 SOP 立即开始。",
+    steps: ["鉴权", "仓库", "默认 LOOP"],
+    // Telling users what this click does avoids the "wizard or chat?" confusion.
+    action: "打开配置向导",
   },
   // New users asked how to hook up a test environment and how roles and LOOPs
   // work; these two cards start a guided conversation instead of dropping them
-  // on a settings page.
+  // on a settings page. The prompt is only a draft: the action label and the
+  // composer notice below say the question still needs their own words.
   {
     id: "environment",
     icon: "terminal",
@@ -186,6 +191,7 @@ const homeStarters = [
     title: "接入测试环境",
     description: "助手先查执行机器、镜像和沙箱，再按缺口一步步带你配好。",
     steps: ["执行机器", "镜像", "沙箱"],
+    action: "填入提问",
     prompt:
       "带我一步步接入测试环境：先查看当前项目已有的执行机器、容器镜像、环境脚本和沙箱，告诉我还缺什么、按什么顺序配、每一步在哪里操作；能由你提交的配置，直接起草出来给我。",
   },
@@ -196,6 +202,7 @@ const homeStarters = [
     title: "选用 LOOP 与角色",
     description: "了解产品、前端、后端三套交付 LOOP 和其中的角色，按需求推荐一套。",
     steps: ["产品", "前端", "后端"],
+    action: "填入提问",
     prompt:
       "我准备写需求了。平台内置的产品、前端、后端交付 LOOP 分别适合什么场景、好在哪里、里面有哪些角色？请结合当前项目推荐一套，并告诉我怎么绑定和派发第一条需求。我的需求是：",
   },
@@ -685,9 +692,14 @@ export default function App() {
     }
     void chat.selectProject(id);
   }
-  function useStarter(prompt) {
+  // The starter cards fill the composer with a draft question. Until it is
+  // edited or sent, a notice above the composer reminds the user the question
+  // was only pre-filled and still needs their own requirement before sending.
+  const [starterNotice, setStarterNotice] = useState(null);
+  function useStarter(prompt, notice) {
     setText(prompt);
     setMention(null);
+    setStarterNotice(notice || null);
     requestAnimationFrame(() => {
       input.current?.focus();
       if (input.current) {
@@ -705,7 +717,15 @@ export default function App() {
       navigate(starter.view);
       return;
     }
-    if (starter.prompt) useStarter(starter.prompt);
+    if (starter.prompt) {
+      const notice =
+        starter.id === "sop"
+          ? { kind: "sop" }
+          : starter.id === "environment"
+            ? { kind: "environment" }
+            : { kind: "question" };
+      useStarter(starter.prompt, notice);
+    }
   }
   function closeQuickAccess() {
     setQuickAccessOpen(false);
@@ -979,6 +999,7 @@ export default function App() {
     if (!hasComposerExecutor || uploading || composerLoading || draftReady.current !== draftKey ||
         (!chat.activeId && savingDraftApproval.current)) return;
     follow.current = true;
+    setStarterNotice(null);
     const snapshot = draftSnapshot({ text, attachments, references });
     const draftApproval = chat.activeId ? null : { owner: approvalOwner, scope: approvalScope, mode: approval, snapshot };
     const copiedFrom = draftOrigin.current;
@@ -2582,6 +2603,18 @@ export default function App() {
                   onResume={chat.resumeQueue}
                   onSendNow={chat.sendNow}
                 />
+                {starterNotice && !conversationStarted ? (
+                  <div className="starter-notice" role="status">
+                    <HarnessIcon name="info" size={14} aria-hidden="true" />
+                    <span>
+                      {starterNotice.kind === "sop"
+                        ? "问题已填入，请补充「我的需求」后发送。"
+                        : starterNotice.kind === "environment"
+                          ? "问题已填入，请检查或补充内容后发送。"
+                          : "问题已填入，请检查或补充内容后发送。"}
+                    </span>
+                  </div>
+                ) : null}
                 <div className="composer">
                   {attachments.length || pendingAttachments.length ? (
                     <div className="composer-attachments">
@@ -2657,6 +2690,8 @@ export default function App() {
                     onChange={({ text: nextText, references: nextReferences }) => {
                       setText(nextText);
                       setReferences(nextReferences);
+                      // Clearing the pre-filled question also retires its notice.
+                      if (starterNotice && !nextText.trim()) setStarterNotice(null);
                     }}
                     onError={(message) => chat.setError(message)}
                     issueId={chat.issueId}
@@ -2874,6 +2909,9 @@ export default function App() {
                       </span>
                     ))}
                   </span>
+                  {starter.action ? (
+                    <span className="home-starter-action">{starter.action}</span>
+                  ) : null}
                 </button>
               ))}
             </div>

@@ -738,6 +738,48 @@ describe("App", () => {
     expect(screen.getByRole("textbox").value).toMatch(/产品、前端、后端交付 LOOP/);
   });
 
+  // #1354: starter cards say what their click does, and a pre-filled question
+  // gets an out-of-input notice asking the user to check/supplement and send.
+  test("starter cards label their action and the pre-filled question asks for a supplement before sending", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    // Card action labels: quick-access opens the wizard, the others fill the question.
+    const quickAccess = screen.getByText("快速接入").closest("button");
+    expect(quickAccess).toHaveTextContent("打开配置向导");
+    expect(screen.getByText("接入测试环境").closest("button")).toHaveTextContent("填入提问");
+    expect(screen.getByText("选用 LOOP 与角色").closest("button")).toHaveTextContent("填入提问");
+
+    // Opening the wizard stays a dialog; no composer notice appears.
+    await user.click(quickAccess);
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(screen.queryByRole("status")).toBeNull();
+    fireEvent.keyDown(document, { key: "Escape" });
+
+    await user.click(screen.getByText("接入测试环境"));
+    expect(screen.getByRole("textbox").value).toMatch(/^带我一步步接入测试环境/);
+    let notice = screen.getByRole("status");
+    expect(notice).toHaveTextContent("问题已填入，请检查或补充内容后发送。");
+
+    // The SOP card explicitly asks for "我的需求" (#1354 suggestion).
+    await user.click(screen.getByText("选用 LOOP 与角色"));
+    notice = screen.getByRole("status");
+    expect(notice).toHaveTextContent("问题已填入，请补充「我的需求」后发送。");
+
+    // Clearing the pre-filled text retires the notice with it.
+    const box = screen.getByRole("textbox", { name: "消息" });
+    await user.clear(box);
+    expect(screen.queryByRole("status")).toBeNull();
+
+    // Refill and send: the notice goes away once the question is on its way.
+    await user.click(screen.getByText("选用 LOOP 与角色"));
+    expect(screen.getByRole("status")).toHaveTextContent("问题已填入");
+    await user.type(box, "尽快交付登录页");
+    await user.click(screen.getByRole("button", { name: "发送消息" }));
+    expect(chat.send).toHaveBeenCalled();
+    expect(screen.queryByRole("status")).toBeNull();
+  });
+
   test("questions and replies show when they were sent, and the header switches project", async () => {
     const user = userEvent.setup();
     const previous = { ...chat };

@@ -259,7 +259,10 @@ function taskTriggerInfo(task){
 function taskTriggerBadge(task){const info=taskTriggerInfo(task);return `<span class="run-trigger ${info.kind}" title="${escapeHTML(info.title||'触发来源')}">${escapeHTML(info.label)}</span>`}
 function renderRunOverview(){
   const live=liveRuns(),runs=scopedRuns(sopRuns(state.data.runs)),active=live.filter(r=>r.status==='running'&&!r.pauseRequested).length,waiting=live.filter(runAwaitsConfirmation).length,queued=runs.filter(r=>r.status==='queued').length,failed=runs.filter(r=>r.status==='failed').length,finished=runs.filter(r=>r.status==='succeeded'),successBase=finished.length+failed,rate=successBase?Math.round(finished.length*100/successBase):0,totalTokens=runs.reduce((n,r)=>n+Number(r.usage?.totalTokens||0),0);
-  $('#runOverview').innerHTML=`<span class="run-kpi" title="成功率 = 已完成 ÷（已完成 + 失败）"><span>成功率</span><b>${rate}%</b><small>${successBase} 次已结束</small></span><span class="run-kpi"><span>累计 Token</span><b>${formatTokens(totalTokens)}</b><small>${runs.length} 次</small></span>`;
+  // #1367: the top KPIs always cover the whole project scope (not the search),
+  // so the label says so instead of making the user infer the range.
+  $('#runOverview').innerHTML=`<span class="run-kpi" title="本项目累计：不受搜索和 SOP 筛选影响
+成功率 = 已完成 ÷（已完成 + 失败）"><span>本项目累计 · 成功率</span><b>${rate}%</b><small>${successBase} 次已结束</small></span><span class="run-kpi" title="本项目累计：不受搜索和 SOP 筛选影响"><span>本项目累计 · Token</span><b>${formatTokens(totalTokens)}</b><small>${runs.length} 次</small></span>`;
   const liveState=$('#runsLiveState'),on=active+waiting+queued>0;
   liveState.classList.toggle('active',on);
   const text=liveState.querySelector('[data-live-text]');if(text)text.textContent=on?'实时更新中':'暂无进行中的运行';
@@ -320,6 +323,14 @@ function renderRuns(){
   if(state.runWorkflowFilter)base=base.filter(r=>r.workflowId===state.runWorkflowFilter);
   if(state.runQuery)base=base.filter(r=>{const ctx=runContext(r);return `${r.id} ${r.input} ${r.workflowSnapshot?.name||''} ${ctx.issue?.title||''}`.toLowerCase().includes(state.runQuery)});
   renderRunFilterCounts(base);
+  // #1367: after a search the status-tab counts turn into matches of the
+  // current search/SOP scope; say so instead of leaving the range implicit.
+  const scopeNote=$('#runScopeNote');
+  if(scopeNote){
+    const hasSearch=Boolean(state.runQuery),hasSop=Boolean(state.runWorkflowFilter);
+    scopeNote.hidden=!(hasSearch||hasSop);
+    if(hasSearch||hasSop)scopeNote.textContent=`当前搜索结果 ${base.length} 条 · 数量随关键词与 SOP 筛选变化，清除后恢复项目范围`;
+  }
   const runs=base.filter(r=>runMatchesFilter(r,state.runFilter||'all'));
   $('#runListCount')&&($('#runListCount').textContent=`${runs.length} 条`);const list=$('#runList');
   const focusedRow=document.activeElement?.closest?.('#runList .run-card'),focusedPart=focusedRow&&['.run-view-btn','.run-del-btn'].find(s=>document.activeElement.matches(s));

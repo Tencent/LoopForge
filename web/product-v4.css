@@ -3191,6 +3191,7 @@ html[data-theme="dark"] #runnersView .runner-runtime-icon:is(.codex,.claude-code
 #runsView .run-filters .is-danger .sliding-tab-count{color:var(--rl-err);font-weight:500;opacity:1}
 #runsView .run-filters .is-zero .sliding-tab-count{opacity:.3}
 #runsView .run-tools{display:flex;align-items:center;gap:8px;margin-left:auto}
+#runsView .run-scope-note{flex:0 0 auto;margin:0;padding:2px 12px 0;color:var(--rl-muted-2);font-size:12px;line-height:1.6}
 #runsView .run-search{box-sizing:border-box;display:flex;align-items:center;gap:7px;width:220px;height:34px;padding:0 10px;border:1px solid var(--rl-line);border-radius:8px;background:var(--rl-surface);color:var(--rl-muted);transition:border-color .16s}
 #runsView .run-search:hover{border-color:color-mix(in srgb,var(--rl-text) 24%,var(--rl-line))}
 #runsView .run-search:focus-within{border-color:var(--rl-focus)}
