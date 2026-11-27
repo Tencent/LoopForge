@@ -140,20 +140,6 @@ func TestProjectContentWritesRequireMembership(t *testing.T) {
 		t.Fatalf("restore member roles: %d", code)
 	}
 
-	submission := `{"projectId":"p1","title":"Runbook","content":"restart the worker"}`
-	if code := call(other, "POST", "/api/knowledge/submissions", submission); code != 403 {
-		t.Fatalf("non-member submits knowledge to p1: %d", code)
-	}
-	if code := call(viewer, "POST", "/api/knowledge/submissions", submission); code != 403 {
-		t.Fatalf("viewer submits knowledge to p1: %d", code)
-	}
-	if code := call(member, "POST", "/api/knowledge/submissions", submission); code == 403 {
-		t.Fatal("members may submit knowledge to their project")
-	}
-	if code := call(other, "POST", "/api/knowledge/submissions", `{"title":"Note","content":"no project"}`); code == 403 {
-		t.Fatal("project-less submissions are not project content")
-	}
-
 	agent := `{"id":"a1","projectId":"p1","name":"Dev","instructions":"build"}`
 	if code := call(other, "PUT", "/api/agents", agent); code != 403 {
 		t.Fatalf("non-member write agent: %d", code)

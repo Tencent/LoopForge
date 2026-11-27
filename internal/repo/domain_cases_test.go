@@ -313,36 +313,18 @@ func TestCloneParseSortAndJSONHelpers(t *testing.T) {
 
 func TestKnowledgeMCPFilesSpacesAndAssistantTasks(t *testing.T) {
 	s := cvEStore(t)
-	if err := s.PutKnowledgeSettings(domain.KnowledgeSettings{Enabled: true, URL: "https://kb", Token: "secret", DefaultSources: []string{"docs"}}); err != nil {
+	if err := s.PutKnowledgeConnector(domain.KnowledgeConnector{ID: "cve-conn", OwnerUserID: 7, Name: "Docs", Type: domain.ConnectorTypeMCP, Endpoint: "https://kb", SecretEnc: "v1:secret", Enabled: true}); err != nil {
 		t.Fatal(err)
 	}
-	settings := s.KnowledgeSettings()
-	if !settings.Enabled || settings.Token != "secret" || !settings.TokenConfigured {
-		t.Fatalf("settings = %+v", settings)
+	conns := s.ListKnowledgeConnectors(7)
+	if len(conns) != 1 || !conns[0].SecretConfigured || conns[0].SecretEnc != "v1:secret" {
+		t.Fatalf("connectors = %+v", conns)
 	}
-	if err := s.PutKnowledgeSubmission(domain.KnowledgeSubmission{}); err == nil {
-		t.Fatal("empty submission accepted")
+	if _, ok := s.GetKnowledgeConnector(8, "cve-conn"); ok {
+		t.Fatal("other user read private connector")
 	}
-	sub := domain.KnowledgeSubmission{ID: "cve-sub", ProjectID: "platform", RunID: "r", ArtifactID: "a", Title: "Doc", Content: "body"}
-	if err := s.PutKnowledgeSubmission(sub); err != nil {
-		t.Fatal(err)
-	}
-	gotSub, ok := s.KnowledgeSubmission(sub.ID)
-	if !ok || gotSub.Status != domain.KnowledgeSubmissionPending || gotSub.Content != "body" {
-		t.Fatalf("submission = %+v %v", gotSub, ok)
-	}
-	list := s.KnowledgeSubmissions("platform", domain.KnowledgeSubmissionPending, 0)
-	if len(list) != 1 || list[0].Content != "" {
-		t.Fatalf("submissions = %+v", list)
-	}
-	if ids := s.KnowledgeSubmissionIDsByArtifact([]string{"a", "missing"}); ids["a"] != sub.ID {
-		t.Fatalf("artifact IDs = %v", ids)
-	}
-	if err := s.DeleteKnowledgeSubmission(sub.ID); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.DeleteKnowledgeSubmission(sub.ID); err == nil {
-		t.Fatal("missing submission deleted")
+	if deleted, err := s.DeleteKnowledgeConnector(7, "cve-conn"); err != nil || !deleted {
+		t.Fatalf("delete = %v %v", deleted, err)
 	}
 
 	mcp := domain.MCPServerDefinition{ID: "cve-mcp", Name: "MCP", Transport: "stdio", Command: "tool"}
@@ -472,8 +454,8 @@ func TestRunnerUtilityAndEmptyQueryBranches(t *testing.T) {
 	if got := s.ListAssistantTasks(0); len(got) != 0 {
 		t.Fatalf("zero-user tasks = %+v", got)
 	}
-	if got := s.KnowledgeSubmissionIDsByArtifact(nil); len(got) != 0 {
-		t.Fatalf("empty artifact map = %v", got)
+	if got := s.ListKnowledgeConnectors(0); len(got) != 0 {
+		t.Fatalf("zero-user connectors = %+v", got)
 	}
 	if _, ok := s.SpaceByIssue(""); ok {
 		t.Fatal("empty issue matched a space")

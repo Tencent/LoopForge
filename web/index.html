@@ -38,6 +38,8 @@
   <link rel="stylesheet" href="/app/harness-motion.css">
   <link rel="stylesheet" href="/app/sliding-tabs.css">
   <link rel="stylesheet" href="/app/mcp.css">
+  <link rel="stylesheet" href="/app/knowledge-refs.css">
+  <link rel="stylesheet" href="/app/knowledge.css">
   <link rel="stylesheet" href="/app/flow-canvas.css?v=20261126arrange">
   <link rel="stylesheet" href="/app/assistant-settings.css">
   <link rel="stylesheet" href="/preferences.css">
@@ -154,6 +156,7 @@
       <p>Agent 能力</p>
       <button class="nav" data-view="agents"><span class="nav-icon"><svg class="agent-icon harness-icon" data-icon="user" data-icon-motion="idle" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle class="head" cx="12" cy="8" r="4"/><path class="body" d="M4 21a8 8 0 0 1 16 0"/></svg></span><span class="nav-label">角色定义</span></button>
       <button class="nav" data-view="mcp" data-nav-match="rules skills" data-nav-icon="skills"><span class="nav-icon"><svg class="agent-icon harness-icon" data-icon="skills" data-icon-motion="idle" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path class="skill-piece" d="M9 4V3a2 2 0 0 1 4 0v1h5a2 2 0 0 1 2 2v4h-1a2 2 0 0 0 0 4h1v4a2 2 0 0 1-2 2h-4v-1a2 2 0 0 0-4 0v1H6a2 2 0 0 1-2-2v-4H3a2 2 0 0 1 0-4h1V6a2 2 0 0 1 2-2h3Z"/></svg></span><span class="nav-label">能力资产</span></button>
+      <button class="nav" data-view="knowledge"><span class="nav-icon"><svg class="agent-icon harness-icon" data-icon="book" data-icon-motion="idle" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg></span><span class="nav-label">我的知识库</span></button>
       <button class="nav" data-view="evolution"><span class="nav-icon"><svg class="agent-icon harness-icon" data-icon="sparkles" data-icon-motion="idle" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M12 3l1.6 4.4L18 9l-4.4 1.6L12 15l-1.6-4.4L6 9l4.4-1.6z"/><path d="M19 14l.8 2.2L22 17l-2.2.8L19 20l-.8-2.2L16 17l2.2-.8z"/></svg></span><span class="nav-label">RSI工作台</span></button>
       <p>运行环境</p>
       <button class="nav" data-view="runners"><span class="nav-icon"><svg class="agent-icon harness-icon" data-icon="server" data-icon-motion="idle" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="3" y="3" width="18" height="7" rx="2"/><rect x="3" y="14" width="18" height="7" rx="2"/><path d="M7 6.5h.01"/><path d="M7 17.5h.01"/></svg></span><span class="nav-label">执行机器</span></button>
@@ -777,6 +780,22 @@
       </div>
     </section>
 
+    <section id="knowledgeView" class="view page-view">
+      <div class="kb-head">
+        <div>
+          <h1>我的知识库</h1>
+          <p class="kb-head-desc" id="kbHeadDesc">接入并管理仅你本人可见的外部只读知识库连接器，供 AI 对话与 SOP 运行按需引用。</p>
+        </div>
+        <div class="kb-head-actions" id="kbHeadActions">
+          <button type="button" class="kb-btn" id="kbRefreshBtn">刷新</button>
+          <button type="button" class="kb-btn primary" id="kbAddConnectorBtn">＋ 添加连接器</button>
+        </div>
+      </div>
+      <div id="knowledgeRoot"></div>
+    </section>
+    <div id="kbConnDrawerScrim" class="kb-conn-drawer-scrim" hidden aria-hidden="true"></div>
+    <aside id="kbConnDrawer" class="kb-conn-drawer" role="dialog" aria-modal="true" aria-hidden="true" inert hidden></aside>
+
     <!-- 执行机器：本机 / CVM 执行环境 -->
     <section id="runnersView" class="view page-view">
       <div class="page-heading">
@@ -1020,7 +1039,7 @@
 
   <div id="importTAPDModal" class="modal"><form id="importTAPDForm" class="modal-card"><button type="button" class="modal-close import-tapd-close">×</button><p class="eyebrow">外部需求</p><h2>导入 TAPD 工作项</h2><p class="modal-hint">支持 TAPD 需求、缺陷或任务链接，也可以粘贴「标题 + 链接」。导入时将读取 TAPD 最新标题和描述并写入当前项目。</p><label for="importTAPDURL">TAPD 链接或分享文本</label><textarea id="importTAPDURL" class="input" required rows="3" placeholder="【工作项标题】&#10;https://www.tapd.cn/tapd_fe/…/story/detail/…"></textarea><label>LOOP 流程</label><select id="importTAPDWorkflow" class="select"></select><label>代码仓库（可多选）</label><div id="importTAPDRepository" class="repo-picker"></div><p class="modal-hint">从下拉框添加仓库，点击标签可移除。导入前必须至少选择一个仓库。</p><label for="importTAPDBaseBranch">继续开发分支（可选）</label><input id="importTAPDBaseBranch" class="input" placeholder="留空从配置主分支新建工作分支" aria-describedby="importTAPDBaseBranchHint" autocomplete="off"><div id="importTAPDRepositoryBranches" class="repository-branches" hidden></div><p id="importTAPDBaseBranchHint" class="modal-hint">留空从配置主分支新建工作分支；填写时直接继续该已有分支，不新建。</p><div class="modal-actions"><button type="button" class="button ghost import-tapd-close">取消</button><button id="confirmImportTAPD" type="submit" class="button primary">导入</button></div></form></div>
 
-  <div id="runModal" class="modal"><div class="modal-card"><button class="modal-close">×</button><p class="eyebrow">手动运行</p><h2>发起流程运行</h2><p>选择 LOOP 并提供任务输入，内容会注入使用 <code>{{input}}</code> 的 Agent 节点。</p><label class="modal-label" for="runWorkflowChoice">LOOP 流程</label><select id="runWorkflowChoice" class="select"></select><label class="modal-label" for="runInput">任务输入</label><textarea id="runInput" placeholder="例如：实现用户登录接口，并补充单元测试"></textarea><div class="modal-actions"><button class="button ghost modal-close">取消</button><button id="confirmRun" class="button primary">开始运行</button></div></div></div>
+  <div id="runModal" class="modal"><div class="modal-card"><button class="modal-close">×</button><p class="eyebrow">手动运行</p><h2>发起流程运行</h2><p>选择 LOOP 并提供任务输入，内容会注入使用 <code>{{input}}</code> 的 Agent 节点。</p><label class="modal-label" for="runWorkflowChoice">LOOP 流程</label><select id="runWorkflowChoice" class="select"></select><label class="modal-label" for="runInput">任务输入</label><textarea id="runInput" placeholder="例如：实现用户登录接口，并补充单元测试"></textarea><div class="modal-knowledge-row"><button id="runKnowledgeRefsBtn" type="button" class="button ghost small">关联我的知识库</button><button id="runKnowledgeRefsResetBtn" type="button" class="button ghost small" hidden>恢复默认</button><span id="runKnowledgeRefsSummary" class="modal-hint">默认按节点或角色配置</span></div><div class="modal-actions"><button class="button ghost modal-close">取消</button><button id="confirmRun" class="button primary">开始运行</button></div></div></div>
 
   <div id="genericTemplateModal" class="modal"><div class="modal-card generic-template-card"><button class="modal-close generic-template-close">×</button><p class="eyebrow">内置 LOOP</p><h2 id="genericTemplateTitle">使用通用模板</h2><p id="genericTemplateIntro" class="modal-hint"></p><div id="genericTemplateStructure" class="generic-structure"></div><div class="generic-requirement-head"><b>运行依赖</b><span>复制不检查依赖；未配置时对应节点会在运行中降级或失败。凭证按任务责任人注入。</span></div><div id="genericTemplateRequirements" class="generic-requirements"></div><div class="modal-actions"><button type="button" class="button ghost generic-template-close">取消</button><button id="runGenericTemplateDirect" type="button" class="button ghost">直接运行</button><button id="confirmGenericTemplate" type="button" class="button primary">复制到本项目</button></div></div></div>
 
@@ -1427,6 +1446,7 @@
   <script src="/app/flow-history.js?v=20261030fd2"></script>
   <script src="/app/flow-viewport.js?v=20261125arrange"></script>
   <script src="/app/flow-palette.js?v=20261126publish"></script>
+  <script src="/app/knowledge-refs.js"></script>
   <script src="/app/flows.js?v=20261125publish"></script>
   <script src="/app/agents.js"></script>
   <script src="/app/mcp.js"></script>
@@ -1451,6 +1471,7 @@
   <script src="/app/hover-ink.js"></script>
   <script src="/app/sidebar-mode-motion.js"></script>
   <script src="/app/sliding-tabs.js?v=20261121lang1"></script>
+  <script src="/app/knowledge.js"></script>
   <script src="/knowledge.js?v=20261113evo1"></script>
   <script src="/evolution.js?v=20261126rsi17"></script>
   <script src="/app/evolution-simple.js?v=20261125rsi3"></script>
