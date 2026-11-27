@@ -31,6 +31,7 @@ func TestAnalyticsTokenPricing(t *testing.T) {
 		{"unknown model without reported amount is unknown", "unknown-model", TokenUsage{InputTokens: 1e6}, false, 0, false},
 		{"total alone cannot determine input output", "glm-5.3", TokenUsage{TotalTokens: 1e6}, false, 0, false},
 		{"invalid inclusive cache", "gpt-5.4", TokenUsage{InputTokens: 10, CacheReadTokens: 11}, true, 0, false},
+		{"inclusive usage without a prompt count prices its cache", "gpt-5.4", TokenUsage{CacheReadTokens: 1e6}, true, .25 * 7, true},
 		{"Kimi K3.1 Pro TokenHub RMB price", "kimi-k3.1-pro", TokenUsage{InputTokens: 1e6, OutputTokens: 1e6, CacheReadTokens: 1e6, CacheWriteTokens: 1e6}, false, 13 + 68 + 1.3 + 13, true},
 		{"MiMo V2.6 Pro RMB price", "mimo-v2.6-pro", TokenUsage{InputTokens: 1e6, OutputTokens: 1e6, CacheReadTokens: 1e6}, false, 3 + 6 + .025, true},
 		{"custom-local uses vendor public price", "custom-local:deepseek-v4-flash", TokenUsage{InputTokens: 1e6, OutputTokens: 1e6}, false, 2 + 8, true},
@@ -45,5 +46,28 @@ func TestAnalyticsTokenPricing(t *testing.T) {
 				t.Fatalf("priced=%+v CNY=%g; want %g known=%v", got, got.CostUSD*AnalyticsUSDToCNY, tc.cny, tc.known)
 			}
 		})
+	}
+}
+
+func TestUsageInputIncludesCacheFollowsTheCLI(t *testing.T) {
+	for _, tc := range []struct {
+		engine, model string
+		want          bool
+	}{
+		{"codex", "gpt-5.5", true},
+		{"openai", "o-series", true},
+		{"codebuddy", "deepseek-v4.1-flash", true},
+		{" CodeBuddy ", "claude-sonnet-4-6", true},
+		{"claude-code", "claude-sonnet-4-6", false},
+		{"claude-code", "gpt-5.5", false},
+		{"opencode", "glm-5.3-flash", false},
+		{"cursor", "grok-4.7", false},
+		{"opencode", "gpt-5.4", true},
+		{"", "gpt-5.4", true},
+		{"", "claude-sonnet-4-6", false},
+	} {
+		if got := UsageInputIncludesCache(tc.engine, tc.model); got != tc.want {
+			t.Errorf("UsageInputIncludesCache(%q, %q) = %v, want %v", tc.engine, tc.model, got, tc.want)
+		}
 	}
 }

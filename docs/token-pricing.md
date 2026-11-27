@@ -7,7 +7,7 @@
 - `costStatus=reported` 且金额是有限、非负值时，保留上报金额，包括明确上报的 **0 美元**；不因公开价较高而覆盖。此时无需模型价目表或 Token 分项。美元按 **1 USD = 7 CNY** 换算。
 - CodeBuddy 的兼容字段 `total_cost_usd: 0` 不能作为真实免费凭据：本机核查的官方发布包 `@tencent-ai/codebuddy-code@2.132.0` 将它硬编码为 0，积分在独立字段中上报。CodeBuddy 的占位美元 0 归一化为未上报费用，按下条规则回退；非零有效美元上报则保留。其他来源明确上报的 0 仍按 0 统计。
 - 没有有效上报费用时，才按已核实的公开标准 Token 价格估算。优先使用人民币单价；只有美元单价的模型按 **1 USD = 7 CNY** 换算。缺少上报的 Hy / Hunyuan 系列（含 `hy3-ioa`、`hy4std`、`hy4-preview-ioa`）采用平台免费价。
-- 输入、输出、缓存读取和缓存创建分别计费；推理 Token 已包含在输出中，不再额外收费。Anthropic 原生输入不含缓存分项；Codex/OpenAI 及外部上报的输入包含缓存，计算普通输入时先扣除缓存分项。
+- 输入、输出、缓存读取和缓存创建分别计费；推理 Token 已包含在输出中，不再额外收费。Anthropic 原生（Claude Code）输入不含缓存分项；Codex/OpenAI、CodeBuddy 及外部上报的输入包含缓存，计算普通输入时先扣除缓存分项。CodeBuddy stream-json 的 `input_tokens` 是整个提示词（等于 `codebuddy.ai/contextUsed`，`modelUsage.inputTokens` 为其减去 `cache_read_input_tokens`）；未带 CLI 前缀的助手模型在 CodeBuddy 上运行，按同一口径计价。包含缓存的用量只上报缓存、未上报输入时，只按缓存分项计价；输入小于缓存分项则视为数据矛盾，费用记为未知。
 - 没有上报费用且缺少模型、公开价或 Token 分项时，不能推算完整费用；保留可识别部分的金额并显示覆盖率，不把未知显示成免费。
 - 一个 Run 包含多个模型时，分别计价后求和；统计页总额、趋势、项目、责任人、LOOP、模型和需求明细使用同一个投影。零用量的脚本节点不产生 Token 费用。
 - 小额费用在求和前不取整。新字段 `costCny` / `totalCostCny` / `costReportedCny` 的单位是人民币；兼容字段 `costUsd` 等表示该统计金额按 7 折算的美元等值，不能再当成原始账单金额。
