@@ -566,10 +566,11 @@ func (d *deps) jsonTextLiteral(column, path string) string {
 }
 
 // jsonTextParam extracts a text value at a path bound as a parameter. The
-// bound path uses the Postgres array form; MySQL keeps its own path syntax.
+// bound parameter keeps the MySQL path form ("$.runId"); the Postgres branch
+// converts it to a path array in SQL, so the call sites do not change.
 func (d *deps) jsonTextParam(column string) string {
 	if d.isPostgres() {
-		return column + "::jsonb #>> ?::text[]"
+		return column + "::jsonb #>> string_to_array(ltrim(?, '$.'), '.')"
 	}
 	if d.isMySQL() {
 		return "JSON_UNQUOTE(JSON_EXTRACT(" + column + ", ?))"
@@ -662,7 +663,10 @@ func (d *deps) sqlPayloadJSONText(path string) string {
 
 `sqlExecutionContextJSONText(path string)` 同理，列名换成 `execution_context`。
 
-注意：Postgres 分支的路径参数不再是 MySQL 的 `$.a.b`，调用方传的是不带 `$.` 前缀的路径段（如 `"name"`、`"participantsVersion"`），因此 `jsonPathToPGArray("name")` → `{name}`。核对每个调用点传入的字符串形式，Postgres 分支需要 `$.` 前缀时由助手内部补齐（`jsonPathToPGArray` 已同时接受 `$.a.b` 与 `a.b`）。
+注意：
+
+1. **绑定参数的路径形态**：`sqlJSONText` 的调用方（例如 `internal/repo/assistant_shared.go:37`）把路径写成 `$.runId` 并**原样绑定**：`Where(r.sqlJSONText("$.runId")+" = ?", "$.runId", runID)`。所以 Postgres 分支不能要求调用方改成数组形态，只能在 SQL 里把 `$.runId` 拆成 `{runId}`——上面用的是 `string_to_array(ltrim(?, '$.'), '.')`（`ltrim` 的第二参是字符集合，会剥掉开头的 `$` 与 `.`）。**调用方一个字都不用改。**
+2. **字面量路径的形态**：`sqlPayloadJSONText`/`sqlExecutionContextJSONText` 的调用方传的是不带 `$.` 前缀的路径段（如 `"name"`、`"clarification.startedAt"`），因此 `jsonPathToPGArray("name")` → `{name}`。`jsonPathToPGArray` 同时接受 `$.a.b` 与 `a.b` 两种形态。
 
 - [ ] **Step 4: 数据库时钟加 Postgres 分支**
 
