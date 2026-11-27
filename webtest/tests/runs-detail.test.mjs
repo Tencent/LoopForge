@@ -256,7 +256,56 @@ test('run filtering, paging, status actions, and list/detail transitions remain 
   assert.match(app.document.querySelector('#runsView').textContent, /共 28 条|运行记录/);
 });
 
-test('conversation workspaces stay out of LOOP run lists and counts but keep their requirement', async (t) => {
+// #1367: after a search the status-tab counts become matches of the current
+// search scope while the top KPIs stay project-wide, and both say their range.
+test('run list labels the search-result scope and keeps project totals labeled', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  const out = JSON.parse(app.evaluate(`
+    const pid=state.projectFilter||state.data.projects[0].id;
+    state.data.runs=Array.from({length:4},(_,i)=>({
+      id:'run-'+(i+1),workflowId:'flow-1',status:['succeeded','succeeded','failed','waiting'][i],
+      input:['登录页','登录页','仪表盘','设置页'][i],
+      createdAt:new Date(Date.now()-(i+1)*60000).toISOString(),
+      executionContext:{projectId:pid},usage:{totalTokens:5000},
+      nodes:{a:{status:'succeeded'}},workflowSnapshot:{name:'Delivery Flow'}}));
+    state.runFilter='all';state.runQuery='';state.runWorkflowFilter='';renderRuns();
+    const noteIdleHidden=document.querySelector('#runScopeNote').hidden;
+    const kpi=document.querySelector('#runOverview').textContent;
+    const waitingIdle=document.querySelector('[data-run-filter="waiting"] .sliding-tab-count').textContent;
+    state.runQuery='登录页';renderRuns();
+    const noteSearchedHidden=document.querySelector('#runScopeNote').hidden;
+    const noteText=document.querySelector('#runScopeNote').textContent;
+    const waitingSearched=document.querySelector('[data-run-filter="waiting"] .sliding-tab-count').textContent;
+    const rows=[...document.querySelectorAll('#runList .run-card')].map(el=>el.dataset.id);
+    const kpiSearched=document.querySelector('#runOverview').textContent;
+    state.runQuery='';renderRuns();
+    const noteClearedHidden=document.querySelector('#runScopeNote').hidden;
+    const rowsCleared=[...document.querySelectorAll('#runList .run-card')].map(el=>el.dataset.id);
+    JSON.stringify({noteIdleHidden,kpi,waitingIdle,noteSearchedHidden,
+      noteText,waitingSearched,rows,kpiSearched,noteClearedHidden,rowsCleared})
+  `));
+  // No search: the scope note is hidden and the KPIs already state the project range.
+  assert.equal(out.noteIdleHidden, true);
+  assert.match(out.kpi, /本项目累计 · 成功率/);
+  assert.match(out.kpi, /本项目累计 · Token/);
+  assert.equal(out.waitingIdle, '1');
+  // Searching narrows the tab counts to the search matches (waiting 1 -> 0)
+  // and the note says the counts are search results that follow the filters.
+  assert.equal(out.noteSearchedHidden, false);
+  assert.match(out.noteText, /当前搜索结果 2 条/);
+  assert.match(out.noteText, /数量随关键词与 SOP 筛选变化/);
+  assert.equal(out.waitingSearched, '0');
+  assert.deepEqual(out.rows, ['run-1', 'run-2']);
+  // Project totals stay project-wide: unchanged by the search.
+  assert.match(out.kpiSearched, /本项目累计 · 成功率/);
+  assert.equal(out.kpiSearched, out.kpi);
+  // Clearing the keyword restores the same list and scope, and hides the note.
+  assert.equal(out.noteClearedHidden, true);
+  assert.deepEqual(out.rowsCleared, ['run-1', 'run-2', 'run-3', 'run-4']);
+});
+
+test('conversation workspaces stay out of SOP run lists and counts but keep their requirement', async (t) => {
   const app = await loadApp();
   t.after(app.close);
   const out = JSON.parse(app.evaluate(`

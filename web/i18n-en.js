@@ -1095,3 +1095,7 @@ Object.assign(window.LF_I18N_EN, {
   "在对话里澄清和改代码": "Clarify and change code in chat",
   "这条需求不使用 LOOP，在对话里澄清需求、直接改代码；定时任务不会自动认领它。": "This requirement uses no LOOP: clarify and change code in chat; scheduled jobs won't pick it up.",
 });
+Object.assign(window.LF_I18N_EN, {
+  "本项目累计": "Project total",
+  "当前搜索结果": "Current search results",
+});
