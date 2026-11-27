@@ -346,18 +346,22 @@ func FinalizeAnalyticsDelivery(item *AnalyticsDelivery) {
 	item.Delivered = (item.SOPSucceeded || item.DirectDelivery) && item.MRState == "merged"
 }
 
-// NormalizeBranchName strips refs/heads/ and origin/ prefixes for comparison.
+// NormalizeBranchName strips an explicit local or origin-tracking namespace.
+// Stop after the first match: a local branch may itself start with origin/.
 func NormalizeBranchName(name string) string {
 	name = strings.TrimSpace(name)
-	name = strings.TrimPrefix(name, "refs/heads/")
-	name = strings.TrimPrefix(name, "origin/")
-	return strings.TrimSpace(name)
+	for _, prefix := range []string{"refs/heads/", "refs/remotes/origin/", "origin/"} {
+		if branch, ok := strings.CutPrefix(name, prefix); ok {
+			return strings.TrimSpace(branch)
+		}
+	}
+	return name
 }
 
 func SameGitBranch(a, b string) bool {
 	left := NormalizeBranchName(a)
 	right := NormalizeBranchName(b)
-	return left != "" && strings.EqualFold(left, right)
+	return left != "" && left == right
 }
 
 // SameGongfengMR reports whether two free-text URLs refer to the same
