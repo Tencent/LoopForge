@@ -345,3 +345,33 @@ test('run activation waits for workspace restoration, deduplicates intent, and f
   assert.equal(app.document.querySelector('[data-run-activation-status]'), null);
   assert.equal(app.document.querySelector('[data-retry-node]').disabled, false);
 });
+
+test('run list empty states distinguish search, filters, loading, and true-empty projects', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  const out = JSON.parse(app.evaluate(`
+    const pid=state.projectFilter||state.data.projects[0].id;
+    state.data.runs=[{id:'run-1',workflowId:'flow-1',status:'succeeded',input:'登录页修复',
+      createdAt:new Date().toISOString(),executionContext:{projectId:pid},usage:{totalTokens:100},
+      nodes:{a:{status:'succeeded'}},workflowSnapshot:{name:'Delivery Flow'}}];
+    state.runFilter='all';state.runQuery='';state.runWorkflowFilter='';renderRuns();
+    state.runQuery='不存在的关键词';renderRuns();
+    const searched=document.querySelector('#runList .run-list-empty');
+    const searchedTitle=searched?.querySelector('b')?.textContent||'';
+    const searchedHint=searched?.querySelector('p')?.textContent||'';
+    const searchedActions=Boolean(searched?.querySelector('.run-empty-actions'));
+    state.runQuery='';state.runWorkflowFilter='flow-9';renderRuns();
+    const filteredTitle=document.querySelector('#runList .run-list-empty b')?.textContent||'';
+    state.runWorkflowFilter='';state.runQuery='';state.data.runs=null;renderRuns();
+    const loadingTitle=document.querySelector('#runList .run-list-empty b')?.textContent||'';
+    state.runQuery='';state.runWorkflowFilter='';state.data.runs=[];renderRuns();
+    const scopedEmpty=document.querySelector('#runList .run-list-empty')?.textContent||'';
+    JSON.stringify({scopedEmpty,searchedTitle,searchedHint,searchedActions,filteredTitle,loadingTitle});
+  `));
+  assert.ok(out.scopedEmpty.includes('还没有运行'), `true-empty project should guide to SOPs, got: ${out.scopedEmpty}`);
+  assert.equal(out.searchedTitle, '未找到与当前关键词匹配的运行');
+  assert.ok(out.searchedHint.includes('清除搜索'), `search empty should suggest clearing search, got: ${out.searchedHint}`);
+  assert.equal(out.searchedActions, false, 'search empty should not show go-to-SOP actions');
+  assert.equal(out.filteredTitle, '当前筛选下没有匹配的运行');
+  assert.equal(out.loadingTitle, '正在加载运行记录');
+});
