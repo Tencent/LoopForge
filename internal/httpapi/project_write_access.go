@@ -60,6 +60,81 @@ func (d deps) projectMemberWrites(projectID string, userID int64) bool {
 	return !found || (p.OwnerID == 0 && len(p.Members) == 0) || p.HasWritableMember(userID)
 }
 
+// projectReadAllowed reports whether r may read project p and its data.
+// Platform admins, auth-disabled setups, service tokens without a user
+// identity, open projects (neither owner nor members), and project
+// owners/members (including viewers) are allowed.
+func (d deps) projectReadAllowed(r *http.Request, p domain.Project) bool {
+	if !authRequired() || d.isPlatformAdmin(r) {
+		return true
+	}
+	user, ok := d.requestUser(r, true)
+	if !ok {
+		return true
+	}
+	return (p.OwnerID == 0 && len(p.Members) == 0) || p.HasMember(user.ID)
+}
+
+// visibleProjectIDSet returns the set of project IDs readable by r and whether
+// filtering is active (false for platform admins, service tokens, or when auth
+// is disabled).
+func (d deps) visibleProjectIDSet(r *http.Request) (map[string]bool, bool) {
+	if !authRequired() || d.isPlatformAdmin(r) {
+		return nil, false
+	}
+	user, ok := d.requestUser(r, true)
+	if !ok {
+		return nil, false
+	}
+	allowed := map[string]bool{}
+	for _, p := range d.repo.Projects() {
+		if (p.OwnerID == 0 && len(p.Members) == 0) || p.HasMember(user.ID) {
+			allowed[p.ID] = true
+		}
+	}
+	return allowed, true
+}
+
+func (d deps) filterVisibleProjects(r *http.Request, projects []domain.Project) []domain.Project {
+	if !authRequired() || d.isPlatformAdmin(r) {
+		return projects
+	}
+	user, ok := d.requestUser(r, true)
+	if !ok {
+		return projects
+	}
+	out := make([]domain.Project, 0, len(projects))
+	for _, p := range projects {
+		if (p.OwnerID == 0 && len(p.Members) == 0) || p.HasMember(user.ID) {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+func (d deps) requireProjectReader(c *gin.Context, projectIDs ...string) bool {
+	if !authRequired() || d.isPlatformAdmin(c.Request) {
+		return true
+	}
+	user, ok := d.requestUser(c.Request, true)
+	if !ok {
+		return true
+	}
+	for _, id := range projectIDs {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		p, found := d.repo.Project(id)
+		if !found || (p.OwnerID == 0 && len(p.Members) == 0) || p.HasMember(user.ID) {
+			continue
+		}
+		c.JSON(http.StatusForbidden, gin.H{"error": "只有项目成员、项目 Owner 或平台管理员可以查看该项目的内容"})
+		return false
+	}
+	return true
+}
+
 var guardedRunWrites = map[string]bool{
 	"/api/runs/:id":                    true,
 	"/api/runs/:id/approve":            true,
@@ -104,7 +179,7 @@ func (d deps) runWriteGuard() gin.HandlerFunc {
 				return
 			}
 		}
-		if run.ID == "" || c.Request.Method == http.MethodGet || !guardedRunWrites[path] {
+		if run.ID == "" {
 			c.Next()
 			return
 		}
@@ -112,7 +187,16 @@ func (d deps) runWriteGuard() gin.HandlerFunc {
 		if issue, found := d.repo.Issue(run.ExecutionContext.IssueID); found {
 			issueProject = issue.ProjectID
 		}
-		if !d.requireProjectWriter(c, domain.RunProjectID(run, issueProject)) {
+		projectID := domain.RunProjectID(run, issueProject)
+		if c.Request.Method == http.MethodGet || !guardedRunWrites[path] {
+			if !run.IsPersonalWorkspace() && !d.requireProjectReader(c, projectID) {
+				c.Abort()
+				return
+			}
+			c.Next()
+			return
+		}
+		if !d.requireProjectWriter(c, projectID) {
 			c.Abort()
 			return
 		}

@@ -18,7 +18,20 @@ type projectsHandlers struct{ *deps }
 func (h *projectsHandlers) projects(c *gin.Context) {
 	r := c.Request
 	if r.Method == http.MethodGet {
-		c.JSON(200, domain.PublicProjects(h.repo.Projects()))
+		all := h.repo.Projects()
+		if strings.EqualFold(strings.TrimSpace(c.Query("scope")), "all") {
+			out := make([]domain.Project, 0, len(all))
+			for _, p := range all {
+				if h.projectReadAllowed(r, p) {
+					out = append(out, domain.PublicProject(p))
+				} else {
+					out = append(out, domain.PublicProjectSummary(p))
+				}
+			}
+			c.JSON(200, out)
+			return
+		}
+		c.JSON(200, domain.PublicProjects(h.filterVisibleProjects(r, all)))
 		return
 	}
 	if r.Method == http.MethodPut || r.Method == http.MethodPost {
@@ -217,6 +230,9 @@ func (h *projectsHandlers) project(c *gin.Context) {
 	project, ok := h.repo.Project(c.Param("id"))
 	if !ok {
 		c.JSON(http.StatusNotFound, map[string]string{"error": "project not found"})
+		return
+	}
+	if !h.requireProjectReader(c, project.ID) {
 		return
 	}
 	c.JSON(http.StatusOK, domain.PublicProject(project))

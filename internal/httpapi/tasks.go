@@ -22,6 +22,21 @@ type tasksHandlers struct {
 func (h *tasksHandlers) tasks(c *gin.Context) {
 	h.syncTasks()
 	tasks := h.repo.Tasks()
+	if allowedProjects, restricted := h.visibleProjectIDSet(c.Request); restricted {
+		issueProjects := map[string]string{}
+		for _, issue := range h.repo.Issues() {
+			issueProjects[issue.ID] = issue.ProjectID
+		}
+		visible := make([]domain.Task, 0, len(tasks))
+		for _, task := range tasks {
+			projectID := issueProjects[task.IssueID]
+			if projectID == "" || allowedProjects[projectID] {
+				visible = append(visible, publicTask(task))
+			}
+		}
+		c.JSON(200, visible)
+		return
+	}
 	for i := range tasks {
 		tasks[i] = publicTask(tasks[i])
 	}
@@ -33,6 +48,9 @@ func (h *tasksHandlers) task(c *gin.Context) {
 	task, ok := h.repo.Task(c.Param("id"))
 	if !ok {
 		c.JSON(http.StatusNotFound, map[string]string{"error": "task not found"})
+		return
+	}
+	if issue, found := h.repo.Issue(task.IssueID); found && !h.requireProjectReader(c, issue.ProjectID) {
 		return
 	}
 	c.JSON(http.StatusOK, publicTask(task))

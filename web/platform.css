@@ -795,6 +795,8 @@ a.conv-branch::after{content:" ↗";opacity:.7}
 .pa-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:14px}
 .pa-card{position:relative;display:flex;flex-direction:column;gap:12px;min-width:0;min-height:188px;padding:16px;border:1px solid var(--line);border-radius:14px;background:var(--pa-surface);cursor:pointer;transition:border-color .15s,box-shadow .2s,transform .2s var(--pa-ease)}
 .pa-card:hover{border-color:color-mix(in srgb,var(--blue) 40%,transparent);box-shadow:var(--pa-lift);transform:translateY(-1px)}
+.pa-card.is-restricted{cursor:default}
+.pa-card.is-restricted:hover{border-color:var(--line);box-shadow:none;transform:none}
 .pa-card:focus-visible{outline:none;box-shadow:var(--glow-blue);border-color:var(--blue)}
 .pa-card-top{display:flex;align-items:flex-start;gap:12px}
 .pa-card-m{flex:1;min-width:0}

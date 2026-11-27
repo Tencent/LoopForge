@@ -44,7 +44,17 @@ func (h *catalogHandlers) canManageProjectRepositories(c *gin.Context, projectID
 
 func (h *catalogHandlers) repositories(c *gin.Context) {
 	if c.Request.Method == http.MethodGet {
-		c.JSON(200, domain.PublicRepositories(h.repo.Repositories()))
+		repos := h.repo.Repositories()
+		if allowedProjects, restricted := h.visibleProjectIDSet(c.Request); restricted {
+			visible := make([]domain.Repository, 0, len(repos))
+			for _, r := range repos {
+				if r.ProjectID == "" || allowedProjects[r.ProjectID] {
+					visible = append(visible, r)
+				}
+			}
+			repos = visible
+		}
+		c.JSON(200, domain.PublicRepositories(repos))
 		return
 	}
 	if c.Request.Method == http.MethodDelete {
@@ -327,6 +337,9 @@ func (h *catalogHandlers) repository(c *gin.Context) {
 	repository, ok := h.repo.Repository(c.Param("id"))
 	if !ok {
 		c.JSON(http.StatusNotFound, map[string]string{"error": "repository not found"})
+		return
+	}
+	if !h.requireProjectReader(c, repository.ProjectID) {
 		return
 	}
 	c.JSON(http.StatusOK, domain.PublicRepository(repository))

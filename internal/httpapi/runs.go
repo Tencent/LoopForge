@@ -90,10 +90,25 @@ func (h *runsHandlers) runs(c *gin.Context) {
 			return
 		}
 		user, authenticated := h.requestUser(r, true)
+		allowedProjects, restricted := h.visibleProjectIDSet(r)
+		var issueProjects map[string]string
+		if restricted {
+			issueProjects = map[string]string{}
+			for _, issue := range h.repo.Issues() {
+				issueProjects[issue.ID] = issue.ProjectID
+			}
+		}
 		visible := runs[:0]
 		for _, run := range runs {
-			if run.IsPersonalWorkspace() && (!authenticated || user.ID <= 0 || user.ID != run.ExecutionContext.ResponsibleUserID) {
-				continue
+			if run.IsPersonalWorkspace() {
+				if !authenticated || user.ID <= 0 || user.ID != run.ExecutionContext.ResponsibleUserID {
+					continue
+				}
+			} else if restricted {
+				projectID := domain.RunProjectID(run, issueProjects[run.ExecutionContext.IssueID])
+				if projectID != "" && !allowedProjects[projectID] {
+					continue
+				}
 			}
 			visible = append(visible, run)
 		}

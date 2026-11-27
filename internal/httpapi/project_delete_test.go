@@ -48,7 +48,7 @@ func TestProjectDeleteArchivesAndRestores(t *testing.T) {
 	h := New(s, engine.New(s, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
 	listed := func() []string {
 		var ids []string
-		for _, p := range requestJSONAuthed[[]domain.Project](t, h, member, http.MethodGet, "/api/projects", nil, 200) {
+		for _, p := range requestJSONAuthed[[]domain.Project](t, h, owner, http.MethodGet, "/api/projects", nil, 200) {
 			ids = append(ids, p.ID)
 		}
 		return ids

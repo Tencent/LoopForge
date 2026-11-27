@@ -1,9 +1,9 @@
 function renderProjectSwitcher(){
   const projects=state.data.projects||[];
   const switcher=$('#projectSwitcher');if(!switcher)return;
+  if(!projects.some(p=>p.id===state.projectFilter))state.projectFilter=defaultProjectId(projects,state.currentUser?.id);
   switcher.innerHTML=projects.map(p=>`<option value="${escapeHTML(p.id)}" ${p.id===state.projectFilter?'selected':''}>${escapeHTML(p.key||'PROJECT')} · ${escapeHTML(p.name)}</option>`).join('')||'<option value="">暂无项目</option>';
   window.enhanceSelect?.(switcher);
-  if(!projects.some(p=>p.id===state.projectFilter))state.projectFilter=defaultProjectId(projects,state.currentUser?.id);
 }
 function renderProjectContext(projectIssues){
   const projects=state.data.projects||[],project=projects.find(p=>p.id===state.projectFilter);renderProjectSwitcher();
@@ -90,10 +90,10 @@ function filterAdminProjects(projects,repos,query,filter,userId){
   const q=String(query||'').trim().toLowerCase(),uid=Number(userId)||0;
   return (projects||[]).filter(p=>{
     const own=(repos||[]).filter(r=>r.projectId===p.id);
-    if(filter==='setup'&&own.length)return false;
-    if(filter==='mine'&&!(uid&&(Number(p.ownerId)===uid||(p.members||[]).some(m=>Number(m.userId)===uid))))return false;
+    if(filter==='setup'&&(p.restricted||own.length))return false;
+    if(filter==='mine'&&(p.restricted||!(projectJoinOpen(p)||(uid&&(Number(p.ownerId)===uid||(p.members||[]).some(m=>Number(m.userId)===uid))))))return false;
     if(!q)return true;
-    return [p.name,p.id,p.key,...own.flatMap(r=>[r.name,r.gongfengProjectId,r.webUrl])].some(v=>String(v||'').toLowerCase().includes(q));
+    return [p.name,p.id,p.key,...(p.restricted?[]:own.flatMap(r=>[r.name,r.gongfengProjectId,r.webUrl]))].some(v=>String(v||'').toLowerCase().includes(q));
   });
 }
 function parseProjectAdminRoute(hash){
@@ -118,14 +118,24 @@ function projectAdminDirty(){return !!state.projectAdminDetailId&&state.projectD
 function projectWorkflowName(id){const w=(state.data?.workflows||[]).find(x=>x.id===id);return w?`${w.generic?'通用 · ':''}${w.name}`:''}
 
 function projectCardHTML(p,ctx={}){
+  const key=String(p.key||p.name||'P');
+  const join=projectJoinCardHTML(p);
+  if(p.restricted){
+    const owner=p.ownerId?userById(p.ownerId):null;
+    const ownerAvatar=p.ownerId?`<span class="pa-av" title="${escapeHTML(owner?userDisplay(owner):String(p.ownerId))}">${userAvatarHTML(owner||p.ownerId,48)}</span>`:'';
+    return `<article class="pa-card is-restricted" data-project-restricted="${escapeHTML(p.id)}" aria-label="未加入的项目 ${escapeHTML(p.name||p.id)}">
+    <div class="pa-card-top"><span class="pa-mark" style="background:${safeColor(p.color)}">${escapeHTML(key.slice(0,2).toUpperCase())}</span><div class="pa-card-m"><h3><span title="${escapeHTML(p.name||'')}">${escapeHTML(p.name||p.id)}</span></h3><div class="pa-card-sub" title="${escapeHTML(p.id)} · ${escapeHTML(p.key||'')}">${escapeHTML(p.id)} · ${escapeHTML(p.key||'—')}</div></div></div>
+    <p class="pa-card-desc${p.description?'':' none'}">${escapeHTML(p.description||'暂无项目说明')}</p>
+    <div class="pa-facts"><span class="pa-fact"><span>未加入 · 申请通过后可见详情</span></span>${join.fact}</div>
+    <div class="pa-card-foot"><div class="pa-avs">${ownerAvatar}</div>${join.action}</div>
+  </article>`;
+  }
   const repos=(ctx.repos||[]).filter(r=>r.projectId===p.id),issues=(ctx.issues||[]).filter(i=>i.projectId===p.id);
   const active=issues.filter(i=>issueRunHealth(i)==='active').length,people=projectPeopleIds(p),def=repos.find(r=>r.id===p.defaultRepositoryId);
-  const key=String(p.key||p.name||'P');
   const repoFact=repos.length
     ?`<span class="pa-fact" title="${def?'默认仓库':'已绑定仓库，未设默认'}">${paIcon('repo',12)}<span>${escapeHTML((def||repos[0]).name||'仓库')}${repos.length>1?` +${repos.length-1}`:''}</span></span>`
     :`<span class="pa-fact warn">${paIcon('alert',12)}<span>未绑定代码仓库</span></span>`;
   const sop=ctx.workflowName?ctx.workflowName(p.workflowId):'';
-  const join=projectJoinCardHTML(p);
   const avatars=people.slice(0,3).map(id=>{const u=userById(id);return `<span class="pa-av" title="${escapeHTML(u?userDisplay(u):String(id))}">${userAvatarHTML(u||id,48)}</span>`}).join('')+(people.length>3?`<span class="pa-av more">+${people.length-3}</span>`:'');
   return `<article class="pa-card" tabindex="0" role="link" data-project-open="${escapeHTML(p.id)}" aria-label="打开项目 ${escapeHTML(p.name||p.id)}">
     <div class="pa-card-top"><span class="pa-mark" style="background:${safeColor(p.color)}">${escapeHTML(key.slice(0,2).toUpperCase())}</span><div class="pa-card-m"><h3><span title="${escapeHTML(p.name||'')}">${escapeHTML(p.name||p.id)}</span>${p.id===ctx.currentId?'<span class="pa-chip cur">当前</span>':''}</h3><div class="pa-card-sub" title="${escapeHTML(p.id)} · ${escapeHTML(p.key||'')}">${escapeHTML(p.id)} · ${escapeHTML(p.key||'—')}</div></div><span class="pa-go">${paIcon('arrow',16)}</span></div>
@@ -135,15 +145,34 @@ function projectCardHTML(p,ctx={}){
   </article>`;
 }
 function projectAdminEmptyHTML(icon,title,text,action){return `<div class="pa-empty"><div class="pa-empty-ic">${paIcon(icon,22)}</div><b>${title}</b><p>${text}</p>${action||''}</div>`}
+function defaultProjectAdminFilter(){
+  return state.currentUser?.id&&!state.currentUser?.isGuest?'mine':'all';
+}
+let projectDirectoryRefresh=null;
+async function loadProjectDirectory(force){
+  if(!state.authRequired||isPlatformAdmin()||!state.currentUser||state.currentUser.isGuest)return;
+  if(!force&&state.projectDirectoryLoadedAt&&Date.now()-state.projectDirectoryLoadedAt<30000)return;
+  state.projectDirectoryLoadedAt=Date.now();
+  const refresh={};projectDirectoryRefresh=refresh;
+  try{
+    const list=await api('/api/projects?scope=all',{silent:true})||[];
+    if(projectDirectoryRefresh!==refresh)return;
+    state.projectDirectory=Array.isArray(list)?list:[];
+  }catch{return}finally{if(projectDirectoryRefresh===refresh)projectDirectoryRefresh=null}
+  if(activeViewName()==='projects'&&!state.projectAdminDetailId)renderProjectList();
+}
 function renderProjectList(){
   const host=$('#projectAdminList');if(!host)return;
-  const projects=state.data.projects||[],repos=state.data.repositories||[];
-  const filter=state.projectAdminFilter||'all',query=state.projectAdminQuery||'';
-  $('#projectAdminCount').textContent=projects.length;
+  const filter=state.projectAdminFilter||defaultProjectAdminFilter(),query=state.projectAdminQuery||'';
+  if(filter==='all')loadProjectDirectory();
+  const projects=filter==='all'&&Array.isArray(state.projectDirectory)?state.projectDirectory:(state.data.projects||[]);
+  const repos=state.data.repositories||[];
+  const list=filterAdminProjects(projects,repos,query,filter,state.currentUser?.id);
+  $('#projectAdminCount').textContent=list.length;
   $$('#projectAdminFilters [data-project-filter]').forEach(b=>{const on=b.dataset.projectFilter===filter;b.classList.toggle('on',on);b.setAttribute('aria-selected',String(on))});
   const search=$('#projectAdminSearch');if(search&&document.activeElement!==search&&search.value!==query)search.value=query;
-  const list=filterAdminProjects(projects,repos,query,filter,state.currentUser?.id);
-  if(!projects.length)host.innerHTML=projectAdminEmptyHTML('repo','还没有项目','项目是需求、仓库与团队的统一边界，先创建第一个项目。','<button type="button" class="button primary" data-project-new>＋ 新建项目</button>');
+  if(!projects.length&&filter!=='mine')host.innerHTML=projectAdminEmptyHTML('repo','还没有项目','项目是需求、仓库与团队的统一边界，先创建第一个项目。','<button type="button" class="button primary" data-project-new>＋ 新建项目</button>');
+  else if(!list.length&&filter==='mine'&&!query)host.innerHTML=projectAdminEmptyHTML('repo','还没有加入任何项目','你可以新建一个项目，或切换到「全部」申请加入已有项目。','<div style="display:flex;gap:8px;justify-content:center"><button type="button" class="button primary" data-project-new>＋ 新建项目</button><button type="button" class="button ghost" data-project-browse-all>浏览全部项目</button></div>');
   else if(!list.length)host.innerHTML=projectAdminEmptyHTML('search','没有匹配的项目','换个关键词试试，或者新建一个项目。','<button type="button" class="button ghost" data-project-clear>清除筛选</button>');
   else host.innerHTML=`<div class="pa-grid">${list.map(p=>projectCardHTML(p,{repos,issues:state.data.issues||[],currentId:state.projectFilter,workflowName:projectWorkflowName})).join('')}</div>`;
   host.querySelectorAll('[data-project-open]').forEach(card=>{card.onclick=()=>openProjectAdminDetail(card.dataset.projectOpen);card.onkeydown=e=>{if(e.target===card&&(e.key==='Enter'||e.key===' ')){e.preventDefault();openProjectAdminDetail(card.dataset.projectOpen)}}});
@@ -151,7 +180,8 @@ function renderProjectList(){
   host.querySelectorAll('[data-project-join-withdraw]').forEach(b=>b.onclick=e=>{e.stopPropagation();withdrawProjectJoin(Number(b.dataset.projectJoinWithdraw))});
   loadProjectJoinRequests();
   host.querySelectorAll('[data-project-new]').forEach(b=>b.onclick=()=>openProjectWizard());
-  host.querySelectorAll('[data-project-clear]').forEach(b=>b.onclick=()=>{state.projectAdminQuery='';state.projectAdminFilter='all';if(search)search.value='';renderProjectList()});
+  host.querySelectorAll('[data-project-browse-all]').forEach(b=>b.onclick=()=>{state.projectAdminFilter='all';renderProjectList()});
+  host.querySelectorAll('[data-project-clear]').forEach(b=>b.onclick=()=>{state.projectAdminQuery='';state.projectAdminFilter=defaultProjectAdminFilter();if(search)search.value='';renderProjectList()});
 }
 
 function paRow(label,desc,control,opt={}){return `<div class="pa-row${opt.stack?' stack':''}"${opt.attrs||''}><div class="pa-row-copy"><div class="pa-row-lbl">${label}${opt.required?'<em>*</em>':''}</div>${desc?`<div class="pa-row-desc"${opt.descAttr||''}>${desc}</div>`:''}</div><div class="pa-row-ctl">${control}</div></div>`}
@@ -450,8 +480,8 @@ function refreshProjectAdminRepos(focusRepoId){
   btn?.focus?.();
 }
 // Join requests: non-members apply from the project card; the owner, maintainers and platform admins review them in 项目成员.
-function projectJoinOpen(p){return !Number(p?.ownerId)&&!(p?.members||[]).length}
-function projectHasUser(p,uid){uid=Number(uid)||0;return !!uid&&(Number(p?.ownerId)===uid||(p?.members||[]).some(m=>Number(m.userId)===uid))}
+function projectJoinOpen(p){return !p?.restricted&&!Number(p?.ownerId)&&!(p?.members||[]).length}
+function projectHasUser(p,uid){uid=Number(uid)||0;return !!uid&&!p?.restricted&&(Number(p?.ownerId)===uid||(p?.members||[]).some(m=>Number(m.userId)===uid))}
 function canReviewProjectJoin(p){
   if(!p||!state.authRequired)return false;
   if(isPlatformAdmin())return true;
@@ -503,10 +533,11 @@ async function loadProjectJoinRequests(force){
     const previousApproved=new Set(previous.filter(r=>r.status==='approved').map(r=>r.id)),approved=new Set();
     for(const r of requests){
       const p=projects.get(r.projectId);
-      if(p&&r.status==='approved'&&Number(r.userId)===uid&&(!previousApproved.has(r.id)||!projectHasUser(p,uid)))approved.add(r.projectId);
+      if(r.status==='approved'&&Number(r.userId)===uid&&(!p||!previousApproved.has(r.id)||!projectHasUser(p,uid)))approved.add(r.projectId);
     }
     // Fetch the authoritative roster: an old approval must not re-add a user who was later removed.
-    await Promise.all([...approved].map(id=>refreshProjectJoinMembers(id)));
+    await Promise.all([...approved].map(id=>refreshProjectJoinMembers(id,{allowAdd:true})));
+    if(approved.size){state.projectDirectoryLoadedAt=0;renderProjectSwitcher()}
     if(projectJoinRequestsRefresh!==refresh)return;
     if(refresh.stale)return loadProjectJoinRequests(true);
     state.projectJoinRequests=requests;
@@ -516,7 +547,7 @@ async function loadProjectJoinRequests(force){
   if(state.projectAdminDetailId)syncProjectJoinBox();else renderProjectList();
 }
 async function applyProjectJoin(projectId){
-  const p=(state.data.projects||[]).find(x=>x.id===projectId);if(!p)return;
+  const p=(state.projectDirectory||[]).find(x=>x.id===projectId)||(state.data.projects||[]).find(x=>x.id===projectId);if(!p)return;
   const reason=await afPrompt({title:`申请加入「${p.name||p.id}」`,message:'项目 Owner 或维护者通过后，你会以成员身份加入，可以查看和推进项目内的需求。',label:'申请理由（可选）',multiline:true,placeholder:'例如：负责登录模块的前端开发',confirmText:'提交申请'});
   if(reason==null)return;
   try{
@@ -545,7 +576,7 @@ function invalidateProjectJoinMembers(projectId){
 // that depend on it can tell a stale page from a settled one. A refresh that was
 // superseded reports the outcome of the request that replaced it instead of its
 // own: only that one can still install a current snapshot.
-async function refreshProjectJoinMembers(projectId){
+async function refreshProjectJoinMembers(projectId,opt={}){
   invalidateProjectJoinMembers(projectId);
   const refresh={};refresh.done=new Promise(settle=>{refresh.settle=settle});
   projectJoinMemberRefreshes.set(projectId,refresh);
@@ -557,7 +588,7 @@ async function refreshProjectJoinMembers(projectId){
   if(latest!==refresh){const ok=latest?await latest.done:true;refresh.settle(ok);return ok}
   // Keep this refresh in the map once it is done: a slower predecessor still has
   // to learn whether the page ended up current.
-  if(!failed&&fresh?.id&&!fresh.archivedAt&&(state.data.projects||[]).some(p=>p.id===projectId))adoptProjectRoster(fresh);
+  if(!failed&&fresh?.id&&!fresh.archivedAt&&(opt.allowAdd||(state.data.projects||[]).some(p=>p.id===projectId)))adoptProjectRoster(fresh);
   refresh.settle(!failed);
   return !failed;
 }
