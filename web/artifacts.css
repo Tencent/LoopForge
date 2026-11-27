@@ -88,7 +88,7 @@
 .markdown-body tr:hover{background:var(--hover)}
 
 /* 行内与代码块 */
-.markdown-body code:not(pre code){padding:2px 6px;border-radius:5px;background:rgba(148,163,184,.14);font:11.5px/1 var(--mono);color:var(--text);border:1px solid var(--line)}
+.markdown-body code:not(pre code){padding:2px 6px;border-radius:5px;background:rgba(148,163,184,.14);font:11.5px/1 var(--mono);color:var(--text);border:1px solid var(--line);white-space:break-spaces;overflow-wrap:anywhere}
 .md-code-block{position:relative;margin:16px 0;border-radius:10px;background:#0d1117;border:1px solid var(--line);overflow:hidden}
 .md-code-header{display:flex;align-items:center;justify-content:space-between;padding:7px 14px;background:rgba(255,255,255,.04);border-bottom:1px solid rgba(255,255,255,.06);font-size:10.5px;color:#8b949e;user-select:none}
 .md-code-lang{font-weight:700;text-transform:uppercase;letter-spacing:.05em}

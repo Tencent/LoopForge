@@ -132,3 +132,53 @@ func TestRequirementBackToSOPRejoinsScheduledClaims(t *testing.T) {
 		t.Fatalf("an explicit automationState must win: %+v", stay)
 	}
 }
+
+// The page editor echoes the stored sopMode. Saving a no-LOOP requirement with
+// a workflowId keeps it without a LOOP, so the audit log must not claim a LOOP
+// was bound; sending sopMode=sop with the chosen LOOP binds it and says so.
+func TestRequirementWithoutSOPEditAuditMatchesStoredLOOP(t *testing.T) {
+	st, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(st.Close)
+	for _, id := range []string{"sop-audit-default", "sop-audit-chosen"} {
+		if err := st.PutWorkflow(domain.WorkflowDefinition{ID: id, Name: id, Version: 1, SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{ID: "approval", Name: "Approval", Type: "approval", MaxAttempts: 1}}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := st.PutProject(domain.Project{ID: "sop-audit", Name: "LOOP audit", OwnerID: 1, WorkflowID: "sop-audit-default"}); err != nil {
+		t.Fatal(err)
+	}
+	e := engine.New(st, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces")))
+	h := New(st, e, tracker.NewService(), "", "")
+	lastDetail := func(issue domain.Issue) string {
+		if len(issue.Operations) == 0 {
+			return ""
+		}
+		return issue.Operations[len(issue.Operations)-1].Detail
+	}
+
+	none := requestJSON[domain.Issue](t, h, http.MethodPost, "/api/issues", map[string]any{
+		"projectId": "sop-audit", "title": "先不走 LOOP", "kind": "requirement", "sopMode": "none",
+	}, http.StatusOK)
+	echoed := requestJSON[domain.Issue](t, h, http.MethodPut, "/api/issues", map[string]any{
+		"id": none.ID, "projectId": "sop-audit", "title": "先不走 LOOP", "sopMode": "none", "workflowId": "sop-audit-chosen", "priority": "high",
+	}, http.StatusOK)
+	if echoed.SOPMode != domain.IssueSOPNone || echoed.WorkflowID != "" {
+		t.Fatalf("an echoed sopMode=none keeps the requirement without a LOOP: %+v", echoed)
+	}
+	if detail := lastDetail(echoed); detail != "优先级" {
+		t.Fatalf("audit must record only what was stored, got %q", detail)
+	}
+
+	bound := requestJSON[domain.Issue](t, h, http.MethodPut, "/api/issues", map[string]any{
+		"id": none.ID, "projectId": "sop-audit", "title": "先不走 LOOP", "sopMode": "sop", "workflowId": "sop-audit-chosen", "automationState": "", "priority": "high",
+	}, http.StatusOK)
+	if bound.SOPMode != "" || bound.WorkflowID != "sop-audit-chosen" || bound.AutomationState != "eligible" {
+		t.Fatalf("sopMode=sop with a chosen LOOP must bind that LOOP and rejoin scheduled claims: %+v", bound)
+	}
+	if detail := lastDetail(bound); detail != "关联 LOOP" {
+		t.Fatalf("binding a LOOP must be audited, got %q", detail)
+	}
+}
