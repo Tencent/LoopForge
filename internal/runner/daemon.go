@@ -722,7 +722,7 @@ func cleanupDockerWorkspace(ctx context.Context, workspace string) error {
 		}
 		imageOut, _ := exec.CommandContext(ctx, "docker", "inspect", "-f", "{{.Config.Image}}", id).Output()
 		image := strings.TrimSpace(string(imageOut))
-		if removeOut, removeErr := exec.CommandContext(ctx, "docker", "rm", "-f", id).CombinedOutput(); removeErr != nil {
+		if removeOut, removeErr := exec.CommandContext(ctx, "docker", "rm", "-f", "-v", id).CombinedOutput(); removeErr != nil {
 			if dockerObjectGone(string(removeOut), removeErr) {
 				continue
 			}

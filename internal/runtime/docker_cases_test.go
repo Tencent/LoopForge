@@ -527,7 +527,7 @@ case "$*" in
     printf '{"mounts":[{"Destination":"/workspace","Source":"%s"}],"privileged":false}\n' "$CVR_DOCKER_WORKSPACE"; exit 0 ;;
   "start box") [ -n "$(status)" ] || exit 1; echo running > "$state/status"; count starts; exit 0 ;;
   "create --name box "*) echo exited > "$state/status"; count generation; exit 0 ;;
-  "rm -f box") rm -f "$state/status"; exit 0 ;;
+  "rm -f -v box") rm -f "$state/status"; exit 0 ;;
   "exec box "*) [ "$(status)" = running ] || { echo 'Error response from daemon: container box is not running' >&2; exit 1; }
     case "$*" in *"cd /workspace && pwd"*) echo /workspace ;; esac; exit 0 ;;
   "image inspect --format {{.Config.User}} "*) exit 0 ;;
@@ -626,3 +626,24 @@ type cvRTextError struct {
 
 func (e *cvRTextError) Error() string { return e.text + ": " + e.base.Error() }
 func (e *cvRTextError) Unwrap() error { return e.base }
+
+func TestRemoveDockerContainerReclaimsAnonymousVolumes(t *testing.T) {
+	bin := t.TempDir()
+	argsPath := filepath.Join(bin, "docker-args")
+	if err := os.WriteFile(filepath.Join(bin, "docker"), []byte("#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$LOOPFORGE_TEST_DOCKER_ARGS\"\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("LOOPFORGE_TEST_DOCKER_ARGS", argsPath)
+
+	if err := removeDockerContainer(context.Background(), "agentflow-rt-test"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(argsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "rm\n-f\n-v\nagentflow-rt-test\n"; string(got) != want {
+		t.Fatalf("docker arguments = %q, want %q", got, want)
+	}
+}
