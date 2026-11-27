@@ -80,13 +80,30 @@ func BrowserRunning(ctx context.Context, runID string) bool {
 	return ok
 }
 
+// ErrBrowserDisabled reports that the deployment switched the Agent browser off.
+var ErrBrowserDisabled = errors.New("平台已关闭 Agent 浏览器")
+
 // EnsureSandboxBrowser gives the invocation its run browser and returns the
 // MCP server the agent drives it through. A docker sandbox gets a sidecar
 // sharing its network namespace whatever image the user picked; host drivers
 // get a host Chromium. Failures only warn: the node still runs without it.
 func EnsureSandboxBrowser(ctx context.Context, sb Sandbox, workspace, runID string, sink EventSink) *domain.MCPServerDefinition {
-	if !BrowserEnabled() || strings.TrimSpace(runID) == "" {
-		return nil
+	server, _ := EnsureSandboxBrowserWithError(ctx, sb, workspace, runID, sink)
+	return server
+}
+
+// EnsureSandboxBrowserWithError prepares the same run browser as
+// EnsureSandboxBrowser but also returns why it is unavailable. Interactive
+// callers (opening the Agent browser panel) use it to surface the real cause,
+// for example a failed sidecar image build, instead of a generic
+// "unsupported environment" message. Node execution keeps using
+// EnsureSandboxBrowser, which ignores the error and only emits the warning.
+func EnsureSandboxBrowserWithError(ctx context.Context, sb Sandbox, workspace, runID string, sink EventSink) (*domain.MCPServerDefinition, error) {
+	if !BrowserEnabled() {
+		return nil, ErrBrowserDisabled
+	}
+	if strings.TrimSpace(runID) == "" {
+		return nil, errors.New("未指定运行的工作区")
 	}
 	var (
 		server domain.MCPServerDefinition
@@ -102,15 +119,15 @@ func EnsureSandboxBrowser(ctx context.Context, sb Sandbox, workspace, runID stri
 	case *processSandbox:
 		server, err = ensureHostBrowser(ctx, inner.workspace, runID)
 	default:
-		return nil
+		return nil, fmt.Errorf("当前运行环境不支持 Agent 浏览器（sandbox %T）", sb)
 	}
 	if err != nil {
 		if sink != nil {
 			sink(domain.TelemetryEvent{Category: "sandbox", Name: "browser.unavailable", Level: "warn", Message: "Agent 浏览器未就绪，本节点不提供浏览器工具：" + err.Error()})
 		}
-		return nil
+		return nil, err
 	}
-	return &server
+	return &server, nil
 }
 
 func unwrapSandbox(sb Sandbox) Sandbox {
@@ -239,11 +256,19 @@ func (s *dockerSandbox) ensureBrowser(ctx context.Context, runID string, sink Ev
 	if !dockerImageExists(ctx, image) && sink != nil {
 		sink(domain.TelemetryEvent{Category: "sandbox", Name: "browser.prepare", Phase: "start", Message: "首次准备 Agent 浏览器镜像（Chromium + Playwright MCP），可能需要几分钟"})
 	}
-	buildCtx, cancel := context.WithTimeout(ctx, 15*time.Minute)
+	// The first browser of a host still needs its sidecar image built. Keep the
+	// build running when the caller goes away: an interactive panel request has
+	// a short timeout, and cancelling docker build with it leaves a defunct
+	// builder and rebuilds from scratch on the next attempt.
+	buildCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Minute)
 	image, err = EnsureBrowserImage(buildCtx)
 	cancel()
 	if err != nil {
 		return domain.MCPServerDefinition{}, err
+	}
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		// The image is ready; only this request ran out of time waiting for it.
+		return domain.MCPServerDefinition{}, fmt.Errorf("Agent 浏览器镜像已就绪，请重新打开浏览器（%w）", ctxErr)
 	}
 	name := dockerBrowserContainerName(s.name)
 	out, inspectErr := exec.CommandContext(ctx, "docker", "inspect", "-f", "{{.State.Running}}|{{.Config.Image}}|{{index .Config.Labels \""+browserRunLabel+"\"}}", name).Output()
