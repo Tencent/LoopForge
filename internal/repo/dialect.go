@@ -123,7 +123,8 @@ func stripPoolParamsTextually(dsn string) string {
 func openDB(dsn string) (*gorm.DB, error) {
 	config := &gorm.Config{TranslateError: true, Logger: logger.Default.LogMode(logger.Silent)}
 	if dsnDialect(dsn) == dialectPostgres {
-		db, err := gorm.Open(postgres.Open(postgresDSN(dsn)), config)
+		pg := postgres.Open(postgresDSN(dsn)).(*postgres.Dialector)
+		db, err := gorm.Open(postgresDialector{Dialector: pg}, config)
 		if err != nil {
 			return nil, fmt.Errorf("postgres open: %w", err)
 		}
