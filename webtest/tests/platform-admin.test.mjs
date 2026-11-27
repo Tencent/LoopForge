@@ -554,3 +554,96 @@ test('platform admins authorize HTTPS and HTTP separately in the Git host trust 
   assert.equal(new Headers(plainRevoke.options.headers).get('If-Match'), '"plain"');
   assert.equal(plainCard.querySelector('[data-http-host-revoke]'), null);
 });
+
+// Save, stop and a failed load reply after the request; the admin may have
+// switched tabs meanwhile. Each reply belongs to the CLI it was sent for: a
+// Codex save that returns under Claude Code must not check Codex's models
+// there (saving would write them into Claude Code's shared key), and a stale
+// failure must not clear a tab a later request already filled.
+test('shared model key saves, stops and failed loads write back only to their own CLI', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  app.evaluate(`state.currentUser={...state.data.users[0],isGuest:false,isPlatformAdmin:true}`);
+  const saved = {
+    codebuddy: { provider: 'codebuddy', configured: true, internetEnvironment: '', models: ['cb-model-1'] },
+    codex: { provider: 'codex', configured: true, baseUrl: '', models: ['gpt-shared-only'] },
+    'claude-code': { provider: 'claude-code', configured: true, baseUrl: '', models: ['claude-shared-only'] },
+  };
+  const held = [];
+  let holdCodex = false, failCodex = false;
+  const hold = (reply) => new Promise((resolve) => held.push(() => resolve(reply)));
+  app.router.get('/api/platform/admins', []);
+  app.router.get('/api/platform/accounts', { accounts: [], signupEnabled: true });
+  app.router.get('/api/platform/model-keys', () => ({ keys: Object.values(saved) }));
+  app.router.get(/^\/api\/platform\/model-keys\/codebuddy(\?|$)/, () => ({ ...saved.codebuddy, catalog: [{ id: 'cb-model-1', name: 'CB Model 1' }] }));
+  app.router.get('/api/platform/model-keys/codex', () => {
+    const reply = failCodex ? { status: 502, body: { error: 'codex upstream down' } } : { ...saved.codex, catalog: [{ id: 'gpt-shared-only', name: 'GPT Shared' }] };
+    return holdCodex ? hold(reply) : reply;
+  });
+  app.router.get('/api/platform/model-keys/claude-code', () => ({ ...saved['claude-code'], catalog: [{ id: 'claude-shared-only', name: 'Claude Shared' }] }));
+  app.router.put('/api/platform/model-keys/codex', (call) => hold({ ...saved.codex, ...call.body, configured: true }));
+  app.router.put('/api/platform/model-keys/claude-code', (call) => ({ ...saved['claude-code'], ...call.body, configured: true }));
+  app.router.delete('/api/platform/model-keys/codex', () => hold({ provider: 'codex', configured: false, baseUrl: '', models: [] }));
+  app.evaluate(`renderPlatformAdminPanel()`);
+  await settle(8);
+  const card = app.document.querySelector('#platformSharedKeyCard');
+  const form = card.querySelector('#platformSharedKeyForm');
+  const boxes = () => [...card.querySelectorAll('[data-shared-models] input[type="checkbox"]')].filter((box) => box.checked).map((box) => box.value);
+  const submit = () => form.dispatchEvent(new app.window.Event('submit', { bubbles: true, cancelable: true }));
+  const tab = (id) => card.querySelector(`[data-shared-provider="${id}"]`).click();
+
+  // Save Codex, switch to Claude Code before the save replies.
+  tab('codex');
+  await settle(6);
+  assert.deepEqual(boxes(), ['gpt-shared-only']);
+  submit();
+  await settle(2);
+  assert.equal(held.length, 1, 'the Codex save is pending');
+  tab('claude-code');
+  await settle(6);
+  held.shift()();
+  await settle(6);
+  assert.ok(card.querySelector('[data-shared-provider="claude-code"]').classList.contains('active'));
+  assert.deepEqual(boxes(), ['claude-shared-only'], 'the Codex save did not check its models under Claude Code');
+  assert.equal(form.elements.baseUrl.value, '');
+  submit();
+  await settle(6);
+  const claudePut = app.router.calls.filter((call) => call.method === 'PUT' && call.path === '/api/platform/model-keys/claude-code');
+  assert.equal(claudePut.length, 1);
+  assert.deepEqual(claudePut[0].body, { apiKey: '', models: ['claude-shared-only'], baseUrl: '' });
+
+  // Stop Codex, switch to Claude Code before the stop replies.
+  tab('codex');
+  await settle(6);
+  card.querySelector('[data-shared-key-clear]').click();
+  await settle(2);
+  app.document.querySelector('#confirmOkBtn').click();
+  await settle(2);
+  assert.equal(held.length, 1, 'the Codex stop is pending');
+  tab('claude-code');
+  await settle(6);
+  held.shift()();
+  await settle(6);
+  assert.deepEqual(boxes(), ['claude-shared-only'], 'stopping Codex did not clear the Claude Code selection');
+  assert.match(card.querySelector('[data-shared-key-badge]').textContent, /已启用/, 'Claude Code still shows as enabled');
+  assert.equal(card.querySelector('[data-shared-provider="codex"] [data-shared-provider-state]').hidden, true, 'the Codex tab shows it was stopped');
+
+  // A failed Codex load that replies after a later Codex load succeeded must
+  // not clear that tab.
+  holdCodex = true; failCodex = true;
+  tab('codex');
+  await settle(2);
+  tab('claude-code');
+  await settle(6);
+  holdCodex = false; failCodex = false;
+  saved.codex = { provider: 'codex', configured: true, baseUrl: 'http://127.0.0.1:19650/v1', models: ['gpt-shared-only'] };
+  tab('codex');
+  await settle(6);
+  assert.equal(form.elements.baseUrl.value, 'http://127.0.0.1:19650/v1');
+  assert.deepEqual(boxes(), ['gpt-shared-only']);
+  held.shift()();
+  await settle(6);
+  assert.equal(form.elements.baseUrl.value, 'http://127.0.0.1:19650/v1', 'the stale failure kept the loaded Base URL');
+  assert.deepEqual(boxes(), ['gpt-shared-only'], 'the stale failure kept the loaded models');
+  assert.ok(!app.document.body.textContent.includes('codex upstream down'), 'no error toast for the stale load');
+});

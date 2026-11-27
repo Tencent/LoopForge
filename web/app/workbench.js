@@ -2111,11 +2111,14 @@ async function loadPlatformSharedKey(host){
   const loadProvider=async(id,{keepSelection=false}={})=>{
     const seq=++loadSeq;loading=true;
     const query=id==='codebuddy'&&env.value!==undefined&&card.dataset.sharedLoaded==='1'?`?environment=${encodeURIComponent(env.value)}`:'';
+    const stale=()=>seq!==loadSeq||id!==provider;
     let result;
+    // A stale request's failure must not clear the tab a later request filled.
     try{result=await api(endpoint(id)+query)}
+    catch(e){if(stale()){renderTabs();return null}throw e}
     finally{if(seq===loadSeq)loading=false}
     statuses[id]=result;
-    if(seq!==loadSeq||id!==provider){renderTabs();return null}
+    if(stale()){renderTabs();return null}
     status=result;catalog=Array.isArray(result?.catalog)?result.catalog:[];
     if(!keepSelection){
       selected=result?.configured?[...(result.models||[])]:(id==='codebuddy'&&result?.legacySponsorModel?[result.legacySponsorModel]:[]);
@@ -2153,10 +2156,14 @@ async function loadPlatformSharedKey(host){
     if(result===null)return;
     renderStatus();renderModels();
   };
+  // Save, stop and probe reply after the request; the tab may have changed
+  // meanwhile, so each writes back only to the CLI it was sent for.
   probe.onclick=async()=>{
+    const id=provider;
     probe.disabled=true;
     try{
-      const result=await api(`${endpoint(provider)}/probe`,{method:'POST',body:JSON.stringify({apiKey:key.value.trim(),baseUrl:baseURL.value.trim()})});
+      const result=await api(`${endpoint(id)}/probe`,{method:'POST',body:JSON.stringify({apiKey:key.value.trim(),baseUrl:baseURL.value.trim()})});
+      if(id!==provider)return;
       if(result?.error){toast(result.error,'err');return}
       const ids=(result?.models||[]).map(m=>String(m?.id||'')).filter(Boolean);
       if(!ids.length){toast('没有读到模型，可以手动填写模型 ID','err');return}
@@ -2172,28 +2179,32 @@ async function loadPlatformSharedKey(host){
   form.onsubmit=async e=>{
     e.preventDefault();
     if(loading)return toast(lfT('正在读取当前 CLI 的配置，请稍候再保存','Still loading this CLI; save again in a moment'),'err');
-    const models=chosen();
+    const id=provider,models=chosen();
     if(!models.length)return toast('请至少勾选一个允许使用的模型','err');
-    if(!status?.configured&&!key.value.trim())return toast(`请填写 ${labelOf(provider)} API Key`,'err');
+    if(!status?.configured&&!key.value.trim())return toast(`请填写 ${labelOf(id)} API Key`,'err');
     const first=defaultSelect.value&&models.includes(defaultSelect.value)?defaultSelect.value:models[0];
-    const ordered=[first,...models.filter(id=>id!==first)];
+    const ordered=[first,...models.filter(m=>m!==first)];
     const body={apiKey:key.value.trim(),models:ordered};
-    if(provider==='codebuddy')body.internetEnvironment=env.value;else body.baseUrl=baseURL.value.trim();
+    if(id==='codebuddy')body.internetEnvironment=env.value;else body.baseUrl=baseURL.value.trim();
     const submit=form.querySelector('button[type="submit"]');if(submit)submit.disabled=true;
     try{
-      status=await api(endpoint(provider),{method:'PUT',body:JSON.stringify(body)});
-      statuses[provider]=status;
+      const result=await api(endpoint(id),{method:'PUT',body:JSON.stringify(body)});
+      statuses[id]=result;
+      if(id!==provider){renderTabs();syncBootstrap();toast(lfT(`${labelOf(id)} 的共享 Key 已保存`,`Shared ${labelOf(id)} key saved`),'ok');return}
+      status=result;
       key.value='';warning.hidden=true;extra.value='';selected=[...(status.models||ordered)];
       renderTabs();renderFields();renderStatus();renderModels();syncBootstrap();toast('共享 Key 已保存','ok');
     }catch(err){toast(err.message,'err')}
     finally{if(submit)submit.disabled=false}
   };
   clear.onclick=async()=>{
-    const label=labelOf(provider);
+    const id=provider,label=labelOf(id);
     if(!await afConfirm({title:'停用共享 Key',message:`停用后，没配自己 Key 的成员将不能再用 ${label} 的共享 Key 对话和跑 LOOP。确定停用？`,danger:true,confirmText:'停用'}))return;
     try{
-      status=await api(endpoint(provider),{method:'DELETE'});
-      statuses[provider]=status;selected=[];
+      const result=await api(endpoint(id),{method:'DELETE'});
+      statuses[id]=result;
+      if(id!==provider){renderTabs();syncBootstrap();toast(lfT(`${label} 的共享 Key 已停用`,`Shared ${label} key stopped`),'ok');return}
+      status=result;selected=[];
       renderTabs();renderFields();renderStatus();renderModels();syncBootstrap();toast('共享 Key 已停用','ok');
     }catch(err){toast(err.message,'err')}
   };
