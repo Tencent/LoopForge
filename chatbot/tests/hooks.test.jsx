@@ -74,6 +74,45 @@ describe("conversation hooks", () => {
     } finally { apiMock.mockImplementation(original); }
   });
 
+  test("shows the workbench before the session list and paints a long transcript from its tail", async () => {
+    const original = apiMock.getMockImplementation();
+    let releaseList;
+    let releaseFull;
+    const listGate = new Promise((resolve) => { releaseList = resolve; });
+    const fullGate = new Promise((resolve) => { releaseFull = resolve; });
+    const messages = Array.from({ length: 45 }, (_, index) => ({ role: "user", content: `第${index}轮` }));
+    apiMock.mockImplementation((path, options) => {
+      if (path === "/api/assistant/sessions") return listGate.then(() => [{ id: "long", title: "长会话" }]);
+      if (path === "/api/assistant/sessions/long?view=recent") return {
+        id: "long", messagesPartial: true, messages: messages.slice(-40),
+      };
+      if ((path.split("?")[0] === "/api/assistant/sessions/long")) return fullGate.then(() => ({ id: "long", messages }));
+      if (path.includes("/generation")) return Promise.reject(Object.assign(Error("生成不存在"), { status: 404 }));
+      return original(path, options);
+    });
+    try {
+      history.replaceState({}, "", "/?session=long");
+      const { result } = renderHook(useChat);
+      await waitFor(() => expect(result.current.ready).toBe(true));
+      expect(result.current.sessions).toEqual([]);
+      await waitFor(() => expect(result.current.session?.messages).toHaveLength(40));
+      await waitFor(() => expect(result.current.replyStatePending).toBe(false));
+      expect(result.current.session.messages[0].content).toBe("第5轮");
+      expect(result.current.session.messagesPartial).toBe(true);
+      await act(async () => expect(await result.current.send({ text: "还不能发" })).toBe(false));
+      expect(result.current.error).toContain("更早的对话");
+      releaseFull();
+      await waitFor(() => expect(result.current.session?.messages).toHaveLength(45));
+      expect(result.current.session.messagesPartial).toBeFalsy();
+      releaseList();
+      await waitFor(() => expect(result.current.sessions).toHaveLength(1));
+    } finally {
+      releaseList?.();
+      releaseFull?.();
+      apiMock.mockImplementation(original);
+    }
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
     history.replaceState({}, "", "/");
@@ -197,7 +236,7 @@ describe("conversation hooks", () => {
         id: "concurrent-generation", status, events: [],
         clientRequestId: accepted && !superseded ? submitted.clientRequestId : "another-members-request",
       };
-      if (submitted && path === "/api/assistant/sessions/s1") {
+      if (submitted && (path.split("?")[0] === "/api/assistant/sessions/s1")) {
         if (transcriptUnavailable) throw Object.assign(Error("记录暂不可用"), { status: 503 });
         if (superseded) return { ...(await originalAPI(path, options)), recentClientRequestIds: [submitted.clientRequestId] };
       }
@@ -266,7 +305,7 @@ describe("conversation hooks", () => {
     };
     let loadCatalog;
     apiMock.mockImplementation(async (path, options) => {
-      if (path === "/api/assistant/sessions/s1") return session;
+      if ((path.split("?")[0] === "/api/assistant/sessions/s1")) return session;
       if (path === "/api/runners?mine=1") return [
         { id: "codex-runner", ownerUserId: 1, runtimes: [{ provider: "codex", authMode: "local" }] },
       ];
@@ -368,7 +407,7 @@ describe("conversation hooks", () => {
         default: "m1",
         models: [{ id: "m1" }, { id: "m2", efforts: ["high"] }, { id: "m3", efforts: ["max"] }],
       };
-      if (path === "/api/assistant/sessions/s2") return { id: "s2", model: "m1", messages: [] };
+      if ((path.split("?")[0] === "/api/assistant/sessions/s2")) return { id: "s2", model: "m1", messages: [] };
       return original(path, options);
     });
     try {
@@ -416,7 +455,7 @@ describe("conversation hooks", () => {
       if (path === "/api/assistant/models") return Promise.resolve({
         default: "m1", models: [{ id: "m1" }, { id: "m2", efforts: ["high"] }],
       });
-      if (path === "/api/assistant/sessions/s1") {
+      if ((path.split("?")[0] === "/api/assistant/sessions/s1")) {
         if (++reads > 1) return Promise.resolve(stored);
         return new Promise((resolve) => { initial = () => resolve(stored); });
       }
@@ -457,7 +496,7 @@ describe("conversation hooks", () => {
           completePending = () => resolve([{ id: 1, loginName: "tester", codeBuddyApiKeyConfigured: true }]);
         });
       }
-      if (path === "/api/assistant/sessions/new-session") return Promise.resolve(saved);
+      if ((path.split("?")[0] === "/api/assistant/sessions/new-session")) return Promise.resolve(saved);
       return originalAPI(path, options);
     });
     writeMock.mockImplementation((path, body, method) => {
@@ -546,7 +585,7 @@ describe("conversation hooks", () => {
     apiMock.mockImplementation((path, options) => {
       if (path === "/api/assistant/models?executor=codex")
         return new Promise((_, reject) => { rejectCatalog = reject; });
-      if (path === "/api/assistant/sessions/s1")
+      if ((path.split("?")[0] === "/api/assistant/sessions/s1"))
         return Promise.resolve({ id: "s1", executor: "codex", model: "codex:historical", messages: [{ role: "user", content: "原消息" }] });
       if (path === "/api/assistant/sessions/s1/generation")
         return Promise.resolve({ id: "another-turn", status: "running" });
@@ -658,7 +697,7 @@ describe("conversation hooks", () => {
       if (path === "/api/runners?mine=1") return [
         { id: "mac", status: "online", ownerUserId: 1, runtimes: [{ provider: "agy", authMode: "local" }] },
       ];
-      if (path === "/api/assistant/sessions/legacy-agy") return structuredClone(session);
+      if ((path.split("?")[0] === "/api/assistant/sessions/legacy-agy")) return structuredClone(session);
       return originalAPI(path, options);
     });
     writeMock.mockImplementation(async (path, body) => path === "/api/runners/mac/models/probe"
@@ -771,7 +810,7 @@ describe("conversation hooks", () => {
       : Promise.resolve(runners);
     apiMock.mockImplementation((path, options) => {
       if (path === "/api/runners?mine=1" || path === "/api/runners?projectId=p1") return machines;
-      if (path === "/api/assistant/sessions/agy-session") return Promise.resolve(stored);
+      if ((path.split("?")[0] === "/api/assistant/sessions/agy-session")) return Promise.resolve(stored);
       return originalAPI(path, options);
     });
     writeMock.mockImplementation((path, body, method) => {
@@ -927,7 +966,7 @@ describe("conversation hooks", () => {
       if (path === "/api/assistant/models") return Promise.resolve({
         default: catalogDefault, preferences, models: [{ id: "m1" }, { id: "m2" }, { id: "m3", efforts: ["high"] }],
       });
-      if (path === "/api/assistant/sessions/s1") return Promise.resolve(saved);
+      if ((path.split("?")[0] === "/api/assistant/sessions/s1")) return Promise.resolve(saved);
       return original(path, options);
     });
     try {
@@ -1083,7 +1122,7 @@ describe("conversation hooks", () => {
           { id: "codex:gpt-alternate", engine: "codex", efforts: ["high"] },
         ],
       });
-      if (path === "/api/assistant/sessions/main") return Promise.resolve(main);
+      if ((path.split("?")[0] === "/api/assistant/sessions/main")) return Promise.resolve(main);
       return originalAPI(path, options);
     });
     writeMock.mockImplementation((path, body, method) =>
@@ -1119,8 +1158,8 @@ describe("conversation hooks", () => {
     const parent = { ...fork, id: "s1", parentSessionId: undefined, executor: "codex" };
     apiMock.mockImplementation((path, options) => {
       if (path === "/api/assistant/sessions") return Promise.resolve([parent, fork]);
-      if (path === "/api/assistant/sessions/s1") return Promise.resolve(parent);
-      if (path === "/api/assistant/sessions/fork") return Promise.resolve(fork);
+      if ((path.split("?")[0] === "/api/assistant/sessions/s1")) return Promise.resolve(parent);
+      if ((path.split("?")[0] === "/api/assistant/sessions/fork")) return Promise.resolve(fork);
       return original(path, options);
     });
     try {
@@ -1149,7 +1188,7 @@ describe("conversation hooks", () => {
       messages: [{ role: "user", content: "hi" }, { role: "assistant", content: "ok", model: "codex:gpt-5.6-sol" }],
     };
     apiMock.mockImplementation(async (path, options) =>
-      path === "/api/assistant/sessions/s9" ? structuredClone(codexSession) : original(path, options));
+      (path.split("?")[0] === "/api/assistant/sessions/s9") ? structuredClone(codexSession) : original(path, options));
     try {
       history.replaceState({}, "", "/?session=s9");
       const { result } = renderHook(() => useChat());
@@ -1422,7 +1461,7 @@ describe("conversation hooks", () => {
       const accept = writeMock.mock.calls.findIndex(([path]) => path.endsWith("/proposals"));
       const mcp = apiMock.mock.calls.findIndex(([path]) => path === "/mcp");
       expect(writeMock.mock.invocationCallOrder[accept]).toBeLessThan(apiMock.mock.invocationCallOrder[mcp]);
-      const saved = writeMock.mock.calls.find(([path, , method]) => path === "/api/assistant/sessions/s1" && method === "PUT");
+      const saved = writeMock.mock.calls.find(([path, , method]) => (path.split("?")[0] === "/api/assistant/sessions/s1") && method === "PUT");
       expect(JSON.parse(saved[1].messages[0].content).drafts[0]).toMatchObject({ decision: "accepted", saved: true });
     } finally {
       writeMock.mockImplementation(original);
@@ -1636,7 +1675,7 @@ describe("conversation hooks", () => {
     const original = apiMock.getMockImplementation();
     let summarized = false;
     apiMock.mockImplementation(async (path, options) => {
-      if (path === "/api/assistant/sessions/s1") {
+      if ((path.split("?")[0] === "/api/assistant/sessions/s1")) {
         const messages = [{ role: "user", content: prompt }];
         if (!summarized) return { id: "s1", title: prompt.slice(0, 36), projectId: "p1", model: "m1", messages };
         return { id: "s1", title: "积分商城梳理", titleGenerated: true, messages: [] };

@@ -963,6 +963,17 @@ async function boot(){
   if(isGuest&&state.authRequired){location.replace('/login.html');return}
   renderUserBadge();
 
+  // Home opens the chatbot while the rest of the shell catalog is still loading.
+  if(restoredView()==='collaboration'){
+    const earlyProject=urlParams.get('projectId')||localStorage.getItem('agentflow.activeProject')||'';
+    if(earlyProject)state.projectFilter=earlyProject;
+    document.body.classList.add('chat-next-active');
+    $$('.view').forEach(view=>view.classList.remove('active'));
+    $('#collaborationView')?.classList.add('active');
+    state.currentView='collaboration';
+    mountNativeChat();
+  }
+
   const shell = await api('/api/bootstrap', {silent: restoredView()==='runs'});
   state.data = Object.assign(state.data, shell);
   const savedProject=urlParams.get('projectId')||localStorage.getItem('agentflow.activeProject');

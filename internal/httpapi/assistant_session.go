@@ -25,9 +25,13 @@ import (
 // included because the viewer's project list does not contain the project.
 type readOnlyConversation struct {
 	domain.AssistantSession
-	ReadOnly    bool   `json:"readOnly"`
-	ProjectName string `json:"projectName,omitempty"`
+	ReadOnly        bool   `json:"readOnly"`
+	ProjectName     string `json:"projectName,omitempty"`
+	MessagesPartial bool   `json:"messagesPartial,omitempty"`
 }
+
+// assistantRecentMessages matches the chat transcript's first painted page.
+const assistantRecentMessages = 40
 
 func (h *assistantHandlers) listSessions(c *gin.Context) {
 	current, ok := h.requestUser(c.Request, true)
@@ -311,12 +315,21 @@ func (h *assistantHandlers) session(c *gin.Context) {
 	}
 	switch c.Request.Method {
 	case "GET":
-		item, err := loadAssistantConversation(h.repo, ownerID, id)
+		recent := c.Query("view") == "recent"
+		var item assistantConversation
+		var messageTotal int
+		var err error
+		if recent {
+			item, messageTotal, err = loadAssistantConversationRecent(h.repo, ownerID, id, assistantRecentMessages)
+		} else {
+			item, err = loadAssistantConversation(h.repo, ownerID, id)
+		}
 		if err != nil {
 			c.JSON(404, gin.H{"error": "对话不存在"})
 			return
 		}
-		if !item.Shared && !readOnly {
+		partial := recent && messageTotal > len(item.Messages)
+		if !recent && !item.Shared && !readOnly {
 			if job, ok := h.readGeneration(ownerID, id); !ok || job.Status != "running" {
 				if materializeWorkspaceImages(ownerID, &item) {
 					updated := item
@@ -333,7 +346,7 @@ func (h *assistantHandlers) session(c *gin.Context) {
 		item = sanitizeAssistantSessionForViewer(item, current.ID)
 		if readOnly {
 			project, _ := h.repo.Project(item.ProjectID)
-			c.JSON(200, readOnlyConversation{AssistantSession: item, ReadOnly: true, ProjectName: project.Name})
+			c.JSON(200, readOnlyConversation{AssistantSession: item, ReadOnly: true, ProjectName: project.Name, MessagesPartial: partial})
 			return
 		}
 		if shared {
@@ -341,7 +354,9 @@ func (h *assistantHandlers) session(c *gin.Context) {
 				item.IssueID = run.ExecutionContext.IssueID
 			}
 		}
-		c.JSON(200, decorateRunSessionView(h.repo, item))
+		view := decorateRunSessionView(h.repo, item)
+		view.MessagesPartial = partial
+		c.JSON(200, view)
 	case "PUT":
 		if job, ok := h.readGeneration(ownerID, id); ok && job.Status == "running" {
 			c.JSON(409, gin.H{"error": "生成期间不能改写会话"})
@@ -635,6 +650,17 @@ func loadAssistantConversation(st *repo.Store, userID int64, id string) (assista
 		return assistantConversation{}, os.ErrNotExist
 	}
 	return item, nil
+}
+
+func loadAssistantConversationRecent(st *repo.Store, userID int64, id string, limit int) (assistantConversation, int, error) {
+	if st == nil {
+		return assistantConversation{}, 0, os.ErrNotExist
+	}
+	item, total, ok := st.AssistantSessionRecent(userID, id, limit)
+	if !ok {
+		return assistantConversation{}, 0, os.ErrNotExist
+	}
+	return item, total, nil
 }
 
 func listAssistantConversations(st *repo.Store, userID int64) ([]assistantConversation, error) {

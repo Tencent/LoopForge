@@ -205,9 +205,10 @@ export function useChat() {
       ? withSessionTitle(stored, renamed)
       : stored;
   }, []);
-  const readSession = useCallback(async (id) => {
+  const readSession = useCallback(async (id, { recent = false } = {}) => {
     const titlesAtRequest = renamedTitles.current;
-    return mergeRenamedTitle(await api(sessionPath(id)), titlesAtRequest);
+    const path = sessionPath(id) + (recent ? "?view=recent" : "");
+    return mergeRenamedTitle(await api(path), titlesAtRequest);
   }, [mergeRenamedTitle]);
   const refreshSessions = useCallback(async () => {
     const titlesAtRequest = renamedTitles.current;
@@ -287,6 +288,8 @@ export function useChat() {
   }
   function receiveSession(stored, running = false) {
     if (!stored || currentId.current !== stored.id) return;
+    // A tail that arrives after the full transcript must not hide earlier turns.
+    if (sessionRef.current?.id === stored.id && !sessionRef.current.messagesPartial && stored.messagesPartial) return;
     const opening = sessionRef.current?.id !== stored.id;
     restoreConversationModel(stored, { running, preserveChoice: !opening });
     if (opening) {
@@ -356,11 +359,13 @@ export function useChat() {
         setSandboxes(sandboxRows || []);
         applyModelCatalog(catalog);
         if (catalog.cursorModelsPending) requestModelCatalogRefresh((revision) => revision + 1);
-        await refreshSessions();
         if (!current) return;
         const recovered = connectionError;
         setError((old) => (old === recovered ? "" : old));
         setReady(true);
+        // The history list fills the sidebar. It must not sit in front of the
+        // open conversation or the signal that the workbench can be shown.
+        void refreshSessions().catch(() => {});
       } catch (e) {
         if (!current) return;
         const retry = !e.status || e.status >= 500;
@@ -385,13 +390,26 @@ export function useChat() {
       connectionError = "";
     async function load() {
       try {
+        if (sessionRef.current?.id !== activeId) {
+          const preview = await readSession(activeId, { recent: true });
+          if (!current || currentId.current !== activeId) return;
+          if (sessionRef.current?.id !== activeId) {
+            receiveSession(preview);
+            const recovered = connectionError;
+            setError((old) => (old === recovered ? "" : old));
+          }
+        }
+        if (!current || currentId.current !== activeId || !sessionRef.current?.messagesPartial) return;
         const stored = await readSession(activeId);
-        if (!current || currentId.current !== activeId || sessionRef.current?.id === activeId) return;
+        if (!current || currentId.current !== activeId) return;
         receiveSession(stored);
         const recovered = connectionError;
         setError((old) => (old === recovered ? "" : old));
       } catch (e) {
-        if (!current || currentId.current !== activeId || sessionRef.current?.id === activeId) return;
+        if (!current || currentId.current !== activeId) return;
+        // The tail is already on screen. A failed full read still has to retry,
+        // otherwise the composer stays blocked on messagesPartial.
+        if (sessionRef.current?.id === activeId && !sessionRef.current.messagesPartial) return;
         const retry = !e.status || e.status >= 500;
         connectionError = retry ? "连接暂时中断，正在重连…" : e.message;
         setError(connectionError);
@@ -1110,6 +1128,10 @@ export function useChat() {
     if (!text.trim() && !attachments.length) return false;
     if (sessionLoading() || replyStatePending()) {
       setError("会话仍在加载，请稍候再发送。");
+      return false;
+    }
+    if (sessionRef.current?.messagesPartial && sessionRef.current.id === currentId.current) {
+      setError("正在补齐更早的对话，请稍候再发送。");
       return false;
     }
     if (!executor || missingServerCLI) return false;

@@ -1785,6 +1785,7 @@ export default function App() {
             scroll={scroll}
             follow={follow}
             loading={!chat.session && !chat.error}
+            earlier={!!chat.session?.messagesPartial}
             renderMessage={(message, index) =>
                 isProposalTimeout(message, messages[index - 1]) ? null : confirmationCaption(message, messages[index - 1]) ? (
                   <div
@@ -2349,6 +2350,7 @@ export default function App() {
                         title={chat.busy ? "当前回复结束后自动发送" : undefined}
                         disabled={
                           !chat.ready ||
+                          !!chat.session?.messagesPartial ||
                           !hasComposerExecutor ||
                           !!chat.missingServerCLI ||
                           chat.submitting ||
