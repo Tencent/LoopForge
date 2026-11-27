@@ -77,10 +77,10 @@ func (h *assistantHandlers) startGeneration(c *gin.Context) {
 		return
 	}
 	old, _ := h.repo.AssistantSession(ownerID, req.SessionID)
+	req.Model = h.assistantChatRequestModel(req, old, stored)
 	if !h.bindTurnExecutionTarget(c, &req, stored.ID, old) {
 		return
 	}
-	req.Model = h.assistantChatRequestModel(req, old, stored)
 	cliEngine, _ := assistantModelEngine(req.Model)
 	loginRunner := h.assistantLoginRunner(stored.ID, req.ExecutionTarget, cliEngine)
 	runnerLogin := loginRunner.ID != ""

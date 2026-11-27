@@ -180,8 +180,10 @@ func (w *processWriter) emit(line string) {
 	if w.redact != nil {
 		line = w.redact(line)
 	}
-	w.output.WriteString(line)
-	w.output.WriteByte('\n')
+	if w.output != nil {
+		w.output.WriteString(line)
+		w.output.WriteByte('\n')
+	}
 	if w.sink != nil {
 		w.sink(domain.TelemetryEvent{Category: "process", Name: w.name, Phase: "progress", Level: w.level, Message: line})
 	}

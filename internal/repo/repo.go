@@ -150,6 +150,11 @@ type RunnersRepo struct {
 	projects *ProjectsRepo
 }
 
+type ExecutionClustersRepo struct {
+	*deps
+	openSandboxKeyring *credcrypt.Keyring
+}
+
 // DeliveryRepo owns MR delivery state and the delivery locking that follows.
 type DeliveryRepo struct {
 	*deps
@@ -186,6 +191,7 @@ type Store struct {
 	*AssistantRepo
 	*RunsRepo
 	*RunnersRepo
+	*ExecutionClustersRepo
 	*DeliveryRepo
 	*AnalyticsRepo
 	*InsightsRepo
@@ -223,6 +229,7 @@ func newStore(db *gorm.DB) *Store {
 	s.IssuesRepo = &IssuesRepo{deps: d, projects: s.ProjectsRepo, users: s.UsersRepo, tasks: s.TasksRepo}
 	s.NotificationsRepo.issues = s.IssuesRepo
 	s.RunnersRepo = &RunnersRepo{deps: d, projects: s.ProjectsRepo}
+	s.ExecutionClustersRepo = &ExecutionClustersRepo{deps: d}
 	s.RunsRepo = &RunsRepo{deps: d, assistant: s.AssistantRepo, issues: s.IssuesRepo, catalog: s.CatalogRepo, runners: s.RunnersRepo, notifications: s.NotificationsRepo}
 	s.DeliveryRepo = &DeliveryRepo{deps: d, issues: s.IssuesRepo, tasks: s.TasksRepo, catalog: s.CatalogRepo, runs: s.RunsRepo}
 	s.InsightsRepo = &InsightsRepo{deps: d}

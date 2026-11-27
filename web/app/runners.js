@@ -25,6 +25,7 @@ function openRunModal(workflowId){
   if(resetBtn)resetBtn.onclick=()=>{state.runModalKnowledgeRefs=null;syncRunModalKnowledgeSummary()};
   $('#confirmRun').disabled=!workflows.length;
   $('#runModal').classList.add('open');
+  void loadRunExecutionTargets(currentProject()?.id||'');
   setTimeout(()=>$('#runInput').focus(),0);
 }
 
@@ -52,10 +53,7 @@ async function refreshRunners(silent){
     state.runnerProjectId=projectId;
     state.defaultRunnerId=def?.runnerId||'';
     state.personalDefaultRunnerId=def?.personalRunnerId??state.defaultRunnerId;
-    state.projectDefaultRunnerId=def?.projectRunnerId||'';
-    state.projectRunnerMode=def?.projectRunnerMode||'';
     state.platformRunner=def?.platformRunner||null;
-    state.cloudPool=def?.cloudPool||null;
     state.minRunnerVersion=def?.minRunnerVersion||'';
     state.minPrivilegedSandboxRunnerVersion=def?.minPrivilegedSandboxRunnerVersion||'';
     renderRunnersView();
@@ -227,14 +225,14 @@ function runnerProjectWritable(project){
   return !!(userId>0&&project&&!project.archivedAt&&(Number(project.ownerId)===userId||
     project.members?.some(m=>Number(m.userId)===userId&&String(m.role||'').trim().toLowerCase()!=='viewer')));
 }
-function platformRunnerCardHTML(runner,isDefault,canSetDefault){
+function platformRunnerCardHTML(runner){
   const name=escapeHTML(runner.name||'平台执行机器（云端）');
   const limit=runner.canEditLimit?runnerRunLimitHTML(runner,true):`<span class="runner-limit-label">${runnerConcurrencyLabel(runner)}</span>`;
-  return `<article class="runner-card runner-platform-card panel ${isDefault?'is-default':''}">
+  return `<article class="runner-card runner-platform-card panel">
     <div class="runner-platform-main">
       <span class="runner-machine-icon" aria-hidden="true">${huiIcon('server')}</span>
       <div class="runner-card-title">
-        <div class="runner-card-name"><b title="${name}">${name}</b><span class="runner-tag">平台自带</span>${isDefault?'<span class="runner-tag default">此项目默认</span>':''}</div>
+        <div class="runner-card-name"><b title="${name}">${name}</b><span class="runner-tag">平台自带</span></div>
         ${runnerLoadHTML(runner)}
       </div>
     </div>
@@ -243,7 +241,6 @@ function platformRunnerCardHTML(runner,isDefault,canSetDefault){
       <span class="runner-platform-sep" aria-hidden="true"></span>
       ${limit}
       ${runnerPrivilegedSandboxHTML(runner,runner.canEditLimit,true)}
-      ${canSetDefault?`<button type="button" class="button small ${isDefault?'ghost runner-text-button':'hui-btn-soft'}" data-runner-platform-default>${isDefault?'清除项目默认':'设为项目默认'}</button>`:''}
     </div>
   </article>`;
 }
@@ -267,95 +264,38 @@ function renderRunnersView(){
     const text=e.currentTarget.parentElement?.querySelector('pre')?.innerText||'';
     runnerCopyCommand(copyUnBtn,text,'已复制卸载命令');
   };
-  const project=currentProject();
-  const projectId=project?.id||'';
+  const projectId=currentProject()?.id||'';
   const projectLoaded=state.runnerProjectId===projectId;
-  const canSetMode=projectLoaded&&!!projectId&&runnerProjectWritable(project);
-  const projectMode=projectLoaded?state.projectRunnerMode||'':'';
   const platform=projectLoaded?state.platformRunner:null;
   const own=r=>r.ownerUserId===state.currentUser?.id;
   const runners=(state.runners||[]).filter(r=>own(r)||projectLoaded);
   const personalDefaultId=state.personalDefaultRunnerId??state.defaultRunnerId??'';
-  const projectDefaultId=projectLoaded?state.projectDefaultRunnerId||'':'';
-  const defaultId=projectLoaded?state.defaultRunnerId||'':'';
   $('#runnerCount').textContent=String(runners.length);
-  const dispatchBar=$('#runnerDispatchBar');
-  if(dispatchBar)dispatchBar.classList.toggle('is-auto',projectMode==='auto');
-  const dispatchLabel=$('#runnerDispatchLabel');
-  if(dispatchLabel)dispatchLabel.textContent=projectId?'本项目执行调度':'当前执行调度';
-  const dispatchHint=$('#runnerDispatchHint');
-  if(dispatchHint){
-    dispatchHint.hidden=!canSetMode;
-    dispatchHint.textContent=!canSetMode?'':projectMode==='auto'
-      ?'已开启自动分配：新建顶层 LOOP 将在「平台机器」和兼容的「可用机器」间自动调度。'
-      :'开启「自动分配」后，新建顶层 LOOP 将在「平台机器」和兼容的「可用机器」间自动调度；也可在下方指定单台机器为项目默认。';
-  }
-  const autoAssign=$('#runnerAutoAssign');
-  if(autoAssign){
-    const active=projectMode==='auto';
-    autoAssign.hidden=!canSetMode;
-    autoAssign.classList.toggle('hui-btn-soft',active);
-    autoAssign.classList.toggle('ghost',!active);
-    autoAssign.setAttribute('aria-pressed',String(active));
-    autoAssign.textContent=active?'已开启自动分配':'自动分配';
-    autoAssign.title='自动分配涵盖平台机器与兼容的可用机器';
-    autoAssign.onclick=()=>setDefaultRunner('',projectId,active?'':'auto');
-  }
-  const poolStatus=$('#runnerPoolStatus');
-  if(poolStatus){
-    const def=runners.find(r=>r.id===defaultId),pool=state.cloudPool;
-    let text='',warn=false;
-    if(projectMode==='auto'){
-      const usable=runners.filter(r=>r.canUseInProject&&!runnerDefaultBlocker(r)).length+(platform?.status==='online'?1:0);
-      text=`此项目 LOOP 自动分配 · ${usable} 台在线机器可用`;
-      warn=usable===0;
-    }else if(projectMode==='platform'){
-      text='此项目默认 · 平台执行机器（云端）';
-      warn=platform?.status==='offline';
-    }else if(def){
-      warn=def.status!=='online';
-      const label=projectDefaultId?'此项目默认':'个人默认';
-      text=warn?`${label}执行机器已离线，请启动机器或更改默认`:`${label} · ${def.name||def.id}`;
-    }else if(platform){
-      warn=platform.status!=='online';
-      text=warn?'平台执行机器离线':'在平台云端执行';
-    }else if(pool?.configured){
-      warn=!pool.online;
-      text=pool.online?`云端执行 · ${pool.online} 台在线`:'云端暂无在线机器，新任务最多等待 10 分钟';
-    }else{
-      text='在平台云端执行';
-    }
-    poolStatus.textContent=text;poolStatus.classList.toggle('warn',warn);
-  }
   const focusedMenu=document.activeElement?.dataset.runnerRuntimeMenu;
   const focusedUpdate=document.activeElement?.dataset.runnerCheckUpdate;
   const focusedShare=document.activeElement?.dataset.runnerShare;
   const focusedPrivilege=document.activeElement?.dataset.runnerPrivilegedSandbox;
-  const focusedPlatform=document.activeElement?.hasAttribute('data-runner-platform-default');
   closeRunnerRuntimeMenu();
   const platformSection=$('#platformRunnerSection');
   const platformHost=$('#platformRunnerHost');
   if(platformSection&&platformHost){
     platformSection.hidden=!platform;
-    platformHost.innerHTML=platform?platformRunnerCardHTML(platform,projectMode==='platform',canSetMode):'';
+    platformHost.innerHTML=platform?platformRunnerCardHTML(platform):'';
   }
   const runnerCards=runners.map(r=>{
-    const isDefault=r.id===defaultId;
     const discoveredCLIs=(r.runtimes||[]).filter(rt=>runnerCLILabels[rt.provider]);
     const shared=!own(r);
     const isPersonalDefault=r.id===personalDefaultId;
-    const isProjectDefault=r.id===projectDefaultId;
-    const canSetProjectDefault=projectLoaded&&projectId&&r.canUseInProject&&!isProjectDefault;
     const cliRows=discoveredCLIs.map(rt=>runnerRuntimeHTML(r,rt,shared)).join('');
     const cliSection=cliRows||'<div class="runner-runtime-empty">未发现支持的 Agent CLI</div>';
     const osLabel=runnerOSLabels[r.os]||r.os||'?';
     const defaultBlocker=runnerDefaultBlocker(r);
     const checking=runnerMaintenancePending.has(r.id);
-    return `<article class="runner-card panel ${isDefault?'is-default':''}">
+    return `<article class="runner-card panel ${isPersonalDefault?'is-default':''}">
       <div class="runner-card-head">
         <span class="runner-machine-icon" aria-hidden="true">${huiIcon('monitor')}</span>
         <div class="runner-card-title">
-          <div class="runner-card-name"><b title="${escapeHTML(r.name||r.id)}">${escapeHTML(r.name||r.id)}</b>${isProjectDefault?'<span class="runner-tag default">此项目默认</span>':isPersonalDefault?'<span class="runner-tag default">个人默认</span>':''}${shared?'<span class="runner-tag">项目共享</span>':''}</div>
+          <div class="runner-card-name"><b title="${escapeHTML(r.name||r.id)}">${escapeHTML(r.name||r.id)}</b>${isPersonalDefault?'<span class="runner-tag default">个人默认</span>':''}${shared?'<span class="runner-tag">项目共享</span>':''}</div>
           <small>${escapeHTML(osLabel)} · ${escapeHTML(r.arch||'?')} · Runner ${escapeHTML(r.runnerVersion||'未知')}</small>
           ${runnerLoadHTML(r)}
         </div>
@@ -373,23 +313,13 @@ function renderRunnersView(){
         ${isPersonalDefault?'<button class="button ghost small runner-text-button" type="button" data-set-default="">清除个人默认</button>':''}
         ${shared||r.status==='online'?'':`<button class="button ghost small runner-text-button" type="button" data-remove-runner="${escapeHTML(r.id)}" title="机器已不再使用时移除绑定">移除</button>`}
         ${!shared&&!isPersonalDefault?`<button class="button hui-btn-soft small" type="button" ${defaultBlocker?`disabled title="${escapeHTML(defaultBlocker)}"`:''} data-set-default="${escapeHTML(r.id)}">设为个人默认</button>`:''}
-        ${isProjectDefault?'<button class="button ghost small runner-text-button" type="button" data-set-project-default="">清除项目默认</button>':''}
-        ${canSetProjectDefault?`<button class="button hui-btn-soft small" type="button" ${defaultBlocker?`disabled title="${escapeHTML(defaultBlocker)}"`:''} data-set-project-default="${escapeHTML(r.id)}">设为项目默认</button>`:''}
       </div>
     </article>`;
   }).join('');
   list.innerHTML=runnerCards||'<div class="runner-empty"><b>还没有机器</b><span>执行上方命令后自动出现</span></div>';
-  const platformDefault=platformHost?.querySelector('[data-runner-platform-default]');
-  if(platformDefault){
-    platformDefault.onclick=()=>setDefaultRunner('',projectId,projectMode==='platform'?'':'platform');
-    if(focusedPlatform)platformDefault.focus({preventScroll:true});
-  }
   // Bind click handlers via JS (CSP blocks inline onclick attributes).
   list.querySelectorAll('[data-set-default]').forEach(btn=>btn.onclick=()=>{
     setDefaultRunner(btn.dataset.setDefault||'');
-  });
-  list.querySelectorAll('[data-set-project-default]').forEach(btn=>{
-    btn.onclick=()=>setDefaultRunner(btn.dataset.setProjectDefault,projectId);
   });
   list.querySelectorAll('[data-runner-share]').forEach(btn=>{
     btn.onclick=()=>editRunnerSharing(runners.find(r=>r.id===btn.dataset.runnerShare));
@@ -488,19 +418,18 @@ function runnerVersionAtLeast(have,want){
   for(let i=0;i<w.length;i++){const hv=h[i]||0;if(hv!==w[i])return hv>w[i]}
   return true;
 }
-function runnerDefaultBlocker(r){
+function runnerDefaultBlocker(r,min=state.minRunnerVersion||''){
   if(r.status!=='online')return '机器离线';
-  const min=state.minRunnerVersion||'';
   if(min&&!runnerVersionAtLeast(r.runnerVersion,min))return `执行机器版本 ${r.runnerVersion||'未知'} 过低，需升级至 ${min} 及以上`;
   return '';
 }
 let runnerPreferenceSaving=false;
-async function setDefaultRunner(runnerId,projectId='',mode=''){
+async function setDefaultRunner(runnerId){
   if(runnerPreferenceSaving)return;
   runnerPreferenceSaving=true;
   try{
-    const query=projectId?`?projectId=${encodeURIComponent(projectId)}`:'';
-    const out=await api('/api/runners/default'+query,{method:'PUT',body:JSON.stringify(mode?{mode}:{runnerId,mode})});
+    const out=await api('/api/runners/default',{method:'PUT',body:JSON.stringify({runnerId})});
+    notifyExecutionSettingsChanged();
     toast(out?.message||'已更新','ok');await refreshRunners(true);
   }catch(err){toast(err.message)}
   finally{runnerPreferenceSaving=false}

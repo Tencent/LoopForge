@@ -29,6 +29,14 @@ func ConfigureConversationSandbox(ctx context.Context, sandbox Sandbox, root str
 	if p, ok := unwrapSandbox(sandbox).(*processSandbox); ok {
 		return configureProcessConversationSandbox(p, root)
 	}
+	if s, ok := unwrapSandbox(sandbox).(*openSandbox); ok {
+		// The checkout and native CLI state travel as separate snapshots.
+		workspace := filepath.Clean(s.Workspace())
+		if root == "/" || root == workspace || strings.HasPrefix(root, workspace+"/") || strings.HasPrefix(workspace, root+"/") {
+			return fmt.Errorf("OpenSandbox 对话状态目录和工作区必须分别存放")
+		}
+		return ValidateConversationRoot(root)
+	}
 	s, ok := unwrapSandbox(sandbox).(*dockerSandbox)
 	if !ok {
 		return fmt.Errorf("对话工作区只支持 Docker 或 native 沙箱")
@@ -154,12 +162,16 @@ func resolveNativeConversationBinary(provider string) (string, error) {
 }
 
 func ensureConversationCLI(ctx context.Context, sandbox Sandbox, provider, home string) (string, error) {
-	if _, native := unwrapSandbox(sandbox).(*processSandbox); native {
+	base := unwrapSandbox(sandbox)
+	if remote, ok := base.(*openSandbox); ok {
+		return remote.ensureConversationCLI(ctx, provider, home)
+	}
+	if _, native := base.(*processSandbox); native {
 		// A native workspace runs the execution machine's own CLI, matching
 		// how the platform mode resolves host binaries.
 		return resolveNativeConversationBinary(provider)
 	}
-	s, ok := unwrapSandbox(sandbox).(*dockerSandbox)
+	s, ok := base.(*dockerSandbox)
 	if !ok {
 		return "", fmt.Errorf("对话工作区只支持 Docker 或 native 沙箱")
 	}

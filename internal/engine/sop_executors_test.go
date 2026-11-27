@@ -143,13 +143,13 @@ func TestSharedRunnerSOPUsesProjectDefaultAndResponsibleUserCredentials(t *testi
 		{"unshared-compute", "", domain.ExecutionModeCloud},
 	} {
 		ownerExecution := domain.TelemetryContext{ProjectID: tc.projectID, ResponsibleUserID: 42}
-		e.selectSOPExecutionTarget(&ownerExecution, false)
+		e.selectSOPExecutionTarget(&ownerExecution, false, domain.ExecutionTarget{})
 		if ownerExecution.ExecutionRunnerID != tc.runnerID || ownerExecution.ExecutionMode != tc.mode {
 			t.Fatalf("owner target for %q = %+v, want %s %q", tc.projectID, ownerExecution, tc.mode, tc.runnerID)
 		}
 	}
 	execution := domain.TelemetryContext{ProjectID: "shared-compute", ResponsibleUserID: 1}
-	e.selectSOPExecutionTarget(&execution, false)
+	e.selectSOPExecutionTarget(&execution, false, domain.ExecutionTarget{})
 	if execution.ExecutionRunnerID != runner.ID || execution.ExecutionMode != domain.ExecutionModeRunner {
 		t.Fatalf("project target = %+v", execution)
 	}
@@ -180,7 +180,7 @@ func TestSharedRunnerSOPUsesProjectDefaultAndResponsibleUserCredentials(t *testi
 		}
 		for _, userID := range []int64{1, 42} {
 			next := domain.TelemetryContext{ProjectID: "shared-compute", ResponsibleUserID: userID}
-			e.selectSOPExecutionTarget(&next, false)
+			e.selectSOPExecutionTarget(&next, false, domain.ExecutionTarget{})
 			if next.ExecutionRunnerID != "" || next.ExecutionMode != domain.ExecutionModeCloud {
 				t.Fatalf("new run used revoked machine: %+v", next)
 			}
@@ -443,7 +443,7 @@ func TestExecutorCredentialsFollowTheProjectDefaultRunner(t *testing.T) {
 	check := func(projectID string, want map[string]bool) {
 		t.Helper()
 		execution := domain.TelemetryContext{ProjectID: projectID, ResponsibleUserID: 42}
-		(&Engine{repo: st}).selectSOPExecutionTarget(&execution, true)
+		(&Engine{repo: st}).selectSOPExecutionTarget(&execution, true, domain.ExecutionTarget{})
 		hasCredential := ExecutorCredentials(st, 42, projectID)
 		for kind, expected := range want {
 			if got := hasCredential(kind); got != expected {
@@ -528,7 +528,7 @@ func TestExecutorCredentialsFollowTheCloudPool(t *testing.T) {
 	// Whatever pool runner a run picks, its login matches a CLI the picker offered.
 	for i := 0; i < 20; i++ {
 		execution := domain.TelemetryContext{ProjectID: "pool-served", ResponsibleUserID: 42}
-		e.selectSOPExecutionTarget(&execution, true)
+		e.selectSOPExecutionTarget(&execution, true, domain.ExecutionTarget{})
 		if execution.ExecutionPool != domain.ExecutionModeCloud || execution.ExecutionRunnerID == "" {
 			t.Fatalf("run did not use the pool: %+v", execution)
 		}
@@ -553,7 +553,7 @@ func TestExecutorCredentialsFollowTheCloudPool(t *testing.T) {
 	e.ConfigureCloudRunnerPool(CloudRunnerPool{Label: "pool", Projects: []string{"*"}})
 	check("personal default", "", map[string]bool{"codex": false, "claude-code": true})
 	execution := domain.TelemetryContext{ResponsibleUserID: 42}
-	e.selectSOPExecutionTarget(&execution, true)
+	e.selectSOPExecutionTarget(&execution, true, domain.ExecutionTarget{})
 	if execution.ExecutionRunnerID != own.ID {
 		t.Fatalf("personal SOP ran on %q, want the default machine", execution.ExecutionRunnerID)
 	}

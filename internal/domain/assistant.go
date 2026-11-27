@@ -151,10 +151,7 @@ const (
 
 // AssistantExecutionTarget is selected once, independently of a workspace.
 // An empty RunnerID in the cloud pool means the built-in execution host.
-type AssistantExecutionTarget struct {
-	Pool     string `json:"pool"`
-	RunnerID string `json:"runnerId,omitempty"`
-}
+type AssistantExecutionTarget = ExecutionTarget
 
 func (s AssistantSession) Execution() AssistantExecutionTarget {
 	if s.ExecutionTarget != nil {

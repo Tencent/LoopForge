@@ -39,9 +39,16 @@ type SOPSandboxCandidate struct {
 }
 
 func (e *Engine) selectSOPSandbox(ctx context.Context, wf domain.WorkflowDefinition, ec *domain.TelemetryContext, repositories []domain.RepositoryContext, input, workspaceSandboxID string) (domain.SandboxProfile, string, error) {
+	if ec.ExecutionClusterID != "" {
+		return e.selectSOPSandboxForTargets(ctx, wf, *ec, repositories, input, workspaceSandboxID,
+			func(profile domain.SandboxProfile) bool {
+				return runtime.ValidateExecutionClusterProfile(profile) == nil
+			},
+			func(domain.SandboxProfile) bool { return true },
+		)
+	}
 	runner, _ := e.repo.Runner(ec.ExecutionRunnerID)
 	nativeAvailable := runner.SupportsNativeSandbox
-	dockerAvailable := true
 	var poolLabel string
 	if ec.ExecutionPool == domain.ExecutionModeCloud && !ec.ExecutionPinned && ec.ParentRunID == "" {
 		poolLabel = e.cloudPoolLabel()
@@ -55,15 +62,16 @@ func (e *Engine) selectSOPSandbox(ctx context.Context, wf domain.WorkflowDefinit
 				return sopNativeRunnerSupports(runner, driver, wf, repositories)
 			})
 		}
-	} else if ec.ExecutionRunnerID == "" && ec.ExecutionPool != domain.ExecutionModeCloud && e.executes() {
-		nativeAvailable = runtime.NativeSandboxAvailable
-		dockerAvailable = runtime.DockerReady()
 	}
+	local := poolLabel == "" && ec.ExecutionRunnerID == "" && ec.ExecutionPool != domain.ExecutionModeCloud && e.executes()
 	supported := func(profile domain.SandboxProfile) bool {
-		if profile.Driver == domain.SandboxDriverDocker {
-			return dockerAvailable && !profile.Privileged
+		if profile.Privileged {
+			return false
 		}
-		return nativeAvailable(profile.Driver)
+		if local {
+			return e.sandboxes.SupportsPlatformSandbox(profile, true)
+		}
+		return profile.Driver == domain.SandboxDriverDocker || nativeAvailable(profile.Driver)
 	}
 	bind := func(profile domain.SandboxProfile) bool {
 		if poolLabel == "" || profile.Driver == domain.SandboxDriverDocker {

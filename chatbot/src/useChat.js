@@ -711,7 +711,9 @@ export function useChat() {
   }
   const runnerId = composerRunnerId(session);
   const runner = executionMachines.machines.find(machine => machine.id === runnerId && machine.ownerUserId === user?.id);
+  const executionPool = executionLocked(session) ? session.executionTarget?.pool : executionMachines.effectiveExecutionPool;
   const checkServerCLI = executionMachines.machinesReady && !runnerId &&
+    !["cluster", "cluster-auto", "machine-auto"].includes(executionPool) &&
     !(session?.executionTarget?.pool === "cloud" && session.executionTarget.runnerId) &&
     !session?.runId && session?.runtimeMode !== "workspace";
   const availableExecutors = EXECUTORS.flatMap(item => {
@@ -1162,9 +1164,9 @@ export function useChat() {
       return true;
     }
     if (sandboxBusyRef.current) { setError("运行环境仍在保存，请稍后发送。"); return false; }
-    if (executionMachines.machineSavingRef.current) { setError("执行机器仍在保存，请稍后发送。"); return false; }
+    if (executionMachines.machineSavingRef.current) { setError("执行位置仍在保存，请稍后发送。"); return false; }
     if (!executionLocked(sessionRef.current) && !executionMachines.machinesReady) {
-      setError(executionMachines.machineError || "执行机器仍在加载，请稍后发送。");
+      setError(executionMachines.machineError || "执行位置仍在加载，请稍后发送。");
       return false;
     }
     // Claim the send and its target before a credential check can yield.
@@ -1211,7 +1213,7 @@ export function useChat() {
             issueId: draft.issueId,
             knowledgeRefs: draftKnowledgeRefs,
             sandboxProfileId,
-            executionTarget: {pool: executionMachines.defaultRunnerId ? "runner" : "cloud", runnerId: executionMachines.defaultRunnerId || ""},
+            executionTarget: executionMachines.draftExecutionTarget,
             ...chosen,
             executor,
             title: text.trim().slice(0, 36) || "图片与文件",
@@ -1254,10 +1256,7 @@ export function useChat() {
         });
         setLive({ answer: "", thinking: "", tools: [] });
       }
-      const executionTarget = executionLocked(s) ? s.executionTarget : {
-        pool: executionMachines.defaultRunnerId ? "runner" : "cloud",
-        runnerId: executionMachines.defaultRunnerId || "",
-      };
+      const executionTarget = executionLocked(s) ? s.executionTarget : executionMachines.draftExecutionTarget;
       clientRequestId = newId();
       if (currentId.current === s.id) setGenerationKnown(null);
       const g = await write("/api/assistant/generations", {
@@ -1585,7 +1584,7 @@ export function useChat() {
     }
   }
   async function bindExecutionMachine(runnerId) {
-    if (submittingRef.current || executionLocked(sessionRef.current)) throw new Error("会话执行机器已固定，请新建对话。");
+    if (submittingRef.current || executionLocked(sessionRef.current)) throw new Error("会话执行位置已固定，请新建对话。");
     if (currentId.current && !sessionRef.current) throw new Error("会话仍在加载，请稍后选择。");
     return {runnerId};
   }

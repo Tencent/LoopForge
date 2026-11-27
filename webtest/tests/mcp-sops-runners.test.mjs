@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { loadApp, settle } from '../lib/load-app.mjs';
+import { chooseOption, loadApp, settle } from '../lib/load-app.mjs';
 
 test('MCP import accepts common formats, validates bad input, and saves HTTP configuration', async (t) => {
   const app = await loadApp();
@@ -142,15 +142,14 @@ test('runner sharing saves multiple projects and offers project defaults for eli
   const mine = {id: 'mine', name: 'Laptop', ownerUserId: 1, status: 'online', canUseInProject: true};
   const desktop = {id: 'desktop', name: 'Desktop', ownerUserId: 1, status: 'online', canUseInProject: true};
   const shared = {id: 'team', name: 'Team host', ownerUserId: 2, status: 'online', canUseInProject: true};
-  let projectRunnerId = '';
+  let projectTarget = {pool:"personal"};
   app.router.get('/api/runners?projectId=one', [mine, desktop, shared]);
   app.router.get('/api/runners?projectId=two', [{...mine, canUseInProject: false}]);
-  app.router.get('/api/runners/default?projectId=one', () => ({
-    runnerId: projectRunnerId || mine.id, personalRunnerId: mine.id, projectRunnerId,
-  }));
-  app.router.put('/api/runners/default?projectId=one', ({body}) => {
-    projectRunnerId = body.runnerId;
-    return { runnerId: projectRunnerId || mine.id };
+  app.router.get('/api/runners/default?projectId=one', {runnerId:mine.id, personalRunnerId:mine.id});
+  app.router.get('/api/execution-clusters', ({search}) => ({canSetDefault:true, projectTarget:search.includes('projectId=one')?projectTarget:{pool:'personal'}, available:[]}));
+  app.router.put('/api/projects/one/execution', ({body}) => {
+    projectTarget = body;
+    return projectTarget;
   });
   app.router.put('/api/runners/desktop/run-limit', {id: desktop.id, name: desktop.name, ownerUserId: 1, status: 'online', runLimit: 25});
   app.router.get('/api/runners/default?projectId=two', { runnerId: '', personalRunnerId: mine.id, projectRunnerId: '' });
@@ -165,10 +164,9 @@ test('runner sharing saves multiple projects and offers project defaults for eli
     ];
   `);
   await app.evaluate('refreshRunners()');
-  assert.match(app.document.querySelector('#runnerPoolStatus').textContent, /个人默认 · Laptop/);
-  app.evaluate(`state.runners.find(r=>r.id==='mine').status='offline';renderRunnersView()`);
-  assert.equal(app.document.querySelector('[data-set-project-default="mine"]').disabled, true);
-  await app.evaluate('refreshRunners()');
+  await app.evaluate('refreshExecutionClusters()');
+  assert.match(app.document.querySelector('.runner-card.is-default').textContent, /个人默认/);
+  assert.equal(app.document.querySelector('[data-set-project-default]'), null);
   app.document.querySelector('[data-runner-share="mine"]').click();
   const projects = [...app.document.querySelectorAll('.runner-share-projects input')];
   assert.deepEqual(projects.map(box => box.value), ['one', 'two']);
@@ -178,26 +176,18 @@ test('runner sharing saves multiple projects and offers project defaults for eli
   assert.deepEqual(app.router.calls.find(c => c.path === '/api/runners/mine/shared-projects').body, {projectIds: ['one', 'two']});
   assert.equal(app.document.querySelector('[data-runner-share="team"]'), null);
   await app.evaluate(`saveRunnerRunLimit('desktop','25')`);
-  const ownerChoice = app.document.querySelector('[data-set-project-default="desktop"]');
-  assert.ok(ownerChoice, 'an eligible owned machine offers the project default action');
-  assert.equal(ownerChoice.textContent, '设为项目默认');
-  ownerChoice.click();
-  await settle();
-  assert.equal(projectRunnerId, desktop.id);
+  const setting = () => app.document.querySelector('#runnerProjectExecutionChoice');
+  chooseOption(setting(), 'runner:desktop');
+  await settle(8);
+  assert.deepEqual(projectTarget, {pool:'runner',runnerId:'desktop'});
   assert.equal(app.evaluate('state.personalDefaultRunnerId'), mine.id);
-  assert.match(app.document.querySelector('#runnerPoolStatus').textContent, /此项目默认 · Desktop/);
-  assert.equal(app.document.querySelector('[data-set-project-default="desktop"]'), null);
-
-  app.document.querySelector('[data-set-project-default="team"]').click();
-  await settle();
-  assert.ok(app.router.calls.some(c => c.method === 'PUT' && c.path === '/api/runners/default' &&
-    c.search === '?projectId=one' && c.body.runnerId === 'team'));
+  chooseOption(setting(), 'runner:team');
+  await settle(8);
+  assert.deepEqual(projectTarget, {pool:'runner',runnerId:'team'});
 
   await app.evaluate("state.projectFilter='two';refreshRunners()");
-  assert.equal(app.document.querySelector('[data-set-project-default="team"]'), null);
-  assert.equal(app.document.querySelector('[data-set-project-default="mine"]'), null);
-  assert.equal(app.document.querySelector('#runnerPoolStatus').textContent, '在平台云端执行');
-  assert.equal(app.document.querySelector('.runner-card.is-default'), null);
+  await app.evaluate('refreshExecutionClusters()');
+  assert.equal(setting().querySelector('option[value="runner:team"], option[value="runner:mine"]'), null);
   assert.match(app.document.querySelector('.runner-card').textContent, /个人默认/);
 });
 
@@ -254,6 +244,49 @@ test('execution machine cards control privileged sandboxes and require a compati
   assert.equal(control('platform'), null);
 });
 
+test('execution clusters have their own settings and keep connection keys out of the list', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  const path = '/api/execution-clusters';
+  let clusters = [];
+  app.router.get(path, () => ({
+    canManage:true, canSetDefault:false, clusters,
+    available:clusters.map(({id,name})=>({id,name})),
+  }));
+  app.router.post(path + '/test', {ok:true});
+  app.router.post(path, ({body}) => {
+    const {apiKey, ...settings} = body;
+    const row = {...settings, id:'cluster-' + (clusters.length+1), hasApiKey:!!apiKey};
+    clusters.push(row);
+    return row;
+  });
+  app.evaluate('state.currentUser={id:1,isPlatformAdmin:true}');
+  await app.evaluate('refreshExecutionClusters()');
+  const list = app.document.querySelector('#executionClusterList');
+  const form = app.document.querySelector('#executionClusterForm');
+  for (const value of [
+    {name:'研发 TKE',url:'http://sandbox-a.test:8090',apiKey:'test-key-a'},
+    {name:'自建 Kubernetes',url:'http://sandbox-b.test:8090',apiKey:'test-key-b'},
+  ]) {
+    app.document.querySelector('#addExecutionCluster').click();
+    assert.equal(app.document.querySelector('#executionClusterModal').classList.contains('open'), true);
+    for (const [field,input] of Object.entries(value)) form.elements[field].value=input;
+    form.querySelector('#testExecutionCluster').click();
+    await settle(5);
+    const probe = app.router.calls.findLast(c => c.method==='POST' && c.path===path+'/test');
+    assert.deepEqual(probe.body,{...value,enabled:true,projectIds:[]});
+    form.dispatchEvent(new app.window.Event('submit',{bubbles:true,cancelable:true}));
+    await settle(8);
+    assert.equal(app.document.querySelector('#executionClusterModal').classList.contains('open'), false);
+  }
+  assert.deepEqual(Array.from(list.querySelectorAll('.execution-cluster-name b'),el=>el.textContent),['研发 TKE','自建 Kubernetes']);
+  list.querySelector('[data-configure-cluster="cluster-1"]').click();
+  assert.equal(form.elements.url.value,'http://sandbox-a.test:8090');
+  assert.equal(form.elements.apiKey.value,'');
+  assert.match(form.elements.apiKey.placeholder,/留空保留/);
+  assert.equal(app.document.querySelector('#platformOpenSandbox'),null);
+});
+
 test('platform runner card and auto assignment respect project and admin permissions', async (t) => {
   const app = await loadApp();
   t.after(app.close);
@@ -268,14 +301,18 @@ test('platform runner card and auto assignment respect project and admin permiss
     { id: 'offline', name: 'Offline', ownerUserId: 1, status: 'offline', runnerVersion: '0.10.2', canUseInProject: true },
     { id: 'private', name: 'Private', ownerUserId: 1, status: 'online', runnerVersion: '0.10.2' },
   ];
-  let mode = '';
+  let projectTarget = {pool:'personal'};
   app.router.get('/api/runners', shared);
-  app.router.get('/api/runners/default', () => ({
-    runnerId: '', projectRunnerMode: mode, minRunnerVersion: '0.8.0', platformRunner: platform,
+  app.router.get('/api/runners/default', {runnerId:'', minRunnerVersion:'0.8.0', platformRunner:platform});
+  app.router.get('/api/execution-clusters', ({search}) => ({
+    available:[{name:'Dev cluster',id:'dev'}],
+    canSetDefault:search.includes('projectId=write'),
+    minRunnerVersion:'0.8.0',
+    projectTarget,
   }));
-  app.router.put('/api/runners/default?projectId=write', ({ body }) => {
-    mode = body.mode;
-    return { runnerId: '', projectRunnerMode: mode };
+  app.router.put('/api/projects/write/execution', ({body}) => {
+    projectTarget = body;
+    return projectTarget;
   });
   app.router.put('/api/runners/platform/run-limit', ({ body }) => {
     platform.runLimit = body.runLimit;
@@ -315,47 +352,30 @@ test('platform runner card and auto assignment respect project and admin permiss
   assert.deepEqual(limitCall.body, { runLimit: 0 });
   assert.match(card().textContent, /运行中 2 · 不限/);
 
-  const poolStatus = app.document.querySelector('#runnerPoolStatus');
-  const dispatchBar = app.document.querySelector('#runnerDispatchBar');
-  const dispatchHint = app.document.querySelector('#runnerDispatchHint');
-  const toggle = app.document.querySelector('#runnerAutoAssign');
-  assert.ok(dispatchBar.contains(toggle) && dispatchBar.contains(poolStatus), 'auto-assign and pool status belong to the shared dispatch bar');
-  assert.equal(app.document.querySelector('.runner-list-heading')?.contains(toggle), false, 'auto-assign is not scoped to available machines only');
-  assert.ok(Boolean(dispatchBar.compareDocumentPosition(section) & app.window.Node.DOCUMENT_POSITION_FOLLOWING), 'dispatch bar precedes platform and available machine sections');
-  assert.equal(dispatchHint.hidden, false);
-  assert.match(dispatchHint.textContent, /平台机器.*可用机器/);
-  assert.equal(toggle.hidden, false);
-  toggle.click();
+  await app.evaluate('refreshExecutionClusters()');
+  const machineChoice = () => app.document.querySelector('#runnerProjectExecutionChoice');
+  const clusterChoice = () => app.document.querySelector('#clusterProjectExecutionChoice');
+  assert.equal(machineChoice().disabled,false);
+  assert.equal(machineChoice().querySelector('option[value="runner:old"]').disabled,true);
+  assert.equal(machineChoice().querySelector('option[value="runner:offline"]').disabled,true);
+  assert.equal(machineChoice().querySelector('option[value="runner:private"]'),null);
+  chooseOption(machineChoice(),'machine-auto');
   await settle(8);
-  assert.equal(toggle.getAttribute('aria-pressed'), 'true');
-  assert.equal(dispatchBar.classList.contains('is-auto'), true);
-  assert.match(poolStatus.textContent, /此项目 LOOP 自动分配 · 2 台在线机器可用/);
-  toggle.click();
+  assert.deepEqual(projectTarget,{pool:'machine-auto'});
+  assert.equal(clusterChoice().value,'machine-auto');
+  chooseOption(clusterChoice(),'cluster-auto');
   await settle(8);
-  assert.equal(toggle.getAttribute('aria-pressed'), 'false');
-  assert.equal(dispatchBar.classList.contains('is-auto'), false);
-
-  const platformDefaultBtn = () => card().querySelector('[data-runner-platform-default]');
-  assert.equal(platformDefaultBtn().textContent, '设为项目默认');
-  platformDefaultBtn().click();
-  await settle(8);
-  assert.match(card().textContent, /此项目默认/);
-  assert.equal(platformDefaultBtn().textContent, '清除项目默认');
-  assert.equal(poolStatus.textContent, '此项目默认 · 平台执行机器（云端）');
-  platformDefaultBtn().click();
-  await settle(8);
-  assert.doesNotMatch(card().textContent, /此项目默认/);
-  assert.equal(platformDefaultBtn().textContent, '设为项目默认');
-  const preferences = app.router.calls.filter(c => c.method === 'PUT' && c.path === '/api/runners/default');
-  assert.deepEqual(preferences.map(c => c.body), [{ mode: 'auto' }, { mode: '', runnerId: '' }, { mode: 'platform' }, { mode: '', runnerId: '' }]);
-  assert.ok(preferences.every(c => c.search === '?projectId=write'));
+  assert.deepEqual(projectTarget,{pool:'cluster-auto'});
+  assert.equal(machineChoice().value,'cluster-auto');
+  assert.equal(app.document.querySelector('#runnerAutoAssign, [data-runner-platform-default], [data-set-project-default]'),null);
 
   platform.canEditLimit = false;
   platform.status = 'offline';
   await app.evaluate(`state.projectFilter='read';refreshRunners()`);
-  assert.equal(toggle.hidden, true);
-  assert.equal(dispatchHint.hidden, true);
-  assert.equal(card().querySelector('[data-runner-platform-default], [data-platform-run-limit]'), null);
+  await app.evaluate('refreshExecutionClusters()');
+  assert.equal(machineChoice().disabled,true);
+  assert.equal(clusterChoice().disabled,true);
+  assert.equal(card().querySelector('[data-platform-run-limit]'),null);
   assert.match(card().textContent, /不限同时运行数/);
-  assert.equal(card().querySelector('.runner-status').textContent, '离线');
+  assert.equal(card().querySelector('.runner-status').textContent,'离线');
 });

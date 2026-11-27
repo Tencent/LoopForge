@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"slices"
@@ -285,7 +286,12 @@ func (e *Engine) SOPExecutorRequirements(wf domain.WorkflowDefinition, userID in
 		return nil, err
 	}
 	ec := domain.TelemetryContext{ResponsibleUserID: userID, ProjectID: projectID}
-	if e.selectSOPExecutionTarget(&ec, true) {
+	target, err := e.repo.ProjectExecutionTarget(context.Background(), projectID)
+	if err != nil {
+		return nil, err
+	}
+	ec.ExecutionClusterID = target.ClusterID
+	if e.selectSOPExecutionTarget(&ec, true, target) {
 		var best []SOPExecutorRequirement
 		var fewestMissing int
 		for _, candidate := range e.autoAssignCandidates(ec, false) {

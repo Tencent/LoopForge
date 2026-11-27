@@ -12,7 +12,6 @@ import (
 
 	"agentflow/internal/domain"
 	"agentflow/internal/repo"
-	"agentflow/internal/runtime"
 )
 
 const autoAssignOfflineGrace = 2 * time.Minute
@@ -123,15 +122,12 @@ func (e *Engine) planAutoAssignCandidate(candidate *autoAssignCandidate, wf doma
 	return nil
 }
 
-func (e *Engine) candidateSupportsSandbox(c autoAssignCandidate, driver string) bool {
+func (e *Engine) candidateSupportsSandbox(c autoAssignCandidate, profile domain.SandboxProfile) bool {
 	if c.runner.ID == "" {
-		if driver == domain.SandboxDriverDocker {
-			return !e.executes() || runtime.DockerReady()
-		}
-		return e.executes() && runtime.NativeSandboxAvailable(driver)
+		return e.sandboxes.SupportsPlatformSandbox(profile, e.executes())
 	}
 	// Repository and credential support were checked before native isolation.
-	return driver == domain.SandboxDriverDocker || c.runner.SupportsNativeSandbox(driver)
+	return profile.Driver == domain.SandboxDriverDocker || c.runner.SupportsNativeSandbox(profile.Driver)
 }
 
 func (e *Engine) prepareAutoAssign(ctx context.Context, wf domain.WorkflowDefinition, ec domain.TelemetryContext, repositories []domain.RepositoryContext, input string) ([]autoAssignCandidate, domain.SandboxProfile, string, error) {
@@ -187,7 +183,7 @@ func (e *Engine) prepareAutoAssign(ctx context.Context, wf domain.WorkflowDefini
 		}
 		var err error
 		profile, selection, err = e.selectSOPSandboxForTargets(ctx, wf, selectorEC, repositories, input, "", func(profile domain.SandboxProfile) bool {
-			return slices.ContainsFunc(candidates, func(c autoAssignCandidate) bool { return e.candidateSupportsSandbox(c, profile.Driver) })
+			return slices.ContainsFunc(candidates, func(c autoAssignCandidate) bool { return e.candidateSupportsSandbox(c, profile) })
 		}, nil)
 		if err != nil {
 			return nil, profile, "", err
@@ -196,7 +192,7 @@ func (e *Engine) prepareAutoAssign(ctx context.Context, wf domain.WorkflowDefini
 	platformAdded := false
 	compatible := candidates[:0]
 	for _, candidate := range candidates {
-		if (!candidate.shared && platformAdded) || !e.candidateSupportsSandbox(candidate, profile.Driver) {
+		if (!candidate.shared && platformAdded) || !e.candidateSupportsSandbox(candidate, profile) {
 			continue
 		}
 		compatible = append(compatible, candidate)
@@ -226,6 +222,45 @@ func rankAutoAssignCandidates(candidates []autoAssignCandidate, loads map[string
 		return cmp.Or(cmp.Compare(left.RunningRuns, right.RunningRuns), cmp.Compare(left.OccupiedRuns, right.OccupiedRuns))
 	})
 	return available
+}
+
+func (e *Engine) AutoConversationMachine(projectID string, userID int64, provider string) (domain.ExecutionTarget, error) {
+	ec := domain.TelemetryContext{ProjectID: projectID, ResponsibleUserID: userID}
+	candidates := e.autoAssignCandidates(ec, false)
+	var sharedIDs []string
+	candidates = slices.DeleteFunc(candidates, func(candidate autoAssignCandidate) bool {
+		runner := candidate.runner
+		if runner.ID == "" {
+			return !slices.ContainsFunc(e.repo.ConversationSandboxes(projectID), func(profile domain.SandboxProfile) bool {
+				return e.sandboxes.SupportsPlatformSandbox(profile, e.executes())
+			})
+		}
+		if !runner.SupportsConversationCLI() || !runner.SupportsProvider(provider) {
+			return true
+		}
+		if candidate.shared {
+			// Automatic targets use the model and API credentials chosen before binding.
+			if runner.RuntimeAuthModeForUser(provider, userID) != domain.RuntimeAuthPersonal {
+				return true
+			}
+			sharedIDs = append(sharedIDs, runner.ID)
+		}
+		return false
+	})
+	loads, err := e.repo.LoadSnapshots(sharedIDs)
+	if err != nil {
+		return domain.ExecutionTarget{}, err
+	}
+	available := rankAutoAssignCandidates(candidates, loads, e.repo.PlatformRunnerRunLimit())
+	if len(available) == 0 {
+		return domain.ExecutionTarget{}, fmt.Errorf("没有可执行此对话的在线机器，请检查 CLI、认证方式和可用名额")
+	}
+	chosen := available[0]
+	pool := domain.ExecutionModeCloud
+	if chosen.shared {
+		pool = domain.ExecutionModeRunner
+	}
+	return domain.ExecutionTarget{Pool: pool, RunnerID: chosen.runner.ID}, nil
 }
 
 func (e *Engine) submitAutoAssignRun(run domain.Run, candidates []autoAssignCandidate) error {
@@ -266,7 +301,7 @@ func (e *Engine) autoAssignPlan(run domain.Run, target string, runner *domain.Ru
 	}
 	for _, candidate := range candidates {
 		if candidate.bucket() == target && e.planAutoAssignCandidate(&candidate, wf, ec, run.RepositoryContexts()) == nil &&
-			e.candidateSupportsSandbox(candidate, wf.SandboxSnapshot.Profile.Driver) {
+			e.candidateSupportsSandbox(candidate, wf.SandboxSnapshot.Profile) {
 			return repo.AutoAssignPlan{ExecutionContext: candidate.bind(ec), ExecutorDefaults: candidate.executorDefaults, EventMessage: message}, true
 		}
 	}
@@ -282,7 +317,7 @@ func (e *Engine) checkAutoRunReachable(run domain.Run, now time.Time) string {
 	graceStart := run.QueueEnteredAt
 	for _, candidate := range e.autoAssignCandidates(ec, true) {
 		if e.planAutoAssignCandidate(&candidate, wf, ec, run.RepositoryContexts()) != nil ||
-			!e.candidateSupportsSandbox(candidate, wf.SandboxSnapshot.Profile.Driver) {
+			!e.candidateSupportsSandbox(candidate, wf.SandboxSnapshot.Profile) {
 			continue
 		}
 		if candidate.runner.ID == "" || candidate.runner.Status == domain.RunnerStatusOnline {

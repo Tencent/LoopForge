@@ -1,7 +1,19 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "./api";
 
-// Machine selection belongs to the local draft until its first turn starts.
+function selectionForTarget(target) {
+  if (target?.pool === "runner") return "runner:" + target.runnerId;
+  if (target?.pool === "cluster") return "cluster:" + target.clusterId;
+  return target?.pool || "";
+}
+
+function targetForSelection(selection) {
+  if (selection.startsWith("runner:")) return { pool: "runner", runnerId: selection.slice(7) };
+  if (selection.startsWith("cluster:")) return { pool: "cluster", clusterId: selection.slice(8) };
+  return { pool: selection || "cloud" };
+}
+
+// Execution selection belongs to the local draft until its first turn starts.
 export function useExecutionMachines(userId, busy, readOnly, onError, bindMachine, draftTarget, projectId = "") {
   const [loaded, setLoaded] = useState(null);
   const [chosen, setChosen] = useState(null);
@@ -9,14 +21,16 @@ export function useExecutionMachines(userId, busy, readOnly, onError, bindMachin
   const machinesReady = loaded?.scope === scope;
   const machines = machinesReady ? loaded.machines : [];
   const availableMachines = machinesReady ? loaded.availableMachines : [];
+  const availableClusters = machinesReady ? loaded.availableClusters : [];
   const cloudPool = machinesReady ? loaded.cloudPool : null;
-  let defaultRunnerId = "";
-  if (machinesReady) {
-    if (chosen !== null) defaultRunnerId = chosen;
-    else if (draftTarget?.pool === "runner" && availableMachines.some((row) => row.id === draftTarget.runnerId))
-      defaultRunnerId = draftTarget.runnerId;
-    else if (draftTarget?.pool !== "cloud") defaultRunnerId = loaded.suggestedRunner;
-  }
+  const projectTarget = machinesReady ? loaded.projectTarget : null;
+  const selection = machinesReady
+    ? chosen ?? (selectionForTarget(draftTarget) || (projectId ? "project" : selectionForTarget(projectTarget) || "cloud"))
+    : "";
+  const draftExecutionTarget = targetForSelection(selection);
+  const effectiveTarget = selection === "project" ? projectTarget : draftExecutionTarget;
+  const selectedClusterId = effectiveTarget?.clusterId || "";
+  const defaultRunnerId = effectiveTarget?.runnerId || "";
   const [machineError, setMachineError] = useState("");
   const [machineSaving, setMachineSaving] = useState(false);
   const machineSavingRef = useRef(false);
@@ -29,9 +43,13 @@ export function useExecutionMachines(userId, busy, readOnly, onError, bindMachin
     const projectQuery = projectId ? `projectId=${encodeURIComponent(projectId)}` : "";
     const defaultQuery = projectQuery ? `${projectQuery}&conversation=1` : "conversation=1";
     try {
-      const [rows, selected] = await Promise.all([
+      const [rows, selected, clusters] = await Promise.all([
         api(`/api/runners?${projectQuery || "mine=1"}`),
         api(`/api/runners/default?${defaultQuery}`),
+        api(`/api/execution-clusters${projectQuery ? "?" + projectQuery : ""}`).catch((error) => {
+          if (error.status === 404) return null;
+          throw error;
+        }),
       ]);
       if (request !== revision.current) return;
       const machines = Array.isArray(rows) ? rows : [];
@@ -39,12 +57,17 @@ export function useExecutionMachines(userId, busy, readOnly, onError, bindMachin
         row.supportsConversation !== false && (!projectId || row.canUseInConversation),
       );
       const hasMachine = (id) => availableMachines.some((row) => row.id === id);
-      setChosen((current) => current && !hasMachine(current) ? null : current);
+      let projectTarget = clusters?.projectTarget;
+      if (!projectTarget?.pool || projectTarget.pool === "personal") {
+        const runnerId = projectTarget?.pool === "personal" ? selected.personalRunnerId : selected.runnerId;
+        projectTarget = hasMachine(runnerId) ? { pool: "runner", runnerId } : { pool: "cloud" };
+      }
       setLoaded({
         scope,
         machines,
         availableMachines,
-        suggestedRunner: hasMachine(selected.runnerId) ? selected.runnerId : "",
+        availableClusters: clusters?.available || [],
+        projectTarget,
         cloudPool: selected.cloudPool || null,
       });
       setMachineError("");
@@ -75,14 +98,19 @@ export function useExecutionMachines(userId, busy, readOnly, onError, bindMachin
     };
   }, [refreshMachines, resetMachine]);
 
-  async function selectMachine(runnerId) {
+  async function selectMachine(value) {
+    const target = targetForSelection(value);
+    const available = target.clusterId ? availableClusters.some((row) => row.id === target.clusterId) :
+      target.runnerId ? availableMachines.some((row) => row.id === target.runnerId) :
+      target.pool === "cluster-auto" ? availableClusters.length > 0 :
+      target.pool === "cloud" || (!!projectId && ["project", "machine-auto"].includes(target.pool));
     if (
       !userId ||
       busy ||
       readOnly ||
       !machinesReady ||
       machineSavingRef.current ||
-      (runnerId && !availableMachines.some((row) => row.id === runnerId))
+      !available
     )
       return false;
     machineSavingRef.current = true;
@@ -90,9 +118,9 @@ export function useExecutionMachines(userId, busy, readOnly, onError, bindMachin
     const request = ++revision.current;
     onError("");
     try {
-      const selected = await bindMachine(runnerId);
+      await bindMachine(target.runnerId || "");
       if (request !== revision.current) return false;
-      setChosen(selected.runnerId || "");
+      setChosen(value);
       setMachineError("");
       return true;
     } catch (e) {
@@ -107,6 +135,12 @@ export function useExecutionMachines(userId, busy, readOnly, onError, bindMachin
   return {
     machines,
     availableMachines,
+    availableClusters,
+    selectedClusterId,
+    executionProjectId: projectId,
+    effectiveExecutionPool: effectiveTarget?.pool,
+    draftExecutionTarget,
+    executionSelection: selection,
     defaultRunnerId,
     cloudPool,
     machinesReady,

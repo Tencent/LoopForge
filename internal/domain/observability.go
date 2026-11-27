@@ -25,9 +25,10 @@ type TelemetrySource struct {
 
 // TelemetryContext correlates all three platform layers plus product context.
 type TelemetryContext struct {
-	ExecutionPinned bool   `json:"executionPinned,omitempty"`
-	ProjectID       string `json:"projectId,omitempty"`
-	IssueID         string `json:"issueId,omitempty"`
+	RequestedExecution *ExecutionTarget `json:"-"`
+	ExecutionPinned    bool             `json:"executionPinned,omitempty"`
+	ProjectID          string           `json:"projectId,omitempty"`
+	IssueID            string           `json:"issueId,omitempty"`
 	// TAPDID is the external requirement key; local IssueID may differ across imports.
 	TAPDID            string `json:"tapdId,omitempty"`
 	ResponsibleUserID int64 `json:"responsibleUserId,omitempty"`
@@ -37,8 +38,10 @@ type TelemetryContext struct {
 	// ExecutionMode and ExecutionRunnerID freeze the execution target when a
 	// run starts. Retries reconnect to this target instead of following a
 	// user's later default-runner changes.
-	ExecutionMode     string `json:"executionMode,omitempty"` // cloud, runner
-	ExecutionRunnerID string `json:"executionRunnerId,omitempty"`
+	ExecutionMode        string `json:"executionMode,omitempty"` // cloud, runner
+	ExecutionRunnerID    string `json:"executionRunnerId,omitempty"`
+	ExecutionClusterID   string `json:"executionClusterId,omitempty"`
+	ExecutionClusterName string `json:"executionClusterName,omitempty"`
 	// ExecutionPool records cloud-pool or automatic project assignment.
 	// A project-auto run without an ExecutionMode still awaits assignment.
 	ExecutionPool string `json:"executionPool,omitempty"`

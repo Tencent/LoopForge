@@ -17,6 +17,8 @@ import (
 type dispatchRequest struct {
 	IssueID, WorkflowID, ScheduleJobID, TriggerOrigin string
 	WorkspaceRunID                                    string
+	ExecutionClusterID                                string
+	ExecutionTarget                                   *domain.ExecutionTarget
 	Rerun                                             bool
 	TriggerUserID                                     int64
 	// ChatOrigin is the IM conversation the start was requested in; the
@@ -234,6 +236,8 @@ func dispatchIssue(d *deps, req dispatchRequest) (domain.Task, error) {
 	exec := domain.TelemetryContext{
 		ProjectID: issue.ProjectID, IssueID: issue.ID, TAPDID: tapdID, ResponsibleUserID: runUserID, IssueNumber: issue.Number,
 		TaskID: taskID, ScheduleJobID: strings.TrimSpace(req.ScheduleJobID), WorkspaceRunID: req.WorkspaceRunID,
+		ExecutionClusterID: req.ExecutionClusterID,
+		RequestedExecution: req.ExecutionTarget,
 	}
 	origin := req.ChatOrigin
 	if origin != nil && origin.ProjectID == issue.ProjectID {

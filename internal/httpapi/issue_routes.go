@@ -311,8 +311,10 @@ func (h issuesHandlers) issueSOPs(c *gin.Context, issue domain.Issue) {
 
 func (h issuesHandlers) dispatchIssueRoute(c *gin.Context, issue domain.Issue) {
 	var request struct {
-		Rerun      bool   `json:"rerun"`
-		WorkflowID string `json:"workflowId"`
+		Rerun              bool                    `json:"rerun"`
+		WorkflowID         string                  `json:"workflowId"`
+		ExecutionClusterID string                  `json:"executionClusterId"`
+		ExecutionTarget    *domain.ExecutionTarget `json:"executionTarget"`
 	}
 	if !decodeOptional(c, &request) {
 		return
@@ -323,7 +325,9 @@ func (h issuesHandlers) dispatchIssueRoute(c *gin.Context, issue domain.Issue) {
 	}
 	req := dispatchRequest{
 		IssueID: issue.ID, WorkflowID: request.WorkflowID, Rerun: request.Rerun, TriggerUserID: triggerUserID,
-		WorkspaceRunID: dispatchConversationWorkspace(h.deps, c.Request, triggerUserID, issue.ProjectID),
+		WorkspaceRunID:     dispatchConversationWorkspace(h.deps, c.Request, triggerUserID, issue.ProjectID),
+		ExecutionClusterID: strings.TrimSpace(request.ExecutionClusterID),
+		ExecutionTarget:    request.ExecutionTarget,
 	}
 	if origin, ok := botStartOriginFrom(c.Request.Context()); ok {
 		req.ChatOrigin = &origin

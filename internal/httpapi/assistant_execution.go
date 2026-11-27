@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"fmt"
 
 	"agentflow/internal/domain"
@@ -21,16 +22,66 @@ func draftExecutionTarget(old domain.AssistantSession, requested *domain.Assista
 	return requested
 }
 
-func (h *assistantHandlers) newExecutionTarget(userID int64, projectID string, requested *domain.AssistantExecutionTarget) (*domain.AssistantExecutionTarget, error) {
+func (h *assistantHandlers) newExecutionTarget(ctx context.Context, userID int64, projectID string, requested *domain.AssistantExecutionTarget, provider string, start bool) (*domain.AssistantExecutionTarget, error) {
 	target := domain.AssistantExecutionTarget{Pool: domain.ExecutionModeCloud}
 	if requested != nil {
 		target = *requested
 	}
-	switch target.Pool {
-	case domain.ExecutionModeCloud:
-		if target.RunnerID != "" {
-			return nil, fmt.Errorf("云端机器由平台分配")
+	if !target.ValidSelection() {
+		return nil, fmt.Errorf("请选择一个有效的执行位置")
+	}
+	if requested == nil || target.Pool == domain.ExecutionTargetProject {
+		configured, err := h.repo.ProjectExecutionTarget(ctx, projectID)
+		if err != nil {
+			return nil, err
 		}
+		if !start && (configured.Pool != "" || requested != nil) {
+			return &domain.AssistantExecutionTarget{Pool: domain.ExecutionTargetProject}, nil
+		}
+		if configured.Pool != "" {
+			target = configured
+		} else if requested != nil {
+			runner := h.repo.ResolveConversationRunnerDefaults(userID, projectID).Runner
+			target = domain.AssistantExecutionTarget{Pool: domain.ExecutionModeCloud}
+			if runner.ID != "" {
+				target = domain.AssistantExecutionTarget{Pool: domain.ExecutionModeRunner, RunnerID: runner.ID}
+			}
+		}
+	}
+	if target.Pool == domain.ExecutionTargetPersonal {
+		if !start {
+			return &target, nil
+		}
+		runner := h.repo.PersonalExecutionRunner(userID, projectID, true)
+		target = domain.AssistantExecutionTarget{Pool: domain.ExecutionModeCloud}
+		if runner.ID != "" {
+			target = domain.AssistantExecutionTarget{Pool: domain.ExecutionModeRunner, RunnerID: runner.ID}
+		}
+	}
+	switch target.Pool {
+	case domain.ExecutionTargetClusterAuto:
+		if start {
+			if h.engine == nil {
+				return nil, fmt.Errorf("K8S 集群调度暂不可用")
+			}
+			cluster, err := h.engine.PickExecutionCluster(ctx, projectID)
+			if err != nil {
+				return nil, err
+			}
+			target = domain.AssistantExecutionTarget{Pool: domain.ExecutionTargetCluster, ClusterID: cluster.ID}
+		}
+	case domain.ExecutionTargetMachineAuto:
+		if start {
+			if h.engine == nil {
+				return nil, fmt.Errorf("执行机器调度暂不可用")
+			}
+			var err error
+			target, err = h.engine.AutoConversationMachine(projectID, userID, provider)
+			if err != nil {
+				return nil, err
+			}
+		}
+	case domain.ExecutionModeCloud:
 		if h.engine != nil {
 			var err error
 			target.RunnerID, err = h.engine.ConversationCloudRunner(projectID)
@@ -46,6 +97,10 @@ func (h *assistantHandlers) newExecutionTarget(userID int64, projectID string, r
 		if !runner.SupportsConversationCLI() {
 			return nil, fmt.Errorf("执行机器需升级至 %s 才能执行对话", domain.RunnerVersionConversationCLI)
 		}
+	case domain.ExecutionTargetCluster:
+		if _, err := h.repo.AllowedExecutionCluster(ctx, target.ClusterID, projectID, true); err != nil {
+			return nil, err
+		}
 	default:
 		return nil, fmt.Errorf("无效的执行机器")
 	}
@@ -55,7 +110,7 @@ func (h *assistantHandlers) newExecutionTarget(userID int64, projectID string, r
 func (h *assistantHandlers) bindTurnExecutionTarget(c *gin.Context, req *assistantRequest, userID int64, saved domain.AssistantSession) bool {
 	if saved.ID != "" && saved.ExecutionLocked() {
 		target := saved.Execution()
-		if req.ExecutionTarget != nil && *req.ExecutionTarget != target {
+		if choice := req.ExecutionTarget; choice != nil && *choice != target && !matchesBoundExecutionPolicy(*choice, target) {
 			c.JSON(409, gin.H{"error": repo.ErrAssistantExecutionLocked.Error()})
 			return false
 		}
@@ -67,7 +122,8 @@ func (h *assistantHandlers) bindTurnExecutionTarget(c *gin.Context, req *assista
 		req.ExecutionTarget = &target
 		return true
 	}
-	target, err := h.newExecutionTarget(userID, req.ProjectID, draftExecutionTarget(saved, req.ExecutionTarget))
+	provider, _ := assistantModelEngine(req.Model)
+	target, err := h.newExecutionTarget(c.Request.Context(), userID, req.ProjectID, draftExecutionTarget(saved, req.ExecutionTarget), provider, true)
 	if err != nil {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return false
@@ -76,7 +132,27 @@ func (h *assistantHandlers) bindTurnExecutionTarget(c *gin.Context, req *assista
 	return true
 }
 
+func matchesBoundExecutionPolicy(choice, target domain.ExecutionTarget) bool {
+	if !choice.ValidSelection() {
+		return false
+	}
+	switch choice.Pool {
+	case domain.ExecutionTargetProject:
+		return true
+	case domain.ExecutionTargetClusterAuto:
+		return target.Pool == domain.ExecutionTargetCluster
+	case domain.ExecutionTargetMachineAuto:
+		return target.Pool == domain.ExecutionModeRunner || target.Pool == domain.ExecutionModeCloud
+	default:
+		return false
+	}
+}
+
 func (h *assistantHandlers) canUseBoundExecutionTarget(target domain.AssistantExecutionTarget, projectID string, userID int64, requireShare bool) bool {
+	if target.Pool == domain.ExecutionTargetCluster {
+		_, err := h.repo.AllowedExecutionCluster(context.Background(), target.ClusterID, projectID, false)
+		return err == nil
+	}
 	if target.Pool != domain.ExecutionModeRunner {
 		return true
 	}
@@ -152,8 +228,9 @@ func (h *assistantHandlers) sessionMode(c *gin.Context) {
 			runID = saved.RunID
 		}
 		run, exists := h.repo.RunState(runID)
-		if !exists || run.ExecutionContext.ExecutionRunnerID != saved.Execution().RunnerID {
-			c.JSON(409, gin.H{"error": "工作区与会话不在同一执行机器"})
+		if !exists || run.ExecutionContext.ExecutionRunnerID != saved.Execution().RunnerID ||
+			run.ExecutionContext.ExecutionClusterID != saved.Execution().ClusterID {
+			c.JSON(409, gin.H{"error": "工作区与会话的执行位置不一致"})
 			return
 		}
 		if run.IsPersonalWorkspace() && (user.ID != saved.UserID || !conversationMayBind(saved, run, saved.ProjectID)) {

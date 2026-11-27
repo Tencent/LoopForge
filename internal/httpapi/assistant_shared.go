@@ -89,7 +89,9 @@ func (h *assistantHandlers) runConversation(c *gin.Context) {
 		title = r.WorkflowID
 	}
 	target := domain.AssistantExecutionTarget{Pool: r.ExecutionContext.ExecutionMode, RunnerID: r.ExecutionContext.ExecutionRunnerID}
-	if target.Pool != domain.ExecutionModeRunner {
+	if id := r.ExecutionContext.ExecutionClusterID; id != "" {
+		target = domain.AssistantExecutionTarget{Pool: domain.ExecutionTargetCluster, ClusterID: id}
+	} else if target.Pool != domain.ExecutionModeRunner {
 		target.Pool = domain.ExecutionModeCloud
 	}
 	session, err := h.repo.EnsureRunAssistantSession(r.ID, project, title, user.ID, target)

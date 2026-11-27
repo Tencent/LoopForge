@@ -551,7 +551,7 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 		proc.gitScrubbed = gitScrubbed
 		// The process was stopped because its protocol already emitted a
 		// terminal result. The kill is not a failed turn; the result line is.
-		if runErr != nil && stopAfterTerminalResult.Load() {
+		if runErr != nil && stopAfterTerminalResult.Load() && !errors.Is(runErr, errOpenSandboxConversationSync) {
 			runErr = nil
 			notStarted = false
 		}
@@ -655,7 +655,20 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 	command.AgentCLI.SystemPromptFile = conversationRemap(command.AgentCLI.SystemPromptFile, req.SourceRoot, root)
 	command.AgentCLI.PromptFile = conversationRemap(command.AgentCLI.PromptFile, req.SourceRoot, root)
 	command.WorkingDir = filepath.Join(root, "ws")
-	if spec != nil && spec.Profile.Driver == domain.SandboxDriverSeatbelt {
+	_, openSandbox := unwrapSandbox(sb).(*openSandbox)
+	if openSandbox {
+		command.WorkingDir = sb.Workspace()
+		source := filepath.Join(root, "ws")
+		for i, arg := range command.Argv {
+			command.Argv[i] = conversationRemap(arg, source, command.WorkingDir)
+		}
+		for key, value := range command.environment {
+			command.environment[key] = conversationRemap(value, source, command.WorkingDir)
+		}
+		proc.mu.Lock()
+		proc.workspace = command.WorkingDir
+		proc.mu.Unlock()
+	} else if spec != nil && spec.Profile.Driver == domain.SandboxDriverSeatbelt {
 		// macOS seatbelt has no mount namespace to map <root>/ws onto the run
 		// workspace, so point the sandboxed CLI directly at the run workspace.
 		switch {
@@ -674,17 +687,27 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 	if spec != nil {
 		command.Argv[0] = conversationBinary(command.Provider)
 	}
-	if forward != nil && req.Token != "" {
-		url, closeRelay, err := startConversationRelay(procCtx, req.Token, forward, spec != nil && spec.Profile.Driver == domain.SandboxDriverDocker)
+	var url string
+	relay := forward != nil && req.Token != ""
+	if openSandbox {
+		token := ""
+		if relay {
+			token = req.Token
+		}
+		command.openSandboxConversation = newOpenSandboxConversation(root, token, forward)
+		url = command.openSandboxConversation.gateway()
+	} else if relay {
+		url, proc.closeRelay, err = startConversationRelay(procCtx, req.Token, forward, spec != nil && spec.Profile.Driver == domain.SandboxDriverDocker)
 		if err != nil {
 			return ConversationProcessResult{}, err
 		}
-		proc.closeRelay = closeRelay
+	}
+	if relay {
 		for i, arg := range command.Argv {
-			command.Argv[i] = strings.ReplaceAll(arg, req.Gateway, url)
+			command.Argv[i] = conversationRemap(arg, req.Gateway, url)
 		}
 		for key, value := range command.environment {
-			command.environment[key] = strings.ReplaceAll(value, req.Gateway, url)
+			command.environment[key] = conversationRemap(value, req.Gateway, url)
 		}
 		if err := replaceConversationGateway(root, req.Gateway, url); err != nil {
 			return ConversationProcessResult{}, err
@@ -692,7 +715,7 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 	}
 	// Some CLIs continue after a hook interpreter cannot be spawned. Both
 	// the platform guard and the native approval hook must fail closed.
-	if (spec == nil || spec.Profile.Driver != domain.SandboxDriverDocker) && (command.Provider == AgentCLIKimi || command.Provider == "codex" || command.Provider == AgentCLICursor || command.Provider == AgentCLIAntigravity || command.Provider == AgentCLIZCode) {
+	if !openSandbox && (spec == nil || spec.Profile.Driver != domain.SandboxDriverDocker) && (command.Provider == AgentCLIKimi || command.Provider == "codex" || command.Provider == AgentCLICursor || command.Provider == AgentCLIAntigravity || command.Provider == AgentCLIZCode) {
 		check := exec.CommandContext(procCtx, "python3", "-c", "import json,urllib.request")
 		if err = check.Run(); err != nil {
 			return ConversationProcessResult{}, fmt.Errorf("原生工具审批需要 Python3：%w", err)
@@ -733,6 +756,9 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 	login, supported := runnerLoginSpec(command.Provider)
 	if req.Command.RunnerLogin && !supported {
 		return ConversationProcessResult{}, fmt.Errorf("该 CLI 不支持使用执行机器的本机登录")
+	}
+	if openSandbox && req.Command.RunnerLogin {
+		return ConversationProcessResult{}, fmt.Errorf("OpenSandbox 对话 CLI 使用 API Key")
 	}
 	if supported {
 		cleanupLogin, localEnv, err = prepareConversationRunnerLogin(root, login, req.Command.RunnerLogin, spec != nil && spec.Profile.Driver == domain.SandboxDriverDocker)
