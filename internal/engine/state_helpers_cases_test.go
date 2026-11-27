@@ -14,7 +14,7 @@ import (
 func TestLifecycleResetSettleAndForceTerminate(t *testing.T) {
 	script := domain.WorkflowNode{ID: "script", Type: "script"}
 	agent := domain.WorkflowNode{ID: "agent", Type: "agent"}
-	wf := domain.WorkflowDefinition{ID: "wf", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{script, agent}}
+	wf := domain.WorkflowDefinition{ID: "wf", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{script, agent}}
 	run := domain.Run{ID: "life", Status: "running", WorkflowSnapshot: wf, Nodes: map[string]*domain.NodeRun{
 		"script": {NodeID: "script", Status: "running", Attempt: 2, SessionID: "script-session"},
 		"agent":  {NodeID: "agent", Status: "pending_input", Attempt: 1, SessionID: "agent-session"},
@@ -136,12 +136,12 @@ func TestArtifactFilesValidationCollectionAndRecovery(t *testing.T) {
 		t.Fatalf("directory artifact = %v", err)
 	}
 	bigPath := filepath.Join(workspace, "big")
-	if err := os.WriteFile(bigPath, make([]byte, maxArtifactBytes+1), 0o644); err != nil {
+	if err := os.WriteFile(bigPath, make([]byte, domain.MaxSOPArtifactBytes+1), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	bigNode := node
 	bigNode.ArtifactOutputs = []domain.ArtifactContract{{Name: "big", Path: "big", Required: true}}
-	if err := validateArtifactContracts(workspace, run, bigNode); err == nil || !strings.Contains(err.Error(), "exceeds") {
+	if err := validateArtifactContracts(workspace, run, bigNode); !errors.Is(err, errOutputTooLarge) {
 		t.Fatalf("big artifact = %v", err)
 	}
 

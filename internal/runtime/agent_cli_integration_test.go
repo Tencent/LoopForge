@@ -88,7 +88,7 @@ func probeMCPServer(t *testing.T) (*httptest.Server, func() int) {
 	}
 }
 
-// Opt-in: runs the installed agent CLIs through the SOP node path with real
+// Opt-in: runs the installed agent CLIs through the LOOP node path with real
 // keys. Per kind: AGENTFLOW_TEST_<KIND>_KEY, _BASE_URL, _PROTOCOL, _MODEL.
 func TestAgentCLINodeInvocation(t *testing.T) {
 	if os.Getenv("AGENTFLOW_TEST_AGENT_CLIS") != "1" {

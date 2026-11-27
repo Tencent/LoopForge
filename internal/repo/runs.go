@@ -6,10 +6,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"sort"
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"agentflow/internal/domain"
 	"agentflow/internal/observability"
@@ -167,12 +169,15 @@ func (r *RunsRepo) runSummariesFor(filter domain.AnalyticsFilter, issueID string
 	// 与 master 的 runSummaryHeaderColumns 一致：列表携带控制位与
 	// human_context、多仓 repositories，且 input 在 SQL 层截断到 500 字符
 	//（master 用 LEFT(input, 500)，使 handler 的 clip 不再追加省略号）。
-	// List rows only need the frozen SOP identity and whether it is a free
-	// collaboration task (待我确认 and status badges depend on it). The graph,
-	// scripts, and commands stay in the snapshot column and are not transferred.
-	snapshotExpr := "json_object('id', json_extract(snapshot, '$.id'), 'name', json_extract(snapshot, '$.name'), 'collaborationMode', json_extract(snapshot, '$.collaborationMode')) AS snapshot"
+	// Keep the frozen LOOP identity, collaboration mode, and publication metadata
+	// used in analytics. The graph, scripts, and commands stay in the database.
+	snapshotExpr := `json_object('id', json_extract(snapshot, '$.id'), 'name', json_extract(snapshot, '$.name'),
+		'collaborationMode', json_extract(snapshot, '$.collaborationMode'), 'status', json_extract(snapshot, '$.status'),
+		'version', json_extract(snapshot, '$.version'), 'publishedRevision', json_extract(snapshot, '$.publishedRevision')) AS snapshot`
 	if r.isMySQL() {
-		snapshotExpr = "JSON_OBJECT('id', JSON_UNQUOTE(JSON_EXTRACT(snapshot, '$.id')), 'name', JSON_UNQUOTE(JSON_EXTRACT(snapshot, '$.name')), 'collaborationMode', JSON_UNQUOTE(JSON_EXTRACT(snapshot, '$.collaborationMode'))) AS snapshot"
+		snapshotExpr = `JSON_OBJECT('id', JSON_UNQUOTE(JSON_EXTRACT(snapshot, '$.id')), 'name', JSON_UNQUOTE(JSON_EXTRACT(snapshot, '$.name')),
+			'collaborationMode', JSON_UNQUOTE(JSON_EXTRACT(snapshot, '$.collaborationMode')), 'status', JSON_UNQUOTE(JSON_EXTRACT(snapshot, '$.status')),
+			'version', JSON_EXTRACT(snapshot, '$.version'), 'publishedRevision', JSON_EXTRACT(snapshot, '$.publishedRevision')) AS snapshot`
 	}
 	if err := q.Select("id", "kind", "workflow_id", "status", "admission_state", "queue_entered_at", "quota_exempt", "cancel_requested", "pause_requested", "human_context", "revision", "SUBSTR(input, 1, 500) AS input", "repository", "repositories", snapshotExpr, "execution_context", "usage_json", "tool_calls", "telemetry_sequence", "log_sequence", "owner_instance_id", "lease_until", "execution_generation", "workspace_host", "workspace_root", "workspace_cleaned_at", "created_at", "updated_at").
 		Order("created_at DESC, id DESC").
@@ -182,6 +187,9 @@ func (r *RunsRepo) runSummariesFor(filter domain.AnalyticsFilter, issueID string
 	candidates := make([]domain.Run, 0, len(rows))
 	for _, row := range rows {
 		run := runFromRow(row)
+		if run.ExecutionContext.IsEvolutionReplay() && !filter.IncludeEvolutionReplays {
+			continue
+		}
 		if issueID != "" && run.ExecutionContext.IssueID != issueID {
 			continue
 		}
@@ -309,11 +317,12 @@ func (r *RunsRepo) Run(id string) (domain.Run, bool) {
 	return run, true
 }
 
-// RunHeader reads identity and execution scope without loading the snapshot,
+// RunHeader reads identity, execution scope and workspace binding without loading the snapshot,
 // nodes, events or artifacts. A missing run is returned as an empty header.
 func (r *RunsRepo) RunHeader(id string) (domain.Run, error) {
 	var row runRow
-	err := r.DB.Select("id", "kind", "workflow_id", "execution_context").Where("id = ?", id).Take(&row).Error
+	err := r.DB.Select("id", "kind", "workflow_id", "execution_context", "workspace_host", "workspace_root", "workspace_cleaned_at").
+		Where("id = ?", id).Take(&row).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return domain.Run{}, nil
 	}
@@ -332,22 +341,43 @@ func (r *RunsRepo) RunWorkflowProjectID(id string) (string, error) {
 	return strings.TrimSpace(row.ProjectID), err
 }
 
+// RunWithNodes reads only the run header and node state for workspace checks.
+func (r *RunsRepo) RunWithNodes(id string) (domain.Run, error) {
+	var row runRow
+	err := r.DB.Where("id = ?", id).Take(&row).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return domain.Run{}, nil
+	}
+	if err != nil {
+		return domain.Run{}, err
+	}
+	run := runFromRow(row)
+	err = r.loadRunNodes(&run)
+	return run, err
+}
+
 // RunState returns the durable aggregate needed by the execution engine.
 // Worker logs are append-only and are never read by engine decisions, so
 // loading the entire log history on every state transition only makes long
 // runs progressively slower.
 func (r *RunsRepo) RunState(id string) (domain.Run, bool) {
-	row, ok := takeRun(r.DB, id)
-	if !ok {
-		return domain.Run{}, false
-	}
-	run := runFromRow(row)
-	if err := r.loadRunNodes(&run); err != nil {
+	return r.runState(id, true)
+}
+
+// RunProgress is the execution state without artifact bodies. Polling and
+// observation writes use it, while consumers of files can still load them.
+func (r *RunsRepo) RunProgress(id string) (domain.Run, bool) {
+	return r.runState(id, false)
+}
+
+func (r *RunsRepo) runState(id string, withArtifactContents bool) (domain.Run, bool) {
+	run, err := r.RunWithNodes(id)
+	if err != nil || run.ID == "" {
 		return domain.Run{}, false
 	}
 	// Engine decisions only need nodes, events and artifacts. Loading thousands
 	// of historical telemetry rows on every lease/heartbeat-adjacent state read
-	// made long SOP runs miss their 30s lease: finishAt then refused to persist
+	// made long LOOP runs miss their 30s lease: finishAt then refused to persist
 	// succeeded, and ResumeInterruptedRuns parked a completed graph forever.
 	// Live telemetry still lands through the observation queue (sequence comes
 	// from the header); the paginated API keeps the history.
@@ -361,13 +391,13 @@ func (r *RunsRepo) RunState(id string) (domain.Run, bool) {
 			run.Events = append(run.Events, ev)
 		}
 	}
-	var artifactRows []runArtifactRow
-	if err := r.DB.Where("run_id = ?", run.ID).Find(&artifactRows).Error; err != nil {
-		return domain.Run{}, false
+	if withArtifactContents {
+		err = r.loadArtifactContents(&run)
+	} else {
+		err = r.loadArtifactMeta(&run)
 	}
-	for _, row := range artifactRows {
-		art := artifactFromRow(row, true)
-		run.Artifacts = append(run.Artifacts, art)
+	if err != nil {
+		return domain.Run{}, false
 	}
 	return run, true
 }
@@ -402,8 +432,35 @@ func (r *RunsRepo) RunView(id string) (domain.Run, bool) {
 				run.Events = append(run.Events, event)
 			}
 		}
+	} else {
+		if run.WorkflowSnapshot.AutoSelectSandbox {
+			if err := r.loadRunViewEvent(&run, domain.RunEventSandboxSelected, "seq"); err != nil {
+				return domain.Run{}, false
+			}
+		}
+		if run.FailedBeforeAutoAssignment() {
+			if err := r.loadRunViewEvent(&run, domain.RunEventFailed, "seq DESC"); err != nil {
+				return domain.Run{}, false
+			}
+		}
 	}
 	return run, true
+}
+
+func (r *RunsRepo) loadRunViewEvent(run *domain.Run, kind, order string) error {
+	var row runEventRow
+	result := r.DB.Select("payload").Where("run_id = ? AND type = ?", run.ID, kind).
+		Order(order).Limit(1).Find(&row)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected > 0 {
+		var event domain.RunEvent
+		if json.Unmarshal(row.Payload, &event) == nil {
+			run.Events = append(run.Events, event)
+		}
+	}
+	return nil
 }
 
 // RunStreamView matches the SSE contract, which delivers only the latest 80
@@ -459,9 +516,6 @@ func (r *RunsRepo) RunRevision(id string) (int, bool) {
 	return row.Revision, err == nil
 }
 
-// LiveSandboxRunIDs returns every run whose workspace has not been cleaned.
-// Failed and active runs remain live; successful and cancelled workspaces are
-// removed explicitly before being excluded here.
 // SupersededIssueRunIDs lists settled runs of an issue that a newer dispatch
 // has replaced. A failed run keeps its workspace and container only so it can
 // be retried; starting the issue over withdraws that reason, and nothing else
@@ -486,9 +540,12 @@ func (r *RunsRepo) SupersededIssueRunIDs(issueID, keepRunID string) []string {
 	return ids
 }
 
+// LiveSandboxRunIDs protects existing workspaces and those being restored
+// before the restoration can clear the cleanup marker.
 func (r *RunsRepo) LiveSandboxRunIDs() []string {
 	var ids []string
-	if err := r.DB.Model(&runRow{}).Select("id").Where("workspace_cleaned_at IS NULL").Pluck("id", &ids).Error; err != nil {
+	leased := r.DB.Model(&WorkspaceCheckpoint{}).Select("run_id").Where("lease_until > ?", time.Now().UTC())
+	if err := r.DB.Model(&runRow{}).Select("id").Where("workspace_cleaned_at IS NULL OR id IN (?)", leased).Pluck("id", &ids).Error; err != nil {
 		return nil
 	}
 	return ids
@@ -545,6 +602,39 @@ func (r *RunsRepo) TerminalWorkspaceCleanupRuns() []domain.Run {
 	return result
 }
 
+func isTopLevelSOP(run domain.Run) bool {
+	return run.ExecutionContext.ParentRunID == "" && !run.IsWorkspace() && run.WorkflowID != domain.FreeCollaborationWorkflowID
+}
+
+// IdleReclaimableSOPRuns lists stopped LOOPs old enough for checkpoint cleanup.
+// The engine checks workspace use and active descendants before saving.
+func (r *RunsRepo) IdleReclaimableSOPRuns(idleBefore time.Time) []domain.Run {
+	return r.topLevelSOPCleanupRuns(r.DB.Where("status IN ? AND workspace_cleaned_at IS NULL AND updated_at <= ? AND (workspace_cleanup_not_before IS NULL OR workspace_cleanup_not_before <= ?)",
+		[]string{"failed", "waiting"}, idleBefore, time.Now().UTC()))
+}
+
+// CleanedSOPRunsHoldingAdmission finds cleanup claims still holding a slot.
+func (r *RunsRepo) CleanedSOPRunsHoldingAdmission() []domain.Run {
+	return r.topLevelSOPCleanupRuns(r.DB.Where("status NOT IN ? AND workspace_cleaned_at IS NOT NULL AND (admission_state IS NULL OR admission_state NOT IN ?)",
+		[]string{"running", "queued"}, []string{"released", "unstarted"}))
+}
+
+func (r *RunsRepo) topLevelSOPCleanupRuns(query *gorm.DB) []domain.Run {
+	var rows []runRow
+	if err := query.Where("(kind IS NULL OR kind <> ?) AND (workflow_id IS NULL OR workflow_id <> ?) AND (quota_parent_run_id IS NULL OR quota_parent_run_id = '')",
+		domain.RunKindWorkspace, domain.FreeCollaborationWorkflowID).Find(&rows).Error; err != nil {
+		return nil
+	}
+	var runs []domain.Run
+	for _, row := range rows {
+		run := runFromRow(row)
+		if isTopLevelSOP(run) { // Legacy rows may carry the parent only in execution_context.
+			runs = append(runs, run)
+		}
+	}
+	return runs
+}
+
 // RunsAwaitingBuiltPreview returns runs whose static-site build already
 // succeeded and whose workspace is still on disk, but which have no preview
 // row yet. The run may still be waiting on a later gate.
@@ -578,6 +668,14 @@ func (r *RunsRepo) ClaimRunWorkspaceCleanup(runID string, now time.Time) (bool, 
 // sweep when cleanup could not be safely scheduled or completed.
 func (r *RunsRepo) ResetRunWorkspaceCleanup(runID string) error {
 	return r.DB.Model(&runRow{}).Where("id = ?", runID).Update("workspace_cleaned_at", nil).Error
+}
+
+// ResetSettledRunWorkspaceCleanup retries a failed Runner cleanup without
+// clearing the marker of an activation or restoration already in progress.
+func (r *RunsRepo) ResetSettledRunWorkspaceCleanup(runID string, cleanedAt, now time.Time) error {
+	lease := r.DB.Model(&WorkspaceCheckpoint{}).Select("1").Where("run_id = ? AND lease_until > ?", runID, now)
+	return r.DB.Model(&runRow{}).Where("id = ? AND status NOT IN ? AND workspace_cleaned_at = ?",
+		runID, []string{"running", "queued"}, cleanedAt).Where("NOT EXISTS (?)", lease).Update("workspace_cleaned_at", nil).Error
 }
 
 func (r *RunsRepo) loadRunNodes(run *domain.Run) error {
@@ -712,19 +810,12 @@ func (r *RunsRepo) loadRunHeavy(run *domain.Run) error {
 			run.Logs = append(run.Logs, rec)
 		}
 	}
-	var artifactRows []runArtifactRow
-	if err := r.DB.Where("run_id = ?", run.ID).Find(&artifactRows).Error; err != nil {
-		return err
-	}
-	for _, row := range artifactRows {
-		run.Artifacts = append(run.Artifacts, artifactFromRow(row, true))
-	}
-	return nil
+	return r.loadArtifactContents(run)
 }
 
 func (r *RunsRepo) loadArtifactMeta(run *domain.Run) error {
 	var rows []runArtifactRow
-	if err := r.DB.Select("id", "run_id", "node_id", "attempt", "name", "path", "media_type", "size_bytes", "sha256", "created_at").
+	if err := r.DB.Select("id", "run_id", "node_id", "attempt", "name", "path", "media_type", "size_bytes", "sha256", "repository_dir", "blob_id", "created_at").
 		Where("run_id = ?", run.ID).Find(&rows).Error; err != nil {
 		return err
 	}
@@ -732,6 +823,21 @@ func (r *RunsRepo) loadArtifactMeta(run *domain.Run) error {
 		run.Artifacts = append(run.Artifacts, artifactFromRow(row, false))
 	}
 	run.ArtifactCount = len(run.Artifacts)
+	return nil
+}
+
+func (r *RunsRepo) loadArtifactContents(run *domain.Run) error {
+	var rows []runArtifactRow
+	if err := r.DB.Where("run_id = ?", run.ID).Find(&rows).Error; err != nil {
+		return err
+	}
+	for _, row := range rows {
+		art := artifactFromRow(row, true)
+		if err := r.hydrateArtifact(&art); err != nil {
+			return fmt.Errorf("read artifact %s: %w", art.ID, err)
+		}
+		run.Artifacts = append(run.Artifacts, art)
+	}
 	return nil
 }
 
@@ -822,7 +928,7 @@ func artifactFromRow(row runArtifactRow, withContent bool) domain.Artifact {
 	art := domain.Artifact{
 		ID: row.ID, RunID: row.RunID, NodeID: row.NodeID, Attempt: row.Attempt,
 		Name: row.Name, Path: row.Path, MediaType: row.MediaType, Size: row.SizeBytes,
-		SHA256: row.SHA256, RepositoryDir: row.RepositoryDir,
+		SHA256: row.SHA256, RepositoryDir: row.RepositoryDir, BlobID: row.BlobID,
 	}
 	if withContent {
 		art.Content = row.Content
@@ -838,7 +944,44 @@ func (r *RunsRepo) Artifact(runID, artifactID string) (domain.Artifact, bool) {
 	if err := r.DB.Where("run_id = ? AND id = ?", runID, artifactID).Take(&row).Error; err != nil {
 		return domain.Artifact{}, false
 	}
-	return artifactFromRow(row, true), true
+	art := artifactFromRow(row, true)
+	if err := r.hydrateArtifact(&art); err != nil {
+		return domain.Artifact{}, false
+	}
+	return art, true
+}
+
+func (r *RunsRepo) hydrateArtifact(art *domain.Artifact) error {
+	if art.BlobID == "" {
+		return nil
+	}
+	_, body, err := r.OpenArtifactBlob(context.Background(), art.RunID, art.BlobID)
+	if err != nil {
+		return err
+	}
+	defer body.Close()
+	data, err := io.ReadAll(body)
+	if err != nil {
+		return err
+	}
+	// A hydrated snapshot can be copied into another run and archived there.
+	art.Content, art.BlobID = string(data), ""
+	return nil
+}
+
+func (r *RunsRepo) OpenArtifactContent(ctx context.Context, runID, artifactID string) (domain.Artifact, io.ReadCloser, error) {
+	var row runArtifactRow
+	if err := r.DB.WithContext(ctx).Where("run_id = ? AND id = ?", runID, artifactID).Take(&row).Error; err != nil {
+		return domain.Artifact{}, nil, err
+	}
+	art := artifactFromRow(row, false)
+	if art.BlobID != "" {
+		blob, body, err := r.OpenArtifactBlob(ctx, runID, art.BlobID)
+		art.Size = blob.Size
+		return art, body, err
+	}
+	art.Size = int64(len(row.Content))
+	return art, io.NopCloser(strings.NewReader(row.Content)), nil
 }
 
 // FilterRunsByProject keeps runs stamped with projectID, or legacy runs whose
@@ -942,7 +1085,7 @@ func (r *RunsRepo) PutRun(v domain.Run) error {
 // header and its append-only children go in a single transaction.
 //
 // Most writes keep or release a slot and take no admission lock. A write that
-// turns out to claim one (new running run, restart of a succeeded/unstarted
+// turns out to claim one (new running run, restart of a released/unstarted
 // run) is rolled back and retried with its bucket locked first, so a bucket
 // lock is never awaited while a run row is held.
 func (r *RunsRepo) writeRun(run domain.Run, expectedRevision ...int) error {
@@ -959,8 +1102,13 @@ func (r *RunsRepo) writeRun(run domain.Run, expectedRevision ...int) error {
 }
 
 func (r *RunsRepo) writeRunOnce(run domain.Run, lockKey string, expectedRevision ...int) error {
+	workspaceAdmission := run.UsesConversationWorkspace() && run.ExecutionContext.ParentRunID == "" &&
+		(run.Status == "running" || run.Status == "queued")
 	var opts []*sql.TxOptions
-	if lockKey != "" {
+	// Under MySQL REPEATABLE READ, a missing run ID takes a gap lock.
+	// A dispatch waiting on the workspace owner could then block the holder's
+	// insert. READ COMMITTED lets the owner row serialize these dispatches.
+	if lockKey != "" || workspaceAdmission {
 		opts = r.admissionTxOptions()
 	}
 	return r.DB.Transaction(func(tx *gorm.DB) error {
@@ -993,6 +1141,11 @@ func (r *RunsRepo) writeRunOnce(run domain.Run, lockKey string, expectedRevision
 		} else if err != gorm.ErrRecordNotFound {
 			return err
 		}
+		if workspaceAdmission && current.Status != "running" && current.Status != "queued" {
+			if err := r.checkConversationWorkspaceForSOP(tx, run, current.ID == ""); err != nil {
+				return err
+			}
+		}
 		if len(expectedRevision) > 0 {
 			if err != nil {
 				return ErrRunDecisionStale
@@ -1011,94 +1164,140 @@ func (r *RunsRepo) writeRunOnce(run domain.Run, lockKey string, expectedRevision
 				return err
 			}
 		}
-		var cur struct {
-			logs      int64
-			telemetry int64
-			events    int64
-		}
+		return r.persistRun(tx, run, current)
+	}, opts...)
+}
+
+func (r *RunsRepo) persistRun(tx *gorm.DB, run domain.Run, current runRow) error {
+	var cur struct {
+		logs      int64
+		telemetry int64
+		events    int64
+	}
+	if current.ID != "" {
 		if err := tx.Raw(`SELECT
-			COALESCE((SELECT MAX(seq) FROM run_logs WHERE run_id=?), 0) AS logs,
-			COALESCE((SELECT MAX(seq) FROM run_telemetry WHERE run_id=?), 0) AS telemetry,
-			COALESCE((SELECT MAX(seq) FROM run_events WHERE run_id=?), -1) + 1 AS events`,
+		COALESCE((SELECT MAX(seq) FROM run_logs WHERE run_id=?), 0) AS logs,
+		COALESCE((SELECT MAX(seq) FROM run_telemetry WHERE run_id=?), 0) AS telemetry,
+		COALESCE((SELECT MAX(seq) FROM run_events WHERE run_id=?), -1) + 1 AS events`,
 			run.ID, run.ID, run.ID).Scan(&cur).Error; err != nil {
 			return err
 		}
-		// On conflict only the run header is refreshed. Lease fields
-		// (owner_instance_id, lease_until, execution_generation) and workspace
-		// bindings are owned by the lease operations and must survive PutRun.
-		// The control flags (cancel_requested/pause_requested) are likewise
-		// excluded: they are written exclusively via RequestRunControl/
-		// ClearRunControl, so a worker PutRun can never clobber an API-side
-		// cancel/pause request (master's writeRun has the same omission).
-		if err := upsertColumns(tx, "runs", runRowValues(run), []string{
+	}
+	// On conflict only the run header is refreshed. Lease fields
+	// (owner_instance_id, lease_until, execution_generation) and workspace
+	// bindings are owned by the lease operations and must survive PutRun.
+	// The control flags (cancel_requested/pause_requested) are likewise
+	// excluded: they are written exclusively via RequestRunControl/
+	// ClearRunControl, so a worker PutRun can never clobber an API-side
+	// cancel/pause request (master's writeRun has the same omission).
+	var err error
+	if current.ID == "" {
+		err = tx.Table("runs").Create(runRowValues(run)).Error
+	} else {
+		err = upsertColumns(tx, "runs", runRowValues(run), []string{
 			"kind", "workflow_id", "status", "revision", "input", "human_context", "sandbox_id", "repository", "repositories", "snapshot",
 			"execution_context", "usage_json", "tool_calls", "telemetry_sequence",
 			"log_sequence", "workspace_cleaned_at", "updated_at", "admission_state", "queue_entered_at", "quota_project_id", "quota_parent_run_id", "quota_exempt", "quota_bucket",
+		})
+	}
+	if err != nil {
+		return fmt.Errorf("write run %s: %w", run.ID, err)
+	}
+	// Nodes: upsert every node of the run.
+	for id, node := range run.Nodes {
+		if node == nil {
+			continue
+		}
+		if err := upsert(tx, "run_nodes", map[string]any{
+			"run_id": run.ID, "node_id": id, "status": node.Status, "attempt": node.Attempt, "payload": mustJSON(node),
 		}); err != nil {
-			return fmt.Errorf("runs upsert %s: %w", run.ID, err)
+			return err
 		}
-		// Nodes: upsert every node of the run.
-		for id, node := range run.Nodes {
-			if node == nil {
-				continue
+	}
+	// Events: append-only by index.
+	if int64(len(run.Events)) > cur.events {
+		for i := cur.events; i < int64(len(run.Events)); i++ {
+			ev := run.Events[i]
+			if err := r.notifications.enqueueRunNotifications(tx, run, ev, i); err != nil {
+				return err
 			}
-			if err := upsert(tx, "run_nodes", map[string]any{
-				"run_id": run.ID, "node_id": id, "status": node.Status, "attempt": node.Attempt, "payload": mustJSON(node),
+			if err := upsert(tx, "run_events", map[string]any{
+				"run_id": run.ID, "seq": i, "event_id": ev.ID, "node_id": ev.NodeID,
+				"type": ev.Type, "message": ev.Message, "payload": mustJSON(ev), "ts": timePtr(ev.Timestamp),
 			}); err != nil {
 				return err
 			}
 		}
-		// Events: append-only by index.
-		if int64(len(run.Events)) > cur.events {
-			for i := cur.events; i < int64(len(run.Events)); i++ {
-				ev := run.Events[i]
-				if err := r.notifications.enqueueRunNotifications(tx, run, ev, i); err != nil {
-					return err
-				}
-				if err := upsert(tx, "run_events", map[string]any{
-					"run_id": run.ID, "seq": i, "event_id": ev.ID, "node_id": ev.NodeID,
-					"type": ev.Type, "message": ev.Message, "payload": mustJSON(ev), "ts": timePtr(ev.Timestamp),
-				}); err != nil {
-					return err
-				}
-			}
+	}
+	if current.ID != "" && current.Status != "queued" && run.Status == "queued" && run.AdmissionState == "queued" {
+		if err := appendAdmissionRunEvent(tx, run.ID, "run.queued", queuedMessage(runAdmissionBucketKey(run)), run.QueueEnteredAt); err != nil {
+			return err
 		}
-		for _, ev := range run.Telemetry {
-			if ev.Sequence == 0 || ev.Sequence <= cur.telemetry {
-				continue
-			}
-			if err := upsert(tx, "run_telemetry", map[string]any{
-				"run_id": run.ID, "seq": ev.Sequence, "payload": mustJSON(ev),
-			}); err != nil {
-				return err
-			}
+	}
+	for _, ev := range run.Telemetry {
+		if ev.Sequence == 0 || ev.Sequence <= cur.telemetry {
+			continue
 		}
-		for _, rec := range run.Logs {
-			if rec.Sequence == 0 || rec.Sequence <= cur.logs {
-				continue
-			}
-			if err := upsert(tx, "run_logs", map[string]any{
-				"run_id": run.ID, "seq": rec.Sequence, "payload": mustJSON(rec),
-			}); err != nil {
-				return err
-			}
+		if err := upsert(tx, "run_telemetry", map[string]any{
+			"run_id": run.ID, "seq": ev.Sequence, "payload": mustJSON(ev),
+		}); err != nil {
+			return err
 		}
-		for _, art := range run.Artifacts {
-			id := art.ID
-			if id == "" {
-				id = fmt.Sprintf("%s-%s-%d-%s", run.ID, art.NodeID, art.Attempt, art.Name)
-			}
-			if err := upsert(tx, "run_artifacts", map[string]any{
-				"id": id, "run_id": run.ID, "node_id": art.NodeID, "attempt": art.Attempt,
-				"name": art.Name, "path": art.Path, "media_type": art.MediaType,
-				"size_bytes": art.Size, "sha256": art.SHA256, "repository_dir": art.RepositoryDir,
-				"content": art.Content, "created_at": timePtr(art.CreatedAt),
-			}); err != nil {
-				return err
-			}
+	}
+	for _, rec := range run.Logs {
+		if rec.Sequence == 0 || rec.Sequence <= cur.logs {
+			continue
 		}
+		if err := upsert(tx, "run_logs", map[string]any{
+			"run_id": run.ID, "seq": rec.Sequence, "payload": mustJSON(rec),
+		}); err != nil {
+			return err
+		}
+	}
+	return writeRunArtifacts(tx, run)
+}
+
+func writeRunArtifacts(tx *gorm.DB, run domain.Run) error {
+	if len(run.Artifacts) == 0 {
 		return nil
-	}, opts...)
+	}
+	var ids []string
+	if err := tx.Table("run_artifacts").Where("run_id = ?", run.ID).Pluck("id", &ids).Error; err != nil {
+		return err
+	}
+	stored := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		stored[id] = true
+	}
+	for _, art := range run.Artifacts {
+		id := art.ID
+		if id == "" {
+			id = fmt.Sprintf("%s-%s-%d-%s", run.ID, art.NodeID, art.Attempt, art.Name)
+		}
+		if stored[id] {
+			continue
+		}
+		if art.BlobID == "" && (len(art.Content) > domain.MaxInlineRunnerArtifactBytes || !utf8.ValidString(art.Content)) {
+			blob, err := saveArtifactBlob(tx, run.ID, id, strings.NewReader(art.Content))
+			if err != nil {
+				return fmt.Errorf("save artifact %s: %w", art.Name, err)
+			}
+			art.BlobID, art.Size, art.SHA256 = blob.ID, blob.Size, blob.SHA256
+		}
+		if art.BlobID != "" {
+			art.Content = ""
+		}
+		if err := upsert(tx, "run_artifacts", map[string]any{
+			"id": id, "run_id": run.ID, "node_id": art.NodeID, "attempt": art.Attempt,
+			"name": art.Name, "path": art.Path, "media_type": art.MediaType,
+			"size_bytes": art.Size, "sha256": art.SHA256, "repository_dir": art.RepositoryDir,
+			"content": art.Content, "blob_id": art.BlobID, "created_at": timePtr(art.CreatedAt),
+		}); err != nil {
+			return err
+		}
+		stored[id] = true
+	}
+	return nil
 }
 
 // DeleteRun removes a settled run together with all of its children (nodes,
@@ -1115,7 +1314,16 @@ func (r *RunsRepo) DeleteRun(id string) error {
 		if row.Status == "running" || row.Status == "waiting" || row.Status == "queued" {
 			return fmt.Errorf("run %s is %s: cancel it before deleting", id, row.Status)
 		}
-		for _, table := range []string{"run_nodes", "run_events", "run_telemetry", "run_logs", "run_artifacts", "run_evals", "run_workspace_checkpoint_chunks", "run_workspace_checkpoints"} {
+		if row.Kind == domain.RunKindWorkspace {
+			inUse, err := workspaceSOPRunExists(r.workspaceSOPRuns(tx, id, nil))
+			if err != nil {
+				return err
+			}
+			if inUse {
+				return fmt.Errorf("工作区仍有关联的 LOOP 运行：%w", ErrWorkspaceInUse)
+			}
+		}
+		for _, table := range []string{"run_nodes", "run_events", "run_telemetry", "run_logs", "run_artifacts", "run_artifact_blob_chunks", "run_artifact_blobs", "run_evals", "run_workspace_checkpoint_chunks", "run_workspace_checkpoints"} {
 			if err := tx.Table(table).Where("run_id = ?", id).Delete(nil).Error; err != nil {
 				return fmt.Errorf("runs delete %s: %w", id, err)
 			}
@@ -1455,7 +1663,7 @@ func runDuration(run domain.Run, now time.Time) int64 {
 	return end.Sub(run.CreatedAt).Milliseconds()
 }
 
-// runExecutionDuration 统计 SOP 节点真实执行耗时之和：Σ(节点 FinishedAt − StartedAt)。
+// runExecutionDuration 统计 LOOP 节点真实执行耗时之和：Σ(节点 FinishedAt − StartedAt)。
 // 与 runDuration（Run 创建 → 最后结束的墙钟差）不同，它不含审批、排队、恢复等待，
 // 因此执行耗时 ≤ 端到端墙钟。起止时间缺失或倒挂的节点跳过。
 // 纯聚合层只读计算，不触碰执行链路；既有的 runDuration/runEndedAt 语义保持不变。

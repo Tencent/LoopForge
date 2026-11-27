@@ -140,7 +140,6 @@ func TestRunnerErrorAndRegistrationBranches(t *testing.T) {
 		{http.MethodDelete, "/api/runners/" + foreignID, nil, 403},
 		{http.MethodPut, "/api/runners/" + foreignID + "/run-limit", map[string]any{"runLimit": 2}, 403},
 		{http.MethodPut, "/api/runners/" + runnerID + "/run-limit", map[string]any{"runLimit": -1}, 400},
-		{http.MethodPut, "/api/runners/" + runnerID + "/run-limit", map[string]any{"runLimit": 100000}, 400},
 		{http.MethodPut, "/api/runners/default", map[string]any{"runnerId": foreignID}, 403},
 		{http.MethodPut, "/api/runners/runtimes", map[string]any{"runnerId": runnerID, "provider": "mock", "status": "nonsense"}, 400},
 		{http.MethodPut, "/api/runners/runtimes", map[string]any{"runnerId": foreignID, "provider": "mock", "status": "online"}, 403},

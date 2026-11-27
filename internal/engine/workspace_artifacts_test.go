@@ -48,7 +48,7 @@ func TestLegacyConversationRefillsOnlyMissingLatestArtifacts(t *testing.T) {
 	}
 	got, _ := s.RunState(r.ID)
 	if got.Status != "waiting" || !got.PauseRequested {
-		t.Fatal("reconstruction changed SOP state")
+		t.Fatal("reconstruction changed LOOP state")
 	}
 	if _, err := e.PrepareConversationWorkspace(context.Background(), r.ID, token); err != nil {
 		t.Fatal(err)
@@ -179,7 +179,7 @@ func TestLegacyArchivedFilesRefillOnOwningWorker(t *testing.T) {
 func TestLegacyNodeReplayCanReadOriginalReportPaths(t *testing.T) {
 	t.Parallel()
 	e, s := newRecoveryEngine(t)
-	wf := domain.WorkflowDefinition{ID: "legacy-original-paths", Name: "legacy original paths", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{
+	wf := domain.WorkflowDefinition{ID: "legacy-original-paths", Name: "legacy original paths", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{
 		{ID: "design", Type: "command", Command: "printf archived-design > design.md", ArtifactOutputs: []domain.ArtifactContract{{Name: "design", Path: "design.md", Required: true}}, MaxAttempts: 1},
 		{ID: "implement", Type: "command", Command: "test \"$(cat design.md)\" = archived-design && test ! -e current.md && printf fresh > current.md", ArtifactOutputs: []domain.ArtifactContract{{Name: "current", Path: "current.md", Required: true}}, MaxAttempts: 1},
 	}, Edges: []domain.WorkflowEdge{{Source: "design", Target: "implement", When: "success"}}}

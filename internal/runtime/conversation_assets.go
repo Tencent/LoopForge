@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"unicode/utf8"
 )
 
 // ConversationStateError describes a preparation failure without exposing the
@@ -168,10 +169,12 @@ var conversationSkillTrees = []string{
 	"home/.gemini/config/skills",
 }
 
+const conversationPromptInputDir = "prompt-input"
+
 // Only platform-generated inputs travel to the execution host. Native
 // transcripts, session maps, locks and provider credentials never do.
 var conversationAssetTrees = append([]string{
-	"home/.codebuddy/agents", "home/.claude/agents", "attachments",
+	"home/.codebuddy/agents", "home/.claude/agents", "attachments", conversationPromptInputDir,
 }, conversationSkillTrees...)
 
 var conversationAssetFiles = []string{
@@ -203,7 +206,7 @@ func ConversationAssetDirectory(rel string) bool {
 func ConversationAsset(rel string) (allowed, rewrite bool) {
 	for _, dir := range conversationAssetTrees {
 		if strings.HasPrefix(rel, dir+"/") {
-			return true, false
+			return true, dir == conversationPromptInputDir
 		}
 	}
 	for _, path := range conversationAssetFiles {
@@ -215,4 +218,32 @@ func ConversationAsset(rel string) (allowed, rewrite bool) {
 		return true, true
 	}
 	return false, false
+}
+
+// ConversationPromptInputAsset reports whether the file is a staged prompt.
+func ConversationPromptInputAsset(rel string) bool {
+	return strings.HasPrefix(rel, conversationPromptInputDir+"/")
+}
+
+// ConversationTextChunkLen splits input without breaking a UTF-8 rune or a
+// conversation path the runner must be able to relocate in each chunk.
+func ConversationTextChunkLen(data string, limit int, paths ...string) int {
+	limit = max(1, limit)
+	if len(data) <= limit {
+		return len(data)
+	}
+	end := limit
+	for end > max(1, limit-utf8.UTFMax+1) && !utf8.RuneStart(data[end]) {
+		end--
+	}
+	for _, path := range paths {
+		if len(path) > 1 && len(path) < end {
+			start := end - len(path) + 1
+			windowEnd := min(len(data), end+len(path)-1)
+			if i := strings.Index(data[start:windowEnd], path); i >= 0 && start+i < end {
+				end = start + i
+			}
+		}
+	}
+	return end
 }

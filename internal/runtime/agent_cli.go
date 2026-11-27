@@ -88,6 +88,8 @@ type AgentCLIOptions struct {
 	// SystemPromptFile is the system prompt path as the process sees it
 	// (relative paths resolve against the working directory).
 	SystemPromptFile string
+	// PromptFile supplies Kimi's user turn through its UserPromptSubmit hook.
+	PromptFile string `json:",omitempty"`
 	// ReadOnly is AgentCLICommandOptions.Chat.
 	ReadOnly bool
 	// ImageInput enables multimodal serialization for custom providers.
@@ -508,6 +510,12 @@ func ApplyAgentCLICredential(kind string, cred ProviderCredential, options Agent
 			// Kimi validates 1–600 seconds and allows the tool on timeout; the
 			// hook's own retry budget ends well before that.
 			lines = append(lines, "[[hooks]]", `event = "PreToolUse"`, "command = "+strconv.Quote(hook), "timeout = 600", "")
+		}
+		if path := options.PromptFile; path != "" {
+			// ACP's Kimi server creates sessions with a default profile. The
+			// print-mode hook adds user input while retaining --agent-file.
+			load := `{ printf '%s\n' '<user_request>'; cat -- ` + shellSingleQuote(path) + ` && printf '\n%s\n' '</user_request>'; } || exit 2`
+			lines = append(lines, "[[hooks]]", `event = "UserPromptSubmit"`, "command = "+strconv.Quote(load), "timeout = 10", "")
 		}
 		if err := writeAgentCLIFile(home, ".kimi-code/config.toml", []byte(strings.Join(lines, "\n"))); err != nil {
 			return nil, nil, err

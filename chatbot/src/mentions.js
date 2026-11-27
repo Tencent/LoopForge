@@ -2,7 +2,7 @@ export const referenceTypes = [
   { type: "agent", label: "角色", hint: "派给角色去做" },
   { type: "skill", label: "技能", hint: "用这个技能来做" },
   { type: "issue", label: "需求", hint: "查找需求与验收条件" },
-  { type: "sop", label: "SOP", hint: "引用工作流程" },
+  { type: "sop", label: "LOOP", hint: "引用工作流程" },
   { type: "run", label: "运行", hint: "查看任务执行情况" },
   { type: "repository", label: "仓库", hint: "添加代码仓库上下文" },
 ];

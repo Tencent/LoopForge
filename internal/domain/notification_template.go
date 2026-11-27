@@ -187,7 +187,7 @@ func notificationTemplate(binding NotificationBinding, sourceType string) string
 	case binding.ContentMode == "ai":
 		return "### {{ai.title}}\n\n{{ai.body}}\n\n触发时状态：{{status}}\n\n{{url}}"
 	case binding.Scope == "run":
-		return "### 需求「{{issue.title}}」的 SOP 已完成\n\n{{result}}\n\n{{url}}"
+		return "### 需求「{{issue.title}}」的 LOOP 已完成\n\n{{result}}\n\n{{url}}"
 	case sourceType == "schedule_job" || sourceType == "assistant_task":
 		return "### {{task.name}} · {{status}}\n\n{{url}}"
 	default:

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/repo"
 )
 
 func sopDesignerTurn(t *testing.T, h *assistantHandlers, user domain.User, req assistantRequest) (int, string) {
@@ -49,8 +50,8 @@ func containsString(items []string, want string) bool {
 	return false
 }
 
-// The SOP canvas runs its own conversation: a designer prompt with the canvas,
-// roles and referenced SOPs injected by the server, a transcript of only what
+// The LOOP canvas runs its own conversation: a designer prompt with the canvas,
+// roles and referenced LOOPs injected by the server, a transcript of only what
 // the user typed, and a session that stays out of the workbench history.
 func TestSOPDesignerConversationIsPrivateAndServerOwned(t *testing.T) {
 	t.Setenv("AGENTFLOW_ASSISTANT_MODELS", assistantChatDefaultModel)
@@ -59,7 +60,7 @@ func TestSOPDesignerConversationIsPrivateAndServerOwned(t *testing.T) {
 	if err := h.repo.PutAgent(domain.AgentDefinition{ID: "workbench-dev", Name: "开发工程师", ProjectID: "workbench", Description: "实现代码"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := h.repo.PutWorkflow(domain.WorkflowDefinition{ID: "workbench-ref", Name: "参考流程", ProjectID: "workbench", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "ref-a", Name: "参考节点", Type: "approval"}}}); err != nil {
+	if err := h.repo.PutWorkflow(domain.WorkflowDefinition{ID: "workbench-ref", Name: "参考流程", ProjectID: "workbench", SandboxProfileID: repo.TestNativeSandboxID, Nodes: []domain.WorkflowNode{{ID: "ref-a", Name: "参考节点", Type: "approval"}}}); err != nil {
 		t.Fatal(err)
 	}
 	canvas := json.RawMessage(`{"id":"sop-a","name":"交付","nodes":[{"id":"n1","name":"实现","type":"agent","agentId":"workbench-dev","position":{"x":10,"y":20},"script":"` + strings.Repeat("x", 500) + `"}],"edges":[]}`)
@@ -76,7 +77,7 @@ func TestSOPDesignerConversationIsPrivateAndServerOwned(t *testing.T) {
 	if !strings.Contains(system, "AI 编排助手") || strings.Contains(system, "workbench_workspace_open") {
 		t.Fatalf("designer turn did not use its own system prompt: %s", system)
 	}
-	for _, want := range []string{"workbench-dev：开发工程师", `"id":"sop-a"`, "参考的已有 SOP「参考流程」", "加一个评审节点"} {
+	for _, want := range []string{"workbench-dev：开发工程师", `"id":"sop-a"`, "参考的已有 LOOP「参考流程」", "加一个评审节点"} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("designer prompt lacks %q:\n%s", want, prompt)
 		}
@@ -117,7 +118,7 @@ func TestSOPDesignerConversationIsPrivateAndServerOwned(t *testing.T) {
 		t.Fatal("designer conversation leaked into the workbench history")
 	}
 	if !containsString(listedSessionIDs(t, h, user, "?surface=sop-designer&workflowId=sop-a"), "designer-chat") {
-		t.Fatal("designer conversation is not listed for its SOP")
+		t.Fatal("designer conversation is not listed for its LOOP")
 	}
 	second := saved
 	second.ID, second.ProjectID = "designer-second", "second"
@@ -131,7 +132,7 @@ func TestSOPDesignerConversationIsPrivateAndServerOwned(t *testing.T) {
 		}
 	}
 	if containsString(listedSessionIDs(t, h, user, "?surface=sop-designer&workflowId=sop-b"), "designer-chat") {
-		t.Fatal("designer conversation listed for another SOP")
+		t.Fatal("designer conversation listed for another LOOP")
 	}
 	code, _ = sopDesignerTurn(t, h, user, assistantRequest{ProjectID: "workbench", SessionID: "designer-chat", Model: assistantChatDefaultModel, Messages: append(saved.Messages, assistantMessage{Role: "user", Content: "改代码"})})
 	if code != 409 {
@@ -191,9 +192,9 @@ func TestSOPDesignerCatalogIsReadOnlyAndDraftOnly(t *testing.T) {
 	result, err := gw.callTerminal(session, submitAssistantReplyTool, json.RawMessage(`{"message":"建需求","drafts":[{"tool":"issues_save","body":{"projectId":"workbench","title":"x"}}]}`))
 	encoded, _ := json.Marshal(result)
 	if err != nil || result["isError"] != true || session.finished() || !strings.Contains(string(encoded), "只能提交 workflows_save") {
-		t.Fatalf("designer accepted a non-SOP draft: %v %v", result, err)
+		t.Fatalf("designer accepted a non-LOOP draft: %v %v", result, err)
 	}
-	result, err = gw.callTerminal(session, submitAssistantReplyTool, json.RawMessage(`{"message":"已搭好","drafts":[{"tool":"workflows_save","body":{"id":"workbench-delivery","projectId":"workbench","sandboxProfileId":"local","name":"交付","nodes":[],"edges":[]}}]}`))
+	result, err = gw.callTerminal(session, submitAssistantReplyTool, json.RawMessage(`{"message":"已搭好","drafts":[{"tool":"workflows_save","body":{"id":"workbench-delivery","projectId":"workbench","sandboxProfileId":"test-native","name":"交付","nodes":[],"edges":[]}}]}`))
 	if err != nil || result["isError"] == true || !session.finished() {
 		t.Fatalf("designer rejected its workflows_save draft: %v %v", result, err)
 	}
@@ -212,7 +213,7 @@ func TestSOPDesignerDraftNormalization(t *testing.T) {
 	}
 	fresh := sopDesignerDrafts(assistantRequest{Surface: assistantSurfaceSOPDesigner, WorkflowID: "sop-new"}, []assistantDraft{{Tool: "workflows_save", Body: json.RawMessage(`{"name":"新流程"}`)}})
 	if strings.Contains(string(fresh[0].Body), "sop-new") {
-		t.Fatal("an empty canvas pinned the draft to a SOP id")
+		t.Fatal("an empty canvas pinned the draft to a LOOP id")
 	}
 }
 
@@ -238,7 +239,7 @@ func TestWorkflowDraftWarningsAcceptPreviewBuildNode(t *testing.T) {
 	}
 }
 
-const designerOpsCanvas = `{"id":"sop-a","projectId":"workbench","sandboxProfileId":"local","name":"交付","description":"旧说明","preview":{"enabled":true},
+const designerOpsCanvas = `{"id":"sop-a","projectId":"workbench","sandboxProfileId":"test-native","name":"交付","description":"旧说明","preview":{"enabled":true},
 "nodes":[{"id":"plan","name":"计划","type":"agent","agentId":"dev","prompt":"写计划","position":{"x":10,"y":20}},
 {"id":"impl","name":"实现","type":"script","script":"make build","position":{"x":300,"y":20}},
 {"id":"old","name":"旧节点","type":"approval","position":{"x":600,"y":20}},
@@ -286,7 +287,7 @@ func TestSOPDesignerOperationsEditTheCanvas(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if body["id"] != "sop-a" || body["projectId"] != "workbench" || body["sandboxProfileId"] != "local" || body["name"] != "交付 v2" || body["description"] != "旧说明" || body["preview"] == nil {
+	if body["id"] != "sop-a" || body["projectId"] != "workbench" || body["sandboxProfileId"] != "test-native" || body["name"] != "交付 v2" || body["description"] != "旧说明" || body["preview"] == nil {
 		t.Fatalf("workflow fields lost: %+v", body)
 	}
 	if _, has := body["operations"]; has {
@@ -344,7 +345,7 @@ func TestSOPDesignerFullBodyKeepsCanvasIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(out), `"id":"sop-a"`) || !strings.Contains(string(out), `"sandboxProfileId":"local"`) || strings.Contains(string(out), "旧节点") {
+	if !strings.Contains(string(out), `"id":"sop-a"`) || !strings.Contains(string(out), `"sandboxProfileId":"test-native"`) || strings.Contains(string(out), "旧节点") {
 		t.Fatalf("full body = %s", out)
 	}
 	own := json.RawMessage(`{"message":"另建","drafts":[{"tool":"workflows_save","body":{"id":"workbench-new","name":"新流程","nodes":[],"edges":[]}}]}`)
@@ -378,7 +379,7 @@ func TestSOPDesignerTerminalAppliesOperations(t *testing.T) {
 // draft takes, the marker never replaces the real script.
 func TestSOPDesignerOmittedScriptIsRestored(t *testing.T) {
 	long := strings.Repeat("echo test; ", 60)
-	canvas := json.RawMessage(`{"id":"sop-a","projectId":"workbench","sandboxProfileId":"local","nodes":[{"id":"checks","name":"测试","type":"script","script":"` + long + `"}],"edges":[]}`)
+	canvas := json.RawMessage(`{"id":"sop-a","projectId":"workbench","sandboxProfileId":"test-native","nodes":[{"id":"checks","name":"测试","type":"script","script":"` + long + `"}],"edges":[]}`)
 	compact := string(compactSOPDesignerWorkflow(canvas))
 	if !strings.Contains(compact, "脚本共 660 字") || strings.Contains(compact, "echo test") {
 		t.Fatalf("compact canvas = %s", compact)
@@ -398,7 +399,7 @@ func TestSOPDesignerOmittedScriptIsRestored(t *testing.T) {
 	}
 }
 
-// The roles offered to the model and the draft warnings follow the rule a SOP
+// The roles offered to the model and the draft warnings follow the rule a LOOP
 // save enforces, so the model never picks a role the save then rejects.
 func TestSOPDesignerRolesMatchTheSaveRule(t *testing.T) {
 	h, _ := workbenchFixture(t)

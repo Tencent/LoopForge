@@ -99,10 +99,8 @@ body.management-mode .platform-sidebar > .settings-navigation-header {
   display: none;
 }
 
-@media (max-width: 1000px) {
-  .settings-navigation-reopen {
-    display: none;
-  }
+.settings-navigation-reopen {
+  flex-shrink: 0;
 }
 
 .platform-sidebar nav {
@@ -256,10 +254,7 @@ body.management-mode .platform-sidebar {
   width: var(--sidebar-w) !important;
   clip-path: inset(0 0 0 0 round 16px);
   opacity: 1;
-  visibility: visible;
-  transition:
-    clip-path var(--settings-sidebar-duration) var(--settings-sidebar-ease),
-    visibility 0s;
+  transition: clip-path var(--settings-sidebar-duration) var(--settings-sidebar-ease);
 }
 
 body.management-mode .shell-main {
@@ -273,9 +268,7 @@ body.management-mode .app-shell::before {
 
 body.management-mode:is(.settings-sidebar-hidden, .settings-sidebar-entering) .platform-sidebar {
   clip-path: inset(0 100% 0 0 round 16px);
-  visibility: hidden;
   pointer-events: none;
-  transition-delay: 0s, var(--settings-sidebar-duration);
 }
 
 @media (prefers-reduced-motion: reduce) {

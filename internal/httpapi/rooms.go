@@ -17,7 +17,7 @@ type roomsHandlers struct {
 	runCache roomRunCache
 }
 
-// roomMaxSOPs bounds one multi-SOP dispatch.
+// roomMaxSOPs bounds one multi-LOOP dispatch.
 const roomMaxSOPs = 5
 
 type roomIssueRequest struct {
@@ -217,7 +217,7 @@ func (h *roomsHandlers) createIssue(c *gin.Context) {
 }
 
 // dispatchRoomIssue creates the issue behind a room dispatch and starts every
-// requested SOP, posting one dispatch card per lane. Errors are written to c.
+// requested LOOP, posting one dispatch card per lane. Errors are written to c.
 func (h *roomsHandlers) dispatchRoomIssue(c *gin.Context, room domain.ChatRoom, req roomIssueRequest) (roomIssueResult, bool) {
 	if len([]rune(req.Title)) > 200 || len([]rune(req.Description)) > 8000 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "标题或描述过长"})
@@ -230,21 +230,21 @@ func (h *roomsHandlers) dispatchRoomIssue(c *gin.Context, room domain.ChatRoom, 
 		c.JSON(http.StatusBadRequest, gin.H{"error": "title is required"})
 		return roomIssueResult{}, false
 	}
-	// Roles stay inside the SOP. A room can only start work by dispatching
+	// Roles stay inside the LOOP. A room can only start work by dispatching
 	// one or more workflows; a bare agentId does not assign or run anything.
 	if len(workflowIDs) == 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "请选择要派发的 SOP"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请选择要派发的 LOOP"})
 		return roomIssueResult{}, false
 	}
 	if len(workflowIDs) > roomMaxSOPs {
-		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("一次最多派给 %d 条 SOP", roomMaxSOPs)})
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("一次最多派给 %d 条 LOOP", roomMaxSOPs)})
 		return roomIssueResult{}, false
 	}
 	workflowNames := make([]string, len(workflowIDs))
 	for i, id := range workflowIDs {
 		wf, found := h.repo.Workflow(id)
 		if !found || (!wf.Generic && !catalogVisible(wf.ProjectID, wf.Shared, room.ProjectID)) {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "SOP 不存在或不属于当前项目"})
+			c.JSON(http.StatusBadRequest, gin.H{"error": "LOOP 不存在或不属于当前项目"})
 			return roomIssueResult{}, false
 		}
 		workflowNames[i] = wf.Name
@@ -317,7 +317,7 @@ func (h *roomsHandlers) dispatchToIssue(c *gin.Context, room domain.ChatRoom, st
 			result.Tasks = append(result.Tasks, publicTask(task))
 			name := workflowNames[i]
 			_, _ = h.repo.PatchIssue(stored.ID, func(iss *domain.Issue) error {
-				iss.AppendOperation(domain.IssueOperation{Actor: author, ActorUserID: userID, Action: "dispatch", Detail: "协作群派发 SOP「" + name + "」"})
+				iss.AppendOperation(domain.IssueOperation{Actor: author, ActorUserID: userID, Action: "dispatch", Detail: "协作群派发 LOOP「" + name + "」"})
 				return nil
 			})
 		}
@@ -342,9 +342,9 @@ func (h *roomsHandlers) dispatchToIssue(c *gin.Context, room domain.ChatRoom, st
 	return result, true
 }
 
-// roomDispatchTarget describes the SOPs a room dispatches to. A single SOP
-// reuses roomTarget; several SOPs become a "multi" target keyed by the first
-// SOP and named after every SOP in dispatch order.
+// roomDispatchTarget describes the LOOPs a room dispatches to. A single LOOP
+// reuses roomTarget; several LOOPs become a "multi" target keyed by the first
+// LOOP and named after every LOOP in dispatch order.
 func roomDispatchTarget(workflowIDs, workflowNames []string) (typ, id, name string) {
 	typ, id, name = roomTarget(workflowIDs[0], workflowNames[0], "", "")
 	if len(workflowIDs) > 1 {
@@ -352,7 +352,7 @@ func roomDispatchTarget(workflowIDs, workflowNames []string) (typ, id, name stri
 		for i, workflowName := range workflowNames {
 			quoted[i] = "「" + fallbackName(workflowName, workflowIDs[i]) + "」"
 		}
-		typ, name = "multi", "SOP"+strings.Join(quoted, "、")
+		typ, name = "multi", "LOOP"+strings.Join(quoted, "、")
 	}
 	return typ, id, name
 }
@@ -360,9 +360,9 @@ func roomDispatchTarget(workflowIDs, workflowNames []string) (typ, id, name stri
 func roomTarget(workflowID, workflowName, agentID, agentName string) (typ, id, name string) {
 	switch {
 	case workflowID != "" && agentID != "":
-		return "both", workflowID, "SOP「" + fallbackName(workflowName, workflowID) + "」和角色「" + fallbackName(agentName, agentID) + "」"
+		return "both", workflowID, "LOOP「" + fallbackName(workflowName, workflowID) + "」和角色「" + fallbackName(agentName, agentID) + "」"
 	case workflowID != "":
-		return "sop", workflowID, "SOP「" + fallbackName(workflowName, workflowID) + "」"
+		return "sop", workflowID, "LOOP「" + fallbackName(workflowName, workflowID) + "」"
 	default:
 		return "role", agentID, "角色「" + fallbackName(agentName, agentID) + "」"
 	}

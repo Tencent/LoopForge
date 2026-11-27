@@ -171,7 +171,7 @@ func TestFinishStopsScheduler(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { s.Close() })
-	wf := domain.WorkflowDefinition{ID: "finish-stop", Name: "finish stop", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{
+	wf := domain.WorkflowDefinition{ID: "finish-stop", Name: "finish stop", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{
 		{ID: "wait", Name: "wait", Type: "command", Command: "sleep 30", MaxAttempts: 1},
 	}}
 	if err := s.PutWorkflow(wf); err != nil {
@@ -262,7 +262,7 @@ func TestPassPausedScriptContinuesDownstream(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { s.Close() })
-	wf := domain.WorkflowDefinition{ID: "pass-paused-script", Name: "pass paused script", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{
+	wf := domain.WorkflowDefinition{ID: "pass-paused-script", Name: "pass paused script", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{
 		{ID: "hard", Name: "hard", Type: "script", ScriptLanguage: "shell", Script: "exit 1", MaxAttempts: 1},
 		{ID: "next", Name: "next", Type: "script", ScriptLanguage: "shell", Script: "printf 'ok\\n'", MaxAttempts: 1},
 	}, Edges: []domain.WorkflowEdge{{ID: "e1", Source: "hard", Target: "next", When: "success"}}}
@@ -336,7 +336,7 @@ func TestRefreshRunSOPPreservesCompletedNodesAndAddsLatestNodes(t *testing.T) {
 	e, s := newRecoveryEngine(t)
 	old := domain.WorkflowDefinition{ID: "refresh-paused", Name: "old", Version: 1, Revision: 2, SandboxProfileID: "frozen", Nodes: []domain.WorkflowNode{{ID: "done", Name: "done"}, {ID: "work", Name: "work"}}}
 	latest := domain.WorkflowDefinition{ID: old.ID, Name: "latest", Version: 2, Revision: 1, SandboxProfileID: "new-environment", Nodes: []domain.WorkflowNode{{ID: "done", Name: "done latest"}, {ID: "work", Name: "work latest"}, {ID: "verify", Name: "verify"}}, Edges: []domain.WorkflowEdge{{ID: "e", Source: "work", Target: "verify", When: "success"}}}
-	for _, sandbox := range []domain.SandboxProfile{{ID: "frozen", Name: "frozen", Driver: "local"}, {ID: "new-environment", Name: "new", Driver: "local"}} {
+	for _, sandbox := range []domain.SandboxProfile{{ID: "frozen", Name: "frozen", Driver: "native"}, {ID: "new-environment", Name: "new", Driver: "native"}} {
 		if err := s.PutSandbox(sandbox); err != nil {
 			t.Fatal(err)
 		}
@@ -425,7 +425,7 @@ func TestRefreshWorkflowForStoppedRunStatuses(t *testing.T) {
 			got, _ := s.Run(run.ID)
 			if tc.wantError {
 				if got.WorkflowSnapshot.Version != 1 {
-					t.Fatalf("active run changed SOP: v%d", got.WorkflowSnapshot.Version)
+					t.Fatalf("active run changed LOOP: v%d", got.WorkflowSnapshot.Version)
 				}
 				return
 			}
@@ -526,7 +526,7 @@ func TestFailedRunCanRefreshSOPThenReplayWithContext(t *testing.T) {
 	}
 	run := domain.Run{ID: "run-repair-failed-sop", WorkflowID: old.ID, WorkflowSnapshot: old, Status: "failed", Nodes: map[string]*domain.NodeRun{
 		"done":   {NodeID: "done", Status: "succeeded"},
-		"broken": {NodeID: "broken", Status: "failed", Error: "SOP script is wrong"},
+		"broken": {NodeID: "broken", Status: "failed", Error: "LOOP script is wrong"},
 	}}
 	if err := s.PutRun(run); err != nil {
 		t.Fatal(err)
@@ -534,7 +534,7 @@ func TestFailedRunCanRefreshSOPThenReplayWithContext(t *testing.T) {
 	if err := e.RefreshRunSOP(run.ID); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.Retry(run.ID, "broken", "SOP 修正后重跑", "按新检查步骤执行"); err != nil {
+	if err := e.Retry(run.ID, "broken", "LOOP 修正后重跑", "按新检查步骤执行"); err != nil {
 		t.Fatal(err)
 	}
 	got, _ := s.Run(run.ID)
@@ -559,7 +559,7 @@ func TestResumePausedAfterLastStepWithoutInterruptedNode(t *testing.T) {
 	}
 	got, _ := s.Run(finished.ID)
 	if got.PauseRequested || got.Status != "running" || got.Nodes["close"].Status != "succeeded" {
-		t.Fatalf("finished SOP was not handed back: status=%s pause=%v", got.Status, got.PauseRequested)
+		t.Fatalf("finished LOOP was not handed back: status=%s pause=%v", got.Status, got.PauseRequested)
 	}
 
 	gated := finished

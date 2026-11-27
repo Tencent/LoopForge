@@ -3,6 +3,8 @@ package httpapi
 import (
 	"os"
 	"testing"
+
+	"agentflow/internal/repo"
 )
 
 // Tests isolate assistant state by pointing AGENTFLOW_ASSISTANT_SESSION_DIR at
@@ -11,5 +13,8 @@ import (
 // them to a real directory shared by every test.
 func TestMain(m *testing.M) {
 	os.Unsetenv("AGENTFLOW_CONVERSATION_DIR")
-	os.Exit(m.Run())
+	cleanup := repo.UseSandboxVisibleTempDir()
+	code := m.Run()
+	cleanup()
+	os.Exit(code)
 }

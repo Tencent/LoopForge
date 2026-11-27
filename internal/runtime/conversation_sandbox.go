@@ -176,7 +176,7 @@ const dockerCLIProbe = `cli_path=$(command -v "$1") || exit 127
 printf '%s\n' "$cli_path"
 `
 
-// ensureDockerCLI prepares a provider in an existing container. SOP and chat
+// ensureDockerCLI prepares a provider in an existing container. LOOP and chat
 // callers hold the execution gate so preparation cannot race recreation.
 func (s *dockerSandbox) ensureDockerCLI(ctx context.Context, provider, home string) (string, error) {
 	binary := conversationBinary(provider)
@@ -187,7 +187,7 @@ func (s *dockerSandbox) ensureDockerCLI(ctx context.Context, provider, home stri
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancel()
 	// npm providers share the same install prefix. Serialize preparation even
-	// when different SOP nodes start different CLIs in the same container.
+	// when different LOOP nodes start different CLIs in the same container.
 	s.cliSetupOnce.Do(func() { s.cliSetupGate = make(chan struct{}, 1) })
 	select {
 	case s.cliSetupGate <- struct{}{}:

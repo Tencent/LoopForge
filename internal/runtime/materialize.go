@@ -115,6 +115,11 @@ func materializeInvocationForDriver(workspace, invocationID string, ex domain.Ex
 		return compiled, err
 	}
 	lines := append([]string{"# " + a.Name, "", "## Rules"}, ruleLines...)
+	if ex.Kind == "codebuddy" {
+		lines = append(lines, "", "## Background Agent results",
+			CodeBuddyBackgroundAgentInstructions,
+			"Collect results required by this step before submitting the gate decision.")
+	}
 	selectedSkills := make([]selectedSkill, 0, len(assets.Skills))
 	for _, skill := range assets.Skills {
 		item, err := compileSelectedSkill(agentRel, skill, assets.SkillFiles[skill.ID])
@@ -448,7 +453,10 @@ func mcpConfigEntries(servers []domain.MCPServerDefinition) (map[string]any, err
 			}
 		} else {
 			entry["command"] = m.Command
-			entry["args"] = m.Args
+			// Some MCP clients reject null for this optional field.
+			if len(m.Args) > 0 {
+				entry["args"] = m.Args
+			}
 			if cwd := MCPRuntimeWorkingDirectory(m); cwd != "" {
 				entry["cwd"] = cwd
 			}

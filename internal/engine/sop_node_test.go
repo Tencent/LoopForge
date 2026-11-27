@@ -75,7 +75,7 @@ func TestSOPNodeArtifactWriteFailureKeepsSuccessfulChild(t *testing.T) {
 func startSOPArtifactHandoff(t *testing.T, s *repo.Store) domain.Run {
 	t.Helper()
 	child := domain.WorkflowDefinition{
-		ID: "child-prd", Name: "Child PRD", SandboxProfileID: "local",
+		ID: "child-prd", Name: "Child PRD", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{{
 			ID: "write", Name: "Write", Type: "script", ScriptLanguage: "shell",
 			Script: "printf '# PRD\\nready\\n' > prd.md", MaxAttempts: 1,
@@ -83,10 +83,10 @@ func startSOPArtifactHandoff(t *testing.T, s *repo.Store) domain.Run {
 		}},
 	}
 	parent := domain.WorkflowDefinition{
-		ID: "req-flow", Name: "Requirement flow", SandboxProfileID: "local",
+		ID: "req-flow", Name: "Requirement flow", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{
 			{
-				ID: "prd-sop", Name: "产品 SOP", Type: "sop", SOPWorkflowID: child.ID, MaxAttempts: 2,
+				ID: "prd-sop", Name: "产品 LOOP", Type: "sop", SOPWorkflowID: child.ID, MaxAttempts: 2,
 				ArtifactOutputs: []domain.ArtifactContract{{Name: "test-branch-merge", Path: "prd.md", Required: true}},
 			},
 			{
@@ -110,7 +110,7 @@ func startSOPArtifactHandoff(t *testing.T, s *repo.Store) domain.Run {
 	return run
 }
 
-// 子 SOP 成功不能把整条需求标成已交付；父流程失败时需求仍要能重试。
+// 子 LOOP 成功不能把整条需求标成已交付；父流程失败时需求仍要能重试。
 func TestSOPChildSuccessDoesNotDeliverParentIssue(t *testing.T) {
 	t.Parallel()
 	s, err := repo.OpenTest()
@@ -123,11 +123,11 @@ func TestSOPChildSuccessDoesNotDeliverParentIssue(t *testing.T) {
 		t.Fatal(err)
 	}
 	child := domain.WorkflowDefinition{
-		ID: "child-ok", Name: "Child", SandboxProfileID: "local",
+		ID: "child-ok", Name: "Child", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{{ID: "ok", Name: "OK", Type: "script", ScriptLanguage: "shell", Script: "true", MaxAttempts: 1}},
 	}
 	parent := domain.WorkflowDefinition{
-		ID: "parent-fails", Name: "Parent", SandboxProfileID: "local",
+		ID: "parent-fails", Name: "Parent", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{
 			{ID: "sub", Name: "Sub", Type: "sop", SOPWorkflowID: child.ID, MaxAttempts: 1},
 			{ID: "boom", Name: "Boom", Type: "script", ScriptLanguage: "shell", Script: "exit 1", MaxAttempts: 1},
@@ -156,7 +156,7 @@ func TestSOPChildSuccessDoesNotDeliverParentIssue(t *testing.T) {
 	}
 }
 
-// 发布（Drain）打断父流程时子 SOP 不能被取消；新 worker 接着等原来的子 SOP，而不是重跑一遍。
+// 发布（Drain）打断父流程时子 LOOP 不能被取消；新 worker 接着等原来的子 LOOP，而不是重跑一遍。
 func TestSOPNodeReattachesChildAfterDrain(t *testing.T) {
 	t.Parallel()
 	s, err := repo.OpenTest()
@@ -166,11 +166,11 @@ func TestSOPNodeReattachesChildAfterDrain(t *testing.T) {
 	defer s.Close()
 	marker := filepath.Join(t.TempDir(), "go")
 	child := domain.WorkflowDefinition{
-		ID: "slow-child", Name: "Slow child", SandboxProfileID: "local",
+		ID: "slow-child", Name: "Slow child", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{{ID: "wait", Name: "Wait", Type: "command", Command: "while [ ! -e " + marker + " ]; do sleep 0.05; done", MaxAttempts: 3}},
 	}
 	parent := domain.WorkflowDefinition{
-		ID: "parent-drain", Name: "Parent", SandboxProfileID: "local",
+		ID: "parent-drain", Name: "Parent", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{{ID: "sub", Name: "Sub", Type: "sop", SOPWorkflowID: child.ID, MaxAttempts: 3}},
 	}
 	for _, wf := range []domain.WorkflowDefinition{child, parent} {
@@ -200,7 +200,7 @@ func TestSOPNodeReattachesChildAfterDrain(t *testing.T) {
 		t.Fatalf("drain: %v", err)
 	}
 	if c, _ := s.RunState(childID); c.Status == "cancelled" || c.CancelRequested {
-		t.Fatalf("drain cancelled the child SOP: %s", c.Status)
+		t.Fatalf("drain cancelled the child LOOP: %s", c.Status)
 	}
 
 	b := New(s, runtime.NewManagerWithLimit(root, 2))
@@ -247,7 +247,7 @@ func childRunsOf(s *repo.Store, parentID string) int {
 	return n
 }
 
-// 暂停父流程要连带暂停子 SOP；子 SOP 在父流程暂停期间跑完，父流程继续时直接用它的结果。
+// 暂停父流程要连带暂停子 LOOP；子 LOOP 在父流程暂停期间跑完，父流程继续时直接用它的结果。
 func TestSOPNodePauseCascadesAndReusesFinishedChild(t *testing.T) {
 	t.Parallel()
 	s, err := repo.OpenTest()
@@ -257,11 +257,11 @@ func TestSOPNodePauseCascadesAndReusesFinishedChild(t *testing.T) {
 	defer s.Close()
 	marker := filepath.Join(t.TempDir(), "go")
 	child := domain.WorkflowDefinition{
-		ID: "pause-child", Name: "Child", SandboxProfileID: "local",
+		ID: "pause-child", Name: "Child", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{{ID: "wait", Name: "Wait", Type: "command", Command: "while [ ! -e " + marker + " ]; do sleep 0.05; done", MaxAttempts: 1}},
 	}
 	parent := domain.WorkflowDefinition{
-		ID: "pause-parent", Name: "Parent", SandboxProfileID: "local",
+		ID: "pause-parent", Name: "Parent", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{{ID: "sub", Name: "Sub", Type: "sop", SOPWorkflowID: child.ID, MaxAttempts: 1}},
 	}
 	for _, wf := range []domain.WorkflowDefinition{child, parent} {
@@ -309,7 +309,7 @@ func TestSOPNodePauseCascadesAndReusesFinishedChild(t *testing.T) {
 	}
 }
 
-// 暂停期间 SOP 节点改指向了另一条 SOP 并刷新：继续时不能复用旧 SOP 的子运行结果。
+// 暂停期间 LOOP 节点改指向了另一条 LOOP 并刷新：继续时不能复用旧 LOOP 的子运行结果。
 func TestSOPNodeRepointedWhilePausedStartsNewChild(t *testing.T) {
 	t.Parallel()
 	s, err := repo.OpenTest()
@@ -319,15 +319,15 @@ func TestSOPNodeRepointedWhilePausedStartsNewChild(t *testing.T) {
 	defer s.Close()
 	marker := filepath.Join(t.TempDir(), "go")
 	oldChild := domain.WorkflowDefinition{
-		ID: "old-child", Name: "Old", SandboxProfileID: "local",
+		ID: "old-child", Name: "Old", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{{ID: "wait", Name: "Wait", Type: "command", Command: "while [ ! -e " + marker + " ]; do sleep 0.05; done", MaxAttempts: 1}},
 	}
 	newChild := domain.WorkflowDefinition{
-		ID: "new-child", Name: "New", SandboxProfileID: "local",
+		ID: "new-child", Name: "New", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{{ID: "ok", Name: "OK", Type: "command", Command: "true", MaxAttempts: 1}},
 	}
 	parent := domain.WorkflowDefinition{
-		ID: "repoint-parent", Name: "Parent", SandboxProfileID: "local",
+		ID: "repoint-parent", Name: "Parent", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{{ID: "sub", Name: "Sub", Type: "sop", SOPWorkflowID: oldChild.ID, MaxAttempts: 1}},
 	}
 	for _, wf := range []domain.WorkflowDefinition{oldChild, newChild, parent} {
@@ -379,17 +379,17 @@ func TestSOPNodeRepointedWhilePausedStartsNewChild(t *testing.T) {
 	}
 	child, _ := s.RunState(got.Nodes["sub"].ChildRunID)
 	if child.ID == oldID || child.WorkflowID != newChild.ID {
-		t.Fatalf("parent reused the old SOP's child %s (workflow %s)", child.ID, child.WorkflowID)
+		t.Fatalf("parent reused the old LOOP's child %s (workflow %s)", child.ID, child.WorkflowID)
 	}
 }
 
-// 恢复父流程时，被连带暂停的子 SOP 也要一起继续。
+// 恢复父流程时，被连带暂停的子 LOOP 也要一起继续。
 func TestSOPNodeResumeParentResumesPausedChild(t *testing.T) {
 	t.Parallel()
 	pauseParentThen(t, false)
 }
 
-// 父流程暂停后直接取消，被连带暂停的子 SOP 也要取消。
+// 父流程暂停后直接取消，被连带暂停的子 LOOP 也要取消。
 func TestSOPNodeCancelPausedParentCancelsChild(t *testing.T) {
 	t.Parallel()
 	pauseParentThen(t, true)
@@ -404,11 +404,11 @@ func pauseParentThen(t *testing.T, cancelInstead bool) {
 	defer s.Close()
 	marker := filepath.Join(t.TempDir(), "go")
 	child := domain.WorkflowDefinition{
-		ID: "resume-child", Name: "Child", SandboxProfileID: "local",
+		ID: "resume-child", Name: "Child", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{{ID: "wait", Name: "Wait", Type: "command", Command: "while [ ! -e " + marker + " ]; do sleep 0.05; done", MaxAttempts: 1}},
 	}
 	parent := domain.WorkflowDefinition{
-		ID: "resume-parent", Name: "Parent", SandboxProfileID: "local",
+		ID: "resume-parent", Name: "Parent", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{{ID: "sub", Name: "Sub", Type: "sop", SOPWorkflowID: child.ID, MaxAttempts: 1}},
 	}
 	for _, wf := range []domain.WorkflowDefinition{child, parent} {
@@ -455,7 +455,7 @@ func pauseParentThen(t *testing.T, cancelInstead bool) {
 	}
 }
 
-// 子 SOP 失败导致父流程失败；在子 SOP 上重跑后，父流程要接上这次重跑继续，而不是停在失败或另起一个子 SOP。
+// 子 LOOP 失败导致父流程失败；在子 LOOP 上重跑后，父流程要接上这次重跑继续，而不是停在失败或另起一个子 LOOP。
 func TestSOPChildRetryResumesFailedParent(t *testing.T) {
 	t.Parallel()
 	s, err := repo.OpenTest()
@@ -465,11 +465,11 @@ func TestSOPChildRetryResumesFailedParent(t *testing.T) {
 	defer s.Close()
 	marker := filepath.Join(t.TempDir(), "ok")
 	child := domain.WorkflowDefinition{
-		ID: "flaky-child", Name: "Child", SandboxProfileID: "local",
+		ID: "flaky-child", Name: "Child", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{{ID: "check", Name: "Check", Type: "command", Command: "test -e " + marker, MaxAttempts: 1}},
 	}
 	parent := domain.WorkflowDefinition{
-		ID: "flaky-parent", Name: "Parent", SandboxProfileID: "local",
+		ID: "flaky-parent", Name: "Parent", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{
 			{ID: "sub", Name: "Sub", Type: "sop", SOPWorkflowID: child.ID, MaxAttempts: 1},
 			{ID: "after", Name: "After", Type: "command", Command: "true", MaxAttempts: 1},
@@ -506,17 +506,17 @@ func TestSOPChildRetryResumesFailedParent(t *testing.T) {
 	}
 }
 
-// startPausedParentWithChild starts parent -> SOP child (waits for marker), pauses
+// startPausedParentWithChild starts parent -> LOOP child (waits for marker), pauses
 // the parent and returns once both are paused.
 func startPausedParentWithChild(t *testing.T, s *repo.Store, e *Engine, prefix string, before bool) (parentID, childID, marker string) {
 	t.Helper()
 	marker = filepath.Join(t.TempDir(), "go")
 	child := domain.WorkflowDefinition{
-		ID: prefix + "-child", Name: "Child", SandboxProfileID: "local",
+		ID: prefix + "-child", Name: "Child", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{{ID: "wait", Name: "Wait", Type: "command", Command: "while [ ! -e " + marker + " ]; do sleep 0.05; done", MaxAttempts: 1}},
 	}
 	parent := domain.WorkflowDefinition{
-		ID: prefix + "-parent", Name: "Parent", SandboxProfileID: "local",
+		ID: prefix + "-parent", Name: "Parent", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{{ID: "sub", Name: "Sub", Type: "sop", SOPWorkflowID: child.ID, MaxAttempts: 1}},
 	}
 	if before {
@@ -548,7 +548,7 @@ func startPausedParentWithChild(t *testing.T, s *repo.Store, e *Engine, prefix s
 	return run.ID, childID, marker
 }
 
-// 父流程暂停时子 SOP 被单独取消：继续父流程应如实失败，而不是悄悄另起一个子 SOP。
+// 父流程暂停时子 LOOP 被单独取消：继续父流程应如实失败，而不是悄悄另起一个子 LOOP。
 func TestSOPNodeFollowsCancelledChildOnResume(t *testing.T) {
 	t.Parallel()
 	s, err := repo.OpenTest()
@@ -571,7 +571,7 @@ func TestSOPNodeFollowsCancelledChildOnResume(t *testing.T) {
 	}
 }
 
-// 从更早的节点重跑暂停中的父流程：旧的子 SOP 不再被引用，必须被取消，而不是留着占用工作区。
+// 从更早的节点重跑暂停中的父流程：旧的子 LOOP 不再被引用，必须被取消，而不是留着占用工作区。
 func TestSOPRetryEarlierNodeCancelsLiveChild(t *testing.T) {
 	t.Parallel()
 	s, err := repo.OpenTest()
@@ -594,7 +594,7 @@ func TestSOPRetryEarlierNodeCancelsLiveChild(t *testing.T) {
 	}
 }
 
-// 子 SOP 失败导致父流程失败；在子 SOP 上「手动通过」失败节点后，父流程也要接着跑。
+// 子 LOOP 失败导致父流程失败；在子 LOOP 上「手动通过」失败节点后，父流程也要接着跑。
 func TestSOPChildPassResumesFailedParent(t *testing.T) {
 	t.Parallel()
 	s, err := repo.OpenTest()
@@ -603,11 +603,11 @@ func TestSOPChildPassResumesFailedParent(t *testing.T) {
 	}
 	defer s.Close()
 	child := domain.WorkflowDefinition{
-		ID: "pass-child", Name: "Child", SandboxProfileID: "local",
+		ID: "pass-child", Name: "Child", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{{ID: "check", Name: "Check", Type: "command", Command: "false", MaxAttempts: 1}},
 	}
 	parent := domain.WorkflowDefinition{
-		ID: "pass-parent", Name: "Parent", SandboxProfileID: "local",
+		ID: "pass-parent", Name: "Parent", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{
 			{ID: "sub", Name: "Sub", Type: "sop", SOPWorkflowID: child.ID, MaxAttempts: 1},
 			{ID: "after", Name: "After", Type: "command", Command: "true", MaxAttempts: 1},
@@ -644,7 +644,7 @@ func TestSOPNodeRejectsSelfReference(t *testing.T) {
 	}
 	defer s.Close()
 	wf := domain.WorkflowDefinition{
-		ID: "loop", Name: "Loop", SandboxProfileID: "local",
+		ID: "loop", Name: "Loop", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{{ID: "self", Name: "Self", Type: "sop", SOPWorkflowID: "loop", MaxAttempts: 1}},
 	}
 	if err := s.PutWorkflow(wf); err != nil {
@@ -656,7 +656,7 @@ func TestSOPNodeRejectsSelfReference(t *testing.T) {
 	}
 }
 
-// 子 SOP 的节点被打回重做过，父流程要拿最新一版产物，而不是被否决的第一版。
+// 子 LOOP 的节点被打回重做过，父流程要拿最新一版产物，而不是被否决的第一版。
 func TestImportChildArtifactsTakesNewestAttempt(t *testing.T) {
 	t.Parallel()
 	t0 := time.Now().UTC()

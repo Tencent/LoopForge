@@ -26,9 +26,9 @@ const sessions = [
 
 test("scheduled sessions are marked by source, with a legacy title fallback", () => {
   assert.equal(scheduledSession({ source: "scheduled", title: "任意" }), true);
-  assert.equal(scheduledSession({ source: "chat", title: "定时 · 仓库&SOP分类" }), false);
+  assert.equal(scheduledSession({ source: "chat", title: "定时 · 仓库&LOOP分类" }), false);
   assert.equal(scheduledSession({ source: "sop", title: "任意" }), false);
-  assert.equal(scheduledSession({ title: "定时 · 仓库&SOP分类" }), true);
+  assert.equal(scheduledSession({ title: "定时 · 仓库&LOOP分类" }), true);
   assert.equal(scheduledSession({ shared: true, title: "定时 · 共享运行" }), false);
   assert.equal(scheduledSession({ title: "普通对话" }), false);
   assert.equal(scheduledSession(null), false);
@@ -133,7 +133,7 @@ test("only finished runs nobody talked in count as idle", () => {
   assert.equal(groups[0].runSessions, undefined);
 });
 
-test("search also matches the SOP of a run conversation", () => {
+test("search also matches the LOOP of a run conversation", () => {
   const run = session("sop-a", "mall", 28, { shared: true, runId: "run-a", displayTitle: "#7 修复登录失败", sopName: "通用后端交付" });
   const groups = groupSessionHistory([run, session("其他", "mall", 27)], projects, { query: "后端交付" });
   assert.deepEqual(groups[0].sessions.map((row) => row.id), ["sop-a"]);

@@ -16,7 +16,7 @@ import (
 
 func controlLeaseRun(t *testing.T, e *Engine, id string, saved bool) string {
 	t.Helper()
-	run := domain.Run{ID: id, Status: "failed", Generation: 1, ExecutionContext: domain.TelemetryContext{ProjectID: "p"}, WorkflowSnapshot: domain.WorkflowDefinition{ID: "control-lease", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "step", Type: "script", Script: "true", MaxAttempts: 1}}}, Nodes: map[string]*domain.NodeRun{"step": {NodeID: "step", Status: "failed", Attempt: 1}}}
+	run := domain.Run{ID: id, Status: "failed", Generation: 1, ExecutionContext: domain.TelemetryContext{ProjectID: "p"}, WorkflowSnapshot: domain.WorkflowDefinition{ID: "control-lease", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{ID: "step", Type: "script", Script: "true", MaxAttempts: 1}}}, Nodes: map[string]*domain.NodeRun{"step": {NodeID: "step", Status: "failed", Attempt: 1}}}
 	if err := e.repo.PutRun(run); err != nil {
 		t.Fatal(err)
 	}
@@ -172,12 +172,12 @@ func TestResumeChildSOPDoesNotReuseParentWorkspaceLease(t *testing.T) {
 	// Even an accidentally matching token cannot cross the parent run boundary.
 	ctx = WithConversationWorkspaceToken(ctx, token, parent.ID)
 	err := e.ResumePausedContext(ctx, parent.ID, "")
-	if err == nil || !strings.Contains(err.Error(), "继续子 SOP child") || !errors.Is(err, context.DeadlineExceeded) {
+	if err == nil || !strings.Contains(err.Error(), "继续子 LOOP child") || !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("child accepted parent's workspace lease: %v", err)
 	}
 	child, _ = e.repo.RunState(child.ID)
 	if child.Status != "waiting" || !child.PauseRequested {
-		t.Fatal("child SOP resumed despite another active workspace owner")
+		t.Fatal("child LOOP resumed despite another active workspace owner")
 	}
 }
 

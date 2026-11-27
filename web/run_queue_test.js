@@ -1,7 +1,13 @@
 const fs = require('node:fs');
+const path = require('node:path');
 const vm = require('node:vm');
 const assert = require('node:assert/strict');
-const bundle = fs.readFileSync(process.argv[2], 'utf8');
+function localBundle() {
+  const page = fs.readFileSync(path.join(__dirname, 'index.html'), 'utf8');
+  const modules = [...page.matchAll(/<script src="\/(app\.js|app\/[^"?]+\.js)(?:\?[^"]*)?"><\/script>/g)];
+  return modules.map(([, file]) => fs.readFileSync(path.join(__dirname, file), 'utf8')).join('\n');
+}
+const bundle = process.argv[2] ? fs.readFileSync(process.argv[2], 'utf8') : localBundle();
 function source(name) {
   const match = new RegExp('^(?:async )?function ' + name + '\\(', 'm').exec(bundle);
   assert(match, name);
@@ -42,7 +48,7 @@ async function main() {
   section.hidden=false;view='issues';refresh.syncQueuedRunRefresh();assert.equal(timers.size,0);
   view='runs';refresh.state.data.runs=[{status:'running'}];refresh.syncQueuedRunRefresh();assert.equal(timers.size,0);
 
-  const calls=[],messages=[],run={id:'run/1',status:'waiting',pauseRequested:true};
+  const calls=[],messages=[],run={id:'run/1',status:'waiting',pauseRequested:true,admissionState:'released',workspaceCleanedAt:'2026-11-25T00:00:00Z'};
   const control={state:{selectedRun:run.id,activeRun:run,data:{runs:[run],issues:[]},issueDetailData:{run}},api:async(path,opts)=>{calls.push([path,opts?.method||'GET']);return{id:run.id,status:'queued',pauseRequested:false,admissionState:'queued'};},toast:m=>messages.push(m),readHumanContext:()=>'',refreshIssues:async()=>{},refreshRuns:async()=>{},startLiveRun:id=>calls.push(['stream',id]),stopLiveRun:()=>{},renderRunDetail:()=>{},renderRuns:()=>{},renderIssueDetailTab:()=>{}};
   load(control,['cachedRun','queuedRunActionBlocked','patchCachedRun','paintRunControl','runStatus','runDisplayStatus','runControlToast','sortRunsDescending','syncRunControlState','resumePausedRun']);
   control.$=()=>null;
@@ -62,7 +68,7 @@ async function main() {
   control.runRetryNeedsContext=()=>false;control.withHumanContext=p=>p;
   assert.equal(control.waitingNodeId({status:'queued',nodes:{old:{status:'waiting_approval'}}}),undefined);
   for (const prior of ['failed','succeeded']) {
-    control.patchCachedRun(run.id,{status:prior});
+    control.patchCachedRun(run.id,{status:prior,admissionState:'released',workspaceCleanedAt:run.workspaceCleanedAt});
     const start=calls.length;
     await control.resumeRun(run.id);
     assert.deepEqual(calls.slice(start,start+2),[['/api/runs/run%2F1/retry','POST'],['/api/runs/run%2F1','GET']]);
@@ -84,8 +90,23 @@ async function main() {
   assert.equal(race.state.runStream,streamB);assert.deepEqual(raceCalls,[]);assert.equal(race.state.activeRun.id,'b');assert.equal(race.state.data.runs[0].status,'queued');
 
   for (const name of ['showRunDetail','selectRun']) {
-    const streams=[],context={state:{data:{runs:[]}},$:()=>({hidden:false,classList:{add:()=>{}},dataset:{}}),document:{querySelector:()=>({setAttribute:()=>{}})},stopQueuedRunRefresh:()=>{},stopLiveRun:()=>{},stopPreviewPoll:()=>{},syncRunHash:()=>{},api:async()=>({id:'r',status:'queued'}),shouldPatchRunLive:()=>false,renderRunDetail:()=>{},renderRuns:()=>{},startLiveRun:id=>streams.push(id),toast:()=>{}};
-    load(context,['loadRunMachineMetadata',name]);context[name]('r');await flush();assert.deepEqual(streams,['r'],name);
+    const streams=[];
+    let evaluationClosed=false;
+    const context={
+      state:{selectedRun:'previous',data:{runs:[]}},
+      runEvalStream:{source:{close:()=>{evaluationClosed=true}}},
+      $:()=>({hidden:false,classList:{add:()=>{}},dataset:{}}),
+      document:{querySelector:()=>({setAttribute:()=>{}})},
+      stopQueuedRunRefresh:()=>{},stopLiveRun:()=>{},stopPreviewPoll:()=>{},syncRunHash:()=>{},
+      api:async()=>({id:'r',status:'queued'}),shouldPatchRunLive:()=>false,
+      renderRunDetail:()=>{},renderRuns:()=>{},startLiveRun:id=>streams.push(id),toast:()=>{},
+    };
+    load(context,['loadRunMachineMetadata','stopRunEvalStream',name]);
+    context[name]('r');
+    await flush();
+    assert.deepEqual(streams,['r'],name);
+    assert.equal(evaluationClosed,true,name);
+    assert.equal(context.runEvalStream,null,name);
   }
   const liveState={selectedRun:'r',data:{runs:[]}},intervals=new Map();let timer=0,status='queued',applied=[];
   const polling={state:liveState,api:async()=>({id:'r',status}),setInterval:fn=>{intervals.set(++timer,fn);return timer},clearInterval:id=>intervals.delete(id),patchCachedRun:()=>{},applyRunPayload:r=>applied.push(r.status),refreshRunPagesDelta:async()=>{},renderRuns:()=>{},renderIssueDetailTab:()=>{}};
@@ -93,33 +114,53 @@ async function main() {
   status='running';[...intervals.values()][0]();await flush();assert.equal(intervals.size,1);
   status='succeeded';[...intervals.values()][0]();await flush();assert.equal(intervals.size,0);assert.equal(liveState.poll,null);assert.deepEqual(applied,['queued','running','succeeded']);
 
-  const machine=load({state:{runners:[{id:'m',name:'local',ownerUserId:9}]},escapeHTML:String},['runnerConcurrencyLabel','runExecutionChipHTML']);
-  assert.match(machine.runnerConcurrencyLabel({ownerUserId:9}),/个人机器/);
-  assert.doesNotMatch(machine.runnerConcurrencyLabel({ownerUserId:0,labels:{personal:'true'}}),/不受/);
-  assert.match(machine.runExecutionChipHTML({executionContext:{executionMode:'runner',executionRunnerId:'m'}}),/不受项目 10/);
-  assert.match(machine.runExecutionChipHTML({concurrencyExempt:true,executionContext:{executionMode:'runner',executionRunnerId:'unlisted'}}),/个人机器/);
-  assert.match(machine.runnerConcurrencyLabel({ownerUserId:9}),/不限同时运行数/);
-  assert.match(machine.runnerConcurrencyLabel({ownerUserId:9,runLimit:3}),/最多同时运行 3 条/);
+  const machinePaths=[];
+  const machine=load({state:{selectedRun:'auto',runners:[{id:'m',name:'local',ownerUserId:9}]},escapeHTML:String,
+    api:async path=>{machinePaths.push(path);return [{id:'shared',name:'Team machine',ownerUserId:3}]}},
+  ['runnerConcurrencyLabel','runExecutionChipHTML','loadRunMachineMetadata','queuedRunCalloutHTML']);
+  assert.match(machine.runExecutionChipHTML({executionContext:{executionMode:'runner',executionRunnerId:'m'}}),/执行机器 local/);
+  assert.match(machine.runnerConcurrencyLabel({runLimit:0}),/不限同时运行数/);
+  assert.match(machine.runnerConcurrencyLabel({runLimit:3}),/最多同时运行 3 条/);
   machine.state.runners[0].runLimit=4;
   assert.match(machine.runExecutionChipHTML({executionContext:{executionMode:'runner',executionRunnerId:'m'}}),/本机最多 4 条/);
+  const auto={id:'auto',status:'queued',executionContext:{projectId:'group/one',executionPool:'project-auto'}};
+  await machine.loadRunMachineMetadata(auto);
+  assert.deepEqual(machinePaths,['/api/runners?projectId=group%2Fone']);
+  assert.equal(machine.state.runners[0].id,'m','detail metadata does not replace the settings list');
+  assert.match(machine.runExecutionChipHTML(auto),/自动分配 · 等待可用机器/);
+  assert.match(machine.queuedRunCalloutHTML(auto),/兼容且有空余名额.*空闲 1 小时后归档并释放名额/);
+  assert.match(machine.queuedRunCalloutHTML({status:'queued'}),/平台所有项目共用名额，默认 10 条/);
+  auto.status='running';
+  auto.executionContext.executionMode='cloud';
+  assert.match(machine.runExecutionChipHTML(auto),/自动分配 · 平台云端/);
+  auto.executionContext.executionMode='runner';
+  auto.executionContext.executionRunnerId='pool-backend';
+  assert.match(machine.runExecutionChipHTML(auto),/自动分配 · 平台云端/);
+  auto.executionContext.executionRunnerId='shared';
+  auto.concurrencyExempt=true;
+  assert.match(machine.runExecutionChipHTML(auto),/自动分配 · Team machine/);
 
   const limitUI=load({escapeHTML:s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))},['runnerRunLimitHTML']);
   assert.equal(limitUI.runnerRunLimitHTML({id:'cloud',ownerUserId:0}),'','platform machines have no per-machine limit');
   const unlimited=limitUI.runnerRunLimitHTML({id:'m',name:'mac',ownerUserId:9});
   assert.match(unlimited,/placeholder="不限" value=""/);
-  assert.match(unlimited,/class="runner-tip" tabindex="0"[^>]*data-tip="[^"]*不受项目 10 条限额/,'run limit rules stay in a focusable tip');
-  assert.match(limitUI.runnerRunLimitHTML({id:'m',ownerUserId:9,runLimit:5}),/value="5"/);
+  assert.match(unlimited,/class="runner-tip" tabindex="0"[^>]*data-tip="[^"]*默认 10 条[^"]*共享项目共用机器名额/,'run limit rules stay in a focusable tip');
+  assert.match(unlimited,/失败、暂停、待确认.*空闲 1 小时.*回收工作区，释放名额。继续或重试时自动恢复工作区/);
+  assert.match(limitUI.runnerRunLimitHTML({id:'m',ownerUserId:9,runLimit:10}),/value="10"/);
+  assert.equal(limitUI.runnerRunLimitHTML({name:'Platform',runLimit:10,canEditLimit:false},true),'');
+  assert.match(limitUI.runnerRunLimitHTML({name:'Platform',runLimit:10,canEditLimit:true},true),/data-platform-run-limit/);
+  assert.match(limitUI.runnerRunLimitHTML({name:'Platform',runLimit:10,canEditLimit:true},true),/平台所有项目共用此名额/);
   assert.doesNotMatch(limitUI.runnerRunLimitHTML({id:'"><img src=x onerror=alert(1)>',ownerUserId:9}),/<img/,'runner id is escaped');
 
   const saves=[],notes=[];let refreshed=0,rendered=0;
   const saver={state:{runners:[{id:'m',ownerUserId:9}]},api:async(path,opts)=>{saves.push([path,opts.method,JSON.parse(opts.body)]);return{id:'m',ownerUserId:9,runLimit:JSON.parse(opts.body).runLimit}},toast:m=>notes.push(m),refreshRunners:()=>refreshed++,renderRunnersView:()=>rendered++};
   load(saver,['saveRunnerRunLimit']);
-  await saver.saveRunnerRunLimit('m','3');
+  await saver.saveRunnerRunLimit('m','250');
   await saver.saveRunnerRunLimit('m','  ');
-  assert.deepEqual(saves,[['/api/runners/m/run-limit','PUT',{runLimit:3}],['/api/runners/m/run-limit','PUT',{runLimit:0}]]);
-  assert.equal(saver.state.runners[0].runLimit,0);assert.match(notes[0],/3 条/);assert.match(notes[1],/不限/);
-  for (const bad of ['0.5','-2','101','abc']) await saver.saveRunnerRunLimit('m',bad);
-  assert.equal(saves.length,2,'invalid values are not sent');assert.equal(refreshed,4);
+  assert.deepEqual(saves,[['/api/runners/m/run-limit','PUT',{runLimit:250}],['/api/runners/m/run-limit','PUT',{runLimit:0}]]);
+  assert.equal(saver.state.runners[0].runLimit,0);assert.match(notes[0],/250 条/);assert.match(notes[1],/不限/);
+  for (const bad of ['0.5','-2',String(Number.MAX_SAFE_INTEGER+1),'abc']) await saver.saveRunnerRunLimit('m',bad);
+  assert.equal(saves.length,2,'invalid values are not sent');assert.equal(refreshed,6);
 
   const nodes=load({issueExecution:()=>({run:{status:'queued',nodes:{old:{status:'failed'}}}})},['currentRunNode']);
   assert.equal(nodes.currentRunNode({}),null);

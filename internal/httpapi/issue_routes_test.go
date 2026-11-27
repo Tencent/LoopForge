@@ -96,7 +96,7 @@ func TestIssueRoutesCoverRegisteredPaths(t *testing.T) {
 			t.Fatalf("%s: incomplete route", path)
 		}
 	}
-	if len(issueRoutes) != 13 {
-		t.Fatalf("expected 13 issue sub-routes, got %d", len(issueRoutes))
+	if len(issueRoutes) != 14 {
+		t.Fatalf("expected 14 issue sub-routes, got %d", len(issueRoutes))
 	}
 }

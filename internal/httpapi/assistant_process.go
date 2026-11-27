@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -20,21 +21,23 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"unicode/utf8"
 )
 
 type assistantHelperExecutionKey struct{}
 type assistantHelperExecution struct {
-	h      *assistantHandlers
-	owner  int64
-	target domain.AssistantExecutionTarget
+	h         *assistantHandlers
+	owner     int64
+	projectID string
+	target    domain.AssistantExecutionTarget
 }
 
-func (h *assistantHandlers) helperExecutionContext(ctx context.Context, owner int64, target *domain.AssistantExecutionTarget) context.Context {
+func (h *assistantHandlers) helperExecutionContext(ctx context.Context, owner int64, projectID string, target *domain.AssistantExecutionTarget) context.Context {
 	if target == nil || target.RunnerID == "" {
 		return ctx
 	}
-	return context.WithValue(ctx, assistantHelperExecutionKey{}, assistantHelperExecution{h: h, owner: owner, target: *target})
+	return context.WithValue(ctx, assistantHelperExecutionKey{}, assistantHelperExecution{
+		h: h, owner: owner, projectID: projectID, target: *target,
+	})
 }
 
 func helperCLIExecution(ctx context.Context, root string, actorID int64, engine string) (func(context.Context, string, runtime.CommandSpec, runtime.RunCredentials, runtime.EventSink) (string, error), bool) {
@@ -42,9 +45,46 @@ func helperCLIExecution(ctx context.Context, root string, actorID int64, engine 
 	if !ok {
 		return nil, false
 	}
-	s := &AgentToolSession{ChatOwnerID: bound.owner, ChatSessionID: "helper-" + newAssistantSessionID(), ExecutionRunnerID: bound.target.RunnerID, RuntimeMode: domain.AssistantModePlatform}
+	s := &AgentToolSession{
+		ChatOwnerID: bound.owner, ChatSessionID: "helper-" + newAssistantSessionID(),
+		UserID: actorID, ProjectID: bound.projectID, ExecutionRunnerID: bound.target.RunnerID,
+		RuntimeMode: domain.AssistantModePlatform,
+	}
 	s.runnerLogin = bound.h.assistantUsesRunnerLogin(actorID, &bound.target, engine)
 	return bound.h.conversationExecutor(s, root), s.runnerLogin
+}
+
+func (h *assistantHandlers) conversationRunner(ctx context.Context, s *AgentToolSession, checkAccess bool) (domain.Runner, error) {
+	if h.runnerControls == nil {
+		return domain.Runner{}, errAssistantExecutionUnavailable
+	}
+	runner, ok := h.repo.Runner(s.ExecutionRunnerID)
+	if !ok {
+		return domain.Runner{}, errAssistantExecutionUnavailable
+	}
+	if checkAccess {
+		requireShare := s.requireRunnerShare || assistantSessionOriginFrom(ctx).Source == domain.AssistantSourceScheduled
+		if !h.canUseBoundRunner(runner, s.ProjectID, s.UserID, requireShare) {
+			return domain.Runner{}, errAssistantRunnerAccessRevoked
+		}
+	}
+	if runner.Status != domain.RunnerStatusOnline {
+		return domain.Runner{}, errAssistantExecutionUnavailable
+	}
+	if !runner.SupportsConversationCLI() {
+		return domain.Runner{}, fmt.Errorf("执行机器需升级至 %s", domain.RunnerVersionConversationCLI)
+	}
+	if (s.runnerLogin || s.transient) && !runner.SupportsCLISettings() {
+		return domain.Runner{}, fmt.Errorf("执行机器需升级至 %s 才能使用对话本机登录和 CLI 测试", domain.RunnerVersionCLISettings)
+	}
+	return runner, nil
+}
+
+func conversationNotStarted(err error, workspaceSetup bool) error {
+	if workspaceSetup {
+		err = &runtime.ConversationWorkspaceSetupError{Cause: err}
+	}
+	return fmt.Errorf("%w: %w", runtime.ErrConversationNotStarted, err)
 }
 
 // Protocol translation stays on the API process; the bound machine owns the
@@ -64,16 +104,24 @@ func (h *assistantHandlers) conversationExecutor(s *AgentToolSession, root strin
 			}
 		}()
 		preparing := true
+		preparingWorkspace := false
 		defer func() {
 			if err != nil && preparing {
-				err = fmt.Errorf("%w: %w", runtime.ErrConversationNotStarted, err)
+				err = conversationNotStarted(err, preparingWorkspace)
 			}
 		}()
 		sum := sha256.Sum256([]byte(fmt.Sprintf("%d/%s", s.ChatOwnerID, s.ChatSessionID)))
 		key := hex.EncodeToString(sum[:])
 		request := domain.RunnerWorkspaceRequest{Operation: domain.RunnerWorkspaceOperationConversationCLI}
 		workspace := ""
+		var projectCredentialEnv map[string]string
 		if s.RuntimeMode == domain.AssistantModeWorkspace {
+			if s.ExecutionRunnerID != "" {
+				if _, err := h.conversationRunner(ctx, s, true); err != nil {
+					return "", err
+				}
+			}
+			preparingWorkspace = true
 			runID := s.workspaceRun()
 			run, ok := h.repo.RunState(runID)
 			if !ok {
@@ -83,7 +131,7 @@ func (h *assistantHandlers) conversationExecutor(s *AgentToolSession, root strin
 				return "", fmt.Errorf("工作区与会话不在同一执行机器")
 			}
 			if !run.IsWorkspace() && !sopStopped(run) {
-				return "", fmt.Errorf("SOP 正在执行，请先暂停后接管工作区")
+				return "", fmt.Errorf("LOOP 正在执行，请先暂停后接管工作区")
 			}
 			var err error
 			if s.workspaceTurn != nil {
@@ -105,6 +153,21 @@ func (h *assistantHandlers) conversationExecutor(s *AgentToolSession, root strin
 			if request.Sandbox == nil || !domain.ConversationSandboxDriver(request.Sandbox.Profile.Driver) {
 				return "", fmt.Errorf("对话工作区只支持 Docker 或 native 沙箱")
 			}
+			if len(s.projectCredentialIDs) > 0 {
+				project, ok := h.repo.Project(s.ProjectID)
+				platformAdmin := h.repo.IsPlatformAdmin(s.User.LoginName)
+				if !ok || project.ID != s.ProjectID || run.ExecutionContext.ProjectID != s.ProjectID ||
+					!workbenchProjectAllowsUser(project, s.UserID, platformAdmin) {
+					return "", fmt.Errorf("无权在该工作区使用项目凭据")
+				}
+				if use, _ := domain.ProjectCredentialAccess(project, s.UserID, platformAdmin); use {
+					projectCredentialEnv, err = h.repo.ResolveAvailableProjectCredentialEnv(ctx, project.ID, s.projectCredentialIDs)
+					if err != nil {
+						return "", err
+					}
+					s.recordProjectCredentialValues(projectCredentialEnv)
+				}
+			}
 			if s.ExecutionRunnerID == "" {
 				var reason string
 				workspace, reason = h.engine.LocalRunWorkspace(run)
@@ -112,11 +175,12 @@ func (h *assistantHandlers) conversationExecutor(s *AgentToolSession, root strin
 					return "", fmt.Errorf("工作区暂不可用：%s", reason)
 				}
 			}
+			preparingWorkspace = false
 		}
 		call := func(callCtx context.Context, req runtime.ConversationProcessRequest) (runtime.ConversationProcessResult, error) {
 			preDispatchError := func(err error) (runtime.ConversationProcessResult, error) {
 				if req.Operation == "start" {
-					err = fmt.Errorf("%w: %w", runtime.ErrConversationNotStarted, err)
+					err = conversationNotStarted(err, false)
 				}
 				return runtime.ConversationProcessResult{}, err
 			}
@@ -146,28 +210,12 @@ func (h *assistantHandlers) conversationExecutor(s *AgentToolSession, root strin
 					}
 				}
 				callCtx = gitwork.WithSSHKnownHostsLookup(callCtx, h.repo.PlatformSSHKnownHosts)
+				callCtx = runtime.WithPrivilegedSandboxSetting(callCtx, h.repo.PlatformRunnerPrivilegedSandbox)
 				result, err := h.conversationProcesses.Handle(callCtx, root, workspace, request.Sandbox, req, forward, factory)
 				if err != nil && req.Operation == "start" {
-					err = fmt.Errorf("%w: %w", runtime.ErrConversationNotStarted, err)
+					err = conversationNotStarted(err, false)
 				}
 				return result, err
-			}
-			if h.runnerControls == nil {
-				return preDispatchError(errAssistantExecutionUnavailable)
-			}
-			runner, ok := h.repo.Runner(s.ExecutionRunnerID)
-			if !ok || runner.Status != domain.RunnerStatusOnline {
-				return preDispatchError(errAssistantExecutionUnavailable)
-			}
-			if !runner.SupportsConversationCLI() {
-				return preDispatchError(fmt.Errorf("执行机器需升级至 %s", domain.RunnerVersionConversationCLI))
-			}
-			if (s.runnerLogin || s.transient) && !runner.SupportsCLISettings() {
-				return preDispatchError(fmt.Errorf("执行机器需升级至 %s 才能使用对话本机登录和 CLI 测试", domain.RunnerVersionCLISettings))
-			}
-			if req.Command != nil && req.Command.Provider == assistantEngineCodeBuddy &&
-				req.Command.Credentials.CodeBuddy.BaseURL != "" && !runner.SupportsCodeBuddyBaseURL() {
-				return preDispatchError(fmt.Errorf("执行机器需升级至 %s 才能使用 CodeBuddy Base URL", domain.RunnerVersionCodeBuddyBaseURL))
 			}
 			raw, err := json.Marshal(req)
 			if err != nil {
@@ -175,11 +223,32 @@ func (h *assistantHandlers) conversationExecutor(s *AgentToolSession, root strin
 			}
 			envelope := request
 			envelope.Conversation = raw
-			response, err := h.runnerControls.requestWorkspace(callCtx, s.ExecutionRunnerID, envelope)
-			// A 429 means the runner's request slots were full and it rejected
-			// the request before handling it, so every operation (including a
-			// write) can be sent again. Back off instead of failing the turn.
-			for delay := 50 * time.Millisecond; err == nil && response.Status == http.StatusTooManyRequests && delay <= conversationProcessBusyMaxDelay; delay *= 2 {
+			// A revoked turn can finish and release its resources. Preparing a
+			// new turn, sending files and starting a process need a live grant.
+			checkAccess := false
+			switch req.Operation {
+			case "prepare", "resetAssets", "sync", "start":
+				checkAccess = true
+			}
+			var response domain.RunnerWorkspaceResponse
+			for delay := 50 * time.Millisecond; ; delay *= 2 {
+				runner, runnerErr := h.conversationRunner(callCtx, s, checkAccess)
+				if runnerErr != nil {
+					return preDispatchError(runnerErr)
+				}
+				if len(projectCredentialEnv) > 0 && !runner.SupportsProjectCredentials() {
+					return preDispatchError(&runtime.ConversationWorkspaceSetupError{Cause: fmt.Errorf("执行机器需升级至 %s 才能使用项目凭据", domain.RunnerVersionProjectCredentials)})
+				}
+				if req.Command != nil && req.Command.Provider == assistantEngineCodeBuddy &&
+					req.Command.Credentials.CodeBuddy.BaseURL != "" && !runner.SupportsCodeBuddyBaseURL() {
+					return preDispatchError(fmt.Errorf("执行机器需升级至 %s 才能使用 CodeBuddy Base URL", domain.RunnerVersionCodeBuddyBaseURL))
+				}
+				response, err = h.runnerControls.requestWorkspace(callCtx, s.ExecutionRunnerID, envelope)
+				// The runner returned 429 before handling the request. Retry
+				// with backoff and check the machine again before each send.
+				if err != nil || response.Status != http.StatusTooManyRequests || delay > conversationProcessBusyMaxDelay {
+					break
+				}
 				timer := time.NewTimer(delay)
 				select {
 				case <-timer.C:
@@ -187,18 +256,24 @@ func (h *assistantHandlers) conversationExecutor(s *AgentToolSession, root strin
 					timer.Stop()
 					return runtime.ConversationProcessResult{}, callCtx.Err()
 				}
-				response, err = h.runnerControls.requestWorkspace(callCtx, s.ExecutionRunnerID, envelope)
 			}
 			if err != nil {
 				return runtime.ConversationProcessResult{}, fmt.Errorf("%w: %w", errAssistantExecutionUnavailable, err)
 			}
 			if response.Error != "" {
 				responseErr := errors.New(response.Error)
-				if response.Code == domain.WorkspaceErrorConversationState {
+				switch response.Code {
+				case domain.WorkspaceErrorConversationState:
 					responseErr = &runtime.ConversationStateError{Message: response.Error}
+				case domain.WorkspaceErrorConversationSetup:
+					responseErr = &runtime.ConversationWorkspaceSetupError{Cause: responseErr}
 				}
 				if req.Operation == "start" {
-					return runtime.ConversationProcessResult{}, fmt.Errorf("%w: %w", runtime.ErrConversationNotStarted, responseErr)
+					// Older runners return workspace startup failures without a
+					// code. Preserve fallback for their confirmed start errors.
+					legacyWorkspaceError := request.RunID != "" && response.Code == "" &&
+						(response.Status == http.StatusBadRequest || response.Status == http.StatusNotFound)
+					return runtime.ConversationProcessResult{}, conversationNotStarted(responseErr, legacyWorkspaceError)
 				}
 				return runtime.ConversationProcessResult{}, responseErr
 			}
@@ -229,6 +304,13 @@ func (h *assistantHandlers) conversationExecutor(s *AgentToolSession, root strin
 			if err != nil {
 				return "", err
 			}
+			if !prepared.PromptInputFiles {
+				for _, file := range files {
+					if runtime.ConversationPromptInputAsset(file.Path) {
+						return "", fmt.Errorf("执行机器需要升级以支持该执行器的长对话输入")
+					}
+				}
+			}
 			if _, err = call(ctx, runtime.ConversationProcessRequest{Operation: "resetAssets"}); err != nil {
 				return "", err
 			}
@@ -249,6 +331,7 @@ func (h *assistantHandlers) conversationExecutor(s *AgentToolSession, root strin
 			command, credentials = h.bindWorkspaceGit(ctx, s, command, credentials)
 		}
 		wire := runtime.ConversationCommandFor(command, credentials)
+		wire.ProjectCredentialEnv = projectCredentialEnv
 		wire.RunnerLogin = s.runnerLogin
 		if s.ExecutionRunnerID != "" {
 			wire.Argv[0] = assistantEngineBinary(command.Provider)
@@ -282,6 +365,9 @@ func (h *assistantHandlers) conversationExecutor(s *AgentToolSession, root strin
 			}
 			return "", err
 		}
+		if acp, ok := command.Stdin.(*assistantACP); ok && started.WorkingDir != "" {
+			acp.cwd = started.WorkingDir
+		}
 
 		ioCtx, stopIO := context.WithCancel(ctx)
 		defer stopIO()
@@ -302,10 +388,12 @@ func (h *assistantHandlers) conversationExecutor(s *AgentToolSession, root strin
 				// Read complete frames, then split oversized writes for runners.
 				// The CLI receives the same byte stream, including newlines.
 				reader := bufio.NewReaderSize(command.Stdin, 64<<10)
+				rootPath := runtime.ConversationStdinPath(root, command.Provider)
+				workspacePath := runtime.ConversationStdinPath(filepath.Join(root, "ws"), command.Provider)
 				for {
 					data, readErr := reader.ReadString('\n')
 					for len(data) > 0 {
-						end := conversationInputChunkLen(data, root)
+						end := conversationInputChunkLen(data, workspacePath, rootPath)
 						if _, writeErr := call(ioCtx, runtime.ConversationProcessRequest{Operation: "write", ID: started.ID, Data: data[:end]}); writeErr != nil {
 							fail(fmt.Errorf("原生进程输入失败：%w", writeErr))
 							return
@@ -361,7 +449,8 @@ func (h *assistantHandlers) conversationExecutor(s *AgentToolSession, root strin
 				s.noteGitScrubbed(result.GitScrubbed)
 				if result.Error != "" {
 					if result.NotStarted {
-						return "", fmt.Errorf("%w: %s", runtime.ErrConversationNotStarted, result.Error)
+						workspaceSetup := request.RunID != "" && (result.ErrorCode == domain.WorkspaceErrorConversationSetup || result.ErrorCode == "")
+						return "", conversationNotStarted(errors.New(result.Error), workspaceSetup)
 					}
 					return "", fmt.Errorf("%s", result.Error)
 				}
@@ -373,23 +462,8 @@ func (h *assistantHandlers) conversationExecutor(s *AgentToolSession, root strin
 
 const maxConversationInputChunk = 1 << 20
 
-func conversationInputChunkLen(data, root string) int {
-	if len(data) <= maxConversationInputChunk {
-		return len(data)
-	}
-	end := maxConversationInputChunk
-	for end > maxConversationInputChunk-utf8.UTFMax && !utf8.RuneStart(data[end]) {
-		end--
-	}
-	// The runner remaps paths separately in each write request.
-	if len(root) > 1 && len(root) < end {
-		start := end - len(root) + 1
-		windowEnd := min(len(data), end+len(root)-1)
-		if i := strings.Index(data[start:windowEnd], root); i >= 0 && start+i < end {
-			end = start + i
-		}
-	}
-	return end
+func conversationInputChunkLen(data string, paths ...string) int {
+	return runtime.ConversationTextChunkLen(data, maxConversationInputChunk, paths...)
 }
 
 func assistantEngineBinary(kind string) string {
@@ -526,7 +600,7 @@ func waitConversationProcessStop(ctx context.Context, id string, call func(conte
 // bindWorkspaceGit gives the workspace CLI this turn's requester's Git
 // credentials, so the agent clones, pushes and calls the Git host itself.
 // Each turn starts its CLI again, so a shared conversation always runs with
-// the identity of whoever sent the current message. HTTPS tokens never travel
+// the identity of whoever sent the current message. Git tokens never travel
 // with the command: the helper fetches them from this turn's session, so a
 // removed token stops working at once.
 func (h *assistantHandlers) bindWorkspaceGit(ctx context.Context, s *AgentToolSession, command runtime.CommandSpec, credentials runtime.RunCredentials) (runtime.CommandSpec, runtime.RunCredentials) {
@@ -535,13 +609,24 @@ func (h *assistantHandlers) bindWorkspaceGit(ctx context.Context, s *AgentToolSe
 		return command, credentials
 	}
 	credentials.GitSSHHostKeys = h.repo.GitSSHKeysByHost(s.User.ID)
-	if hosts := h.repo.GitHTTPWorkspaceHosts(s.User.ID); len(hosts) > 0 {
-		if runner, ok := h.repo.Runner(s.ExecutionRunnerID); s.ExecutionRunnerID != "" && (!ok || !runner.SupportsGitHTTP()) {
-			assistantDiagnosticsFrom(ctx).platform("git.http_unavailable", fmt.Sprintf("执行机器需升级至 %s 才能在工作区使用 HTTPS Git 访问令牌", domain.RunnerVersionGitHTTP), s.User)
-		} else {
-			credentials.GitHTTPHosts = hosts
-			command = runtime.WithCommandEnvironment(command, map[string]string{runtime.SessionGatewayEnv: agentToolMCPURL(s.Token)})
+	hosts := h.repo.GitHTTPWorkspaceHosts(s.User.ID)
+	if len(hosts) > 0 && s.ExecutionRunnerID != "" {
+		runner, _ := h.repo.Runner(s.ExecutionRunnerID)
+		if !runner.SupportsGitPlainHTTP() {
+			before := len(hosts)
+			maps.DeleteFunc(hosts, func(host, _ string) bool { return strings.HasPrefix(host, "http://") })
+			if len(hosts) < before {
+				assistantDiagnosticsFrom(ctx).platform("git.plain_http_unavailable", domain.RunnerGitPlainHTTPUpgradeMessage, s.User)
+			}
 		}
+		if len(hosts) > 0 && !runner.SupportsGitHTTP() {
+			assistantDiagnosticsFrom(ctx).platform("git.http_unavailable", fmt.Sprintf("执行机器需升级至 %s 才能在工作区使用 Git 访问令牌", domain.RunnerVersionGitHTTP), s.User)
+			hosts = nil
+		}
+	}
+	if len(hosts) > 0 {
+		credentials.GitHTTPHosts = hosts
+		command = runtime.WithCommandEnvironment(command, map[string]string{runtime.SessionGatewayEnv: agentToolMCPURL(s.Token)})
 	}
 	if user, ok := h.repo.User(s.User.ID); ok {
 		if login := strings.TrimSpace(user.LoginName); login != "" {
@@ -577,7 +662,7 @@ func (h *assistantHandlers) testRunnerCLI(ctx context.Context, runnerID, provide
 		}
 	}
 	session := &AgentToolSession{
-		ChatOwnerID: user.ID, ChatSessionID: newAssistantSessionID(), ExecutionRunnerID: runnerID,
+		UserID: user.ID, ChatOwnerID: user.ID, ChatSessionID: newAssistantSessionID(), ExecutionRunnerID: runnerID,
 		RuntimeMode: domain.AssistantModePlatform, runnerLogin: runnerLogin, transient: true,
 	}
 	_, _, err = runAssistantCLI(ctx, assistantCLIRequest{

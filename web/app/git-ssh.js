@@ -59,18 +59,39 @@ globalThis.LoopForgeGitHTTPSHost = function normalizeHTTPSHost(raw) {
   }
 };
 
-// Unknown HTTPS hosts use Git transport without identifying the hosting product.
-globalThis.LoopForgeGitHTTPS = function parseHTTPSRepository(raw) {
+// A pasted clone command explicitly selects plaintext transport.
+globalThis.LoopForgeExplicitHTTPClone = function isHTTPCloneCommand(raw) {
+  const input = String(raw || '').trim();
+  return input.startsWith('git clone ') && /^http:\/\//i.test(input.slice('git clone '.length).trimStart());
+};
+
+// Keep the stored transport when displaying a repository in an editable field.
+globalThis.LoopForgeGitRepositoryReference = function gitRepositoryReference(repository) {
+  if (repository?.provider === 'http' && repository.cloneUrl) return `git clone ${repository.cloneUrl}`;
+  if (repository?.provider === 'ssh') return repository.cloneUrl || '';
+  return repository?.webUrl || repository?.cloneUrl || repository?.gongfengProjectId || '';
+};
+
+// Generic HTTP(S) hosts use Git transport without a hosting API.
+globalThis.LoopForgeGitHTTPRepository = function parseHTTPRepository(raw) {
   const address=String(raw||'').trim().replace(/^git clone\s+/i,'');
-  if(!/^https:\/\//i.test(address)||/[\s\\]/.test(address))return null;
+  if(!/^https?:\/\//i.test(address)||/[\s\\]/.test(address))return null;
   try{
-    const u=new URL(address),host=globalThis.LoopForgeGitHTTPSHost(`https://${u.host}`);
-    if(!host||u.username||u.password||u.search||u.hash||['github.com','git.example.com'].includes(u.hostname.toLowerCase()))return null;
+    const u=new URL(address),plain=u.protocol==='http:';
+    if(u.username||u.password||u.search||u.hash||u.port==='0')return null;
+    if(!plain&&['github.com','git.example.com'].includes(u.hostname))return null;
+    const rawAuthority=address.replace(/^https?:\/\//i,'').split('/')[0];
+    const ipv4=/^\d+(?:\.\d+){3}$/.test(u.hostname);
+    const validHost=ipv4
+      ? plain && rawAuthority.split(':')[0]===u.hostname
+      : !!globalThis.LoopForgeGitHTTPSHost(`https://${u.host}`);
+    if(!validHost)return null;
     const parts=u.pathname.replace(/^\/+|\/+$/g,'').split('/');
     if(parts.some(part=>!part||decodeURIComponent(part)==='.'||decodeURIComponent(part)==='..'))return null;
     const name=parts[parts.length-1].replace(/\.git$/,'');if(!name)return null;
-    const cloneUrl='https://'+host+'/'+parts.join('/');
-    return {provider:'https',host,project:host+'/'+parts.join('/').replace(/\.git$/,''),name,cloneUrl,webUrl:cloneUrl.replace(/\.git$/,'')};
+    const cloneUrl=u.origin+'/'+parts.join('/');
+    const host=plain?u.origin:u.host;
+    return {provider:plain?'http':'https',host,project:host+'/'+parts.join('/').replace(/\.git$/,''),name,cloneUrl,webUrl:cloneUrl.replace(/\.git$/,'')};
   }catch{return null}
 };
 

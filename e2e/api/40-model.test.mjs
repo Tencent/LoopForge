@@ -42,8 +42,8 @@ test('agent node: the real executor writes the declared artifact', { skip, timeo
   if (run.timing) assert.ok(run.timing.executionMs > 0);
 });
 
-// 真实 Agent 在子 SOP 里改父流程检出的代码，父流程下一个节点能直接读到；节点不提交、不推送。
-test('agent node in a child SOP edits the parent checkout', { skip: skip || repoSkip, timeout: 900_000 }, async () => {
+// 真实 Agent 在子 LOOP 里改父流程检出的代码，父流程下一个节点能直接读到；节点不提交、不推送。
+test('agent node in a child LOOP edits the parent checkout', { skip: skip || repoSkip, timeout: 900_000 }, async () => {
   const agentId = await createAgent('repo-writer', [
     '你是 e2e 自动化测试角色。严格按以下步骤执行，不要做任何额外的事：',
     '1. 在当前工作目录下找到代码仓库子目录（里面有 parent.txt 文件）。',

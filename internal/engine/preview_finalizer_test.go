@@ -178,7 +178,7 @@ func TestStartInjectsPreviewBuildNode(t *testing.T) {
 	}
 	t.Cleanup(store.Close)
 	wf := domain.WorkflowDefinition{
-		ID: "preview-auto-build", Name: "preview", SandboxProfileID: "local",
+		ID: "preview-auto-build", Name: "preview", SandboxProfileID: "test-native",
 		Preview: &domain.PreviewContract{Enabled: true, Model: "gpt-5.6-terra"},
 		Nodes: []domain.WorkflowNode{
 			{ID: "impl", Name: "实现", Type: "script", ScriptLanguage: "shell", Script: "printf ok\n", MaxAttempts: 1},
@@ -205,7 +205,7 @@ func TestStartInjectsPreviewBuildNode(t *testing.T) {
 	}
 	stored, _ := store.Workflow(wf.ID)
 	if len(stored.Nodes) != 1 {
-		t.Fatalf("catalog SOP must stay without the injected node: %+v", stored.Nodes)
+		t.Fatalf("catalog LOOP must stay without the injected node: %+v", stored.Nodes)
 	}
 	agent, ok := workflowAgent(store, run.WorkflowSnapshot, domain.PreviewBuildAgentID)
 	if !ok || agent.ExecutorID != domain.PreviewBuildExecutor || agent.Model != "gpt-5.6-terra" {

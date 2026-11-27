@@ -177,7 +177,7 @@ func IsPreviewBuildAgent(id string) bool {
 }
 
 // NormalizePreviewBackendURL accepts an empty value or an http(s) URL. The
-// URL is chosen when opening a preview, not stored on the SOP.
+// URL is chosen when opening a preview, not stored on the LOOP.
 func NormalizePreviewBackendURL(raw string) (string, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -237,7 +237,7 @@ func (p RunPreview) Serveable() bool {
 // PreviewSession is a short-lived access grant for /preview/{token}/.
 // The database stores only the token hash. BackendURL is chosen when the
 // session is created so Studio can point the preview at a backend without
-// baking it into the SOP.
+// baking it into the LOOP.
 type PreviewSession struct {
 	ID             string    `json:"id"`
 	PreviewID      string    `json:"previewId"`

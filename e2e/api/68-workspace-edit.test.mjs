@@ -1,6 +1,6 @@
 // Human editing of a run workspace: a repository-bound run waits at an
 // approval gate while a user edits files with compare-and-swap hashes, like an
-// AI IDE — editing never pauses the SOP ("takeover" is a no-op kept for older
+// AI IDE — editing never pauses the LOOP ("takeover" is a no-op kept for older
 // clients). The user inspects the diff and hands the workspace back; the run
 // then continues and finishes with the edit, without pushing. Editing is not
 // exclusive to one person: any non-viewer member may edit, and the content
@@ -51,7 +51,7 @@ test('viewers cannot write', { skip: repoSkip || tokenBSkip }, async () => {
 
 test('editing never pauses the run, edits use compare-and-swap, unsafe paths are refused', { skip: repoSkip, timeout: 120_000 }, async () => {
   const me = await tokenOwner();
-  assert.equal((await get(ws())).readOnly, false, 'a live SOP workspace must open editable');
+  assert.equal((await get(ws())).readOnly, false, 'a live LOOP workspace must open editable');
   const lease = await post(ws('/takeover'), {});
   assert.equal(lease.editorId, me.id);
   assert.equal((await get(`/api/runs/${runId}`)).pauseRequested, false, 'editing must not pause agents');
