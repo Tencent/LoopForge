@@ -1480,9 +1480,18 @@ func (h *assistantHandlers) downloadAttachment(c *gin.Context) {
 		c.Header("Cache-Control", "private, no-cache")
 		c.Header("ETag", strconv.Quote(id))
 		if c.Query("view") == "thumbnail" && thumbnailImageType(record.MimeType) {
+			thumbTag := strconv.Quote(id + "-thumbnail-v1")
+			// The preview tag is only issued after a preview was built, and the original never
+			// changes, so a matching validator can be answered without decoding the image again.
+			if attachmentETagMatches(c.Request.Header.Values("If-None-Match"), thumbTag) {
+				c.Header("ETag", thumbTag)
+				c.Status(http.StatusNotModified)
+				c.Writer.WriteHeaderNow()
+				return
+			}
 			thumb := h.attachmentThumbnail(ownerID, id, file, info.Size())
 			if len(thumb) != 0 {
-				c.Header("ETag", strconv.Quote(id+"-thumbnail-v1"))
+				c.Header("ETag", thumbTag)
 				c.Header("Content-Type", http.DetectContentType(thumb))
 				c.Header("Content-Disposition", "inline")
 				http.ServeContent(c.Writer, c.Request, "", info.ModTime(), bytes.NewReader(thumb))

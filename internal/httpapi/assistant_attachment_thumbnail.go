@@ -7,6 +7,7 @@ import (
 	"image/png"
 	"io"
 	"os"
+	"strings"
 	"sync"
 
 	"github.com/disintegration/imaging"
@@ -78,4 +79,17 @@ func makeAttachmentThumbnail(file io.ReaderAt, size int64) []byte {
 		return nil
 	}
 	return buf.Bytes()
+}
+
+// attachmentETagMatches applies If-None-Match's weak comparison to one entity tag.
+func attachmentETagMatches(headers []string, tag string) bool {
+	for _, header := range headers {
+		for _, candidate := range strings.Split(header, ",") {
+			candidate = strings.TrimPrefix(strings.TrimSpace(candidate), "W/")
+			if candidate == tag {
+				return true
+			}
+		}
+	}
+	return false
 }
