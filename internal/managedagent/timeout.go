@@ -38,3 +38,31 @@ func turnTimeoutError(provider string, turn, parent context.Context, err error) 
 	}
 	return &turnTimeoutFailure{provider: provider, err: err}
 }
+
+// UnknownTurnError reports a managed turn whose remote outcome is unknown,
+// rebuilt from a message that crossed a process boundary (a personal Runner
+// completing its task). The wrapped sentinel cannot cross that boundary as a
+// value, so this type matches ErrTurnTimedOut for retry classification while
+// keeping the reporter's explanation intact.
+type UnknownTurnError struct {
+	Message string
+}
+
+func (e *UnknownTurnError) Error() string {
+	if e.Message == "" {
+		return ErrTurnTimedOut.Error()
+	}
+	return e.Message
+}
+
+func (e *UnknownTurnError) Is(target error) bool {
+	return target == ErrTurnTimedOut
+}
+
+// TurnTimeout reports the per-turn budget. Runners and the control plane read
+// the same value; tests shorten it.
+func TurnTimeout() time.Duration { return turnTimeout }
+
+// SetTurnTimeout replaces the per-turn budget and returns nothing; callers in
+// tests restore the previous value.
+func SetTurnTimeout(d time.Duration) { turnTimeout = d }

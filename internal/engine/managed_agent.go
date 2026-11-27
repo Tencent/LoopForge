@@ -179,14 +179,14 @@ func (e *Engine) dispatchExternalAgent(ctx context.Context, runID, nodeID, runne
 	if completed.Status == domain.RunnerTaskSuccess {
 		return completed.Result, nil
 	}
+	// A turn the personal Runner handed to the Agent and could not confirm is
+	// the same unknown outcome the direct path reports. Keep the runner's
+	// explanation, but restore the sentinel the completion API cannot carry:
+	// an unknown outcome never consumes another attempt.
+	if completed.Code == domain.RunnerTaskUncertainOutcome {
+		return "", &managedagent.UnknownTurnError{Message: strings.TrimSpace(completed.Error)}
+	}
 	if completed.Error != "" {
-		// A personal Runner reports a turn whose remote outcome it could not
-		// observe with a structured marker. The prompt already reached the
-		// remote Agent, so keep the sentinel: the engine must fail this
-		// attempt instead of consuming MaxAttempts by resending it.
-		if rest, ok := strings.CutPrefix(completed.Error, domain.RunnerResultTurnOutcomeUnknown+"："); ok {
-			return "", fmt.Errorf("%w：%s", managedagent.ErrTurnTimedOut, rest)
-		}
 		return "", errors.New(completed.Error)
 	}
 	return "", fmt.Errorf("个人执行器 A2A 任务结束于 %s", completed.Status)

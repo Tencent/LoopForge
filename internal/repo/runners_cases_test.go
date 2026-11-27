@@ -169,19 +169,19 @@ func TestRunnerTaskLeaseEventsExpiryCancellationAndDeregister(t *testing.T) {
 	if control, ok := s.RunnerTaskControl(task.ID); !ok || control.DesiredState != domain.RunnerTaskDesiredCancel {
 		t.Fatalf("control=%+v ok=%v", control, ok)
 	}
-	if err := s.CompleteRunnerTask(task.ID, runner.ID, "invalid", nil, "", "", nil, nil, now); err == nil {
+	if err := s.CompleteRunnerTask(task.ID, runner.ID, "invalid", nil, "", "", "", nil, nil, now); err == nil {
 		t.Fatal("invalid completion accepted")
 	}
 	exit := 0
 	outputs := &domain.RunnerTaskOutputs{Files: map[string]string{"result.md": "ok"}}
-	if err := s.CompleteRunnerTask(task.ID, runner.ID, domain.RunnerTaskSuccess, &exit, "done", "", map[string]string{"result": "body"}, outputs, now); err != nil {
+	if err := s.CompleteRunnerTask(task.ID, runner.ID, domain.RunnerTaskSuccess, &exit, "done", "", "", map[string]string{"result": "body"}, outputs, now); err != nil {
 		t.Fatal(err)
 	}
 	completed, ok := s.RunnerTask(task.ID)
 	if !ok || completed.Status != domain.RunnerTaskSuccess || completed.Invocation.CodexAPIKey != "" || completed.Invocation.Repository.GitToken != "" || completed.Invocation.Repositories[0].GitToken != "" {
 		t.Fatalf("completed=%+v ok=%v", completed, ok)
 	}
-	if err := s.CompleteRunnerTask(task.ID, runner.ID, domain.RunnerTaskSuccess, nil, "", "", nil, nil, now); !errors.Is(err, ErrRunnerTaskLeaseLost) {
+	if err := s.CompleteRunnerTask(task.ID, runner.ID, domain.RunnerTaskSuccess, nil, "", "", "", nil, nil, now); !errors.Is(err, ErrRunnerTaskLeaseLost) {
 		t.Fatalf("double completion err=%v", err)
 	}
 

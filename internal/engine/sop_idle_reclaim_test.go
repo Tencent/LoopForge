@@ -634,7 +634,7 @@ func TestSOPIdleReclaimPromotedRunnerRestoresBeforeDispatch(t *testing.T) {
 					if err != nil {
 						status, message = domain.RunnerTaskFailed, err.Error()
 					}
-					if err := s.CompleteRunnerTask(task.ID, runner.ID, status, nil, string(output), message, nil, nil, time.Now().UTC()); err != nil {
+					if err := s.CompleteRunnerTask(task.ID, runner.ID, status, nil, string(output), message, "", nil, nil, time.Now().UTC()); err != nil {
 						t.Error(err)
 					}
 				}

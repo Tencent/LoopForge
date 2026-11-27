@@ -249,7 +249,7 @@ func TestRunnerTaskLeaseLifecycle(t *testing.T) {
 	}
 
 	exit := 0
-	if err := s.CompleteRunnerTask(task.ID, "runner-a", domain.RunnerTaskSuccess, &exit, "done", "", map[string]string{"plan": "# plan"}, nil, now); err != nil {
+	if err := s.CompleteRunnerTask(task.ID, "runner-a", domain.RunnerTaskSuccess, &exit, "done", "", "", map[string]string{"plan": "# plan"}, nil, now); err != nil {
 		t.Fatal(err)
 	}
 	final, ok := s.RunnerTask(task.ID)
@@ -263,7 +263,7 @@ func TestRunnerTaskLeaseLifecycle(t *testing.T) {
 		t.Fatalf("task credentials survived completion: %+v", final.Invocation)
 	}
 	// Completing twice is rejected.
-	if err := s.CompleteRunnerTask(task.ID, "runner-a", domain.RunnerTaskFailed, nil, "", "", nil, nil, now); err != ErrRunnerTaskLeaseLost {
+	if err := s.CompleteRunnerTask(task.ID, "runner-a", domain.RunnerTaskFailed, nil, "", "", "", nil, nil, now); err != ErrRunnerTaskLeaseLost {
 		t.Fatalf("double complete err = %v", err)
 	}
 }
@@ -406,5 +406,58 @@ func TestRunnerSessionLookup(t *testing.T) {
 	}
 	if _, ok := s.RunnerSessionByHash("hash-old"); ok {
 		t.Fatal("expired session resolved")
+	}
+}
+
+// An external Agent turn that already started must not be requeued when its
+// Runner goes away: the Agent holds the prompt, so a re-claim would run the
+// same work twice. The row reports an unknown outcome, which the engine maps to
+// a failure that never consumes another attempt.
+func TestExpireRunnerTaskKeepsStartedExternalAgentUncertain(t *testing.T) {
+	s := newTestRunner(t)
+	now := time.Now().UTC()
+	started := domain.RunnerTask{
+		ID: "rt-a2a-started", RunnerID: "runner-a", Provider: domain.A2AExecutorID,
+		Action: domain.RunnerTaskActionExternalAgent, Prompt: "do the work", MaxAttempts: 4, Status: domain.RunnerTaskQueued,
+	}
+	unstarted := domain.RunnerTask{
+		ID: "rt-a2a-unstarted", RunnerID: "runner-a", Provider: domain.A2AExecutorID,
+		Action: domain.RunnerTaskActionExternalAgent, Prompt: "do the work", MaxAttempts: 4, Status: domain.RunnerTaskQueued,
+	}
+	for _, task := range []domain.RunnerTask{started, unstarted} {
+		if err := s.PutRunnerTask(task); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, claimed, err := s.ClaimRunnerTask("runner-a", []string{domain.A2AExecutorID}, now, time.Second); err != nil || !claimed {
+		t.Fatalf("claim started task claimed=%v err=%v", claimed, err)
+	}
+	if err := s.StartRunnerTask("rt-a2a-started", "runner-a", now); err != nil {
+		t.Fatal(err)
+	}
+	if _, claimed, err := s.ClaimRunnerTask("runner-a", []string{domain.A2AExecutorID}, now, time.Second); err != nil || !claimed {
+		t.Fatalf("claim unstarted task claimed=%v err=%v", claimed, err)
+	}
+
+	recovered, err := s.ExpireRunnerTasks(now.Add(2 * time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recovered) != 2 {
+		t.Fatalf("recovered %d tasks, want 2", len(recovered))
+	}
+	got, _ := s.RunnerTask("rt-a2a-started")
+	if got.Status != domain.RunnerTaskFailed || got.Code != domain.RunnerTaskUncertainOutcome {
+		t.Fatalf("started task = %s/%q, want failed/%s", got.Status, got.Code, domain.RunnerTaskUncertainOutcome)
+	}
+	if got.Attempt != 1 {
+		t.Fatalf("started task attempt = %d, want 1", got.Attempt)
+	}
+	// The same rule must not block a Runner that never started the task: the
+	// Agent never saw the prompt, so a re-claim is safe and cheaper than a
+	// failed node.
+	other, _ := s.RunnerTask("rt-a2a-unstarted")
+	if other.Status != domain.RunnerTaskQueued {
+		t.Fatalf("unstarted task status = %s, want queued", other.Status)
 	}
 }

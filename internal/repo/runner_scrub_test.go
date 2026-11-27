@@ -108,7 +108,7 @@ func TestRunnerTaskPayloadScrubbedOnTerminalTransitions(t *testing.T) {
 	if err := st.PutRunnerTask(completed); err != nil {
 		t.Fatalf("put completed task: %v", err)
 	}
-	if err := st.CompleteRunnerTask("task-completed", "runner-1", domain.RunnerTaskSuccess, nil, "ok", "", nil, nil, now); err != nil {
+	if err := st.CompleteRunnerTask("task-completed", "runner-1", domain.RunnerTaskSuccess, nil, "ok", "", "", nil, nil, now); err != nil {
 		t.Fatalf("complete task: %v", err)
 	}
 	assertPayloadScrubbed(t, st, "task-completed")

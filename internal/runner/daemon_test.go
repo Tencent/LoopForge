@@ -686,7 +686,7 @@ func TestDaemonExecuteProcessRunsRealCommand(t *testing.T) {
 	if strings.Contains(result.result, "file already closed") {
 		t.Fatalf("stream error leaked into result %q", result.result)
 	}
-	if err := s.CompleteRunnerTask("rt-echo", daemon.runnerID(), domain.RunnerTaskSuccess, &result.exitCode, result.result, result.errMsg, nil, nil, time.Now().UTC()); err != nil {
+	if err := s.CompleteRunnerTask("rt-echo", daemon.runnerID(), domain.RunnerTaskSuccess, &result.exitCode, result.result, result.errMsg, "", nil, nil, time.Now().UTC()); err != nil {
 		t.Fatal(err)
 	}
 	final, _ := s.RunnerTask("rt-echo")
@@ -737,7 +737,7 @@ func TestExecuteProcessCapturesFastCommandStdout(t *testing.T) {
 		if strings.Contains(result.result, "file already closed") {
 			t.Fatalf("iter %d leaked stream error into result: %q", i, result.result)
 		}
-		if err := s.CompleteRunnerTask(id, daemon.runnerID(), domain.RunnerTaskSuccess, &result.exitCode, result.result, result.errMsg, nil, nil, time.Now().UTC()); err != nil {
+		if err := s.CompleteRunnerTask(id, daemon.runnerID(), domain.RunnerTaskSuccess, &result.exitCode, result.result, result.errMsg, "", nil, nil, time.Now().UTC()); err != nil {
 			t.Fatal(err)
 		}
 	}

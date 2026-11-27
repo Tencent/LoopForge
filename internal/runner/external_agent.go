@@ -3,7 +3,6 @@ package runner
 import (
 	"context"
 	"errors"
-	"fmt"
 
 	"agentflow/internal/domain"
 	"agentflow/internal/managedagent"
@@ -36,15 +35,16 @@ func (d *Daemon) executeExternalAgent(ctx context.Context, task domain.RunnerTas
 		return execResult{status: domain.RunnerTaskCanceled}
 	}
 	if err != nil {
-		// The prompt was already sent. A turn that ran past its budget has an
-		// unknown remote outcome — the cancellation is only advisory — so
-		// report a structured marker and let the control plane fail the node
-		// instead of resending the same turn on its retry path.
+		// A completed turn or a provider error is a final answer; a turn that
+		// ran past its budget is not. The prompt already reached the Agent and
+		// the cancel was advisory, so the control plane must not resend it.
+		// The sentinel cannot survive the completion report as an error value,
+		// so it travels as a structured code instead of the message text.
+		result := execResult{status: domain.RunnerTaskFailed, errMsg: err.Error()}
 		if errors.Is(err, managedagent.ErrTurnTimedOut) {
-			return execResult{status: domain.RunnerTaskFailed,
-				errMsg: fmt.Sprintf("%s：%v", domain.RunnerResultTurnOutcomeUnknown, err)}
+			result.uncertain = true
 		}
-		return execResult{status: domain.RunnerTaskFailed, errMsg: err.Error()}
+		return result
 	}
 	return execResult{status: domain.RunnerTaskSuccess, result: output}
 }

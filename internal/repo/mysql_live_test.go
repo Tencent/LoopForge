@@ -190,7 +190,7 @@ func TestMySQLRunnerTaskCompletionScrubsCredentials(t *testing.T) {
 	if claimed.Invocation == nil || len(claimed.Invocation.GitSSHKeys) != 0 || claimed.Invocation.GitSSHUserID != 42 {
 		t.Fatal("queue must retain the SSH credential reference only")
 	}
-	if err := s.CompleteRunnerTask(claimed.ID, runnerID, domain.RunnerTaskSuccess, nil, "done", "", nil, nil, time.Now().UTC()); err != nil {
+	if err := s.CompleteRunnerTask(claimed.ID, runnerID, domain.RunnerTaskSuccess, nil, "done", "", "", nil, nil, time.Now().UTC()); err != nil {
 		t.Fatal(err)
 	}
 	var payload string

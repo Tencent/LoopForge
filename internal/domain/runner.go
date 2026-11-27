@@ -264,11 +264,13 @@ const RunnerVersionEvolutionReplay = "0.13.1"
 
 const RunnerResultReportError = "执行结果回传失败"
 
-// RunnerResultTurnOutcomeUnknown prefixes the failure a personal Runner
-// reports for an external Agent turn whose prompt was already sent but whose
-// remote outcome it could not observe (for example a turn-budget timeout).
-// The control plane must fail the node instead of resending the turn.
-const RunnerResultTurnOutcomeUnknown = "托管 Agent 轮次结果未知"
+// RunnerTaskUncertainOutcome is a structured failure code reported by runners
+// when a task handed work to an external Agent and the Agent's outcome is
+// unknown (the turn ran past its budget, so the advisory cancel may not have
+// stopped it). The prompt already reached the Agent, so the control plane must
+// not resend it automatically; the error text alone cannot carry this, since
+// it crosses the completion API as an opaque string.
+const RunnerTaskUncertainOutcome = "outcome_unknown"
 
 func (r Runner) SupportsArtifactTransfer() bool {
 	return versionAtLeast(r.RunnerVersion, RunnerVersionArtifactTransfer)
@@ -547,10 +549,13 @@ type RunnerTask struct {
 	ExitCode     *int       `json:"exitCode,omitempty"`
 	Result       string     `json:"result,omitempty"`
 	Error        string     `json:"error,omitempty"`
-	StartedAt    *time.Time `json:"startedAt,omitempty"`
-	CompletedAt  *time.Time `json:"completedAt,omitempty"`
-	CreatedAt    time.Time  `json:"createdAt"`
-	UpdatedAt    time.Time  `json:"updatedAt"`
+	// Code is a structured failure code from the runner (see
+	// RunnerTaskUncertainOutcome). Error stays human-readable.
+	Code        string     `json:"code,omitempty"`
+	StartedAt   *time.Time `json:"startedAt,omitempty"`
+	CompletedAt *time.Time `json:"completedAt,omitempty"`
+	CreatedAt   time.Time  `json:"createdAt"`
+	UpdatedAt   time.Time  `json:"updatedAt"`
 	// RunID/NodeID link a task to a workflow execution. Runner events for a
 	// linked task are bridged into the run timeline (adapter runner-v1).
 	RunID      string            `json:"runId,omitempty"`

@@ -329,10 +329,13 @@ func (c *Client) SendEvents(ctx context.Context, taskID string, events []domain.
 }
 
 type CompleteRequest struct {
-	Status    string                    `json:"status"`
-	ExitCode  *int                      `json:"exitCode"`
-	Result    string                    `json:"result"`
-	Error     string                    `json:"error"`
+	Status   string `json:"status"`
+	ExitCode *int   `json:"exitCode"`
+	Result   string `json:"result"`
+	Error    string `json:"error"`
+	// Code is a structured failure code the control plane acts on without
+	// parsing Error (e.g. domain.RunnerTaskUncertainOutcome).
+	Code      string                    `json:"code,omitempty"`
 	Artifacts map[string]string         `json:"artifacts,omitempty"`
 	Outputs   *domain.RunnerTaskOutputs `json:"outputs,omitempty"`
 }

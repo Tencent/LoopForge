@@ -1102,7 +1102,7 @@ func (h *runnersHandlers) runnerTaskClaim(c *gin.Context) {
 			}
 			if err != nil {
 				// Finish the task before sending an unusable sandbox to the runner.
-				if finishErr := h.repo.CompleteRunnerTask(task.ID, runner.ID, domain.RunnerTaskFailed, nil, "", err.Error(), nil, nil, time.Now().UTC()); finishErr != nil {
+				if finishErr := h.repo.CompleteRunnerTask(task.ID, runner.ID, domain.RunnerTaskFailed, nil, "", err.Error(), "", nil, nil, time.Now().UTC()); finishErr != nil {
 					return domain.RunnerTask{}, false, finishErr
 				}
 				if ctxErr := c.Request.Context().Err(); ctxErr != nil {
@@ -1398,6 +1398,7 @@ func (h *runnersHandlers) runnerTaskComplete(c *gin.Context) {
 		ExitCode  *int                      `json:"exitCode"`
 		Result    string                    `json:"result"`
 		Error     string                    `json:"error"`
+		Code      string                    `json:"code"`
 		Artifacts map[string]string         `json:"artifacts"`
 		Outputs   *domain.RunnerTaskOutputs `json:"outputs"`
 	}
@@ -1425,7 +1426,7 @@ func (h *runnersHandlers) runnerTaskComplete(c *gin.Context) {
 	if input.Outputs != nil && (len(input.Outputs.FileBlobs) != 0 || len(input.Outputs.FileErrors) != 0) && !h.validateRunnerOutputTransfer(c, runner.ID, input.Outputs) {
 		return
 	}
-	if err := h.repo.CompleteRunnerTask(c.Param("id"), runner.ID, input.Status, input.ExitCode, input.Result, input.Error, input.Artifacts, input.Outputs, time.Now().UTC()); err != nil {
+	if err := h.repo.CompleteRunnerTask(c.Param("id"), runner.ID, input.Status, input.ExitCode, input.Result, input.Error, input.Code, input.Artifacts, input.Outputs, time.Now().UTC()); err != nil {
 		if err == repo.ErrRunnerTaskLeaseLost {
 			c.JSON(http.StatusConflict, map[string]string{"error": "task lease lost"})
 			return

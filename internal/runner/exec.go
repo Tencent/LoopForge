@@ -280,6 +280,10 @@ type execResult struct {
 	result   string
 	errMsg   string
 	outputs  *domain.RunnerTaskOutputs
+	// uncertain marks a failure whose remote outcome is unknown: the work was
+	// handed to an external Agent that may still be running. The control plane
+	// must not retry it automatically.
+	uncertain bool
 }
 
 // executeProcess spawns the Agent CLI in its own process group so a cancel

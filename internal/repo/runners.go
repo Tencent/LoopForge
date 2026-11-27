@@ -30,6 +30,7 @@ type runnerTaskPayload struct {
 	ExitCode          *int                             `json:"exitCode,omitempty"`
 	Result            string                           `json:"result,omitempty"`
 	Error             string                           `json:"error,omitempty"`
+	Code              string                           `json:"code,omitempty"`
 	StartedAt         *runnerTaskTime                  `json:"startedAt,omitempty"`
 	CompletedAt       *runnerTaskTime                  `json:"completedAt,omitempty"`
 	RunID             string                           `json:"runId,omitempty"`
@@ -116,6 +117,7 @@ func runnerTaskFromRow(row runnerTaskRow) domain.RunnerTask {
 		t.ExitCode = p.ExitCode
 		t.Result = p.Result
 		t.Error = p.Error
+		t.Code = p.Code
 		t.StartedAt = p.StartedAt.toTime()
 		t.CompletedAt = p.CompletedAt.toTime()
 		t.RunID = p.RunID
@@ -143,7 +145,7 @@ func runnerTaskPayloadBytes(v domain.RunnerTask) []byte {
 	}
 	return mustJSON(runnerTaskPayload{
 		Prompt: v.Prompt, Workspace: v.Workspace, Args: v.Args, ExitCode: v.ExitCode,
-		Result: v.Result, Error: v.Error, StartedAt: newRunnerTaskTime(v.StartedAt),
+		Result: v.Result, Error: v.Error, Code: v.Code, StartedAt: newRunnerTaskTime(v.StartedAt),
 		CompletedAt: newRunnerTaskTime(v.CompletedAt), RunID: v.RunID, NodeID: v.NodeID,
 		Invocation: v.Invocation, Sandbox: v.Sandbox, Command: v.Command, Action: v.Action,
 		PreviewArchive: v.PreviewArchive, WorkBranchMessage: v.WorkBranchMessage, Artifacts: v.Artifacts,
@@ -749,7 +751,7 @@ func (r *RunnersRepo) RenewRunnerTaskLease(id, runnerID string, ttl time.Duratio
 // CompleteRunnerTask finalizes a task. Only the lease owner may complete it.
 // artifacts (legacy, by contract name) and outputs carry what the runner
 // reported about its workspace; either may be nil.
-func (r *RunnersRepo) CompleteRunnerTask(id, runnerID, status string, exitCode *int, result, errMsg string, artifacts map[string]string, outputs *domain.RunnerTaskOutputs, now time.Time) error {
+func (r *RunnersRepo) CompleteRunnerTask(id, runnerID, status string, exitCode *int, result, errMsg, code string, artifacts map[string]string, outputs *domain.RunnerTaskOutputs, now time.Time) error {
 	if status != domain.RunnerTaskSuccess && status != domain.RunnerTaskFailed && status != domain.RunnerTaskCanceled {
 		return fmt.Errorf("invalid final task status %q", status)
 	}
@@ -763,6 +765,7 @@ func (r *RunnersRepo) CompleteRunnerTask(id, runnerID, status string, exitCode *
 		task.ExitCode = exitCode
 		task.Result = result
 		task.Error = errMsg
+		task.Code = code
 		if artifacts != nil {
 			task.Artifacts = artifacts
 		}
@@ -850,11 +853,20 @@ func (r *RunnersRepo) ExpireRunnerTasks(now time.Time) ([]domain.RunnerTask, err
 		}
 		for _, row := range rows {
 			task := runnerTaskFromRow(row)
-			if task.Attempt < task.MaxAttempts {
+			// An external Agent turn that already started has reached the
+			// Agent; a lost lease only says this Runner stopped hearing from
+			// it. Neither requeueing the task nor letting the node retry can
+			// undo the work the Agent may still be doing, so the row reports
+			// an unknown outcome instead.
+			uncertain := task.Action == domain.RunnerTaskActionExternalAgent && task.StartedAt != nil
+			if task.Attempt < task.MaxAttempts && !uncertain {
 				task.Status = domain.RunnerTaskQueued
 			} else {
 				task.Status = domain.RunnerTaskFailed
 				task.Error = "lease expired"
+				if uncertain {
+					task.Code = domain.RunnerTaskUncertainOutcome
+				}
 				completed := now
 				task.CompletedAt = &completed
 				scrubRunnerTaskCredentials(&task)
