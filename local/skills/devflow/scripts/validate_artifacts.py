@@ -158,6 +158,9 @@ def main() -> int:
             selected = [
                 relative
                 for stage in route
+                if not (stage in DEFAULTS["optional_stages"]
+                        and state.get("stages", {}).get(stage, {}).get("status") == "skipped"
+                        and state["stages"][stage].get("decision") == "skip")
                 for relative in required_artifacts(
                     stage, bool(state.get("requires_design_artifacts", False))
                 )
