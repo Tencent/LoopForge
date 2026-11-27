@@ -39,8 +39,12 @@ func (d *deps) isMySQL() bool {
 
 // sqlJSONText returns a portable "extract text at JSON path" expression.
 // MySQL needs the JSON_UNQUOTE wrapper; sqlite's json_extract already returns
-// unquoted text for string values.
+// unquoted text for string values. The path is bound as a parameter in its
+// MySQL form ("$.runId"); the Postgres branch converts it in SQL.
 func (d *deps) sqlJSONText(path string) string {
+	if d.isPostgres() {
+		return d.jsonTextParam("payload")
+	}
 	if d.isMySQL() {
 		return "JSON_UNQUOTE(JSON_EXTRACT(payload, ?))"
 	}
@@ -51,6 +55,9 @@ func (d *deps) sqlJSONText(path string) string {
 // projections that cannot bind the path as a parameter. path is the JSON path
 // below "$." and must be a code constant, never user input.
 func (d *deps) sqlPayloadJSONText(path string) string {
+	if d.isPostgres() {
+		return "payload::jsonb #>> '" + jsonPathToPGArray(path) + "'"
+	}
 	if d.isMySQL() {
 		return "JSON_UNQUOTE(JSON_EXTRACT(payload, '$." + path + "'))"
 	}
@@ -61,6 +68,9 @@ func (d *deps) sqlPayloadJSONText(path string) string {
 // sqlPayloadJSONText. path is the JSON path below "$." and must be a code
 // constant, never user input.
 func (d *deps) sqlExecutionContextJSONText(path string) string {
+	if d.isPostgres() {
+		return "execution_context::jsonb #>> '" + jsonPathToPGArray(path) + "'"
+	}
 	if d.isMySQL() {
 		return "JSON_UNQUOTE(JSON_EXTRACT(execution_context, '$." + path + "'))"
 	}

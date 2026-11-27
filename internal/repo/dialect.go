@@ -142,3 +142,110 @@ func openDB(dsn string) (*gorm.DB, error) {
 func (d *deps) isPostgres() bool {
 	return d.DB != nil && d.DB.Dialector.Name() == dialectPostgres
 }
+
+// jsonPathToPGArray converts a MySQL JSON path ("$.a.b", "$.messages[0]") into
+// the Postgres path array form ("{a,b}", "{messages,0}").
+func jsonPathToPGArray(path string) string {
+	trimmed := strings.TrimSpace(path)
+	trimmed = strings.TrimPrefix(trimmed, "$")
+	trimmed = strings.TrimPrefix(trimmed, ".")
+	var parts []string
+	for _, segment := range strings.Split(trimmed, ".") {
+		for {
+			open := strings.Index(segment, "[")
+			if open < 0 {
+				break
+			}
+			closeIdx := strings.Index(segment, "]")
+			if closeIdx < open {
+				break
+			}
+			parts = append(parts, segment[:open])
+			parts = append(parts, segment[open+1:closeIdx])
+			segment = segment[closeIdx+1:]
+		}
+		if segment != "" {
+			parts = append(parts, segment)
+		}
+	}
+	return "{" + strings.Join(parts, ",") + "}"
+}
+
+// jsonTextLiteral extracts a text value at a JSON path. The path is a code
+// constant, never user input.
+func (d *deps) jsonTextLiteral(column, path string) string {
+	if d.isPostgres() {
+		return column + "::jsonb #>> '" + jsonPathToPGArray(path) + "'"
+	}
+	if d.isMySQL() {
+		return "JSON_UNQUOTE(JSON_EXTRACT(" + column + ", '" + path + "'))"
+	}
+	return "json_extract(" + column + ", '" + path + "')"
+}
+
+// jsonTextParam extracts a text value at a path bound as a parameter. The
+// bound parameter keeps the MySQL path form ("$.runId"); the Postgres branch
+// converts it to a path array in SQL, so the call sites do not change.
+func (d *deps) jsonTextParam(column string) string {
+	if d.isPostgres() {
+		return column + "::jsonb #>> string_to_array(ltrim(?, '$.'), '.')"
+	}
+	if d.isMySQL() {
+		return "JSON_UNQUOTE(JSON_EXTRACT(" + column + ", ?))"
+	}
+	return "json_extract(" + column + ", ?)"
+}
+
+// jsonLengthLiteral counts the elements of the JSON array at a path. A
+// missing or non-array value counts as zero.
+func (d *deps) jsonLengthLiteral(column, path string) string {
+	if d.isPostgres() {
+		inner := column + "::jsonb #> '" + jsonPathToPGArray(path) + "'"
+		return "COALESCE(CASE WHEN jsonb_typeof(" + inner + ") = 'array' THEN jsonb_array_length(" + inner + ") END, 0)"
+	}
+	if d.isMySQL() {
+		return "JSON_LENGTH(JSON_EXTRACT(" + column + ", '" + path + "'))"
+	}
+	return "json_array_length(" + column + ", '" + path + "')"
+}
+
+// jsonTypeLiteral names the JSON type at a path ("STRING", "OBJECT", ...).
+func (d *deps) jsonTypeLiteral(column, path string) string {
+	if d.isPostgres() {
+		inner := column + "::jsonb #> '" + jsonPathToPGArray(path) + "'"
+		return "CASE WHEN jsonb_typeof(" + inner + ") IS NULL THEN NULL WHEN jsonb_typeof(" + inner + ") = 'string' THEN 'STRING' WHEN jsonb_typeof(" + inner + ") = 'number' THEN 'INTEGER' WHEN jsonb_typeof(" + inner + ") = 'boolean' THEN 'BOOLEAN' WHEN jsonb_typeof(" + inner + ") = 'object' THEN 'OBJECT' WHEN jsonb_typeof(" + inner + ") = 'array' THEN 'ARRAY' ELSE 'NULL' END"
+	}
+	if d.isMySQL() {
+		return "JSON_TYPE(JSON_EXTRACT(" + column + ", '" + path + "'))"
+	}
+	return "json_type(" + column + ", '" + path + "')"
+}
+
+// jsonBuildObject builds a JSON object from alternating key/value arguments.
+func (d *deps) jsonBuildObject(pairs ...string) string {
+	if d.isPostgres() {
+		return "jsonb_build_object(" + strings.Join(pairs, ", ") + ")"
+	}
+	if d.isMySQL() {
+		return "JSON_OBJECT(" + strings.Join(pairs, ", ") + ")"
+	}
+	return "json_object(" + strings.Join(pairs, ", ") + ")"
+}
+
+// likeOperator returns the pattern-matching operator. MySQL's default
+// collation matches case-insensitively, so Postgres uses ILIKE to keep the
+// same search behaviour.
+func (d *deps) likeOperator() string {
+	if d.isPostgres() {
+		return "ILIKE"
+	}
+	return "LIKE"
+}
+
+// nowMillisLiteral returns the current timestamp in milliseconds.
+func (d *deps) nowMillisLiteral() string {
+	if d.isPostgres() {
+		return "now()"
+	}
+	return "UTC_TIMESTAMP(3)"
+}

@@ -57,6 +57,29 @@ func TestPostgresDSNKeepsTLSSForRemoteHosts(t *testing.T) {
 	}
 }
 
+func TestJSONPathToPGArray(t *testing.T) {
+	cases := map[string]string{
+		"$.name":        "{name}",
+		"$.a.b":         "{a,b}",
+		"$.messages[0]": "{messages,0}",
+		"$.a[1].b":      "{a,1,b}",
+		"$":             "{}",
+	}
+	for path, want := range cases {
+		if got := jsonPathToPGArray(path); got != want {
+			t.Fatalf("jsonPathToPGArray(%q) = %q, want %q", path, got, want)
+		}
+	}
+}
+
+func TestDialectExpressions(t *testing.T) {
+	// 助手依赖一个真实的 gorm 句柄来判定方言，纯函数部分单独覆盖；
+	// 方言分支由 postgres_types_test.go 与集成测试覆盖。
+	if got := jsonPathToPGArray("$.messages[0].content"); got != "{messages,0,content}" {
+		t.Fatalf("unexpected path array: %s", got)
+	}
+}
+
 func TestPostgresDSNStripsPoolParamsFromUnparsableDSN(t *testing.T) {
 	// A DSN the URL parser rejects cannot connect anyway, but a pool_*
 	// parameter must still not reach the server as a startup parameter.
