@@ -253,7 +253,7 @@ func (h *evolutionHandlers) sweepWatch(p domain.EvoProposal, now time.Time) doma
 	pins := h.repo.AssetPinsBetween(asset.Kind, asset.ID, w.StartedAt, time.Time{}, evolution.TrialRunScanLimit)
 	w.Current = h.armStats(p.ProjectID, pins, w.Hash, asset, 0)
 	w.ProbWorse = evolution.ProbWorse(w.Current, w.Baseline)
-	status, verdict := evolution.JudgeWatch(*w, now.Sub(w.StartedAt))
+	status, verdict := evolution.JudgeWatchWithHealthyRuns(*w, now.Sub(w.StartedAt), h.proposalSOPWatchHealthyRuns(p))
 	w.Status, w.Verdict = status, verdict
 	if status == domain.EvoWatchHealthy || status == domain.EvoWatchEnded {
 		w.EndedAt = now
@@ -284,6 +284,77 @@ func (h *evolutionHandlers) sweepWatch(p domain.EvoProposal, now time.Time) doma
 	}
 	stored, _ := h.repo.EvoProposal(p.ID)
 	return stored
+}
+
+// proposalSOPWatchHealthyRuns aligns post-release watch completion with the
+// governing SOP's batchSize so completing one full SOP batch without degradation
+// settles the watch and unlocks the next optimization round immediately.
+func (h *evolutionHandlers) proposalSOPWatchHealthyRuns(p domain.EvoProposal) int {
+	if strings.TrimSpace(p.ProjectID) == "" {
+		return 0
+	}
+	checkWF := func(wfID string) int {
+		wfID = strings.TrimSpace(wfID)
+		if wfID == "" {
+			return 0
+		}
+		if pol, stored := h.repo.EvoSOPPolicyStored(p.ProjectID, wfID); stored && pol.Enabled {
+			return evolution.NormalizeSOPBatchSize(pol.BatchSize)
+		}
+		return 0
+	}
+	if n := checkWF(p.WorkflowID); n > 0 {
+		return n
+	}
+	if strings.TrimSpace(p.FindingID) != "" {
+		if f, ok := h.repo.EvoFinding(p.FindingID); ok {
+			for _, wfID := range f.WorkflowIDs {
+				if n := checkWF(wfID); n > 0 {
+					return n
+				}
+			}
+		}
+	}
+	// Fallback for legacy released proposals created before WorkflowID was stamped:
+	// match any enabled SOP policy in the same project whose workflow uses this asset.
+	policies := h.repo.EvoSOPPolicies(p.ProjectID)
+	minBatch := 0
+	for wfID, pol := range policies {
+		if !pol.Enabled {
+			continue
+		}
+		wf, ok := h.repo.Workflow(wfID)
+		if !ok {
+			continue
+		}
+		uses := false
+		for _, node := range wf.Nodes {
+			if p.AssetKind == domain.EvoAssetAgent && node.AgentID == p.AssetID {
+				uses = true
+				break
+			}
+			if p.AssetKind == domain.EvoAssetRule && node.AgentID != "" {
+				if ag, found := h.repo.Agent(node.AgentID); found {
+					for _, rid := range ag.Rules {
+						if rid == p.AssetID {
+							uses = true
+							break
+						}
+					}
+				}
+			}
+			if uses {
+				break
+			}
+		}
+		if uses {
+			b := evolution.NormalizeSOPBatchSize(pol.BatchSize)
+			if minBatch == 0 || b < minBatch {
+				minBatch = b
+			}
+		}
+	}
+	return minBatch
 }
 
 // rollbackTo writes a stored version back into the live asset, appends a

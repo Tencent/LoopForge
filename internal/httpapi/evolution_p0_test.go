@@ -421,3 +421,68 @@ func TestEvolutionP0BudgetPrecheckSleepAndWake(t *testing.T) {
 		t.Fatalf("expected wake endpoint to reset sleep state, got %+v", woken)
 	}
 }
+
+func TestEvolutionP0WatchAlignedWithSOPBatchSizeUnlocksNextRound(t *testing.T) {
+	env := newEvoTestEnv(t)
+	now := time.Now().UTC()
+	liveHash := domain.ContentHash(env.agent.Prompt)
+
+	// Enable SOP with batchSize = 5.
+	if err := env.store.PutEvoSOPPolicy(domain.EvoSOPPolicy{
+		ProjectID: "evo-p", WorkflowID: env.wf.ID, Enabled: true,
+		Preferences: []string{domain.EvoPrefTokens}, BatchSize: 5, UpdatedBy: env.user.ID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Simulate an existing released v2 proposal (even without WorkflowID stamped)
+	// in active post-release watch with MinRuns=5.
+	released := domain.EvoProposal{
+		ID: "evp-v2-watch", ProjectID: "evo-p", AssetKind: domain.EvoAssetAgent, AssetID: env.agent.ID,
+		AssetName: env.agent.Name, Title: "v2 已发布", Status: domain.EvoProposalReleased,
+		BaseContent: "old", BaseHash: "prevhash", CandidateContent: env.agent.Prompt,
+		ReleasedVersion: 2, DecidedAt: now.Add(-1 * time.Hour),
+		Watch: &domain.EvoWatch{
+			Version: 2, Hash: liveHash, PrevVersion: 1, PrevHash: "prevhash",
+			MinRuns: 5, Status: domain.EvoWatchWatching, StartedAt: now.Add(-1 * time.Hour),
+			BaselineReady: true,
+			Baseline:      domain.EvoArmStats{Runs: 20, Clean: 19, Failed: 1, Rate: 0.95},
+		},
+	}
+	if err := env.store.PutEvoProposal(released); err != nil {
+		t.Fatal(err)
+	}
+
+	// Seed 5 clean runs pinned to v2 after release.
+	for i := 0; i < 5; i++ {
+		id := "watch-r-" + string(rune('a'+i))
+		if err := env.store.PutRun(domain.Run{
+			ID: id, WorkflowID: env.wf.ID, WorkflowSnapshot: env.wf, Status: "succeeded",
+			ExecutionContext: domain.TelemetryContext{ProjectID: "evo-p"},
+			Usage:            domain.TokenUsage{TotalTokens: 60000}, ToolCalls: 6,
+			Nodes:            map[string]*domain.NodeRun{"code": {NodeID: "code", Status: "succeeded", Attempt: 1}},
+			CreatedAt:        now.Add(-time.Duration(10-i) * time.Minute), UpdatedAt: now.Add(-time.Duration(9-i) * time.Minute),
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if err := env.store.PutRunAssetPins([]domain.RunAssetPin{{
+			RunID: id, AssetKind: domain.EvoAssetAgent, AssetID: env.agent.ID,
+			Version: 2, Hash: liveHash, CreatedAt: now.Add(-time.Duration(10-i) * time.Minute),
+		}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Read-only SOP detail recognizes 5/5 clean runs satisfy the SOP-aligned watch (no false AutoBlockReason).
+	detail := requestJSONAuthed[domain.EvoSOPDetail](t, env.router, env.user, http.MethodGet, "/api/evolution/sops/"+env.wf.ID+"?projectId=evo-p", nil, http.StatusOK)
+	if detail.AutoBlockReason != "" {
+		t.Fatalf("expected 5/5 clean runs to clear AutoBlockReason, got %q", detail.AutoBlockReason)
+	}
+	// Sweeping the watch (as background monitor or startSOPOptimization does) settles it to healthy!
+	stored, _ := env.store.EvoProposal(released.ID)
+	env.h.sweepWatch(stored, now)
+	updated, _ := env.store.EvoProposal(released.ID)
+	if updated.Watch.Status != domain.EvoWatchHealthy {
+		t.Fatalf("expected watch to settle as healthy at 5/5, got %+v", updated.Watch)
+	}
+}

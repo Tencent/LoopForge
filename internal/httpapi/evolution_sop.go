@@ -778,6 +778,13 @@ func (h *evolutionHandlers) startSOPOptimization(ctx context.Context, projectID,
 		_ = h.repo.PutEvoFinding(targetFinding)
 	}
 
+	// Settle any completed post-release watch on the target asset right away so
+	// an SOP whose batchSize runs finished cleanly does not wait for the next
+	// periodic trial sweep before unlocking the next optimization round.
+	if occ, busy, err := h.repo.CurrentEvoProposalForAsset(targetAsset.Kind, targetAsset.ID); err == nil && busy && occ.Status == domain.EvoProposalReleased && occ.Watch.Active() {
+		h.sweepWatch(occ, now)
+	}
+
 	p := domain.EvoProposal{
 		ID:          "evp-" + randomID(),
 		ProjectID:   projectID,
@@ -1272,7 +1279,17 @@ func (h *evolutionHandlers) diagnoseSOPAutoBlockReason(
 	for _, asset := range privateAssets {
 		if occ, busy, err := h.repo.CurrentEvoProposalForAsset(asset.Kind, asset.ID); err == nil && busy {
 			if occ.Status == domain.EvoProposalReleased && occ.Watch.Active() {
-				return fmt.Sprintf("关联角色「%s」正处于 v%d 发布后观察期（%s），观察结束后将自动开启下一轮", firstNonEmpty(asset.Name, asset.ID), occ.Watch.Version, firstNonEmpty(occ.Watch.Verdict, "观察中"))
+				// Pure read-only check against SOP batchSize (never mutate DB on GET):
+				// if the watch already met batchSize cleanly, background sweep / click
+				// will settle it immediately, so don't show a stale block banner.
+				w := *occ.Watch
+				pins := h.repo.AssetPinsBetween(asset.Kind, asset.ID, w.StartedAt, time.Time{}, evolution.TrialRunScanLimit)
+				w.Current = h.armStats(projectID, pins, w.Hash, asset, 0)
+				st, verdict := evolution.JudgeWatchWithHealthyRuns(w, now.Sub(w.StartedAt), h.proposalSOPWatchHealthyRuns(occ))
+				if st == domain.EvoWatchWatching || st == domain.EvoWatchDegraded {
+					return fmt.Sprintf("关联角色「%s」正处于 v%d 发布后观察期（%s），观察结束后将自动开启下一轮", firstNonEmpty(asset.Name, asset.ID), w.Version, firstNonEmpty(verdict, "观察中"))
+				}
+				continue
 			}
 			if occ.Open() {
 				return fmt.Sprintf("关联角色「%s」正被进行中的提案「%s」占用，该提案结束后将自动继续", firstNonEmpty(asset.Name, asset.ID), firstNonEmpty(occ.Title, occ.ID))

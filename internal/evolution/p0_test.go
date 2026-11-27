@@ -271,3 +271,26 @@ func TestSOPSleepBackoffProgressionAndWake(t *testing.T) {
 		t.Fatalf("gained outcome did not clear backoff: %+v", released)
 	}
 }
+
+func TestJudgeWatchWithHealthyRunsAlignedToSOPBatchSize(t *testing.T) {
+	// v2 has 5/5 clean runs vs v1 19/20 clean runs (ProbWorse ~60% < 90%):
+	// legacy JudgeWatch keeps watching until 10 runs, while SOP-aligned healthyRuns=5
+	// immediately settles as healthy!
+	w := domain.EvoWatch{
+		Version: 2, PrevVersion: 1, MinRuns: 5,
+		Baseline: domain.EvoArmStats{Runs: 20, Clean: 19, Failed: 1, Rate: 0.95},
+		Current:  domain.EvoArmStats{Runs: 5, Clean: 5, Rate: 1.0},
+	}
+	if st, _ := JudgeWatch(w, time.Hour); st != domain.EvoWatchWatching {
+		t.Fatalf("legacy JudgeWatch at 5/10 should still watch, got %s", st)
+	}
+	if st, _ := JudgeWatchWithHealthyRuns(w, time.Hour, 5); st != domain.EvoWatchHealthy {
+		t.Fatalf("SOP-aligned JudgeWatchWithHealthyRuns(5) at 5/5 clean should settle healthy, got %s", st)
+	}
+	// Degraded release at 5 runs must STILL flag degraded even when healthyRuns=5!
+	wBad := w
+	wBad.Current = domain.EvoArmStats{Runs: 5, Clean: 2, Failed: 3, Rate: 0.4}
+	if st, _ := JudgeWatchWithHealthyRuns(wBad, time.Hour, 5); st != domain.EvoWatchDegraded {
+		t.Fatalf("degraded release must stay degraded, got %s", st)
+	}
+}

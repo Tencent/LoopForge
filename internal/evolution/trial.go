@@ -254,25 +254,43 @@ func evaluateCanaryGoal(control, candidate domain.EvoArmStats, metric string) (o
 // on real runs: degraded when it is very probably worse than the version
 // it replaced, healthy once enough runs show no degradation.
 func JudgeWatch(w domain.EvoWatch, age time.Duration) (string, string) {
+	return JudgeWatchWithHealthyRuns(w, age, 0)
+}
+
+// JudgeWatchWithHealthyRuns decides a post-release watch with an optional
+// explicit healthyRuns target (e.g. aligned to an SOP's batchSize so completing
+// one full SOP batch without degradation settles the watch instead of requiring
+// 2x runs). When healthyRuns <= 0, it defaults to w.MinRuns * watchHealthyFactor.
+func JudgeWatchWithHealthyRuns(w domain.EvoWatch, age time.Duration, healthyRuns int) (string, string) {
 	w.ProbWorse = ProbWorse(w.Current, w.Baseline)
 	stats := armLine(fmt.Sprintf("v%d", w.Version), w.Current) + "，" + armLine(fmt.Sprintf("发布前 v%d", w.PrevVersion), w.Baseline)
 	if w.Baseline.Runs >= WatchMinBaseline {
 		stats += fmt.Sprintf("，新版本更差的概率 %s", pct(w.ProbWorse))
 	}
+	minCheck := w.MinRuns
+	if minCheck <= 0 {
+		minCheck = DefaultWatchMinRuns
+	}
+	targetHealthy := healthyRuns
+	if targetHealthy <= 0 {
+		targetHealthy = minCheck * watchHealthyFactor
+	} else if targetHealthy < minCheck {
+		minCheck = targetHealthy
+	}
 	switch {
-	case w.Current.Runs < w.MinRuns:
+	case w.Current.Runs < minCheck:
 		if age >= WatchStaleAge {
 			return domain.EvoWatchEnded, "观察期内运行太少，停止观察：" + stats
 		}
-		return domain.EvoWatchWatching, fmt.Sprintf("观察中，需要 %d 次运行：", w.MinRuns) + stats
+		return domain.EvoWatchWatching, fmt.Sprintf("观察中，需要 %d 次运行：", minCheck) + stats
 	case w.Baseline.Runs < WatchMinBaseline:
-		if w.Current.Runs >= w.MinRuns*watchHealthyFactor || age >= WatchMaxAge {
+		if w.Current.Runs >= targetHealthy || age >= WatchMaxAge {
 			return domain.EvoWatchEnded, "发布前的版本样本不足，只记录不判定：" + stats
 		}
 		return domain.EvoWatchWatching, "发布前的版本样本不足，只记录不判定：" + stats
 	case w.ProbWorse >= WatchDegradeProb:
 		return domain.EvoWatchDegraded, "发布后效果变差：" + stats
-	case w.Current.Runs >= w.MinRuns*watchHealthyFactor || age >= WatchMaxAge:
+	case w.Current.Runs >= targetHealthy || age >= WatchMaxAge:
 		return domain.EvoWatchHealthy, "发布后效果没有变差，结束观察：" + stats
 	}
 	return domain.EvoWatchWatching, "观察中，暂未发现变差：" + stats

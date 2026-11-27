@@ -988,7 +988,11 @@ func (h *evolutionHandlers) releaseProposal(p domain.EvoProposal, asset evoAsset
 	if p.Status == domain.EvoProposalCanary && (p.Canary == nil || p.Canary.Status != domain.EvoCanaryPassed) {
 		return p, evoConflict("灰度尚未通过，不能发布")
 	}
-	released, err := h.repo.ReleaseEvoProposal(p, userID, note, force, evolution.DefaultWatchMinRuns)
+	watchMinRuns := evolution.DefaultWatchMinRuns
+	if sopRuns := h.proposalSOPWatchHealthyRuns(p); sopRuns > 0 && sopRuns < watchMinRuns {
+		watchMinRuns = sopRuns
+	}
+	released, err := h.repo.ReleaseEvoProposal(p, userID, note, force, watchMinRuns)
 	if err == nil {
 		h.recordSOPProposalOutcome(released, true, "", time.Now().UTC())
 	}
