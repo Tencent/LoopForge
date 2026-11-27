@@ -91,15 +91,17 @@ function scheduleExecDashboardPath(projectId){
   p.set('limit',String(scheduleExecPageSize));
   return `/api/schedule-job-executions/dashboard?${p}`;
 }
+function syncScheduleExecProject(projectId){
+  if(scheduleExecProject===projectId)return;
+  scheduleExecProject=projectId;
+  scheduleExecJobFilter='';scheduleExecExpanded.clear();scheduleExecPage=1;
+  scheduleExecutions=[];scheduleExecTotal=0;scheduleExecOverview=null;scheduleExecRecords=0;scheduleExecRecentFailed=0;
+}
 async function refreshScheduleExecutions(){
   clearTimeout(scheduleExecSearchTimer);
   const projectId=state.projectFilter||'';
   const request=++scheduleExecRequest;
-  if(scheduleExecProject!==projectId){
-    scheduleExecExpanded.clear();scheduleExecPage=1;
-    scheduleExecutions=[];scheduleExecTotal=0;scheduleExecOverview=null;scheduleExecRecords=0;scheduleExecRecentFailed=0;
-  }
-  scheduleExecProject=projectId;
+  syncScheduleExecProject(projectId);
   if(!projectId){scheduleExecError='';scheduleExecLoading=false;renderScheduleExecutions();return scheduleExecutions}
   scheduleExecLoading=true;scheduleExecError='';
   renderScheduleExecutions();
@@ -372,6 +374,7 @@ function bindScheduleJobTraceActions(list){
   window.AgentFlowHarnessIcons?.hydrate(list);
 }
 function openScheduleExecutions(jobId=''){
+  syncScheduleExecProject(state.projectFilter||'');
   scheduleExecJobFilter=jobId||'';
   scheduleExecStatusFilter='';scheduleExecRangeFilter='';scheduleExecQuery='';scheduleExecPage=1;
   if($('#scheduleModal')?.classList.contains('open'))closeScheduleJobModal();

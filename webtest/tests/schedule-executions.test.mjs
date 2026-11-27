@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { loadApp, settle } from '../lib/load-app.mjs';
+import { chooseOption, loadApp, settle } from '../lib/load-app.mjs';
 
 const FAILED_TRACE = '0123456789abcdef0123456789abcdef';
 const OK_TRACE = 'fedcba9876543210fedcba9876543210';
@@ -158,6 +158,46 @@ test('execution dashboard lists history with metrics, filters and copyable trace
   rows = panel.querySelectorAll('.sched-exec-row');
   assert.equal(rows.length, 1);
   assert.equal(rows[0].dataset.status, 'failed');
+});
+
+test('switching projects clears the execution history job filter', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  const otherExecution = {
+    ...executions()[0], id: 'sjx-other', projectId: 'project-2',
+    jobId: 'job-other', jobName: 'Weekly report',
+  };
+  app.router.get(DASHBOARD, fakeDashboard([...executions(), otherExecution]));
+  const jobs = [
+    { id: 'job-ai', projectId: 'project-1', name: 'Daily summary', skipDispatch: true },
+    { id: 'job-other', projectId: 'project-2', name: 'Weekly report', skipDispatch: true },
+  ];
+  app.router.get('/api/schedule-jobs', jobs);
+  app.evaluate(`
+    state.data.projects.push({id:'project-2',name:'Another project'});
+    renderProjectSwitcher();
+    switchView('aiSchedules');
+  `);
+  await settle(6);
+
+  app.document.querySelector('[data-schedule-menu="job-ai"]').click();
+  app.document.querySelector('[data-schedule-history="job-ai"]').click();
+  await settle();
+  assert.equal(dashboardCalls(app).at(-1).url.searchParams.get('jobId'), 'job-ai');
+
+  chooseOption(app.document.querySelector('#projectSwitcher'), 'project-2');
+  await settle(6);
+  const params = dashboardCalls(app).at(-1).url.searchParams;
+  assert.equal(params.get('projectId'), 'project-2');
+  assert.equal(params.has('jobId'), false);
+  assert.equal(app.document.querySelector('#scheduleExecJob').value, '');
+  assert.match(app.document.querySelector('#scheduleExecList .sched-exec-row').textContent, /Weekly report/);
+
+  app.document.querySelector('#aiScheduleProjectTab').click();
+  app.document.querySelector('[data-schedule-menu="job-other"]').click();
+  app.document.querySelector('[data-schedule-history="job-other"]').click();
+  await settle();
+  assert.equal(dashboardCalls(app).at(-1).url.searchParams.get('jobId'), 'job-other');
 });
 
 test('an AI execution links to the conversation it ran in', async (t) => {
