@@ -400,7 +400,7 @@ func TestDingTalkReplyClassification(t *testing.T) {
 	f.mu.Lock()
 	body := f.requests[0]
 	f.mu.Unlock()
-	if body["msgtype"] != "text" || body["text"].(map[string]any)["content"] != "答复" {
+	if body["msgtype"] != "markdown" || body["markdown"].(map[string]any)["text"] != "答复" {
 		t.Fatalf("body = %v", body)
 	}
 	cases := []struct {

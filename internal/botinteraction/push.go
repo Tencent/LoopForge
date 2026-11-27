@@ -52,11 +52,9 @@ func (f *feishuChannel) Push(ctx context.Context, bot domain.NotificationBot, cr
 	if strings.TrimSpace(msg.ChatID) == "" {
 		return SendResult{Outcome: Rejected, Code: "target_missing", SafeDetail: "缺少飞书接收成员"}
 	}
-	msgType, content := "text", []byte(nil)
+	msgType, content := "interactive", feishuMarkdownJSON(msg.Text)
 	if msg.Card != nil {
 		msgType, content = "interactive", feishuCardJSON(msg.Card)
-	} else {
-		content, _ = json.Marshal(map[string]string{"text": msg.Text})
 	}
 	body := larkim.NewCreateMessageReqBodyBuilder().ReceiveId(msg.ChatID).MsgType(msgType).Content(string(content))
 	if msg.SendKey != "" {
@@ -162,14 +160,15 @@ func (d *dingtalkChannel) Push(ctx context.Context, bot domain.NotificationBot, 
 		}
 		return out
 	}
-	param, _ := json.Marshal(map[string]string{"content": msg.Text})
+	// sampleMarkdown renders the model's Markdown; sampleText shows it raw.
+	param, _ := json.Marshal(map[string]string{"title": markdownTitle(msg.Text), "text": markdownLinks(msg.Text)})
 	endpoint := "/v1.0/robot/oToMessages/batchSend"
-	raw, _ := json.Marshal(map[string]any{"robotCode": bot.BotID, "userIds": []string{msg.ChatID}, "msgKey": "sampleText", "msgParam": string(param)})
+	raw, _ := json.Marshal(map[string]any{"robotCode": bot.BotID, "userIds": []string{msg.ChatID}, "msgKey": "sampleMarkdown", "msgParam": string(param)})
 	if msg.ChatType == "group" {
 		// Group chats: the robot group message API with the open
 		// conversation ID of the group.
 		endpoint = "/v1.0/robot/groupMessages/send"
-		raw, _ = json.Marshal(map[string]any{"robotCode": bot.BotID, "openConversationId": msg.ChatID, "msgKey": "sampleText", "msgParam": string(param)})
+		raw, _ = json.Marshal(map[string]any{"robotCode": bot.BotID, "openConversationId": msg.ChatID, "msgKey": "sampleMarkdown", "msgParam": string(param)})
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, d.api+endpoint, bytes.NewReader(raw))
 	if err != nil {

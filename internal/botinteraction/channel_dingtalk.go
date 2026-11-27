@@ -531,7 +531,7 @@ func (d *dingtalkChannel) replyWebhook(ctx context.Context, msg OutboundMessage)
 	if !msg.Route.ExpiresAt.IsZero() && !time.Now().Add(sendTimeout).Before(msg.Route.ExpiresAt) {
 		return SendResult{Outcome: Rejected, Code: "route_expired", SafeDetail: "会话回复授权已过期"}
 	}
-	status, data, err := d.postJSON(ctx, u.String(), map[string]any{"msgtype": "text", "text": map[string]string{"content": msg.Text}})
+	status, data, err := d.postJSON(ctx, u.String(), dingtalkMarkdownBody(markdownTitle(msg.Text), msg.Text))
 	if err != nil {
 		return classifyDingTalkTransport(err)
 	}

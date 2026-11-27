@@ -356,12 +356,12 @@ func (c *feishuConn) Reply(ctx context.Context, msg OutboundMessage) SendResult 
 	if msg.Route.MessageID == "" {
 		return SendResult{Outcome: Rejected, Code: "route_missing", SafeDetail: "缺少飞书原消息标识，无法在原会话回复"}
 	}
-	msgType, content := "text", []byte(nil)
+	// Replies are cards so Feishu renders the model's Markdown; a plain-text
+	// or post message would show ** and - literally.
+	msgType, content := "interactive", feishuMarkdownJSON(msg.Text)
 	if msg.Card != nil {
 		// Write confirmations go out as a card with buttons.
 		msgType, content = "interactive", feishuCardJSON(msg.Card)
-	} else {
-		content, _ = json.Marshal(map[string]string{"text": msg.Text})
 	}
 	body := larkim.NewReplyMessageReqBodyBuilder().MsgType(msgType).Content(string(content))
 	if msg.SendKey != "" {

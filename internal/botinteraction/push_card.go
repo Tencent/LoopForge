@@ -281,6 +281,59 @@ func feishuCardJSON(c *PushCard) []byte {
 	return out
 }
 
+// feishuMarkdownJSON wraps reply text in a schema 2.0 card with the markdown
+// element, the only Feishu form that renders headings and lists: plain-text
+// and post messages show the control characters literally, and a 1.0 card's
+// lark_md omits both. Action cards with buttons stay on schema 1.0.
+func feishuMarkdownJSON(text string) []byte {
+	card := map[string]any{
+		"schema": "2.0",
+		"config": map[string]any{"wide_screen_mode": true},
+		"body":   map[string]any{"elements": []any{map[string]any{"tag": "markdown", "content": markdownLinks(text)}}},
+	}
+	out, _ := json.Marshal(card)
+	return out
+}
+
+// Trailing sentence punctuation stays out of the captured URL.
+var bareURLPattern = regexp.MustCompile(`(?m)[ \t]*(https?://[^\s<>()\[\]"',;，。；、！]+)`)
+
+// markdownTitle is the first line of the reply, for the notification preview
+// DingTalk Markdown messages require.
+func markdownTitle(text string) string {
+	line := text
+	if i := strings.IndexByte(line, '\n'); i >= 0 {
+		line = line[:i]
+	}
+	line = strings.TrimSpace(strings.TrimLeft(strings.TrimSpace(line), "#"))
+	if r := []rune(line); len(r) > 40 {
+		line = string(r[:40])
+	}
+	if line == "" {
+		return "LoopForge"
+	}
+	return line
+}
+
+// markdownLinks turns bare URLs and /bind commands into Markdown links. Card
+// bodies do not autolink, so a plain-text bind link would be unreadable there.
+// Text that already carries Markdown links keeps its own formatting.
+func markdownLinks(text string) string {
+	if strings.Contains(text, "](") {
+		return text
+	}
+	return bareURLPattern.ReplaceAllStringFunc(text, func(part string) string {
+		link := strings.TrimSpace(part)
+		return part[:len(part)-len(strings.TrimLeft(part, " \t"))] + "[" + link + "](" + link + ")"
+	})
+}
+
+// dingtalkMarkdownBody renders reply text as DingTalk's Markdown, which needs a
+// title and does not autolink bare URLs either.
+func dingtalkMarkdownBody(title, text string) map[string]any {
+	return map[string]any{"msgtype": "markdown", "markdown": map[string]string{"title": title, "text": markdownLinks(text)}}
+}
+
 // dingtalkCardParams fills the variables of the administrator's card
 // template (see docs/im-channels.md): title, content (Markdown), detail_url,
 // status and one show_<action> switch per button.
