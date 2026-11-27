@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"agentflow/internal/domain"
 	"agentflow/internal/repo"
@@ -118,6 +120,9 @@ func (h *assistantHandlers) listSessions(c *gin.Context) {
 		out = filtered
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].UpdatedAt.After(out[j].UpdatedAt) })
+	for i := range out {
+		out[i] = sanitizeAssistantSessionForViewer(out[i], current.ID)
+	}
 	c.JSON(200, decorateRunSessions(h.repo, out))
 }
 
@@ -164,7 +169,7 @@ func (h *assistantHandlers) archiveSession(c *gin.Context) {
 		return
 	}
 	if _, ok := h.repo.SharedAssistantSession(c.Param("id")); ok {
-		c.JSON(403, gin.H{"error": "共享 SOP 会话不能个人归档"})
+		c.JSON(403, gin.H{"error": "共享 LOOP 会话不能个人归档"})
 		return
 	}
 	var body struct {
@@ -182,6 +187,54 @@ func (h *assistantHandlers) archiveSession(c *gin.Context) {
 		return
 	}
 	c.JSON(200, gin.H{"ok": true})
+}
+
+func (h *assistantHandlers) renameSession(c *gin.Context) {
+	current, ok := h.requestUser(c.Request, true)
+	if !ok {
+		c.JSON(401, gin.H{"error": "请先登录"})
+		return
+	}
+	session, found := h.repo.AssistantSessionMetadata(c.Param("id"))
+	if !found || (!session.Shared && !repo.ProjectSharedAssistantSession(session) && session.UserID != current.ID) {
+		c.JSON(404, gin.H{"error": repo.ErrAssistantSessionNotFound.Error()})
+		return
+	}
+	if !h.workbenchProjectAllowed(c, session.ProjectID, current.ID) {
+		c.JSON(403, gin.H{"error": "无权修改此会话"})
+		return
+	}
+	if session.Shared {
+		c.JSON(403, gin.H{"error": repo.ErrAssistantSessionTitleLocked.Error()})
+		return
+	}
+	var body struct {
+		Title string `json:"title"`
+	}
+	if !decode(c, &body) {
+		return
+	}
+	title := strings.TrimSpace(body.Title)
+	if title == "" {
+		c.JSON(400, gin.H{"error": "请输入会话名称"})
+		return
+	}
+	if utf8.RuneCountInString(title) > 128 {
+		c.JSON(400, gin.H{"error": "会话名称最多 128 个字符"})
+		return
+	}
+	switch err := h.repo.SetAssistantSessionTitle(session.UserID, session.ID, session.ProjectID, title); {
+	case errors.Is(err, repo.ErrAssistantSessionNotFound):
+		c.JSON(404, gin.H{"error": err.Error()})
+	case errors.Is(err, repo.ErrAssistantSessionTitleLocked):
+		c.JSON(403, gin.H{"error": err.Error()})
+	case errors.Is(err, repo.ErrAssistantSessionProjectChanged):
+		c.JSON(409, gin.H{"error": err.Error()})
+	case err != nil:
+		c.JSON(500, gin.H{"error": "保存会话名称失败"})
+	default:
+		c.JSON(200, gin.H{"title": title, "titleEdited": true})
+	}
 }
 
 // markSessionRead records the reply the reader has seen in a conversation, so
@@ -266,7 +319,9 @@ func (h *assistantHandlers) session(c *gin.Context) {
 		if !item.Shared && !readOnly {
 			if job, ok := h.readGeneration(ownerID, id); !ok || job.Status != "running" {
 				if materializeWorkspaceImages(ownerID, &item) {
-					if err := saveAssistantConversation(h.repo, ownerID, item); err == nil {
+					updated := item
+					updated.TitleEdited = false
+					if err := saveAssistantConversation(h.repo, ownerID, updated); err == nil {
 						if stored, err := loadAssistantConversation(h.repo, ownerID, id); err == nil {
 							item = stored
 						}
@@ -275,6 +330,7 @@ func (h *assistantHandlers) session(c *gin.Context) {
 			}
 		}
 		item.Executor = h.forkExecutor(c, item, current.ID)
+		item = sanitizeAssistantSessionForViewer(item, current.ID)
 		if readOnly {
 			project, _ := h.repo.Project(item.ProjectID)
 			c.JSON(200, readOnlyConversation{AssistantSession: item, ReadOnly: true, ProjectName: project.Name})
@@ -301,6 +357,19 @@ func (h *assistantHandlers) session(c *gin.Context) {
 			return
 		}
 		conv := body.assistantConversation
+		if conv.ProjectID == "" {
+			conv.ProjectID = existing.ProjectID
+		}
+		if existing.ID != "" {
+			// Existing bindings are server-owned and modified only through the
+			// dedicated /knowledge endpoint; keep historical refs even if a
+			// connector was later disabled or deleted so receipts can still save.
+			conv.KnowledgeRefs = existing.KnowledgeRefs
+		} else if err := h.validateUserKnowledgeRefs(current.ID, conv.KnowledgeRefs); err != nil {
+			c.JSON(400, gin.H{"error": err.Error()})
+			return
+		}
+		conv.KnowledgeRestricted = existing.KnowledgeRestricted || len(conv.KnowledgeRefs) > 0
 		conv.RuntimeMode = existing.Mode()
 		conv.ExecutionTargetLocked = existing.ExecutionLocked()
 		if existing.ID != "" && existing.ExecutionLocked() {
@@ -328,14 +397,19 @@ func (h *assistantHandlers) session(c *gin.Context) {
 			conv.SandboxProfileID = existing.SandboxProfileID
 		}
 		if existing.ID == "" && conv.SandboxProfileID != "" {
-			if _, err := h.repo.ConversationSandbox(conv.ProjectID, conv.SandboxProfileID); err != nil {
+			profile, err := h.repo.ConversationSandbox(conv.ProjectID, conv.SandboxProfileID)
+			if err != nil {
 				c.JSON(400, gin.H{"error": err.Error()})
 				return
 			}
+			conv.SandboxProfileID = profile.ID
 		}
 		conv.Effort = existing.Effort
 		if body.Effort != nil {
 			conv.Effort = *body.Effort
+		}
+		if existing.ID != "" {
+			conv.TitleEdited = false
 		}
 		if existing.ID != "" && conv.Title != "" && conv.Title != existing.Title {
 			// A client that still has the first-prompt title must not undo the
@@ -375,11 +449,15 @@ func (h *assistantHandlers) session(c *gin.Context) {
 		if conv.Title == "" {
 			conv.Title = existing.Title
 		}
-		if conv.ProjectID == "" {
-			conv.ProjectID = existing.ProjectID
-		}
 		if conv.RunID == "" {
 			conv.RunID = existing.RunID
+		}
+		if existing.ID != "" {
+			conv.ProjectCredentialIDs = existing.ProjectCredentialIDs
+		} else if len(conv.ProjectCredentialIDs) > 0 {
+			if !h.validateSessionProjectCredentials(c, conv, current.ID) {
+				return
+			}
 		}
 		oldExecutor := h.forkExecutor(c, existing, current.ID)
 		if conv.Executor == "" {
@@ -439,12 +517,12 @@ func (h *assistantHandlers) session(c *gin.Context) {
 			c.JSON(500, gin.H{"error": "保存对话失败"})
 			return
 		}
-		c.JSON(200, stored)
+		c.JSON(200, sanitizeAssistantSessionForViewer(stored, current.ID))
 	case "DELETE":
 		if shared {
 			_, project := h.repo.ProjectAssistantSession(id)
 			if !project {
-				c.JSON(403, gin.H{"error": "共享 SOP 会话随运行保留，不能个人删除"})
+				c.JSON(403, gin.H{"error": "共享 LOOP 会话随运行保留，不能个人删除"})
 				return
 			}
 		}
@@ -621,4 +699,88 @@ func deleteAssistantCLISession(userID int64, id string) {
 
 func assistantCLISessionName(name, id string) bool {
 	return name == id || strings.HasPrefix(name, id+".")
+}
+
+func (h *assistantHandlers) sessionKnowledge(c *gin.Context) {
+	user, ok := h.requestUser(c.Request, true)
+	if !ok {
+		c.JSON(401, gin.H{"error": "请先登录"})
+		return
+	}
+	id := c.Param("id")
+	owner, _, err := h.conversationScope(c, id, "", "", user.ID)
+	if err != nil {
+		c.JSON(403, gin.H{"error": err.Error()})
+		return
+	}
+	s, ok := h.repo.AssistantSession(owner, id)
+	if !ok || s.RunID != "" {
+		c.JSON(400, gin.H{"error": "请选择普通对话"})
+		return
+	}
+	if owner != user.ID {
+		c.JSON(403, gin.H{"error": "仅会话创建者可修改个人知识库引用"})
+		return
+	}
+	var body struct {
+		Refs *[]domain.KnowledgeRef `json:"knowledgeRefs"`
+	}
+	if !decode(c, &body) {
+		return
+	}
+	if body.Refs == nil {
+		c.JSON(400, gin.H{"error": "缺少知识库引用列表"})
+		return
+	}
+	if err := h.validateUserKnowledgeRefs(user.ID, *body.Refs); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+	if err := h.repo.SetAssistantSessionKnowledge(owner, id, *body.Refs); err != nil {
+		respond(c, err)
+		return
+	}
+	saved, _ := h.repo.AssistantSession(owner, id)
+	c.JSON(200, saved)
+}
+
+// sanitizeAssistantSessionForViewer strips the creator's personal knowledge
+// connector bindings when returning a session to another viewer (for example,
+// another project member reading or updating a shared project conversation).
+func sanitizeAssistantSessionForViewer(s domain.AssistantSession, viewerID int64) domain.AssistantSession {
+	if s.UserID != viewerID {
+		s.KnowledgeRefs = nil
+	}
+	return s
+}
+
+func (h *assistantHandlers) validateUserKnowledgeRefs(uid int64, refs []domain.KnowledgeRef) error {
+	return validateUserKnowledgeRefsWithDeps(h.deps, uid, refs)
+}
+
+func (h *runsHandlers) validateUserKnowledgeRefs(uid int64, refs []domain.KnowledgeRef) error {
+	return validateUserKnowledgeRefsWithDeps(h.deps, uid, refs)
+}
+
+func validateUserKnowledgeRefsWithDeps(d *deps, uid int64, refs []domain.KnowledgeRef) error {
+	if len(refs) == 0 {
+		return nil
+	}
+	if err := domain.ValidateKnowledgeRefs(refs); err != nil {
+		return err
+	}
+	if d == nil {
+		return nil
+	}
+	svc := d.knowledgeService()
+	if svc == nil {
+		return nil
+	}
+	for _, ref := range refs {
+		conn, ok := svc.GetConnector(uid, ref.ConnectorID)
+		if !ok || !conn.Enabled {
+			return fmt.Errorf("所选知识库连接器 %s 不存在、已停用或不属于当前用户", ref.ConnectorID)
+		}
+	}
+	return nil
 }

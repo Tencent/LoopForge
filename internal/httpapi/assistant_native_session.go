@@ -57,22 +57,22 @@ func assistantMessageHashes(messages []assistantMessage) []string {
 
 func openAssistantNativeSession(req assistantRequest, saved domain.AssistantSession, user domain.User, sourceRoot string) (*assistantNativeSession, error) {
 	root := assistantSharedSessionRoot(saved.ID)
-	if err := runtime.ValidateConversationRoot(root); err != nil {
+	if _, err := runtime.ConversationSkillLinks(root); err != nil {
 		return nil, err
 	}
 	if err := os.MkdirAll(root, 0o700); err != nil {
-		return nil, err
+		return nil, runtime.NewConversationStateError("创建共享会话目录", ".", err)
 	}
 	lock, err := os.OpenFile(filepath.Join(root, "session.lock"), os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
-		return nil, err
+		return nil, runtime.NewConversationStateError("打开共享会话锁", "session.lock", err)
 	}
 	if err = syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 		_ = lock.Close()
 		if err == syscall.EWOULDBLOCK || err == syscall.EAGAIN {
 			return nil, errAssistantNativeBusy
 		}
-		return nil, err
+		return nil, runtime.NewConversationStateError("获取共享会话锁", "session.lock", err)
 	}
 	native := &assistantNativeSession{root: root, lock: lock}
 	if data, err := os.ReadFile(filepath.Join(root, "session.json")); err == nil {
@@ -81,7 +81,7 @@ func openAssistantNativeSession(req assistantRequest, saved domain.AssistantSess
 		}
 	} else if !os.IsNotExist(err) {
 		native.Close()
-		return nil, err
+		return nil, runtime.NewConversationStateError("读取共享会话缓存", "session.json", err)
 	}
 	// Model settings, mode, approval and selected assets can change without
 	// replacing the CLI journal. History edits explicitly bump its revision.
@@ -116,7 +116,12 @@ func (n *assistantNativeSession) Close() {
 	}
 }
 
-func (n *assistantNativeSession) writeCheckpoint() error {
+func (n *assistantNativeSession) writeCheckpoint() (err error) {
+	defer func() {
+		if err != nil {
+			err = runtime.NewConversationStateError("写入共享会话缓存", "session.json", err)
+		}
+	}()
 	data, err := json.Marshal(n.checkpoint)
 	if err != nil {
 		return err
@@ -178,11 +183,11 @@ func assistantIncrementalPrompt(req assistantRequest, checkpoint assistantNative
 // selected, offered a project-settings delete that did not exist, and could
 // not say what to do about a repository it cannot create.
 func assistantProjectScopeNote(projectID string) string {
-	common := "新项目不指定 workflowId 时，平台默认绑定 generic-backend-delivery（通用后端交付 SOP）：草稿和总结里如实写明，不要说「暂不绑定」。"
+	common := "新项目不指定 workflowId 时，平台默认绑定 generic-backend-delivery（通用后端交付 LOOP）：草稿和总结里如实写明，不要说「暂不绑定」。"
 	if strings.TrimSpace(projectID) == "" {
 		return "\n本对话没有绑定项目（个人对话）；写入项目内资源前先和用户确认目标项目。需要项目时，请用户点对话右上角的项目名称选择项目（个人对话会直接绑定，不用重开）。" + common
 	}
-	return "\n本对话属于项目 " + projectID + "（即上面的 projectId），这就是用户当前所在的项目，不要说没有选中项目。需求、仓库、角色、SOP 等项目内资源默认写入该项目。" +
+	return "\n本对话属于项目 " + projectID + "（即上面的 projectId），这就是用户当前所在的项目，不要说没有选中项目。需求、仓库、角色、LOOP 等项目内资源默认写入该项目。" +
 		"新建项目（projects_save）是独立的顶层项目，不归属当前项目，也不会把本对话切过去；保存后让用户点卡片上的「进入项目」继续。删除项目用 projects_delete（归档，数据保留，可用 projects_restore 恢复）。" +
 		"你不能替用户切换本对话的项目；要到其他项目继续，请用户点对话右上角的项目名称选择目标项目（会在该项目里新开对话）。不要让用户去输入框上方找项目选择器，对话开始后那里不再显示。" + common +
 		"如需绑定新仓库，请用户在使用的代码托管服务上创建仓库，然后提供完整仓库地址，再用 repositories_save 绑定。文件通过工作区写入后提交 PR 或 MR，空仓库会自动初始化默认分支。"

@@ -259,6 +259,9 @@ func TestSteerContinuesFromPartialTranscript(t *testing.T) {
 				if err := h.repo.PutRunner(runner); err != nil {
 					t.Fatal(err)
 				}
+				if err := h.repo.SetRunnerSharedProjects(runner.ID, user.ID, []string{"workbench"}); err != nil {
+					t.Fatal(err)
+				}
 				target = domain.AssistantExecutionTarget{Pool: domain.ExecutionModeRunner, RunnerID: runner.ID}
 			}
 			// Switch between CodeBuddy models and reset an effort the new one does not support.

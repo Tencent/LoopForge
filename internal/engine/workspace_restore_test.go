@@ -89,7 +89,7 @@ func TestBackgroundWorkspaceRestoreSharesLeaseAcrossAPIInstances(t *testing.T) {
 				t.Fatalf("restore was duplicated or not acknowledged: count=%d run=%+v meta=%+v", restores.Load(), run, after)
 			}
 			if !after.SavedAt.Equal(*before.SavedAt) || run.Status != "failed" || run.Nodes["prepare"].Attempt != 1 {
-				t.Fatal("restoration resaved the archive or changed SOP execution")
+				t.Fatal("restoration resaved the archive or changed LOOP execution")
 			}
 			if data, err := os.ReadFile(filepath.Join(worker.RunWorkspace(id), "README.md")); err != nil || string(data) != "saved changes" {
 				t.Fatalf("restored files lost: %q %v", data, err)

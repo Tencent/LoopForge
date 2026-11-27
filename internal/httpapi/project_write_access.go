@@ -8,14 +8,15 @@ import (
 	"strings"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/repo"
 
 	"github.com/gin-gonic/gin"
 )
 
 // requireProjectWriter limits changes to a project's requirements, roles and
-// SOPs to platform administrators, the project owner and non-viewer members.
-// Projects without an owner are shared. Requests that passed authentication
-// without a user identity (service tokens) are allowed.
+// LOOPs to platform administrators, the project owner and non-viewer members.
+// Projects with neither an owner nor members are shared. Authenticated
+// requests without a user identity (service tokens) are allowed.
 func (d deps) requireProjectWriter(c *gin.Context, projectIDs ...string) bool {
 	if !authRequired() {
 		return true
@@ -56,15 +57,7 @@ func (d deps) speakerProjectWriter(projectID string, user domain.User, userID in
 
 func (d deps) projectMemberWrites(projectID string, userID int64) bool {
 	p, found := d.repo.Project(projectID)
-	if !found || p.OwnerID == 0 || p.OwnerID == userID {
-		return true
-	}
-	for _, member := range p.Members {
-		if member.UserID == userID && !strings.EqualFold(strings.TrimSpace(member.Role), "viewer") {
-			return true
-		}
-	}
-	return false
+	return !found || (p.OwnerID == 0 && len(p.Members) == 0) || p.HasWritableMember(userID)
 }
 
 var guardedRunWrites = map[string]bool{
@@ -151,21 +144,16 @@ func (d deps) assetOwner(kind, id string) (project string, global bool, found bo
 	case "skills":
 		v, ok := d.repo.Skill(id)
 		return v.ProjectID, v.ProjectID == "", ok
-	case "dockerfiles":
-		v, ok := d.repo.Dockerfile(id)
-		return v.ProjectID, v.ProjectID == "", ok
-	case "environments":
-		v, ok := d.repo.Environment(id)
-		return v.ProjectID, v.ProjectID == "", ok
 	case "sandboxes":
+		if strings.EqualFold(id, repo.DefaultSandboxProfileID) {
+			return "", true, true
+		}
 		v, ok := d.repo.Sandbox(id)
-		return v.ProjectID, v.ProjectID == "", ok
-	case "mcp-servers":
-		v, ok := d.repo.MCPServer(id)
-		return v.ProjectID, v.ProjectID == "" && v.Scope != "personal", ok
+		return v.ProjectID, v.ProjectID == "" || v.ID == repo.DefaultSandboxProfileID, ok
 	case "schedule-jobs":
 		v, ok := d.repo.ScheduleJob(id)
 		return v.ProjectID, false, ok
+	// TODO(knowledge-legacy-compat): remove with legacy /api/knowledge/submissions routes.
 	case "knowledge":
 		v, ok := d.repo.KnowledgeSubmission(id)
 		return v.ProjectID, false, ok
@@ -174,8 +162,8 @@ func (d deps) assetOwner(kind, id string) (project string, global bool, found bo
 }
 
 // assetWriteGuard applies project membership to catalog assets, project MCP
-// servers, schedule jobs and knowledge submissions, and limits platform-wide
-// assets and sync settings to administrators.
+// servers and schedule jobs, and limits platform-wide assets and sync settings
+// to administrators.
 func (d deps) assetWriteGuard() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if c.Request.Method == http.MethodGet || !authRequired() {
@@ -215,6 +203,10 @@ func (d deps) allowAssetWrite(c *gin.Context, path string) bool {
 			return d.requirePlatformAdmin(c)
 		}
 		return d.requireProjectWriter(c, strings.TrimSpace(body.ProjectID))
+	case "/api/schedule-jobs/:id", "/api/schedule-jobs/:id/run":
+		project, _, _ := d.assetOwner("schedule-jobs", c.Param("id"))
+		return d.requireProjectWriter(c, project)
+	// TODO(knowledge-legacy-compat): remove with legacy /api/knowledge/submissions routes.
 	case "/api/knowledge/submissions":
 		var body struct {
 			ProjectID string `json:"projectId"`
@@ -224,17 +216,12 @@ func (d deps) allowAssetWrite(c *gin.Context, path string) bool {
 	case "/api/knowledge/submissions/:id", "/api/knowledge/submissions/:id/publish", "/api/knowledge/submissions/:id/reject":
 		project, _, _ := d.assetOwner("knowledge", c.Param("id"))
 		return d.requireProjectWriter(c, project)
-	case "/api/schedule-jobs/:id", "/api/schedule-jobs/:id/run":
-		project, _, _ := d.assetOwner("schedule-jobs", c.Param("id"))
-		return d.requireProjectWriter(c, project)
 	case "/api/skills/:id/files", "/api/skills/:id/files/*path":
 		return d.allowStoredAsset(c, "skills", c.Param("id"))
-	case "/api/mcp-servers/:id/files", "/api/mcp-servers/:id/files/*path":
-		return d.allowStoredAsset(c, "mcp-servers", c.Param("id"))
 	}
 	kind := strings.TrimPrefix(path, "/api/")
 	switch kind {
-	case "rules", "skills", "dockerfiles", "environments", "sandboxes", "mcp-servers", "schedule-jobs":
+	case "rules", "skills", "sandboxes", "schedule-jobs":
 	default:
 		return true
 	}
@@ -244,14 +231,23 @@ func (d deps) allowAssetWrite(c *gin.Context, path string) bool {
 	var body struct {
 		ID        string `json:"id"`
 		ProjectID string `json:"projectId"`
-		Scope     string `json:"scope"`
 	}
 	peekJSON(c, &body)
 	id, project := strings.TrimSpace(body.ID), strings.TrimSpace(body.ProjectID)
+	if kind == "sandboxes" {
+		reserved, err := d.repo.IsReservedSandboxID(id)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return false
+		}
+		if reserved {
+			return d.requirePlatformAdmin(c)
+		}
+	}
 	if !d.allowStoredAsset(c, kind, id) {
 		return false
 	}
-	if project == "" && kind != "schedule-jobs" && !(kind == "mcp-servers" && strings.TrimSpace(body.Scope) == "personal") {
+	if project == "" && kind != "schedule-jobs" {
 		if storedProject, _, found := d.assetOwner(kind, id); found && storedProject != "" {
 			return true
 		}

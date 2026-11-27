@@ -71,7 +71,7 @@ func (r *CatalogRepo) ShareSkill(id string) error {
 	return r.PutSkill(v)
 }
 
-// ValidateWorkflowAgentScopes is shared by SOP saves and sharing transitions.
+// ValidateWorkflowAgentScopes is shared by LOOP saves and sharing transitions.
 func (r *CatalogRepo) ValidateWorkflowAgentScopes(workflow domain.WorkflowDefinition) error {
 	projectID := strings.TrimSpace(workflow.ProjectID)
 	if projectID == "" {
@@ -97,9 +97,12 @@ func (r *CatalogRepo) ValidateWorkflowAgentScopes(workflow domain.WorkflowDefini
 	return nil
 }
 
-// ValidateWorkflowSharing preserves the SOP sandbox boundary. Sharing a SOP
-// requires an already-shared sandbox; it does not share the sandbox itself.
+// ValidateWorkflowSharing checks the sandbox bound to a fixed LOOP. Automatic
+// LOOPs resolve and validate a sandbox in the target project at run admission.
 func (r *CatalogRepo) ValidateWorkflowSharing(v domain.WorkflowDefinition) error {
+	if v.AutoSelectSandbox {
+		return nil
+	}
 	if strings.TrimSpace(v.SandboxProfileID) == "" {
 		return fmt.Errorf("workflow sandboxProfileId is required")
 	}
@@ -111,12 +114,12 @@ func (r *CatalogRepo) ValidateWorkflowSharing(v domain.WorkflowDefinition) error
 		return fmt.Errorf("沙箱不属于当前项目且尚未共享")
 	}
 	if v.Shared && !profile.Shared {
-		return fmt.Errorf("共享 SOP 只能使用已共享的沙箱")
+		return fmt.Errorf("共享 LOOP 只能使用已共享的沙箱")
 	}
 	return nil
 }
 
-// ShareWorkflow applies SOP sharing checks before the ordinary save path,
+// ShareWorkflow applies LOOP sharing checks before the ordinary save path,
 // including its existing notification and revision validation.
 func (r *CatalogRepo) ShareWorkflow(id string) error {
 	v, ok := r.Workflow(id)

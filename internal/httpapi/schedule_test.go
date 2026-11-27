@@ -27,7 +27,7 @@ func TestScheduleJobCRUD(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(st.Close)
-	if err := st.PutWorkflow(domain.WorkflowDefinition{ID: "scheduled-wf", Name: "Scheduled", SandboxProfileID: "local"}); err != nil {
+	if err := st.PutWorkflow(domain.WorkflowDefinition{ID: "scheduled-wf", Name: "Scheduled", SandboxProfileID: "test-native"}); err != nil {
 		t.Fatal(err)
 	}
 	h := New(st, engine.New(st, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
@@ -212,7 +212,7 @@ func TestScheduledDispatchUsesIntegrationBranchAndManualDispatchDoesNot(t *testi
 	if err := st.PutRepository(domain.Repository{ID: "repo", ProjectID: project.ID, Name: "Repo", Provider: "gongfeng", DefaultBranch: "master", IntegrateBranch: "agentflow/integration"}); err != nil {
 		t.Fatal(err)
 	}
-	wf := domain.WorkflowDefinition{ID: "scheduled-wf", Name: "Scheduled", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "approval", Name: "Approval", Type: "approval"}}}
+	wf := domain.WorkflowDefinition{ID: "scheduled-wf", Name: "Scheduled", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{ID: "approval", Name: "Approval", Type: "approval"}}}
 	if err := st.PutWorkflow(wf); err != nil {
 		t.Fatal(err)
 	}
@@ -276,8 +276,8 @@ func TestSingleSOPDispatchReplacesStaleBinding(t *testing.T) {
 	if err := st.PutProject(project); err != nil {
 		t.Fatal(err)
 	}
-	bound := domain.WorkflowDefinition{ID: "issue-fix-production", Name: "生产闭环", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "approval", Type: "approval"}}}
-	started := domain.WorkflowDefinition{ID: "sop-sandbox", Name: "沙箱", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "approval", Type: "approval"}}}
+	bound := domain.WorkflowDefinition{ID: "issue-fix-production", Name: "生产闭环", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{ID: "approval", Type: "approval"}}}
+	started := domain.WorkflowDefinition{ID: "sop-sandbox", Name: "沙箱", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{ID: "approval", Type: "approval"}}}
 	for _, wf := range []domain.WorkflowDefinition{bound, started} {
 		if err := st.PutWorkflow(wf); err != nil {
 			t.Fatal(err)
@@ -295,7 +295,7 @@ func TestSingleSOPDispatchReplacesStaleBinding(t *testing.T) {
 	t.Cleanup(func() { _ = e.Cancel(task.RunID) })
 	got, ok := st.Issue("one")
 	if !ok || got.WorkflowID != started.ID {
-		t.Fatalf("single SOP binding = %q, want %s", got.WorkflowID, started.ID)
+		t.Fatalf("single LOOP binding = %q, want %s", got.WorkflowID, started.ID)
 	}
 	multi := domain.Issue{ID: "multi", ProjectID: project.ID, Title: "multi", Source: "local", Kind: "requirement", WorkflowID: bound.ID, SOPBindings: []domain.IssueSOPBinding{
 		{WorkflowID: bound.ID, Order: 1},
@@ -311,13 +311,13 @@ func TestSingleSOPDispatchReplacesStaleBinding(t *testing.T) {
 	t.Cleanup(func() { _ = e.Cancel(second.RunID) })
 	got, ok = st.Issue("multi")
 	if !ok || got.WorkflowID != bound.ID || got.SOPBindings[0].WorkflowID != bound.ID {
-		t.Fatalf("multi SOP bindings were rewritten: %+v", got)
+		t.Fatalf("multi LOOP bindings were rewritten: %+v", got)
 	}
 	if err := st.PutIssue(domain.Issue{ID: "kept", ProjectID: project.ID, Title: "kept", Source: "gongfeng", Kind: "issue", WorkflowID: bound.ID}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := dispatchIssue(s.deps, dispatchRequest{IssueID: "kept", WorkflowID: "deleted-sop"}); err == nil {
-		t.Fatal("starting a missing SOP should fail")
+		t.Fatal("starting a missing LOOP should fail")
 	}
 	got, ok = st.Issue("kept")
 	if !ok || got.WorkflowID != bound.ID {
@@ -374,7 +374,7 @@ func TestScheduledJobWaitsWhenIntegrateConflictsWithDefault(t *testing.T) {
 	if err := st.PutRepository(domain.Repository{ID: "repo", ProjectID: project.ID, Name: "Repo", Provider: "gongfeng", DefaultBranch: "master", IntegrateBranch: "agentflow/integration", CloneURL: remote}); err != nil {
 		t.Fatal(err)
 	}
-	wf := domain.WorkflowDefinition{ID: "scheduled-wf", Name: "Scheduled", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "approval", Name: "Approval", Type: "approval"}}}
+	wf := domain.WorkflowDefinition{ID: "scheduled-wf", Name: "Scheduled", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{ID: "approval", Name: "Approval", Type: "approval"}}}
 	if err := st.PutWorkflow(wf); err != nil {
 		t.Fatal(err)
 	}
@@ -399,7 +399,7 @@ func TestScheduledJobWaitsWhenIntegrateConflictsWithDefault(t *testing.T) {
 		t.Fatalf("expected waiting baseline gate, got %+v", job)
 	}
 	if st.IssueHasTask(issue.ID) {
-		t.Fatal("conflict must not dispatch the issue SOP")
+		t.Fatal("conflict must not dispatch the issue LOOP")
 	}
 	var alignRun domain.Run
 	for _, run := range st.Runs() {
@@ -453,14 +453,14 @@ func TestEnsureBaselineAlignWorkflowUsesPlatformAgentNotProjectFixer(t *testing.
 		t.Fatal(err)
 	}
 	if err := st.PutWorkflow(domain.WorkflowDefinition{
-		ID: "issue-fix-production", Name: "Issue 修复", ProjectID: "skillhub", SandboxProfileID: "local",
+		ID: "issue-fix-production", Name: "Issue 修复", ProjectID: "skillhub", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{{ID: "fix", Type: "agent", AgentID: "issue-fix-engineer", Name: "修复并提交"}},
 	}); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.PutWorkflow(domain.WorkflowDefinition{
 		ID: engine.BaselineAlignWorkflowID, Name: "对齐默认分支到基线", ProjectID: "skillhub",
-		Version: 3, Status: "published", SandboxProfileID: "local",
+		Version: 3, Status: "published", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{{ID: "resolve", Type: "agent", AgentID: "issue-fix-engineer"}},
 	}); err != nil {
 		t.Fatal(err)
@@ -470,7 +470,7 @@ func TestEnsureBaselineAlignWorkflowUsesPlatformAgentNotProjectFixer(t *testing.
 		t.Fatal("ensure should rewrite project fixer onto the platform align role")
 	}
 	wf, ok := st.Workflow(engine.BaselineAlignWorkflowID)
-	if !ok || wf.Version < baselineAlignWorkflowVersion || wf.SandboxProfileID != "local" {
+	if !ok || wf.Version < baselineAlignWorkflowVersion || wf.SandboxProfileID != repo.DefaultSandboxProfileID {
 		t.Fatalf("upgraded workflow = %+v", wf)
 	}
 	if !alignWorkflowUsesPlatformAgent(wf) {
@@ -479,6 +479,16 @@ func TestEnsureBaselineAlignWorkflowUsesPlatformAgentNotProjectFixer(t *testing.
 	agent, ok := st.Agent(engine.BaselineAlignAgentID)
 	if !ok || !agent.Shared || len(agent.Verification) != 0 || len(agent.Hooks) != 0 {
 		t.Fatalf("platform align agent = %+v", agent)
+	}
+	wf.SandboxProfileID = repo.TestNativeSandboxID
+	if err := st.PutWorkflow(wf); err != nil {
+		t.Fatal(err)
+	}
+	if !h.ensureBaselineAlignWorkflow(domain.ScheduleJob{}) {
+		t.Fatal("existing align workflow was rejected")
+	}
+	if saved, _ := st.Workflow(wf.ID); saved.SandboxProfileID != repo.TestNativeSandboxID {
+		t.Fatalf("explicit align sandbox was overwritten: %q", saved.SandboxProfileID)
 	}
 }
 
@@ -490,7 +500,7 @@ func TestEnsureBaselineAlignWorkflowUpgradesExistingRevision(t *testing.T) {
 	t.Cleanup(st.Close)
 	if err := st.PutWorkflow(domain.WorkflowDefinition{
 		ID: engine.BaselineAlignWorkflowID, Name: "对齐默认分支到基线", ProjectID: "platform",
-		Version: 1, Status: "published", SandboxProfileID: "local",
+		Version: 1, Status: "published", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{
 			{ID: "resolve", Name: "解决冲突", Type: "agent", AgentID: "developer"},
 			{ID: "confirm", Name: "确认对齐", Type: "approval"},
@@ -504,7 +514,7 @@ func TestEnsureBaselineAlignWorkflowUpgradesExistingRevision(t *testing.T) {
 	}
 	h := &scheduleHandlers{deps: &deps{repo: st}}
 	if !h.ensureBaselineAlignWorkflow(domain.ScheduleJob{ProjectID: "platform"}) {
-		t.Fatal("ensure should upgrade an existing v1 align SOP")
+		t.Fatal("ensure should upgrade an existing v1 align LOOP")
 	}
 	wf, ok := st.Workflow(engine.BaselineAlignWorkflowID)
 	if !ok || wf.Version < baselineAlignWorkflowVersion {
@@ -538,11 +548,11 @@ func TestEnsureBaselineAlignWorkflowUpgradesExistingRevision(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !h.ensureBaselineAlignWorkflow(domain.ScheduleJob{ProjectID: "platform"}) {
-		t.Fatal("ensure should upgrade the previously installed v7 align SOP")
+		t.Fatal("ensure should upgrade the previously installed v7 align LOOP")
 	}
 	if upgraded, ok := st.Workflow(engine.BaselineAlignWorkflowID); !ok || upgraded.Version != baselineAlignWorkflowVersion ||
 		len(upgraded.Nodes) != 2 || upgraded.Nodes[1].ExecutionScope != domain.ExecutionScopeRepositories {
-		t.Fatalf("installed align SOP still lacks repository-scoped verification: %+v", upgraded)
+		t.Fatalf("installed align LOOP still lacks repository-scoped verification: %+v", upgraded)
 	}
 }
 
@@ -621,8 +631,8 @@ func TestScheduleUIDemoServer(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, wf := range []domain.WorkflowDefinition{
-		{ID: "demodns-issue-fix", Name: "Issue 修复", ProjectID: "dp", Status: "published", SandboxProfileID: "local", Version: 1, Nodes: []domain.WorkflowNode{{ID: "work", Name: "处理", Type: "approval"}}},
-		{ID: "demodns-feature-dev", Name: "功能开发", ProjectID: "dp", Status: "published", SandboxProfileID: "local", Version: 1, Nodes: []domain.WorkflowNode{{ID: "work", Name: "处理", Type: "approval"}}},
+		{ID: "demodns-issue-fix", Name: "Issue 修复", ProjectID: "dp", Status: "published", SandboxProfileID: "test-native", Version: 1, Nodes: []domain.WorkflowNode{{ID: "work", Name: "处理", Type: "approval"}}},
+		{ID: "demodns-feature-dev", Name: "功能开发", ProjectID: "dp", Status: "published", SandboxProfileID: "test-native", Version: 1, Nodes: []domain.WorkflowNode{{ID: "work", Name: "处理", Type: "approval"}}},
 	} {
 		if err := st.PutWorkflow(wf); err != nil {
 			t.Fatal(err)
@@ -646,7 +656,7 @@ func TestScheduleUIDemoServer(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	prompt := `你是项目 DP（projectId: dp）的需求预分诊助手。调用 issues_list，query={"status":"backlog","limit":50}，按 offset 翻页直到 hasMore=false。没有 backlog 则输出“无待处理需求”。对 source=gongfeng / kind=issue：确认 workflowId=demodns-issue-fix，仓库缺失时结合标题与 repositories_list 判断，仅高把握用 issues_save。不要 issues_dispatch。对 source=tapd：无 TAPD MCP 时跳过处理人同步，仓库与 SOP 置信度不足则跳过。写操作只允许 issues_save，每轮最多 12 个。输出 Markdown 表格：需求编号 | 标题 | 来源 | 处理动作 | 置信度 | 说明。`
+	prompt := `你是项目 DP（projectId: dp）的需求预分诊助手。调用 issues_list，query={"status":"backlog","limit":50}，按 offset 翻页直到 hasMore=false。没有 backlog 则输出“无待处理需求”。对 source=gongfeng / kind=issue：确认 workflowId=demodns-issue-fix，仓库缺失时结合标题与 repositories_list 判断，仅高把握用 issues_save。不要 issues_dispatch。对 source=tapd：无 TAPD MCP 时跳过处理人同步，仓库与 LOOP 置信度不足则跳过。写操作只允许 issues_save，每轮最多 12 个。输出 Markdown 表格：需求编号 | 标题 | 来源 | 处理动作 | 置信度 | 说明。`
 	if err := st.PutScheduleJob(domain.ScheduleJob{
 		ID: "job-triage", Name: "DP backlog 需求预分诊", ProjectID: "dp", SkipDispatch: true,
 		AssistantPrompt: prompt, AssistantModel: "default", Enabled: true, IntervalSec: 3600,

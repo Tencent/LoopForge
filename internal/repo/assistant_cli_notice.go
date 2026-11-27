@@ -88,7 +88,7 @@ func (r *AssistantRepo) replaceSessionCLIFailure(engine, missing, generic, next 
 			if !rewriteCLIFailureMessages(&item, missing, generic, next, sessionUsesEngine(item, engine)) {
 				return nil
 			}
-			return tx.Model(&assistantSessionRow{}).Where("id = ? AND user_id = ?", row.ID, row.UserID).Update("payload", mustJSON(item)).Error
+			return tx.Model(&assistantSessionRow{}).Where("id = ? AND user_id = ?", row.ID, row.UserID).Update("payload", encodeAssistantSession(item)).Error
 		})
 		if err != nil {
 			return err

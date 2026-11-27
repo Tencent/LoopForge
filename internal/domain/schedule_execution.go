@@ -35,7 +35,7 @@ type ScheduleJobExecution struct {
 	// Model and Usage cover this execution's generation, including retries
 	// and usage reported before failure, but not prior turns in a fixed session.
 	// Usage.CostUSD/CostStatus are the analytics estimate; CostCNY is set only
-	// when that estimate is known. Unreported executions and SOP triggers have
+	// when that estimate is known. Unreported executions and LOOP triggers have
 	// no usage.
 	Model   string      `json:"model,omitempty"`
 	Usage   *TokenUsage `json:"usage,omitempty"`
@@ -50,7 +50,7 @@ func (e *ScheduleJobExecution) RecordUsage(model string, usage *TokenUsage) {
 	}
 	priced := PriceScheduleExecutionUsage(model, *usage)
 	e.Model, e.Usage, e.CostCNY = strings.TrimSpace(model), &priced, nil
-	if priced.CostStatus == "estimated" {
+	if priced.CostStatus == "estimated" || priced.CostStatus == "reported" {
 		cny := priced.CostUSD * AnalyticsUSDToCNY
 		e.CostCNY = &cny
 	}
@@ -85,7 +85,7 @@ func (e ScheduleJobExecution) ExecutionTotalTokens() int64 {
 	return usageTotalTokens(*e.Usage)
 }
 
-// ScheduleJobExecutionRun links an execution to the SOP run it started.
+// ScheduleJobExecutionRun links an execution to the LOOP run it started.
 type ScheduleJobExecutionRun struct {
 	IssueID    string `json:"issueId"`
 	IssueTitle string `json:"issueTitle,omitempty"`

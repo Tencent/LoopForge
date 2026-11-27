@@ -62,7 +62,7 @@ func (p *TerminalPool) Handle(root, scope string, req domain.WorkspaceTerminalRe
 }
 
 // HandleSandbox opens a PTY through the same driver and environment overlay as
-// the SOP sandbox. ctx covers opening/driver preparation only; after a successful
+// the LOOP sandbox. ctx covers opening/driver preparation only; after a successful
 // open the pool's expiry/close owns the shell lifetime, not an HTTP request.
 // A successful open transfers release to the pool (called exactly once on close).
 // On a failed open release is NOT called; the caller still owns that cleanup.
@@ -85,6 +85,10 @@ func (p *TerminalPool) HandleSandboxWithGit(ctx context.Context, sandbox Sandbox
 	if _, err := terminalTTL(req); err != nil {
 		return TerminalResult{}, err
 	}
+	releaseTerminal := func() {}
+	if s, ok := unwrapSandbox(sandbox).(*dockerSandbox); ok {
+		releaseTerminal = s.reserveTerminal()
+	}
 	stopSSH := func() {}
 	var bind func(*CommandSpec) error
 	if len(credentials.SSHKeys) > 0 && sandbox != nil {
@@ -99,11 +103,13 @@ func (p *TerminalPool) HandleSandboxWithGit(ctx context.Context, sandbox Sandbox
 	cmd, home, err := sandboxTerminalCommandWithBinding(ctx, sandbox, credentials.HTTPS, bind)
 	if err != nil {
 		stopSSH()
+		releaseTerminal()
 		return TerminalResult{}, err
 	}
 	ownedRelease := func() {
 		stopSSH()
 		sandboxTerminalCleanup(sandbox, home)
+		releaseTerminal()
 		if release != nil {
 			release()
 		}
@@ -113,6 +119,7 @@ func (p *TerminalPool) HandleSandboxWithGit(ctx context.Context, sandbox Sandbox
 		stopSSH()
 		sandboxTerminalCleanup(sandbox, home)
 		_ = removeTerminalHome(home)
+		releaseTerminal()
 	}
 	return result, err
 }

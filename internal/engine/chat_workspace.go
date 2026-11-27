@@ -1,13 +1,14 @@
 package engine
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
 	"agentflow/internal/domain"
 )
 
-// StartConversationWorkspace allocates an idle workspace, never an SOP scheduler
+// StartConversationWorkspace allocates an idle workspace, never a LOOP scheduler
 // or a group of role tasks. Docker definitions are frozen by the normal run builder.
 func (e *Engine) StartConversationWorkspace(input string, actor domain.TelemetryContext, sandboxID string) (domain.Run, error) {
 	if strings.TrimSpace(input) == "" {
@@ -25,5 +26,5 @@ func (e *Engine) StartConversationWorkspace(input string, actor domain.Telemetry
 		return domain.Run{}, err
 	}
 	wf := domain.WorkflowDefinition{ID: domain.ConversationWorkspaceWorkflowID, Name: "对话工作区", Version: 1, ProjectID: actor.ProjectID, SandboxProfileID: sandboxID, Nodes: []domain.WorkflowNode{}, Edges: []domain.WorkflowEdge{}}
-	return e.startWorkflowDefinition(wf, input, nil, actor, true)
+	return e.startWorkflowDefinition(context.Background(), wf, input, nil, actor, true)
 }

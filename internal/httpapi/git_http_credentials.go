@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -88,6 +89,8 @@ func respondGitHTTPCredentialError(c *gin.Context, err error) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 	case errors.Is(err, repo.ErrGitHTTPCredentialExists):
 		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+	case errors.Is(err, repo.ErrGitHTTPHostUnauthorized):
+		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
 	case errors.Is(err, gorm.ErrRecordNotFound):
 		c.JSON(http.StatusNotFound, gin.H{"error": "此主机的访问令牌已不存在"})
 	default:
@@ -98,7 +101,7 @@ func respondGitHTTPCredentialError(c *gin.Context, err error) {
 // gitHTTPCredentialFromInput validates the form. The platform defaults to
 // GitHub for github.com and "other" elsewhere.
 func (h *usersHandlers) gitHTTPCredentialFromInput(ctx context.Context, userID int64, input gitHTTPCredentialInput) (domain.GitHTTPCredentialSecret, error) {
-	host, err := gitwork.HTTPSHostScope(input.Host)
+	endpoint, err := domain.ParseGitHTTPEndpoint(input.Host)
 	if err != nil {
 		return domain.GitHTTPCredentialSecret{}, err
 	}
@@ -106,11 +109,12 @@ func (h *usersHandlers) gitHTTPCredentialFromInput(ctx context.Context, userID i
 	if name == "" || utf8.RuneCountInString(name) > 80 {
 		return domain.GitHTTPCredentialSecret{}, errors.New("请输入 1 到 80 个字符的凭据名称")
 	}
+	host := endpoint.Scope()
 	platform := domain.GitPlatformOther
 	if host == "github.com" {
 		platform = domain.GitPlatformGitHub
 	}
-	if strings.TrimSpace(input.Platform) != "" {
+	if endpoint.Scheme != "http" && strings.TrimSpace(input.Platform) != "" {
 		var ok bool
 		if platform, ok = domain.NormalizeGitPlatform(input.Platform); !ok {
 			return domain.GitHTTPCredentialSecret{}, errors.New("平台只能是 github、gitlab 或 other")
@@ -131,9 +135,8 @@ func (h *usersHandlers) gitHTTPCredentialFromInput(ctx context.Context, userID i
 	}, nil
 }
 
-// verifyGitHTTPCredential checks a saved credential against its platform's
-// "current user" endpoint. It always answers 200 with a structured result
-// once the credential exists.
+// verifyGitHTTPCredential checks the provider account or read access to a
+// plaintext Git repository.
 func (h *usersHandlers) verifyGitHTTPCredential(c *gin.Context) {
 	id, ok := h.gitHTTPCredentialOwner(c)
 	if !ok {
@@ -146,10 +149,50 @@ func (h *usersHandlers) verifyGitHTTPCredential(c *gin.Context) {
 	}
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 15*time.Second)
 	defer cancel()
-	c.JSON(http.StatusOK, verifyGitHTTPToken(ctx, cred))
+	if strings.HasPrefix(cred.Host, "http://") {
+		var input struct {
+			RepoURL string `json:"repoUrl"`
+		}
+		if !decodeLimit(c, &input, 8<<10) {
+			return
+		}
+		c.JSON(http.StatusOK, h.verifyPlainGitRepository(ctx, cred, input.RepoURL))
+		return
+	}
+	c.JSON(http.StatusOK, verifyGitHTTPToken(ctx, cred, gitHTTPVerifyClient(h.repo.PlatformGitHTTPSAddresses)))
 }
 
-func verifyGitHTTPToken(ctx context.Context, cred domain.GitHTTPCredentialSecret) gitTokenVerifyResult {
+func (h *usersHandlers) verifyPlainGitRepository(ctx context.Context, cred domain.GitHTTPCredentialSecret, raw string) gitTokenVerifyResult {
+	remote, _, err := gitwork.GitHTTPRepositoryURL(raw)
+	if err != nil {
+		return gitTokenVerifyResult{Error: err.Error()}
+	}
+	endpoint, ok := gitwork.GitHTTPRemoteEndpoint(remote)
+	if !ok || endpoint.Scope() != cred.Host || endpoint.Scheme != "http" {
+		return gitTokenVerifyResult{Error: "仓库地址必须与此令牌的 HTTP 主机和端口一致"}
+	}
+	authorized, err := h.repo.PlatformGitHTTPHostAuthorized(ctx, endpoint.Authority)
+	if err != nil {
+		return gitTokenVerifyResult{Error: "暂时无法读取 Git 主机授权，请稍后重试"}
+	}
+	if !authorized {
+		return gitTokenVerifyResult{Error: repo.ErrGitHTTPHostUnauthorized.Error()}
+	}
+	workspace, err := os.MkdirTemp("", "loopforge-git-access-")
+	if err != nil {
+		return gitTokenVerifyResult{Error: "暂时无法创建 Git 校验目录"}
+	}
+	defer os.RemoveAll(workspace)
+	ctx = gitwork.WithHTTPCredentials(ctx, map[string]gitwork.HTTPCredential{
+		cred.Host: {Username: cred.GitUsername(), Token: cred.Token},
+	})
+	if _, err := gitwork.Run(ctx, workspace, "ls-remote", "--", remote); err != nil {
+		return gitTokenVerifyResult{Error: "无法读取仓库，请检查仓库地址、HTTP 主机授权与令牌的读取权限"}
+	}
+	return gitTokenVerifyResult{RepositoryReadable: true}
+}
+
+func verifyGitHTTPToken(ctx context.Context, cred domain.GitHTTPCredentialSecret, client *http.Client) gitTokenVerifyResult {
 	if cred.Managed {
 		return verifyGongfengToken(ctx, cred.Token)
 	}
@@ -165,8 +208,15 @@ func verifyGitHTTPToken(ctx context.Context, cred domain.GitHTTPCredentialSecret
 	if cred.Platform == domain.GitPlatformGitHub {
 		req.Header.Set("Accept", "application/vnd.github+json")
 	}
-	res, err := gitHTTPVerifyClient().Do(req)
-	if err != nil {
+	res, err := client.Do(req)
+	switch {
+	case errors.Is(err, gitegress.ErrNonPublicAddress):
+		return gitTokenVerifyResult{Error: "此 Git HTTPS 主机尚未授权，请联系平台管理员在「Git 主机信任」中登记。"}
+	case errors.Is(err, gitegress.ErrHTTPSAddressChanged):
+		return gitTokenVerifyResult{Error: "Git 主机解析地址已变更，请联系平台管理员更新该主机的 HTTPS 授权。"}
+	case errors.Is(err, gitegress.ErrHTTPSHostLookup):
+		return gitTokenVerifyResult{Error: "暂时无法读取 Git 主机授权，请稍后重试。"}
+	case err != nil:
 		return gitTokenVerifyResult{Error: fmt.Sprintf("无法连接 %s：%v", cred.Host, err)}
 	}
 	defer res.Body.Close()

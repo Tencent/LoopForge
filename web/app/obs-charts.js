@@ -164,7 +164,7 @@ function obsTrendOption(points,mode,sel,prev,opts){
 function obsBreakdownPalette(t){return [t.c1,t.c2,t.c3,t.muted2,t.c4,t.panel3]}
 function obsBreakdownValue(row,metric){return Number(metric==='cost'?row?.costCny:row?.tokens)||0}
 function obsBreakdownTotal(rows,metric){return (rows||[]).reduce((n,r)=>n+obsBreakdownValue(r,metric),0)}
-// Conversation code changes stand apart from SOPs, and are often a sliver.
+// Conversation code changes stand apart from LOOPs, and are often a sliver.
 const OBS_CONVERSATION_COLOR='#f59e0b';
 function obsBreakdownOption(rows,metric,opts){
   const o=obsChartOpts(opts),t=o.theme,pal=obsBreakdownPalette(t);

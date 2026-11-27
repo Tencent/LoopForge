@@ -3,17 +3,13 @@ package repo
 import "agentflow/internal/domain"
 
 // GenericBackendDeliveryWorkflowID is the stable identifier of the platform
-// backend delivery SOP stored in generic_templates.
+// backend delivery LOOP stored in generic_templates.
 const GenericBackendDeliveryWorkflowID = "generic-backend-delivery"
 
-// Platform docker assets the generic backend SOP binds to. They are catalog
-// rows (not part of the template blob), seeded by
-// migrations/seed/111_generic_docker.sql so new projects run in a container
-// instead of the host-local driver.
-const (
-	GenericBackendDockerfileID = "generic-backend"
-	GenericDockerSandboxID     = "generic-docker"
-)
+// GenericDockerSandboxID is the platform docker sandbox the generic backend
+// LOOP binds to. It is a catalog row (not part of the template blob), seeded
+// by migrations/seed/001_public_catalog.sql.
+const GenericDockerSandboxID = "generic-docker"
 
 // Role identifiers used by the stored LoopForge backend template. Cloning a
 // generic template copies these roles into the target project.
@@ -37,7 +33,7 @@ const (
 )
 
 // Product and frontend harness templates share the same generic_templates
-// table as the LoopForge backend SOP.
+// table as the LoopForge backend LOOP.
 const (
 	GenericProductDeliveryWorkflowID  = "generic-product-delivery"
 	GenericFrontendDeliveryWorkflowID = "generic-frontend-delivery"
@@ -76,9 +72,9 @@ const (
 	GenericSkillKnowledgeDistill    = "loopforge-knowledge-distillation"
 )
 
-// GenericTemplate bundles a project-independent SOP with the roles it needs.
+// GenericTemplate bundles a project-independent LOOP with the roles it needs.
 // Rows live in generic_templates; the engine resolves them through the same
-// Workflow/Agent catalog lookups as a custom SOP. The Generic flag on the
+// Workflow/Agent catalog lookups as a custom LOOP. The Generic flag on the
 // workflow payload is only a marker for listing and clone/edit policy.
 type GenericTemplate struct {
 	Workflow domain.WorkflowDefinition

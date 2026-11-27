@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"agentflow/internal/domain"
 	"agentflow/internal/repo"
@@ -71,6 +72,80 @@ func TestRunnerModelProbeUsesOwnersSelectedMachine(t *testing.T) {
 	}
 	if got := catalog.Models[0].DiscoveredReasoningEfforts; got == nil || !slices.Equal(*got, []string{"xhigh"}) {
 		t.Fatalf("runner metadata was not preserved and constrained: %s", w.Body)
+	}
+}
+
+func TestCodexAndClaudeRunnerLoginCatalogsAreIndependentOfAPIKey(t *testing.T) {
+	f := cvBNewHTTPFixture(t)
+	apiEfforts := []string{"low"}
+	codex := []domain.CLIModel{{ID: "gpt-5.5", ReasoningEfforts: &apiEfforts}}
+	claude := []domain.CLIModel{{ID: "claude-sonnet-4-6", ReasoningEfforts: &apiEfforts}}
+	user, err := f.s.UpdateUserCredentials(f.user.ID, repo.UserCredentialUpdate{
+		CodexAPIKey: "test-only-codex", CodexModels: &codex,
+		ClaudeCodeAPIKey: "test-only-claude", ClaudeCodeModels: &claude,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	machine := domain.Runner{
+		ID: "model-source-runner", OwnerUserID: user.ID, RunnerVersion: domain.RunnerVersionConversationCLI,
+		Runtimes: []domain.RunnerRuntime{{Provider: "codex"}, {Provider: "claude-code"}},
+	}
+	if err := f.s.PutRunner(machine); err != nil {
+		t.Fatal(err)
+	}
+
+	target := &domain.AssistantExecutionTarget{Pool: domain.ExecutionModeRunner, RunnerID: machine.ID}
+	h := &assistantHandlers{deps: &deps{repo: f.s}}
+	for _, tc := range []struct{ provider, model string }{
+		{"codex", codex[0].ID}, {"claude-code", claude[0].ID},
+	} {
+		t.Run(tc.provider, func(t *testing.T) {
+			model := tc.provider + ":" + tc.model
+			checkEffort := func(effort string, want bool) {
+				t.Helper()
+				runner := h.assistantLoginRunner(user.ID, target, tc.provider)
+				stored, _ := f.s.User(user.ID)
+				_, err := h.resolveAssistantTurnModel(t.Context(), stored, model, effort, runner)
+				if (err == nil) != want {
+					t.Fatalf("validate %s/%s for %s = %v", model, effort, runner.ID, err)
+				}
+			}
+			checkEffort("high", true) // Built-in account list even with a conflicting API Key setting.
+			path := "/api/runners/" + machine.ID + "/models"
+			accountEfforts := []string{"medium"}
+			body := map[string]any{
+				"provider": tc.provider,
+				"models":   []domain.CLIModel{{ID: tc.model, ReasoningEfforts: &accountEfforts}},
+			}
+			catalog := cvBRequest(t, f, http.MethodPut, path, body, true)
+			var saved domain.Runner
+			if err := json.Unmarshal(catalog.Body.Bytes(), &saved); err != nil || catalog.Code != http.StatusOK {
+				t.Fatalf("save account catalog: %d %s (%v)", catalog.Code, catalog.Body.String(), err)
+			}
+			if len(saved.LoginModels[tc.provider]) != 1 || saved.LoginModels[tc.provider][0].ID != tc.model {
+				t.Fatalf("account catalog: %+v", saved.LoginModels)
+			}
+			checkEffort("medium", true)
+			checkEffort("low", false)
+			if err := f.s.SetRunnerRuntimeAuthMode(machine.ID, tc.provider, domain.RuntimeAuthPersonal, time.Now()); err != nil {
+				t.Fatal(err)
+			}
+			checkEffort("low", true)
+			checkEffort("medium", false)
+			if err := f.s.SetRunnerRuntimeAuthMode(machine.ID, tc.provider, domain.RuntimeAuthLocal, time.Now()); err != nil {
+				t.Fatal(err)
+			}
+			checkEffort("medium", true)
+			body["models"] = []domain.CLIModel{}
+			if rec := cvBRequest(t, f, http.MethodPut, path, body, true); rec.Code != http.StatusOK {
+				t.Fatalf("restore built-in catalog: %d %s", rec.Code, rec.Body.String())
+			}
+			checkEffort("high", true)
+			if savedView := runnerViewForUser(saved, user.ID+1); len(savedView.LoginModels) != 0 {
+				t.Fatal("shared machine exposed its owner's account catalog")
+			}
+		})
 	}
 }
 

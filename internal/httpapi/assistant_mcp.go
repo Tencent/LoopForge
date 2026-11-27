@@ -139,13 +139,18 @@ func (h *assistantHandlers) callAssistantPlatform(ctx context.Context, user doma
 		ctx = context.Background()
 	}
 	ctx = context.WithValue(ctx, requestUserContextKey{}, domainUserToAuth(user))
+	ctx = context.WithValue(ctx, assistantEditSourceContextKey{}, domain.EvoVersionChatbot)
 	input := assistantToolInput(call)
-	if scope := scheduledAssetsFrom(ctx); scope.Version.ID != "" && op.Name == "runs_start" {
+	if op.Name == "runs_start" && projectID != "" {
 		if body, ok := input.Body.(map[string]any); ok {
-			if id, _ := body["projectId"].(string); id != "" && id != projectID {
-				return "", fmt.Errorf("只能在当前项目启动 SOP")
+			id, _ := body["projectId"].(string)
+			id = strings.TrimSpace(id)
+			if id != "" && id != projectID && scheduledAssetsFrom(ctx).Version.ID != "" {
+				return "", fmt.Errorf("只能在当前项目启动 LOOP")
 			}
-			body["projectId"] = projectID
+			if id == "" {
+				body["projectId"] = projectID
+			}
 		}
 	}
 	if op.Name == "runs_control_get" {
@@ -192,7 +197,7 @@ func (h *assistantHandlers) callAssistantPlatform(ctx context.Context, user doma
 	}
 	if !op.ReadOnly && mode.ReviewWrites {
 		// Review the final merged payload immediately before the real handler.
-		review := reviewAssistantAction(ctx, op.Name, op.Description, map[string]any{"path": input.Path, "query": input.Query, "body": input.Body})
+		review := reviewAssistantAction(withApprovalActionSource(ctx, approvalSourceBuiltinPlatform), op.Name, op.Description, map[string]any{"path": input.Path, "query": input.Query, "body": input.Body})
 		if !review.allows() {
 			return "", assistantReviewRefusal(op.Name, review)
 		}

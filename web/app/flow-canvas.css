@@ -107,7 +107,7 @@ html[data-theme="dark"] #flowView{
   #flowView .fd-vsep{display:none}
 }
 
-/* SOP switcher popover */
+/* LOOP switcher popover */
 #flowView .fd-pop{position:absolute;z-index:60;left:12px;top:calc(100% - 4px);width:360px;max-width:calc(100% - 24px);display:flex;flex-direction:column;border:1px solid var(--fd-line);border-radius:12px;background:var(--fd-surface);box-shadow:var(--fd-shadow-lg);overflow:hidden;white-space:normal;animation:fdPop .14s var(--fd-ease)}
 @keyframes fdPop{from{opacity:0;transform:translateY(-4px) scale(.98)}to{opacity:1;transform:none}}
 #flowView .fd-pop .fd-search{flex:none;margin:10px 10px 4px}
@@ -145,7 +145,7 @@ html[data-theme="dark"] #flowView{
 #flowView .fd-body{position:relative;flex:1;display:flex;min-height:0;min-width:0}
 
 /* palette */
-#flowView .fd-palette{position:relative;z-index:12;width:256px;flex:none;display:flex;flex-direction:column;min-height:0;border-right:1px solid var(--fd-line);background:var(--fd-surface);transition:width .2s var(--fd-ease)}
+#flowView .fd-palette{position:relative;z-index:12;width:min(256px,38%);flex:none;display:flex;flex-direction:column;min-height:0;border-right:1px solid var(--fd-line);background:var(--fd-surface);transition:width .2s var(--fd-ease)}
 #flowView .fd-pal-head{display:flex;align-items:center;gap:6px;padding:12px 12px 6px}
 #flowView .fd-pal-body{flex:1;overflow:auto;padding:2px 8px 12px}
 #flowView .fd-pal-group+.fd-pal-group{margin-top:6px}
@@ -181,7 +181,7 @@ html[data-theme="dark"] #flowView{
 #flowView .fd-tile.t-approval{--tint:16 163 127}
 
 /* ---------- stage / canvas ---------- */
-#flowView .fd-stagewrap{position:relative;flex:1;min-width:0;min-height:0;overflow:hidden}
+#flowView .fd-stagewrap{--fd-drawer-width:368px;position:relative;flex:1;min-width:0;min-height:0;overflow:hidden}
 #flowView .fd-canvas{position:absolute;inset:0;min-height:0;overflow:hidden;border:0;border-radius:0;background-color:var(--fd-canvas);background-image:radial-gradient(circle,var(--fd-dot) 1px,transparent 1.2px);background-size:18px 18px;cursor:default;touch-action:none;outline:0}
 #flowView .fd-canvas.panning{cursor:grabbing}
 #flowView .fd-canvas.dragover{box-shadow:inset 0 0 0 2px rgb(var(--fd-accent) / .45)}
@@ -280,7 +280,8 @@ html[data-theme="dark"] #flowView{
 /* floating chrome */
 #flowView .fd-chrome{position:absolute;z-index:15;display:flex;align-items:center;gap:2px;padding:4px;border:1px solid var(--fd-line);border-radius:11px;background:var(--fd-glass);-webkit-backdrop-filter:blur(12px) saturate(1.4);backdrop-filter:blur(12px) saturate(1.4);box-shadow:var(--fd-shadow);white-space:nowrap;transition:right .24s var(--fd-ease),left .24s var(--fd-ease),opacity .2s}
 #flowView .fd-tr{top:12px;right:12px}
-#flowView .fd-bl{left:12px;bottom:12px}
+#flowView .fd-bl{left:12px;bottom:12px;max-width:calc(100% - 24px);flex-wrap:wrap}
+#flowView #canvasArrange{height:30px;padding:0 8px}
 #flowView .fd-sep{width:1px;height:18px;margin:0 4px;background:var(--fd-line-2);flex:none}
 #flowView .fd-zoomv{min-width:46px;height:30px;padding:0 4px;border:0;border-radius:7px;background:none;color:var(--fd-ink-2);font:500 12px/1 ui-monospace,SFMono-Regular,Menlo,monospace;cursor:pointer}
 #flowView .fd-zoomv:hover{background:var(--fd-hover)}
@@ -301,6 +302,10 @@ html[data-theme="dark"] #flowView{
 #flowView .fd-mm-view{fill:rgb(var(--fd-accent) / .07);stroke:rgb(var(--fd-accent) / .75);stroke-width:1.2}
 #flowView .fd-stagewrap.check-mode .fd-bl,#flowView .fd-stagewrap.check-mode .fd-minimap{display:none}
 #flowView .flow-check-panel{position:absolute;inset:0;overflow:auto;padding:64px 24px 24px;background:var(--fd-canvas)}
+/* 属性抽屉打开时让出右侧宽度，检查卡片按剩余宽度自适应列数，长文字换行 */
+#flowView .fd-stagewrap.has-drawer .flow-check-panel{right:368px}
+#flowView .flow-check-grid{grid-template-columns:repeat(auto-fit,minmax(min(100%,280px),1fr))}
+#flowView .flow-check-item{min-width:0;overflow-wrap:anywhere}
 
 /* empty state */
 #flowView .fd-empty{position:absolute;inset:0;z-index:4;display:grid;place-items:center;pointer-events:none}
@@ -321,11 +326,11 @@ html[data-theme="dark"] #flowView .fd-toast{background:#f3f4f6;color:#111827}
 html[data-theme="dark"] #flowView .fd-toast button{background:rgba(0,0,0,.06);color:#4338ca}
 
 /* ---------- drawer ---------- */
-#flowView .properties.fd-drawer{position:absolute;z-index:20;top:0;right:0;bottom:0;left:auto;width:368px;max-width:100%;min-height:0;display:flex;flex-direction:column;padding:0;border:0;border-left:1px solid var(--fd-line);border-radius:0;background:var(--fd-surface);box-shadow:-12px 0 32px rgba(15,23,42,.08);overflow:hidden;transform:translateX(100%);visibility:hidden;transition:transform .24s var(--fd-ease),visibility 0s .24s}
+#flowView .properties.fd-drawer{position:absolute;z-index:20;top:0;right:0;bottom:0;left:auto;width:var(--fd-drawer-width);max-width:100%;min-height:0;display:flex;flex-direction:column;padding:0;border:0;border-left:1px solid var(--fd-line);border-radius:0;background:var(--fd-surface);box-shadow:-12px 0 32px rgba(15,23,42,.08);overflow:hidden;transform:translateX(100%);visibility:hidden;transition:transform .24s var(--fd-ease),visibility 0s .24s}
 #flowView .properties.fd-drawer.open{transform:none;visibility:visible;transition:transform .24s var(--fd-ease),visibility 0s}
 #flowView .fd-stagewrap.ai-open .properties.fd-drawer{display:none}
-#flowView .fd-stagewrap.has-drawer .fd-tr{right:380px}
-#flowView .fd-stagewrap.has-drawer .fd-minimap{right:380px}
+#flowView .fd-stagewrap.has-drawer .fd-tr,#flowView .fd-stagewrap.has-drawer .fd-minimap{right:calc(var(--fd-drawer-width) + 12px)}
+#flowView .fd-stagewrap.has-drawer .fd-bl{max-width:calc(100% - var(--fd-drawer-width) - 24px)}
 #flowView .fd-stagewrap.tight .fd-minimap,#flowView .fd-stagewrap.tight .fd-legend,#flowView .fd-stagewrap.tight .fd-lg-sep{display:none}
 #flowView .fd-dh{display:flex;align-items:center;gap:10px;padding:14px 12px 12px 16px;border-bottom:1px solid var(--fd-line);flex:none}
 #flowView .fd-dh-t{flex:1;min-width:0}
@@ -392,7 +397,7 @@ html[data-theme="dark"] #flowView .fd-toast button{background:rgba(0,0,0,.06);co
 #flowView .fd-drawer .script-snippet-preview{margin-top:6px}
 
 /* AI orchestrator: fixed header/composer, scrollable conversation. */
-#flowView .ai-orchestrator.fd-ai-panel{position:absolute;z-index:22;inset:0 0 0 auto;display:flex;flex-direction:column;width:368px;max-width:100%;min-height:0;overflow:hidden;border:0;border-left:1px solid var(--hui-border);border-radius:0;background:var(--hui-surface);color:var(--hui-text);box-shadow:var(--hui-panel-shadow);font-size:13px;animation:fdSlide .24s var(--fd-ease)}
+#flowView .ai-orchestrator.fd-ai-panel{position:absolute;z-index:22;inset:0 0 0 auto;display:flex;flex-direction:column;width:var(--fd-drawer-width);max-width:100%;min-height:0;overflow:hidden;border:0;border-left:1px solid var(--hui-border);border-radius:0;background:var(--hui-surface);color:var(--hui-text);box-shadow:var(--hui-panel-shadow);font-size:13px;animation:fdSlide .24s var(--fd-ease)}
 @keyframes fdSlide{from{transform:translateX(40px);opacity:0}to{transform:none;opacity:1}}
 #aiOrchestrator .ai-orchestrator-head{display:flex;align-items:center;justify-content:space-between;gap:12px;flex:none;height:56px;padding:0 12px 0 16px;border-bottom:1px solid var(--hui-border)}
 #aiOrchestrator .ai-orchestrator-head b{display:flex;align-items:center;gap:8px;font-size:14px;font-weight:600}

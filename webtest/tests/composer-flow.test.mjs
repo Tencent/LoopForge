@@ -8,6 +8,68 @@ function describe(app, text) {
   input.dispatchEvent(new app.window.Event('input', { bubbles: true }));
 }
 
+test('new requirements preview Markdown and retain pasted images until saved', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  const $ = (s) => app.document.querySelector(s);
+  const { Event, File, URL } = app.window;
+  const released = [];
+  URL.createObjectURL = (file) => `blob:${file.name}`;
+  URL.revokeObjectURL = (url) => released.push(url);
+  const paste = (files) => {
+    const event = new Event('paste', { bubbles: true, cancelable: true });
+    Object.defineProperty(event, 'clipboardData', { value: { files, getData: () => '' } });
+    $('#chatInput').dispatchEvent(event);
+    return event.defaultPrevented;
+  };
+
+  $('#newIssue').click();
+  assert.equal(paste([]), false, 'ordinary Markdown paste uses native text input');
+  const markdown = '# Checkout\n\n- Add **receipt**\n\n![Draft](/some_image_v2.png)\n\n![Unsafe](javascript:example)\n\n<script>example</script>';
+  describe(app, markdown);
+  assert.equal(paste([
+    new File(['discard'], 'discard.png', { type: 'image/png' }),
+    new File(['screenshot'], 'checkout.png', { type: 'image/png' }),
+  ]), true);
+  assert.equal(app.document.querySelectorAll('#reqImages img').length, 2);
+  $('#reqImages button').click();
+  assert.deepEqual(released, ['blob:discard.png']);
+  $('#reqPreviewToggle').click();
+  assert.equal($('#chatInput').hidden, true);
+  assert.equal($('#reqMarkdownPreview h1').textContent, 'Checkout');
+  assert.equal($('#reqMarkdownPreview li strong').textContent, 'receipt');
+  assert.match($('#reqMarkdownPreview img').src, /\/some_image_v2\.png$/);
+  assert.equal(app.document.querySelectorAll('#reqMarkdownPreview img').length, 1);
+  assert.equal($('#reqMarkdownPreview script'), null);
+  assert.equal($('#reqImages img').alt, 'checkout.png');
+
+  app.router.post('/api/issues', { error: 'Try again' }, 503);
+  $('#reqCreate').click();
+  await settle(4);
+  assert.equal($('#reqImages img').alt, 'checkout.png');
+  assert.equal($('#chatInput').value, markdown);
+  assert.match($('#toastContainer').textContent, /Try again/);
+
+  app.router.post('/api/issues', (call) => {
+    assert.equal(call.options.headers, undefined, 'the browser supplies the multipart boundary');
+    const issue = JSON.parse(call.body.get('issue'));
+    assert.equal(issue.title, 'Checkout');
+    assert.equal(issue.description, markdown);
+    assert.deepEqual(call.body.getAll('images').map((file) => file.name), ['checkout.png']);
+    const saved = { ...issue, id: 'issue-with-images' };
+    app.router.get('/api/issues/issue-with-images', {
+      issue: saved, comments: [], images: [{ id: 'image-1', name: 'checkout.png' }],
+    });
+    return { status: 200, body: saved };
+  });
+  $('#reqCreate').click();
+  await settle(6);
+  assert.equal($('#requirementModal').classList.contains('open'), false);
+  assert.deepEqual(released, ['blob:discard.png', 'blob:checkout.png']);
+  assert.equal($('.issue-description h1').textContent, 'Checkout');
+  assert.equal($('.issue-description-images img').getAttribute('src'), '/api/issues/issue-with-images/images/image-1');
+});
+
 test('the composer gates on the description and creates an undispatched issue without clarifying', async (t) => {
   const app = await loadApp();
   t.after(app.close);
@@ -34,10 +96,10 @@ test('the composer gates on the description and creates an undispatched issue wi
   assert.equal($('#reqCreateChat').disabled, false);
   assert.equal($('#reqCharCount').textContent, '27 字');
   assert.match($('#reqComposerHint').textContent, /去对话里把需求聊清楚/);
-  assert.equal($('[data-req-delivery="sop"]').getAttribute('aria-checked'), 'true', 'SOP delivery is the default');
+  assert.equal($('[data-req-delivery="sop"]').getAttribute('aria-checked'), 'true', 'LOOP delivery is the default');
   assert.equal($('#reqWorkflowField').hidden, false);
   const workflowId = $('#reqWorkflow').value;
-  assert.ok(workflowId, 'the project SOP is preselected');
+  assert.ok(workflowId, 'the project LOOP is preselected');
 
   app.router.post('/api/issues', (call) => ({ status: 200, body: { id: 'issue-direct', ...call.body } }));
   $('#reqCreate').click();
@@ -52,7 +114,7 @@ test('the composer gates on the description and creates an undispatched issue wi
   assert.ok(!app.router.calls.some((c) => c.path.endsWith('/dispatch')));
   assert.ok(!app.router.calls.some((c) => c.path.includes('chat-clarify')));
   assert.equal($('#requirementModal').classList.contains('open'), false);
-  assert.match($('#toastContainer').textContent, /可在详情里触发 SOP/);
+  assert.match($('#toastContainer').textContent, /可在详情里触发 LOOP/);
   assert.ok(app.evaluate(`state.data.issues.some(issue=>issue.id==='issue-direct')`));
 });
 
@@ -64,7 +126,7 @@ test('创建并去对话澄清 creates the issue and opens a new chat with the r
   describe(app, 'Add CSV export');
   $('[data-req-delivery="none"]').click();
   assert.equal($('[data-req-delivery="none"]').getAttribute('aria-checked'), 'true');
-  assert.equal($('#reqWorkflowField').hidden, true, 'the SOP picker hides when no SOP is used');
+  assert.equal($('#reqWorkflowField').hidden, true, 'the LOOP picker hides when no LOOP is used');
   assert.match($('#reqComposerHint').textContent, /定时任务也不会自动认领/);
   app.router.post('/api/issues', (call) => ({ status: 200, body: { id: 'issue-chat', ...call.body } }));
   $('#reqCreateChat').click();
@@ -74,7 +136,7 @@ test('创建并去对话澄清 creates the issue and opens a new chat with the r
   assert.equal(create.body.sopMode, 'none');
   assert.equal(create.body.workflowId, '');
   assert.equal(create.body.playbookId, '');
-  assert.ok(!app.router.calls.some((c) => c.path.endsWith('/dispatch')), 'the chat handoff does not start an SOP');
+  assert.ok(!app.router.calls.some((c) => c.path.endsWith('/dispatch')), 'the chat handoff does not start a LOOP');
   assert.equal($('#requirementModal').classList.contains('open'), false);
   assert.match($('#toastContainer').textContent, /在对话里继续澄清/);
   assert.equal(app.evaluate(`activeViewName()`), 'collaboration');
@@ -84,11 +146,11 @@ test('创建并去对话澄清 creates the issue and opens a new chat with the r
   const frame = $('#chatNextFrame');
   const posted = [];
   frame.contentWindow.postMessage = (message) => posted.push(JSON.parse(JSON.stringify(message)));
-  assert.deepEqual(JSON.parse(JSON.stringify(app.evaluate(`pendingChatIssueMention`))), { issueId: 'issue-chat', projectId: 'project-1' });
+  assert.deepEqual(JSON.parse(JSON.stringify(app.evaluate(`pendingChatIssueMention`))), { issueId: 'issue-chat', projectId: 'project-1', intent: 'clarify' });
   app.window.dispatchEvent(new app.window.MessageEvent('message', {
     data: { type: 'agentflow-chat-ready' }, origin: app.window.location.origin, source: frame.contentWindow,
   }));
-  assert.deepEqual(posted[0], { type: 'agentflow-chat-mention-issue', issueId: 'issue-chat', projectId: 'project-1' });
+  assert.deepEqual(posted[0], { type: 'agentflow-chat-mention-issue', issueId: 'issue-chat', projectId: 'project-1', intent: 'clarify' });
   assert.equal(posted[1]?.type, 'agentflow-project-context', 'the project context follows the mention');
   assert.equal(app.evaluate(`pendingChatIssueMention`), null);
 
@@ -105,7 +167,15 @@ test('创建并去对话澄清 creates the issue and opens a new chat with the r
   const cold = new URL(frame.src, 'http://localhost');
   assert.equal(cold.pathname, '/chatbot/');
   assert.equal(cold.searchParams.get('mentionIssue'), 'issue-cold');
+  assert.equal(cold.searchParams.get('mentionIntent'), null);
   assert.equal(cold.searchParams.get('projectId'), 'project-1');
+  assert.equal(app.evaluate(`pendingChatIssueMention`), null);
+
+  // A cold chat opened for clarification carries mentionIntent=clarify in its URL.
+  app.evaluate(`switchView('issues');$('#chatNextFrame').dataset.src='';openIssueInChat({id:'issue-cold-clarify',projectId:'project-1'},{intent:'clarify'})`);
+  const coldClarify = new URL(frame.src, 'http://localhost');
+  assert.equal(coldClarify.searchParams.get('mentionIssue'), 'issue-cold-clarify');
+  assert.equal(coldClarify.searchParams.get('mentionIntent'), 'clarify');
   assert.equal(app.evaluate(`pendingChatIssueMention`), null);
 });
 

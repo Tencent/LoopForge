@@ -80,7 +80,7 @@ func TestCursorModelID(t *testing.T) {
 	if i := slices.Index(argv, "--model"); i < 0 || argv[i+1] != "claude-opus-4-8-thinking-xhigh" {
 		t.Errorf("cursor argv: %q", argv)
 	}
-	// The SOP path: an unknown ID with an effort reaches the CLI unchanged.
+	// The LOOP path: an unknown ID with an effort reaches the CLI unchanged.
 	argv = AgentCLICommand(AgentCLICursor, AgentCLICommandOptions{Model: "grok-5-code", Effort: "high", Prompt: "p"}).Argv
 	if i := slices.Index(argv, "--model"); i < 0 || argv[i+1] != "grok-5-code" {
 		t.Errorf("unknown model argv: %q", argv)

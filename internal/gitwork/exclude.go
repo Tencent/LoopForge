@@ -8,7 +8,7 @@ import (
 	"strings"
 )
 
-// PatchExcludeBasenames are SOP deliverables and executor-local files that
+// PatchExcludeBasenames are LOOP deliverables and executor-local files that
 // never belong in a repository change set, wherever they sit in the tree.
 var PatchExcludeBasenames = map[string]bool{
 	"mcporter.json": true, "e2e-cases.md": true, "e2e-report.md": true, "test-report.md": true,
@@ -522,7 +522,7 @@ func IsTestArtifactOrCachePath(rel string) bool {
 }
 
 // Excluded reports whether a workspace-relative path stays out of commits and
-// change inventories: SOP control files, dependencies, test output, secrets.
+// change inventories: LOOP control files, dependencies, test output, secrets.
 func Excluded(rel string) bool {
 	return IsSOPDeliverableOrControlFile(rel) || IsDependencyPath(rel) || IsTestArtifactOrCachePath(rel) || IsCredentialFile(rel)
 }

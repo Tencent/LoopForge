@@ -29,7 +29,7 @@ func TestPersonalWorkspaceBindingAndReuse(t *testing.T) {
 	if err := h.repo.PutAssistantSession(owner.ID, chat); err != nil {
 		t.Fatal(err)
 	}
-	if err := h.repo.PutSandbox(domain.SandboxProfile{ID: "private-sandbox", Name: "Private", Driver: domain.SandboxDriverDocker, DockerfileID: repo.GenericBackendDockerfileID}); err != nil {
+	if err := h.repo.PutSandbox(domain.SandboxProfile{ID: "private-sandbox", Name: "Private", Driver: domain.SandboxDriverDocker, Dockerfile: repo.GenericDockerSandbox().Dockerfile}); err != nil {
 		t.Fatal(err)
 	}
 	gateway := &agentToolGateway{deps: h.deps}
@@ -166,8 +166,8 @@ func TestPersonalWorkspaceAccess(t *testing.T) {
 		ID: "private-workspace", Kind: domain.RunKindWorkspace, Status: "waiting",
 		ExecutionContext: domain.TelemetryContext{ResponsibleUserID: owner.ID},
 		Artifacts: []domain.Artifact{{
-			ID: "private-note", RunID: "private-workspace", Name: domain.KnowledgeArtifactBasename,
-			Path: domain.KnowledgeArtifactBasename, Content: "private content", CreatedAt: time.Now().UTC(),
+			ID: "private-note", RunID: "private-workspace", Name: "knowledge.md",
+			Path: "knowledge.md", Content: "private content", CreatedAt: time.Now().UTC(),
 		}},
 	}
 	if err := h.repo.PutRun(run); err != nil {

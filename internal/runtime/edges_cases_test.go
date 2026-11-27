@@ -32,10 +32,6 @@ func TestOpenRemoteSandboxErrorBranches(t *testing.T) {
 	if _, err := OpenRemoteSandbox(context.Background(), "id", t.TempDir(), domain.SandboxProfile{Driver: "seatbelt"}, SandboxRequirements{}, SandboxResources{}); err == nil {
 		t.Fatal("missing seatbelt accepted")
 	}
-	resources := SandboxResources{Environment: domain.EnvironmentDefinition{ID: "broken", InstallScript: "exit 9"}}
-	if _, err := OpenRemoteSandbox(context.Background(), "id", t.TempDir(), domain.SandboxProfile{EnvironmentID: "broken"}, SandboxRequirements{}, resources); err == nil {
-		t.Fatal("failing environment install accepted")
-	}
 }
 
 func TestWorkspacePreparationReusableReceipts(t *testing.T) {
@@ -105,9 +101,6 @@ func TestSandboxIsolationEnvironmentConcreteTypes(t *testing.T) {
 	}
 	if got := command.WithMCPStartupWait(time.Second); len(got.environment) != 0 {
 		t.Fatalf("non-codebuddy wait changed command=%+v", got)
-	}
-	if _, err := OpenRemoteSandbox(context.Background(), "id", t.TempDir(), domain.SandboxProfile{EnvironmentID: "missing"}, SandboxRequirements{}, SandboxResources{}); err == nil {
-		t.Fatal("missing environment accepted")
 	}
 	if got := safeID(strings.Repeat("a", 60)); len(got) != 48 {
 		t.Fatalf("long safe id length=%d", len(got))

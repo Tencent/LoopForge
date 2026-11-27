@@ -1,11 +1,13 @@
 package httpapi
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -220,23 +222,66 @@ func newRunnerSessionToken() (string, string, error) {
 
 // 路由: g.GET("/api/runners", h.runners)
 func (h *runnersHandlers) runners(c *gin.Context) {
-	list := domain.PublicRunners(h.repo.Runners())
-	// The personal 执行器 page lists only machines bound to the current user.
-	if strings.TrimSpace(c.Query("mine")) == "1" {
-		user, ok := h.requestUser(c.Request, true)
-		if !ok {
-			c.JSON(http.StatusUnauthorized, map[string]string{"error": "请先登录后查看我的执行器"})
-			return
-		}
-		mine := make([]domain.Runner, 0, len(list))
-		for _, item := range list {
-			if item.OwnerUserID == user.ID {
-				mine = append(mine, item)
+	projectID := strings.TrimSpace(c.Query("projectId"))
+	mine := strings.TrimSpace(c.Query("mine")) == "1"
+	user, signedIn := h.requestUser(c.Request, true)
+	if !mine && projectID == "" && (!signedIn || h.isPlatformAdmin(c.Request)) {
+		list := domain.PublicRunners(h.repo.Runners())
+		if !signedIn {
+			for i := range list {
+				list[i].SharedProjectIDs = nil
+				list[i].LoginModels = nil
 			}
 		}
-		list = mine
+		c.JSON(http.StatusOK, list)
+		return
+	}
+	if !signedIn {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "请先登录后查看执行机器"})
+		return
+	}
+	if mine {
+		projectID = ""
+	}
+	list := h.repo.RunnersForUser(user.ID, projectID)
+	var loads map[string]domain.RunnerLoad
+	if mine || projectID != "" {
+		ids := make([]string, 0, len(list))
+		for _, runner := range list {
+			ids = append(ids, runner.ID)
+		}
+		var err error
+		loads, err = h.repo.RunnerLoadSnapshots(ids)
+		if err != nil {
+			respond(c, err)
+			return
+		}
+	}
+	for i := range list {
+		list[i].Runner = runnerViewForUser(list[i].Runner, user.ID)
+		if load, ok := loads[list[i].ID]; ok {
+			list[i].Load = &load
+		}
 	}
 	c.JSON(http.StatusOK, list)
+}
+
+func runnerViewForUser(runner domain.Runner, userID int64) domain.Runner {
+	runner = domain.PublicRunner(runner)
+	if userID > 0 && runner.OwnerUserID == userID {
+		for provider, models := range runner.LoginModels {
+			runner.LoginModels[provider] = runnerLoginModelsWithEfforts(provider, models)
+		}
+		return runner
+	}
+	runner.SharedProjectIDs = nil
+	runner.LoginModels = nil
+	runner.Labels = nil
+	for i := range runner.Runtimes {
+		runner.Runtimes[i].BinaryPath = ""
+		runner.Runtimes[i].AuthMode = domain.RuntimeAuthPersonal
+	}
+	return runner
 }
 
 // runnerDefault returns the user's default execution machine (执行机器).
@@ -247,22 +292,100 @@ func (h *runnersHandlers) runnerDefault(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, map[string]string{"error": "请先登录后管理执行机器"})
 		return
 	}
-	runnerID := h.repo.DefaultRunner(user.ID)
-	runner, found := h.repo.Runner(runnerID)
-	var poolConfigured bool
-	var poolOnline int
-	if h.engine != nil {
-		poolConfigured, poolOnline = h.engine.CloudPoolStatus()
+	projectID := strings.TrimSpace(c.Query("projectId"))
+	var defaults repo.RunnerDefaults
+	if c.Query("conversation") == "1" {
+		defaults = h.repo.ResolveConversationRunnerDefaults(user.ID, projectID)
+	} else {
+		defaults = h.repo.ResolveRunnerDefaults(user.ID, projectID)
 	}
-	c.JSON(http.StatusOK, map[string]any{
-		"runnerId":  runnerID,
-		"runner":    runner,
-		"online":    found && runner.Status == domain.RunnerStatusOnline,
-		"cloudPool": map[string]any{"configured": poolConfigured, "online": poolOnline},
+	runner := defaults.Runner
+	platform, err := h.platformRunnerStatus(c.Request.Context(), projectID, h.isPlatformAdmin(c.Request))
+	if err != nil {
+		respond(c, err)
+		return
+	}
+	result := map[string]any{
+		"runnerId":       runner.ID,
+		"runner":         runnerViewForUser(runner, user.ID),
+		"online":         runner.Status == domain.RunnerStatusOnline,
+		"cloudPool":      gin.H{"configured": platform.CloudPool, "online": platform.CloudPoolOnline},
+		"platformRunner": platform,
 		// minRunnerVersion lets the runners page disable「设为默认」with the
 		// same rule PUT /api/runners/default enforces.
-		"minRunnerVersion": domain.RunnerVersionDefaultSelection,
-	})
+		"minRunnerVersion":                  domain.RunnerVersionDefaultSelection,
+		"minPrivilegedSandboxRunnerVersion": domain.RunnerVersionPrivilegedSandbox,
+	}
+	if projectID != "" {
+		result["personalRunnerId"] = defaults.PersonalRunnerID
+		result["projectRunnerId"] = defaults.ProjectRunnerID
+		result["projectRunnerMode"] = defaults.ProjectRunnerMode
+	}
+	c.JSON(http.StatusOK, result)
+}
+
+func (h *runnersHandlers) platformRunnerStatus(ctx context.Context, projectID string, canEdit bool) (domain.PlatformRunnerStatus, error) {
+	loads, err := h.repo.LoadSnapshots(nil)
+	if err != nil {
+		return domain.PlatformRunnerStatus{}, err
+	}
+	allowed, err := h.repo.PlatformRunnerPrivilegedSandbox(ctx)
+	if err != nil {
+		return domain.PlatformRunnerStatus{}, err
+	}
+	load := loads[repo.PlatformAdmissionBucketKey]
+	status := domain.PlatformRunnerStatus{
+		Name: domain.PlatformRunnerName, Status: domain.RunnerStatusOffline,
+		RunLimit: h.repo.PlatformRunnerRunLimit(), CanEditLimit: canEdit, Load: &load,
+		AllowPrivilegedSandbox: allowed,
+	}
+	if h.engine != nil {
+		status.CloudPool, status.CloudPoolOnline = h.engine.CloudPoolStatus()
+		if h.engine.PlatformRunnerOnline(projectID) {
+			status.Status = domain.RunnerStatusOnline
+		}
+	}
+	return status, nil
+}
+
+// 路由: g.PUT("/api/runners/:id/shared-projects", h.runnerSharedProjectsSet)
+func (h *runnersHandlers) runnerSharedProjectsSet(c *gin.Context) {
+	user, ok := h.requestUser(c.Request, true)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "请先登录后管理执行机器"})
+		return
+	}
+	var input struct {
+		ProjectIDs []string `json:"projectIds"`
+	}
+	if !decode(c, &input) {
+		return
+	}
+	if input.ProjectIDs == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请提供 projectIds，空数组表示取消共享"})
+		return
+	}
+	id := strings.TrimSpace(c.Param("id"))
+	if err := h.repo.SetRunnerSharedProjects(id, user.ID, input.ProjectIDs); err != nil {
+		if errors.Is(err, repo.ErrRunnerProjectDenied) {
+			c.JSON(http.StatusForbidden, gin.H{"error": "只能共享给你有写权限的项目"})
+			return
+		}
+		runnerPreferenceError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
+func runnerPreferenceError(c *gin.Context, err error) {
+	switch {
+	case errors.Is(err, repo.ErrRunnerNotFound):
+		c.JSON(http.StatusNotFound, gin.H{"error": "执行机器不存在"})
+	case errors.Is(err, repo.ErrRunnerShareForbidden), errors.Is(err, repo.ErrRunnerProjectDenied):
+		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+	default:
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+	}
 }
 
 // runnerRemove unbinds one of the caller's own offline machines, for a machine
@@ -294,8 +417,8 @@ func (h *runnersHandlers) runnerRemove(c *gin.Context) {
 	c.JSON(http.StatusOK, map[string]bool{"ok": true})
 }
 
-// runnerRunLimitSet sets how many top-level SOP runs one of the caller's own
-// machines may hold at once. 0 clears the limit (unlimited, the default).
+// runnerRunLimitSet sets how many top-level LOOP runs one of the caller's own
+// machines may hold at once. 0 sets unlimited mode.
 // 路由: g.PUT("/api/runners/:id/run-limit", h.runnerRunLimitSet)
 func (h *runnersHandlers) runnerRunLimitSet(c *gin.Context) {
 	user, ok := h.requestUser(c.Request, true)
@@ -309,8 +432,8 @@ func (h *runnersHandlers) runnerRunLimitSet(c *gin.Context) {
 	if !decode(c, &input) {
 		return
 	}
-	if input.RunLimit == nil || *input.RunLimit < 0 || *input.RunLimit > repo.MaxRunnerRunLimit {
-		c.JSON(http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("runLimit 需为 0-%d 的整数，0 表示不限制", repo.MaxRunnerRunLimit)})
+	if input.RunLimit == nil || *input.RunLimit < 0 {
+		c.JSON(http.StatusBadRequest, map[string]string{"error": "runLimit 需为非负整数，0 表示不限制"})
 		return
 	}
 	runner, found := h.repo.Runner(strings.TrimSpace(c.Param("id")))
@@ -330,13 +453,49 @@ func (h *runnersHandlers) runnerRunLimitSet(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
+	if h.engine != nil && (*input.RunLimit == 0 || (runner.RunLimit > 0 && *input.RunLimit > runner.RunLimit)) {
+		h.engine.PromoteQueuedRunsAsync()
+	}
 	runner, _ = h.repo.Runner(runner.ID)
 	c.JSON(http.StatusOK, domain.PublicRunner(runner))
 }
 
-// runnerDefaultSet selects or clears the user's default execution machine.
-// Only online machines bound to the requesting user, at or above
-// RunnerVersionDefaultSelection, can be selected.
+func (h *runnersHandlers) platformRunnerRunLimitSet(c *gin.Context) {
+	if !h.platformAdminWrite(c) {
+		return
+	}
+	user, ok := h.requestUser(c.Request, true)
+	if !ok {
+		c.JSON(http.StatusForbidden, gin.H{"error": "只有平台管理员可以执行该操作"})
+		return
+	}
+	var input struct {
+		RunLimit *int `json:"runLimit"`
+	}
+	if !decode(c, &input) {
+		return
+	}
+	if input.RunLimit == nil || *input.RunLimit < 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "runLimit 需为非负整数，0 表示不限制"})
+		return
+	}
+	previous := h.repo.PlatformRunnerRunLimit()
+	if err := h.repo.SetPlatformRunnerRunLimit(*input.RunLimit, user.ID); err != nil {
+		respond(c, err)
+		return
+	}
+	if h.engine != nil && (*input.RunLimit == 0 || (previous > 0 && *input.RunLimit > previous)) {
+		h.engine.PromoteQueuedRunsAsync()
+	}
+	status, err := h.platformRunnerStatus(c.Request.Context(), strings.TrimSpace(c.Query("projectId")), true)
+	if err != nil {
+		respond(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, status)
+}
+
+// runnerDefaultSet selects the user's personal default or a project override.
 // 路由: g.PUT("/api/runners/default", h.runnerDefaultSet)
 func (h *runnersHandlers) runnerDefaultSet(c *gin.Context) {
 	user, ok := h.requestUser(c.Request, true)
@@ -346,25 +505,66 @@ func (h *runnersHandlers) runnerDefaultSet(c *gin.Context) {
 	}
 	var input struct {
 		RunnerID string `json:"runnerId"`
+		Mode     string `json:"mode"`
 	}
 	if !decode(c, &input) {
 		return
 	}
 	runnerID := strings.TrimSpace(input.RunnerID)
+	projectID := strings.TrimSpace(c.Query("projectId"))
+	mode := strings.TrimSpace(input.Mode)
+	switch mode {
+	case "", domain.RunnerSelectionModeAuto, domain.RunnerSelectionModePlatform:
+	default:
+		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的项目执行模式"})
+		return
+	}
+	if mode != "" {
+		if projectID == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "仅支持按项目配置执行模式"})
+			return
+		}
+		if runnerID != "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "执行模式与指定执行机器只能选择一项"})
+			return
+		}
+	}
 	if runnerID != "" {
 		runner, found := h.repo.Runner(runnerID)
 		if !found {
 			c.JSON(http.StatusNotFound, map[string]string{"error": "执行机器不存在"})
 			return
 		}
-		if runner.OwnerUserID != user.ID {
+		if projectID == "" && runner.OwnerUserID != user.ID {
 			c.JSON(http.StatusForbidden, map[string]string{"error": "只能选择自己绑定的执行机器"})
+			return
+		}
+		if projectID != "" && !h.repo.CanUseRunner(runner, projectID, user.ID) {
+			runnerPreferenceError(c, repo.ErrRunnerProjectDenied)
 			return
 		}
 		if reason := runner.DefaultSelectionBlocker(); reason != "" {
 			c.JSON(http.StatusConflict, map[string]string{"error": reason})
 			return
 		}
+	}
+	if projectID != "" {
+		if err := h.repo.SetProjectRunnerPreference(user.ID, projectID, runnerID, mode); err != nil {
+			runnerPreferenceError(c, err)
+			return
+		}
+		message := "已设为你在此项目的默认执行机器"
+		switch {
+		case mode == domain.RunnerSelectionModeAuto:
+			message = "已开启此项目 LOOP 自动分配"
+		case mode == domain.RunnerSelectionModePlatform:
+			message = "已设为此项目使用平台执行机器"
+		case runnerID == "":
+			message = "已清除此项目的默认执行机器"
+		}
+		defaults := h.repo.ResolveRunnerDefaults(user.ID, projectID)
+		c.JSON(http.StatusOK, gin.H{"runnerId": defaults.Runner.ID, "projectRunnerMode": defaults.ProjectRunnerMode, "message": message})
+		return
 	}
 	if err := h.repo.SetDefaultRunner(user.ID, runnerID, time.Now().UTC()); err != nil {
 		if err == repo.ErrRunnerNotFound {
@@ -375,9 +575,9 @@ func (h *runnersHandlers) runnerDefaultSet(c *gin.Context) {
 		return
 	}
 	if runnerID == "" {
-		c.JSON(http.StatusOK, map[string]any{"runnerId": "", "message": "已切回云端执行"})
+		c.JSON(http.StatusOK, gin.H{"runnerId": "", "projectRunnerMode": "", "message": "已切回云端执行"})
 	} else {
-		c.JSON(http.StatusOK, map[string]any{"runnerId": runnerID, "message": "已设为默认执行机器，你的任务和沙箱将在这台机器上执行"})
+		c.JSON(http.StatusOK, gin.H{"runnerId": runnerID, "projectRunnerMode": "", "message": "已设为默认执行机器，你的任务和沙箱将在这台机器上执行"})
 	}
 }
 
@@ -513,7 +713,7 @@ func (h *runnersHandlers) consumeRunnerBindCode(code string) (int64, bool) {
 // 路由: g.POST("/api/runners/bind-codes", h.issueRunnerBindCode)
 func (h *runnersHandlers) issueRunnerBindCode(c *gin.Context) {
 	user, ok := h.requestUser(c.Request, true)
-	if !ok {
+	if !ok || user.ID <= 0 {
 		c.JSON(http.StatusUnauthorized, map[string]string{"error": "请先登录后生成接入命令"})
 		return
 	}
@@ -557,7 +757,7 @@ func (h *runnersHandlers) resolveRunnerRegistrant(r *http.Request) (ownerUserID 
 	if bootstrap := runnerBootstrapToken(); bootstrap != "" && constantTimeEqual(provided, bootstrap) {
 		return 0, true
 	}
-	if user, userOK := h.requestUser(r, true); userOK {
+	if user, userOK := h.requestUser(r, true); userOK && user.ID > 0 {
 		return user.ID, true
 	}
 	return 0, false
@@ -613,14 +813,15 @@ func (h *runnersHandlers) runnerRegister(c *gin.Context) {
 		return
 	}
 	var input struct {
-		RunnerID       string                 `json:"runnerId"`
-		Name           string                 `json:"name"`
-		OS             string                 `json:"os"`
-		Arch           string                 `json:"arch"`
-		Version        string                 `json:"version"`
-		Labels         []string               `json:"labels"`
-		MaxConcurrency int                    `json:"maxConcurrency"`
-		Runtimes       []domain.RunnerRuntime `json:"runtimes"`
+		RunnerID               string                 `json:"runnerId"`
+		Name                   string                 `json:"name"`
+		OS                     string                 `json:"os"`
+		Arch                   string                 `json:"arch"`
+		Version                string                 `json:"version"`
+		Labels                 []string               `json:"labels"`
+		MaxConcurrency         int                    `json:"maxConcurrency"`
+		Runtimes               []domain.RunnerRuntime `json:"runtimes"`
+		NativeSandboxAvailable bool                   `json:"nativeSandboxAvailable"`
 	}
 	if !decode(c, &input) {
 		return
@@ -631,22 +832,25 @@ func (h *runnersHandlers) runnerRegister(c *gin.Context) {
 	if input.MaxConcurrency > 32 {
 		input.MaxConcurrency = 32
 	}
-	// A re-registration with a known runner id rotates the session token and
-	// re-binds ownership to the token used for this registration.
+	// Only the original binding may reuse an ID. Platform bootstrap
+	// credentials can renew platform runners, whose owner is zero.
 	now := time.Now().UTC()
 	runner := domain.Runner{
-		Name:           strings.TrimSpace(input.Name),
-		OS:             strings.TrimSpace(input.OS),
-		Arch:           strings.TrimSpace(input.Arch),
-		RunnerVersion:  strings.TrimSpace(input.Version),
-		Labels:         input.Labels,
-		MaxConcurrency: input.MaxConcurrency,
-		Status:         domain.RunnerStatusOnline,
-		Runtimes:       normalizeRunnerRuntimes(input.Runtimes, nil),
-		OwnerUserID:    owner,
-		LastSeenAt:     &now,
+		Name:                   strings.TrimSpace(input.Name),
+		OS:                     strings.TrimSpace(input.OS),
+		Arch:                   strings.TrimSpace(input.Arch),
+		RunnerVersion:          strings.TrimSpace(input.Version),
+		Labels:                 input.Labels,
+		MaxConcurrency:         input.MaxConcurrency,
+		Status:                 domain.RunnerStatusOnline,
+		Runtimes:               normalizeRunnerRuntimes(input.Runtimes, nil),
+		NativeSandboxAvailable: input.NativeSandboxAvailable,
+		OwnerUserID:            owner,
+		LastSeenAt:             &now,
 	}
-	if existing, ok := h.repo.Runner(strings.TrimSpace(input.RunnerID)); ok {
+	existing, found := h.repo.Runner(strings.TrimSpace(input.RunnerID))
+	renew := found && existing.OwnerUserID == owner
+	if renew {
 		runner.ID = existing.ID
 		runner.CreatedAt = existing.CreatedAt
 		runner.Runtimes = normalizeRunnerRuntimes(input.Runtimes, existing.Runtimes)
@@ -661,7 +865,11 @@ func (h *runnersHandlers) runnerRegister(c *gin.Context) {
 	expires := now.Add(runnerSessionTTL)
 	runner.SessionTokenHash = hash
 	runner.SessionExpiresAt = &expires
-	if err := h.repo.PutRunner(runner); err != nil {
+	if err := h.repo.RegisterRunner(runner, renew); err != nil {
+		if errors.Is(err, repo.ErrRunnerNotFound) {
+			c.JSON(http.StatusConflict, gin.H{"error": "runner registration changed; retry"})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
@@ -709,17 +917,18 @@ func (h *runnersHandlers) runnerHeartbeat(c *gin.Context) {
 		return
 	}
 	var input struct {
-		Status       string                 `json:"status"`
-		RunningTasks int                    `json:"runningTasks"`
-		Version      string                 `json:"version"`
-		Runtimes     []domain.RunnerRuntime `json:"runtimes"`
+		Status                 string                 `json:"status"`
+		RunningTasks           int                    `json:"runningTasks"`
+		Version                string                 `json:"version"`
+		Runtimes               []domain.RunnerRuntime `json:"runtimes"`
+		NativeSandboxAvailable bool                   `json:"nativeSandboxAvailable"`
 	}
 	if !decode(c, &input) {
 		return
 	}
 	now := time.Now().UTC()
 	expires := now.Add(runnerSessionTTL)
-	if err := h.repo.RunnerHeartbeat(runner.ID, input.Runtimes, strings.TrimSpace(input.Version), now, expires); err != nil {
+	if err := h.repo.RunnerHeartbeat(runner.ID, input.Runtimes, strings.TrimSpace(input.Version), input.NativeSandboxAvailable, now, expires); err != nil {
 		c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
@@ -826,11 +1035,12 @@ func (h *runnersHandlers) runnerTaskClaim(c *gin.Context) {
 		return
 	}
 	var input struct {
-		AvailableRuntimes        []string `json:"availableRuntimes"`
-		Capacity                 int      `json:"capacity"`
-		Preflight                bool     `json:"preflight"`
-		NoWait                   bool     `json:"noWait"`
-		SupportsGitSSHKnownHosts bool     `json:"supportsGitSshKnownHosts"`
+		AvailableRuntimes           []string `json:"availableRuntimes"`
+		Capacity                    int      `json:"capacity"`
+		Preflight                   bool     `json:"preflight"`
+		NoWait                      bool     `json:"noWait"`
+		SupportsGitSSHKnownHosts    bool     `json:"supportsGitSshKnownHosts"`
+		SupportsDockerSandboxLimits bool     `json:"supportsDockerSandboxLimits"`
 	}
 	if !decode(c, &input) {
 		return
@@ -847,12 +1057,43 @@ func (h *runnersHandlers) runnerTaskClaim(c *gin.Context) {
 			available, err := h.repo.RunnerTaskAvailable(runner.ID, input.AvailableRuntimes)
 			return domain.RunnerTask{}, available, err
 		}
-		return h.repo.ClaimRunnerTask(runner.ID, input.AvailableRuntimes, time.Now().UTC(), runnerTaskLeaseTTL)
+		for {
+			task, claimed, err := h.repo.ClaimRunnerTask(runner.ID, input.AvailableRuntimes, time.Now().UTC(), runnerTaskLeaseTTL)
+			if err != nil || !claimed || task.Sandbox == nil {
+				return task, claimed, err
+			}
+			profile := task.Sandbox.Profile
+			switch {
+			case profile.Privileged && c.GetHeader(domain.RunnerPrivilegedSandboxHeader) != "1":
+				err = errors.New(domain.RunnerPrivilegedSandboxUpgradeMessage)
+			case profile.HasResourceLimits() && !input.SupportsDockerSandboxLimits:
+				err = errors.New(domain.RunnerDockerSandboxLimitsUpgradeMessage)
+			case task.RunID != "" && task.Action == "":
+				err = domain.ValidateFrozenSandbox(profile)
+				if err == nil {
+					task.ProjectCredentialEnv, err = h.runnerTaskProjectCredentialEnv(c.Request.Context(), task, runner)
+				}
+			}
+			if err != nil {
+				// Finish the task before sending an unusable sandbox to the runner.
+				if finishErr := h.repo.CompleteRunnerTask(task.ID, runner.ID, domain.RunnerTaskFailed, nil, "", err.Error(), nil, nil, time.Now().UTC()); finishErr != nil {
+					return domain.RunnerTask{}, false, finishErr
+				}
+				if ctxErr := c.Request.Context().Err(); ctxErr != nil {
+					return domain.RunnerTask{}, false, ctxErr
+				}
+				continue
+			}
+			return task, true, nil
+		}
 	}
 	respond := func(task domain.RunnerTask) {
 		if input.Preflight {
 			c.JSON(http.StatusOK, map[string]bool{"taskAvailable": true})
 			return
+		}
+		if len(task.ProjectCredentialEnv) > 0 {
+			c.Header("Cache-Control", "no-store")
 		}
 		if task.Invocation != nil && task.Invocation.GitSSHUserID > 0 && runner.SupportsGitSSH() && len(task.Invocation.GitSSHRemotes()) > 0 {
 			task.Invocation.GitSSHKeys = h.repo.GitSSHKeysForRemotes(task.Invocation.GitSSHUserID, task.Invocation.GitSSHRemotes())
@@ -864,7 +1105,8 @@ func (h *runnersHandlers) runnerTaskClaim(c *gin.Context) {
 			c.Header("Cache-Control", "no-store")
 		}
 		if task.Invocation != nil && task.Invocation.GitHTTPUserID > 0 && runner.SupportsGitHTTP() {
-			task.Invocation.GitHTTPCredentials = h.repo.GitHTTPCredentialSecrets(c.Request.Context(), task.Invocation.GitHTTPUserID)
+			credentials := h.repo.GitHTTPCredentialSecrets(c.Request.Context(), task.Invocation.GitHTTPUserID)
+			task.Invocation.GitHTTPCredentials = runner.FilterGitHTTPCredentials(credentials)
 			task.Invocation.GitHTTPUserID = 0
 			c.Header("Cache-Control", "no-store")
 		}
@@ -1130,7 +1372,8 @@ func (h *runnersHandlers) runnerTaskComplete(c *gin.Context) {
 		Artifacts map[string]string         `json:"artifacts"`
 		Outputs   *domain.RunnerTaskOutputs `json:"outputs"`
 	}
-	if !decode(c, &input) {
+	// Legacy runners still post several inline files in one completion.
+	if !decodeLimit(c, &input, 16<<20) {
 		return
 	}
 	if input.Status == "" {
@@ -1148,6 +1391,9 @@ func (h *runnersHandlers) runnerTaskComplete(c *gin.Context) {
 	}
 	if message := validateRunnerTaskOutputs(input.Outputs); message != "" {
 		c.JSON(http.StatusBadRequest, map[string]string{"error": message})
+		return
+	}
+	if input.Outputs != nil && (len(input.Outputs.FileBlobs) != 0 || len(input.Outputs.FileErrors) != 0) && !h.validateRunnerOutputTransfer(c, runner.ID, input.Outputs) {
 		return
 	}
 	if err := h.repo.CompleteRunnerTask(c.Param("id"), runner.ID, input.Status, input.ExitCode, input.Result, input.Error, input.Artifacts, input.Outputs, time.Now().UTC()); err != nil {
@@ -1211,8 +1457,18 @@ func validateRunnerTaskOutputs(outputs *domain.RunnerTaskOutputs) string {
 		if !domain.SafeWorkspaceRelPath(path) {
 			return fmt.Sprintf("产物路径 %q 不合法", path)
 		}
-		if len(content) > 1<<20 {
-			return fmt.Sprintf("产物 %s 超过 1MB 上传限制", path)
+		if len(content) > domain.MaxInlineRunnerArtifactBytes {
+			return fmt.Sprintf("旧版行内产物 %s 超过 1 MiB 上传限制", path)
+		}
+	}
+	for path, message := range outputs.FileErrors {
+		if !domain.SafeWorkspaceRelPath(path) || len(message) > 2048 {
+			return "无效的产物错误报告"
+		}
+	}
+	for _, path := range outputs.TooLarge {
+		if !domain.SafeWorkspaceRelPath(path) {
+			return fmt.Sprintf("产物路径 %q 不合法", path)
 		}
 	}
 	for dir, patch := range outputs.Patches {
@@ -1250,7 +1506,7 @@ func isRunnerAgentPath(path string) bool {
 			return true
 		}
 		switch strings.Join(parts[1:], "/") {
-		case "start", "lease/renew", "events", "complete", "control":
+		case "start", "lease/renew", "events", "complete", "control", "input-file", "output-file":
 			return true
 		}
 	}

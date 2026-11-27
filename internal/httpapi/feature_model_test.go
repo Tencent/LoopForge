@@ -92,6 +92,7 @@ func TestFeatureModelsWithoutCodeBuddy(t *testing.T) {
 	mcp := httptest.NewServer(router)
 	t.Cleanup(mcp.Close)
 	t.Setenv("AGENTFLOW_AGENT_TOOL_GATEWAY_URL", mcp.URL)
+	t.Setenv(approvalEgressAllowCIDRsEnv, "127.0.0.1/32,::1/128")
 	assistant := &assistantHandlers{deps: d, identities: &botIdentityHandlers{deps: d}}
 	stream := &streamHandlers{deps: d}
 	const project = "cli-acceptance"
@@ -188,13 +189,7 @@ func TestFeatureModelsWithoutCodeBuddy(t *testing.T) {
 			case "bot":
 				bot := domain.NotificationBot{ID: "fixture-bot", BotID: "fixture-bot-account", ProjectID: project, Model: selected, Enabled: true, InteractionEnabled: true}
 				must(store.SaveNotificationBot(bot, "fixture-secret"))
-				now := time.Now()
-				token, err := store.NewBotBindingChallenge(bot.BotID, "sender", now)
-				must(err)
-				code, err := store.ClaimBotBindingChallenge(token, user.ID, now)
-				must(err)
-				_, err = store.ConfirmBotUserBinding(bot.BotID, "sender", code, now)
-				must(err)
+				bindBotTestUser(t, store, bot, "sender", user.ID)
 				reply, err := assistant.generateBotReply(ctx, bot, domain.BotConversation{}, nil, domain.BotInteraction{SenderID: "sender", Content: "Hello from the fixture."})
 				if err != nil || reply != "bot accepted" {
 					t.Fatalf("reply=%q err=%v", reply, err)

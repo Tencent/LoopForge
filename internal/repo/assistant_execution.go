@@ -40,6 +40,6 @@ func (r *AssistantRepo) SetAssistantRuntimeMode(userID int64, id, projectID, mod
 			return fmt.Errorf("请先打开工作区")
 		}
 		item.RuntimeMode = mode
-		return tx.Model(&assistantSessionRow{}).Where("id = ? AND user_id = ?", row.ID, userID).Update("payload", mustJSON(item)).Error
+		return tx.Model(&assistantSessionRow{}).Where("id = ? AND user_id = ?", row.ID, userID).Update("payload", encodeAssistantSession(item)).Error
 	})
 }

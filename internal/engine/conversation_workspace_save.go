@@ -15,6 +15,7 @@ func (e *Engine) saveConversationWorkspaceAfterUse(ctx context.Context, id, toke
 	if !ok || !run.WorkspaceCleanedAt.IsZero() || !e.conversationWorkspaceIdle(run) {
 		return nil
 	}
+	ctx = WithConversationWorkspaceToken(ctx, token, id)
 	err := e.saveConversationWorkspace(ctx, run, token)
 	if os.IsNotExist(err) {
 		return nil // a fresh task may not have materialized files yet

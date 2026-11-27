@@ -57,6 +57,68 @@ test('knowledge: usage and candidates answer for the project', async () => {
   assert.ok(await get(`/api/knowledge/candidates?projectId=${P}`));
 });
 
+test('knowledge: personal connector CRUD, secret masking, isolation and check', async () => {
+  const me = await tokenOwner();
+  await api('POST', '/api/knowledge/connectors', { name: '', type: 'mcp', endpoint: 'http://127.0.0.1:1/mcp' }, { expect: 400 });
+  await api('POST', '/api/knowledge/connectors', { name: uid('kb-bad'), type: 'no-such-type', endpoint: 'http://127.0.0.1:1/mcp' }, { expect: 400 });
+
+  const secret = `e2e-secret-${cfg.runTag}`;
+  const createdRes = await api('POST', '/api/knowledge/connectors', {
+    name: `E2E 知识连接器 ${cfg.runTag}`,
+    type: 'mcp',
+    endpoint: 'http://127.0.0.1:1/mcp',
+    token: secret,
+    config: { timeoutSec: 3 },
+  }, { expect: 201, raw: true });
+  const conn = createdRes.data;
+  assert.ok(conn.id);
+  track(`knowledge connector ${conn.id}`, () => del(`/api/knowledge/connectors/${conn.id}`));
+  assert.equal(conn.ownerUserId, me.id);
+  assert.equal(conn.secretConfigured, true);
+  assert.ok(!createdRes.text.includes(secret), 'connector response must never echo the secret');
+
+  const fetched = await api('GET', `/api/knowledge/connectors/${conn.id}`, undefined, { raw: true });
+  assert.equal(fetched.data.id, conn.id);
+  assert.ok(!fetched.text.includes(secret), 'connector detail must never echo the secret');
+  assert.ok(list(await get('/api/knowledge/connectors')).some(c => c.id === conn.id));
+  assert.ok(list(await get('/api/knowledge/reference-options')).some(c => c.id === conn.id));
+
+  if (cfg.tokenB) {
+    assert.ok(!list(await get('/api/knowledge/connectors', asB())).some(c => c.id === conn.id), 'another user must not list private connectors');
+    await api('GET', `/api/knowledge/connectors/${conn.id}`, undefined, asB({ expect: 404 }));
+    await api('PUT', `/api/knowledge/connectors/${conn.id}`, { name: 'hijacked', type: 'mcp', endpoint: 'http://127.0.0.1:1/mcp' }, asB({ expect: 404 }));
+    await api('DELETE', `/api/knowledge/connectors/${conn.id}`, undefined, asB({ expect: 404 }));
+  }
+
+  const updated = await put(`/api/knowledge/connectors/${conn.id}`, {
+    name: `E2E 知识连接器（改） ${cfg.runTag}`,
+    type: 'mcp',
+    endpoint: 'http://127.0.0.1:1/mcp',
+    config: { timeoutSec: 3 },
+  });
+  assert.equal(updated.name, `E2E 知识连接器（改） ${cfg.runTag}`);
+  assert.equal(updated.secretConfigured, true, 'omitting secret on update must preserve stored credentials');
+
+  const cleared = await put(`/api/knowledge/connectors/${conn.id}`, {
+    name: updated.name,
+    type: 'mcp',
+    endpoint: 'http://127.0.0.1:1/mcp',
+    clearSecret: true,
+    config: { timeoutSec: 3 },
+  });
+  assert.equal(cleared.secretConfigured, false);
+
+  const check = await post(`/api/knowledge/connectors/${conn.id}/check`, {});
+  assert.equal(check.ok, false);
+  assert.ok(check.error, 'unreachable check must report an error reason');
+
+  const reset = await api('DELETE', `/api/knowledge/usage?connectorId=${encodeURIComponent(conn.id)}`, undefined, { expect: 200 });
+  assert.equal(reset.ok, true);
+
+  await del(`/api/knowledge/connectors/${conn.id}`, { expect: [200, 204] });
+  await api('GET', `/api/knowledge/connectors/${conn.id}`, undefined, { expect: 404 });
+});
+
 test('rooms: create, message, and turn a message into a dispatched requirement', { timeout: 300_000 }, async () => {
   await api('GET', '/api/rooms', undefined, { expect: 400 });
   await api('POST', '/api/rooms', { projectId: P }, { expect: 400 });
@@ -98,6 +160,9 @@ test('schedule job: a manual trigger dispatches todo requirements of the project
   const saved = await put('/api/schedule-jobs', { ...job, name: 'E2E 定时任务（改）' });
   assert.equal(saved.name, 'E2E 定时任务（改）');
   assert.ok(list(await get('/api/schedule-jobs')).some(j => j.id === id));
+  // The enable switch keeps the e2e job disabled.
+  assert.equal((await post(`/api/schedule-jobs/${id}/enabled`, { enabled: false })).enabled, false);
+  await api('POST', `/api/schedule-jobs/${id}/enabled`, {}, { expect: 400 });
 
   await post(`/api/schedule-jobs/${id}/run`, {});
   const runs = await waitFor('scheduled dispatch', async () => {
@@ -106,6 +171,7 @@ test('schedule job: a manual trigger dispatches todo requirements of the project
   }, { timeoutMs: 120_000 });
   trackRun(runs[0].id);
   await waitRun(runs[0].id, r => r.status === 'succeeded', { label: 'scheduled run succeeded' });
+  assert.ok(Array.isArray(list(await get(`/api/schedule-job-executions?projectId=${P}&jobId=${id}`))));
   const after = list(await get('/api/schedule-jobs')).find(j => j.id === id);
   assert.ok(['success', 'waiting', 'running'].includes(after.lastStatus), `job status ${after.lastStatus}: ${after.lastError || ''}`);
 });
@@ -203,6 +269,35 @@ test('users: per-host Git access tokens are write-only and scoped to their owner
   }
 });
 
+test('platform: saves and clears the external access address', async t => {
+  const path = '/api/platform/public-url';
+  const initial = await get(path, { expect: 200 });
+  const address = 'https://loopforge-e2e.example.com:8443';
+  t.after(async () => {
+    const { stored } = await get(path, { expect: 200 });
+    if (stored === initial.stored) return;
+    if (initial.stored) await put(path, { value: initial.stored }, { expect: 200 });
+    else await del(path, { expect: 200 });
+  });
+
+  const saved = await put(path, { value: `${address}/` }, { expect: 200 });
+  assert.equal(saved.source, 'settings');
+  assert.equal(saved.value, address);
+  assert.equal(saved.stored, address);
+  assert.equal(saved.envValue, initial.envValue);
+  assert.ok(saved.updatedBy);
+
+  await put(path, { value: 'https://loopforge-e2e.example.com:65536' }, { expect: 400 });
+  assert.deepEqual(await get(path, { expect: 200 }), saved);
+
+  const cleared = await del(path, { expect: 200 });
+  assert.equal(cleared.source, initial.envValue ? 'env' : 'none');
+  assert.equal(cleared.value, initial.envValue);
+  assert.equal(cleared.stored, '');
+  assert.equal(cleared.updatedBy, saved.updatedBy);
+  assert.deepEqual(await get(path, { expect: 200 }), cleared);
+});
+
 function newSSHHostKey() {
   const algorithm = Buffer.from('ssh-ed25519');
   const { publicKey } = generateKeyPairSync('ed25519');
@@ -262,4 +357,33 @@ test('chat clarify and sync endpoints are reachable read-only', async () => {
   assert.ok(await get('/api/chat-clarify', { expect: [200, 400] }));
   const status = await get('/api/sync/status');
   assert.ok(status);
+});
+
+test('platform: Git HTTPS host authorizations are scoped and personal choices omit addresses', async () => {
+  const base = '/api/platform/git-https-hosts';
+  const host = `${uid('git-https-host')}.example.org:8443`;
+  const path = `${base}/${encodeURIComponent(host)}`;
+  const choicePath = '/api/git-https-hosts';
+  const findHost = async () => (await get(base)).find(entry => entry.host === host);
+  const revisionHeader = revision => ({ 'If-Match': JSON.stringify(revision) });
+
+  await post(`${base}/preview`, { host: 'bad/path', platform: 'gitlab' }, { expect: 400 });
+  const input = { host, platform: 'gitlab', addresses: ['10.20.30.40'] };
+  const created = await post(base, input, { expect: 201, raw: true });
+  track(`Git HTTPS host ${host}`, async () => {
+    const entry = await findHost();
+    if (entry) await del(path, { expect: 204, headers: revisionHeader(entry.revision) });
+  });
+  assert.equal(created.headers.get('etag'), JSON.stringify(created.data.revision));
+  const choices = await get(choicePath, cfg.tokenB ? asB() : {});
+  assert.deepEqual(choices.find(choice => choice.host === host), { host, platform: 'gitlab' });
+  if (cfg.tokenB) await get(base, asB({ expect: 403 }));
+
+  const updated = await put(path, { platform: 'gitlab', addresses: ['10.20.30.41', 'fd00::2'] }, {
+    expect: 200, headers: revisionHeader(created.data.revision),
+  });
+  assert.deepEqual(await findHost(), updated);
+  assert.equal((await del(path, { expect: 412, headers: revisionHeader(created.data.revision) })).code, 'https_host_trust_changed');
+  await del(path, { expect: 204, headers: revisionHeader(updated.revision) });
+  assert.ok(!(await get(choicePath)).some(choice => choice.host === host));
 });

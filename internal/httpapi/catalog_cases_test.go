@@ -4,7 +4,6 @@ import (
 	"agentflow/internal/domain"
 	"agentflow/internal/repo"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"strings"
 	"testing"
@@ -54,15 +53,11 @@ func TestCatalogRepositoryAgentAndAssetBranches(t *testing.T) {
 		{http.MethodPut, "/api/skills", map[string]any{"id": "cvb-skill", "name": "Skill", "projectId": "cvb-cat"}, 200},
 		{http.MethodGet, "/api/skills?projectId=cvb-cat", nil, 200},
 
-		{http.MethodPut, "/api/dockerfiles", map[string]any{"id": "cvb-df", "name": "DF", "projectId": "cvb-cat", "content": "FROM scratch"}, 200},
-		{http.MethodPut, "/api/environments", map[string]any{"id": "cvb-env", "name": "Env", "projectId": "cvb-cat", "installScript": "true"}, 200},
-		{http.MethodPut, "/api/sandboxes", map[string]any{"id": "cvb-box-bad", "name": "Box", "projectId": "cvb-cat", "dockerfileId": "missing"}, 400},
-		{http.MethodPut, "/api/sandboxes", map[string]any{"id": "cvb-box", "name": "Box", "projectId": "cvb-cat", "driver": "docker", "dockerfileId": "cvb-df", "environmentId": "cvb-env"}, 200},
-		{http.MethodGet, "/api/dockerfiles?projectId=cvb-cat", nil, 200},
-		{http.MethodGet, "/api/environments?projectId=cvb-cat", nil, 200},
+		{http.MethodPut, "/api/sandboxes", map[string]any{"id": "cvb-box-bad", "name": "Box", "projectId": "cvb-cat", "driver": "docker"}, 400},
+		{http.MethodPut, "/api/sandboxes", map[string]any{"id": "cvb-box", "name": "Box", "projectId": "cvb-cat", "driver": "docker", "dockerfile": map[string]any{"content": "FROM scratch"}, "install": map[string]any{"script": "true"}}, 200},
+		{http.MethodPut, "/api/sandboxes", map[string]any{"id": "cvb-native", "name": "Native", "projectId": "cvb-cat", "driver": "native", "install": map[string]any{"script": "true"}}, 200},
 		{http.MethodGet, "/api/sandboxes?projectId=cvb-cat", nil, 200},
-		{http.MethodDelete, "/api/dockerfiles?id=cvb-df", nil, 409},
-		{http.MethodDelete, "/api/environments?id=cvb-env", nil, 204},
+		{http.MethodDelete, "/api/sandboxes?id=cvb-native", nil, 204},
 	}
 	for i, tc := range requests {
 		rec := cvBRequest(t, f, tc.method, tc.path, tc.body, true)
@@ -146,6 +141,25 @@ func TestCatalogWorkflowBranches(t *testing.T) {
 		}
 	}
 
+	draft := requestJSONAuthed[domain.WorkflowDefinition](t, f.h, f.user, http.MethodGet, "/api/workflows/cvb-flow", nil, http.StatusOK)
+	if draft.Status != "draft" || draft.PublishedRevision != 0 {
+		t.Fatalf("saved workflow = %+v", draft)
+	}
+	const publishPath = "/api/workflows/cvb-flow/publish"
+	first := requestJSONAuthed[domain.WorkflowDefinition](t, f.h, f.user, http.MethodPost, publishPath, nil, http.StatusOK)
+	if first.Status != "published" || first.Version != 1 || first.PublishedRevision != first.Revision {
+		t.Fatalf("first publication = %+v", first)
+	}
+	first.Description = "Updated after the first publication"
+	saved := requestJSONAuthed[domain.WorkflowDefinition](t, f.h, f.user, http.MethodPut, "/api/workflows", first, http.StatusOK)
+	if saved.Version != 1 || saved.PublishedRevision != first.Revision || saved.Revision <= first.Revision {
+		t.Fatalf("saved edit = %+v", saved)
+	}
+	second := requestJSONAuthed[domain.WorkflowDefinition](t, f.h, f.user, http.MethodPost, publishPath, nil, http.StatusOK)
+	if second.Version != 2 || second.PublishedRevision != second.Revision {
+		t.Fatalf("second publication = %+v", second)
+	}
+
 	// Deletion conflicts: active run, then bound issue.
 	if err := f.s.PutRun(domain.Run{ID: "cvb-active", WorkflowID: "cvb-flow", Status: "running", Nodes: map[string]*domain.NodeRun{}}); err != nil {
 		t.Fatal(err)
@@ -220,6 +234,7 @@ func TestCatalogDirectSharingAndCloneHelpers(t *testing.T) {
 		{ID: "cvb-project-market", Name: "Market source", Command: "true", Scope: "project", ProjectID: "cvb-direct-a", MarketID: "market-x"},
 		{ID: "cvb-project-installed", Name: "Installed", Command: "true", Scope: "project", ProjectID: "cvb-direct-b", MarketID: "market-x"},
 		{ID: "cvb-project-copy", Name: "Copy", Command: "true", Scope: "project", ProjectID: "cvb-direct-a"},
+		{ID: "cvb-project-private", Name: "Private project", Command: "true", Scope: "project", ProjectID: "private-project"},
 		{ID: "cvb-personal-own", Name: "Own", Command: "true", Scope: "personal", OwnerUserID: f.user.ID},
 		{ID: "cvb-personal-other", Name: "Other", Command: "true", Scope: "personal", OwnerUserID: f.user.ID + 100},
 	}
@@ -228,28 +243,24 @@ func TestCatalogDirectSharingAndCloneHelpers(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err := h.cloneAgentMCPServers([]string{"cvb-personal-other"}, "cvb-direct-b", 0); !errors.Is(err, errPersonalMCPCloneRequiresLogin) {
-		t.Fatalf("personal clone without login error = %v", err)
-	}
+	allowed := func(projectID string) bool { return projectID == "cvb-direct-a" }
 	got, err := h.cloneAgentMCPServers([]string{
 		"missing", "cvb-empty", "cvb-project-same", "cvb-project-market",
-		"cvb-project-copy", "cvb-personal-own", "cvb-personal-other",
-	}, "cvb-direct-b", f.user.ID)
+		"cvb-project-copy", "cvb-personal-own", "cvb-personal-other", "cvb-project-private",
+	}, "cvb-direct-b", f.user.ID, allowed)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 5 {
+	if len(got) != 4 {
 		t.Fatalf("cloned MCP ids = %#v", got)
 	}
 	if got[0] != "cvb-project-same" || got[1] != "cvb-project-installed" || got[3] != "cvb-personal-own" {
 		t.Fatalf("unexpected reused MCP ids: %#v", got)
 	}
-	for _, id := range []string{got[2], got[4]} {
-		if _, ok := f.s.MCPServer(id); !ok {
-			t.Fatalf("cloned MCP %q was not stored", id)
-		}
+	if _, ok := f.s.MCPServer(got[2]); !ok {
+		t.Fatalf("cloned MCP %q was not stored", got[2])
 	}
-	again, err := h.cloneAgentMCPServers([]string{"cvb-project-copy"}, "cvb-direct-b", f.user.ID)
+	again, err := h.cloneAgentMCPServers([]string{"cvb-project-copy"}, "cvb-direct-b", f.user.ID, allowed)
 	if err != nil || len(again) != 1 || again[0] != got[2] {
 		t.Fatalf("idempotent clone = %#v, %v", again, err)
 	}
@@ -276,64 +287,18 @@ func TestCatalogDirectEnvironmentBranches(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := h.shareSandboxDependencies(domain.SandboxProfile{ProjectID: "cvb-env-a", DockerfileID: "missing"}); err == nil {
-		t.Fatal("missing Dockerfile accepted")
-	}
-	if err := h.shareSandboxDependencies(domain.SandboxProfile{ProjectID: "cvb-env-a", EnvironmentID: "missing"}); err == nil {
-		t.Fatal("missing environment accepted")
-	}
-	if err := f.s.PutDockerfile(domain.DockerfileDefinition{ID: "cvb-foreign-df", Name: "Foreign DF", ProjectID: "cvb-env-b", Content: "FROM scratch"}); err != nil {
-		t.Fatal(err)
-	}
-	if err := f.s.PutEnvironment(domain.EnvironmentDefinition{ID: "cvb-foreign-env", Name: "Foreign env", ProjectID: "cvb-env-b"}); err != nil {
-		t.Fatal(err)
-	}
-	if err := h.shareSandboxDependencies(domain.SandboxProfile{ProjectID: "cvb-env-a", DockerfileID: "cvb-foreign-df"}); err == nil {
-		t.Fatal("private foreign Dockerfile accepted")
-	}
-	if err := h.shareSandboxDependencies(domain.SandboxProfile{ProjectID: "cvb-env-a", EnvironmentID: "cvb-foreign-env"}); err == nil {
-		t.Fatal("private foreign environment accepted")
-	}
-	if err := f.s.PutDockerfile(domain.DockerfileDefinition{ID: "cvb-own-df", Name: "Own DF", ProjectID: "cvb-env-a", Content: "FROM scratch"}); err != nil {
-		t.Fatal(err)
-	}
-	if err := f.s.PutEnvironment(domain.EnvironmentDefinition{ID: "cvb-own-env", Name: "Own env", ProjectID: "cvb-env-a"}); err != nil {
-		t.Fatal(err)
-	}
 	box := domain.SandboxProfile{
 		ID: "cvb-shared-box", Name: "Shared box", ProjectID: "cvb-env-a", Shared: true,
-		Driver: "docker", DockerfileID: "cvb-own-df", EnvironmentID: "cvb-own-env",
+		Driver: "docker", Dockerfile: &domain.SandboxDockerfile{Content: "FROM scratch"},
 	}
-	if err := h.shareSandboxDependencies(box); err != nil {
-		t.Fatal(err)
-	}
-	df, _ := f.s.Dockerfile("cvb-own-df")
-	env, _ := f.s.Environment("cvb-own-env")
-	if !df.Shared || !env.Shared {
-		t.Fatalf("dependencies not shared: df=%v env=%v", df.Shared, env.Shared)
-	}
-
 	if err := f.s.PutSandbox(box); err != nil {
-		t.Fatal(err)
-	}
-	envBox := domain.SandboxProfile{
-		ID: "cvb-shared-env-box", Name: "Shared env box", ProjectID: "cvb-env-a",
-		Shared: true, Driver: "bwrap", EnvironmentID: "cvb-own-env",
-	}
-	if err := f.s.PutSandbox(envBox); err != nil {
 		t.Fatal(err)
 	}
 	if err := f.s.PutWorkflow(domain.WorkflowDefinition{ID: "cvb-shared-wf", Name: "Shared workflow", Shared: true, SandboxProfileID: box.ID}); err != nil {
 		t.Fatal(err)
 	}
-	if !h.sharedEnvironmentReference("sandbox", box.ID) || h.sharedEnvironmentReference("sandbox", "missing") {
+	if !h.sharedWorkflowUsesSandbox(box.ID) || h.sharedWorkflowUsesSandbox("missing") {
 		t.Fatal("shared workflow sandbox reference lookup is wrong")
-	}
-	if !h.sharedEnvironmentReference("dockerfile", df.ID) || !h.sharedEnvironmentReference("environment", env.ID) {
-		t.Fatal("shared sandbox dependency reference lookup is wrong")
-	}
-	if h.sharedEnvironmentReference("other", df.ID) {
-		t.Fatal("unknown dependency kind matched")
 	}
 }
 
@@ -408,11 +373,8 @@ func TestCatalogMoreHTTPBranches(t *testing.T) {
 		{http.MethodDelete, "/api/skills", nil, http.StatusBadRequest},
 		{http.MethodPut, "/api/rules", map[string]any{"id": "cvb-http-rule", "name": "Moved", "projectId": "cvb-http-b"}, http.StatusConflict},
 		{http.MethodPut, "/api/skills", map[string]any{"id": "cvb-http-skill", "name": "Moved", "projectId": "cvb-http-b"}, http.StatusConflict},
-		{http.MethodPut, "/api/dockerfiles", map[string]any{"id": "", "name": "Bad", "projectId": "cvb-http-a"}, http.StatusBadRequest},
-		{http.MethodPut, "/api/environments", map[string]any{"id": "bad", "name": "Bad", "projectId": "missing"}, http.StatusBadRequest},
 		{http.MethodPut, "/api/sandboxes", map[string]any{"id": "bad", "name": "Bad", "projectId": "missing"}, http.StatusBadRequest},
-		{http.MethodDelete, "/api/dockerfiles?id=" + repo.GenericBackendDockerfileID, nil, http.StatusConflict},
-		{http.MethodDelete, "/api/sandboxes?id=local", nil, http.StatusConflict},
+		{http.MethodDelete, "/api/sandboxes?id=" + repo.GenericDockerSandboxID, nil, http.StatusConflict},
 		{http.MethodGet, "/api/executors", nil, http.StatusOK},
 	}
 	for _, tc := range cases {
@@ -515,28 +477,6 @@ func TestCatalogSmallDirectHelpers(t *testing.T) {
 	}
 	if names := h.agentNamesReferencing("skill", "s"); len(names) != 1 {
 		t.Fatalf("skill references = %#v", names)
-	}
-	if err := f.s.PutDockerfile(domain.DockerfileDefinition{ID: "cvb-helper-df", Name: "DF", ProjectID: "cvb-helper", Content: "FROM scratch"}); err != nil {
-		t.Fatal(err)
-	}
-	if err := f.s.PutEnvironment(domain.EnvironmentDefinition{ID: "cvb-helper-env", Name: "Env", ProjectID: "cvb-helper"}); err != nil {
-		t.Fatal(err)
-	}
-	if err := f.s.PutSandbox(domain.SandboxProfile{
-		ID: "cvb-helper-docker", Name: "Docker", ProjectID: "cvb-helper",
-		Driver: "docker", DockerfileID: "cvb-helper-df",
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if err := f.s.PutSandbox(domain.SandboxProfile{
-		ID: "cvb-helper-bwrap", Name: "Bwrap", ProjectID: "cvb-helper",
-		Driver: "bwrap", EnvironmentID: "cvb-helper-env",
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if len(h.sandboxNamesReferencing("dockerfile", "cvb-helper-df")) != 1 ||
-		len(h.sandboxNamesReferencing("environment", "cvb-helper-env")) != 1 {
-		t.Fatal("sandbox dependency names were not found")
 	}
 	if len(h.workflowNamesReferencingSandbox("missing")) != 0 {
 		t.Fatal("missing sandbox unexpectedly referenced")

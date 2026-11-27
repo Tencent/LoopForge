@@ -160,7 +160,7 @@ func businessTimeInWindow(at time.Time, filter domain.AnalyticsFilter) bool {
 }
 
 // businessExecutionDuration unions actual execution spans across all attempts
-// and parallel Runs. SOP wrapper nodes are replaced by their child Run evidence
+// and parallel Runs. LOOP wrapper nodes are replaced by their child Run evidence
 // so the child's approval/queue waits do not become parent execution time.
 func businessExecutionDuration(item businessIssueTiming, completedAt time.Time, events map[string][]domain.RunEvent) *int64 {
 	if item.start.IsZero() || completedAt.Before(item.start) {
@@ -212,7 +212,7 @@ func businessExecutionDuration(item businessIssueTiming, completedAt time.Time, 
 		spans, known := domain.RunExecutionIntervals(run, filtered, completedAt)
 		if !known {
 			if len(wrappers) > 0 && len(nodes) == 0 {
-				continue // a pure SOP wrapper contributes only its children
+				continue // a pure LOOP wrapper contributes only its children
 			}
 			return nil
 		}

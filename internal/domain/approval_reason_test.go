@@ -7,7 +7,7 @@ import (
 
 func TestApprovalWaitReason(t *testing.T) {
 	run := Run{WorkflowSnapshot: WorkflowDefinition{
-		Name: "通用后端交付 SOP",
+		Name: "通用后端交付 LOOP",
 		Nodes: []WorkflowNode{
 			{ID: "impl", Name: "代码实现"}, {ID: "test", Name: "测试"},
 			{ID: "gate", Name: "上线确认", Type: "approval", RejectTo: "impl", TaskPrompt: "检查测试报告和 MR 改动范围"},
@@ -16,7 +16,7 @@ func TestApprovalWaitReason(t *testing.T) {
 		Edges: []WorkflowEdge{{Source: "impl", Target: "gate"}, {Source: "test", Target: "gate"}, {Source: "gate", Target: "release"}},
 	}}
 	got := ApprovalWaitReason(run, "gate")
-	want := "SOP「通用后端交付 SOP」在这一步设置了人工门禁：「代码实现」、「测试」已完成，需要有权限的成员检查结果后确认，确认后继续「发布」；不通过可打回到「代码实现」重做。确认要求：检查测试报告和 MR 改动范围"
+	want := "LOOP「通用后端交付 LOOP」在这一步设置了人工门禁：「代码实现」、「测试」已完成，需要有权限的成员检查结果后确认，确认后继续「发布」；不通过可打回到「代码实现」重做。确认要求：检查测试报告和 MR 改动范围"
 	if got != want {
 		t.Fatalf("got  %s\nwant %s", got, want)
 	}
@@ -36,7 +36,7 @@ func TestApprovalWaitReasonFallbacks(t *testing.T) {
 	run := Run{WorkflowSnapshot: WorkflowDefinition{
 		Nodes: []WorkflowNode{{ID: "gate", Type: "approval"}},
 	}}
-	want := "该 SOP在这一步设置了人工门禁，需要有权限的成员确认，确认后运行结束。"
+	want := "该 LOOP在这一步设置了人工门禁，需要有权限的成员确认，确认后运行结束。"
 	if got := ApprovalWaitReason(run, "gate"); got != want {
 		t.Fatalf("got  %s\nwant %s", got, want)
 	}
@@ -45,7 +45,7 @@ func TestApprovalWaitReasonFallbacks(t *testing.T) {
 		Name:  "  ",
 		Nodes: []WorkflowNode{{ID: "gate", RejectTo: "ghost"}, {ID: "next", Name: "  "}},
 	}
-	want = "该 SOP在这一步设置了人工门禁，需要有权限的成员确认，确认后继续「next」；不通过可打回到「ghost」重做。"
+	want = "该 LOOP在这一步设置了人工门禁，需要有权限的成员确认，确认后继续「next」；不通过可打回到「ghost」重做。"
 	if got := ApprovalWaitReason(run, "gate"); got != want {
 		t.Fatalf("got  %s\nwant %s", got, want)
 	}
@@ -60,7 +60,7 @@ func TestApprovalNeighborsIgnoresEmptyEdgeEnds(t *testing.T) {
 	if strings.Join(up, ",") != "「甲」" || len(down) != 0 {
 		t.Fatalf("up=%v down=%v", up, down)
 	}
-	if got := approvalSOPLabel(" 交付 "); got != "SOP「交付」" {
+	if got := approvalSOPLabel(" 交付 "); got != "LOOP「交付」" {
 		t.Fatalf("sop label: %s", got)
 	}
 }
