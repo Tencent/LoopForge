@@ -166,6 +166,14 @@ func (e *Engine) resolveAssets(agent domain.AgentDefinition, projectID, workflow
 func (e *Engine) resolveNodeAssets(ctx context.Context, agent domain.AgentDefinition, run domain.Run, wfID string, node domain.WorkflowNode) domain.AgentAssetBundle {
 	project := run.ExecutionContext.ProjectID
 	uid := run.ExecutionContext.ResponsibleUserID
+	roleKnowledge := agent.KnowledgeBase
+	// An issue assignment selects the executor. Only their authenticated
+	// action can authorize that run to mount their personal connectors.
+	agent.KnowledgeBase = false
+	bundle := e.resolveAssets(agent, project, wfID, uid)
+	if !run.ExecutionContext.AllowsPersonalKnowledge() {
+		return bundle
+	}
 	exec := e.knowledgeExecutor()
 
 	// Priority (A-Union):
@@ -173,19 +181,16 @@ func (e *Engine) resolveNodeAssets(ctx context.Context, agent domain.AgentDefini
 	// 2) Otherwise, union of node-level KnowledgeRefs (taking precedence per ConnectorID)
 	//    and role-level KnowledgeBase toggle (appending remaining enabled connectors owned by uid with mode="all").
 	var userConnectors []domain.KnowledgeConnector
-	if agent.KnowledgeBase && exec != nil && exec.Service() != nil {
+	if roleKnowledge && exec != nil && exec.Service() != nil {
 		userConnectors = exec.Service().ListConnectors(uid)
 	}
 	effectiveRefs := mergeNodeAndRoleKnowledgeRefs(
 		run.ExecutionContext.KnowledgeRefs,
 		node.KnowledgeRefs,
-		agent.KnowledgeBase,
+		roleKnowledge,
 		userConnectors,
 	)
 
-	// Suppress role-level generic tokens so we mint node/run/attempt-bound tokens below.
-	agent.KnowledgeBase = false
-	bundle := e.resolveAssets(agent, project, wfID, uid)
 	attempt := 0
 	if nr := run.Nodes[node.ID]; nr != nil {
 		attempt = nr.Attempt

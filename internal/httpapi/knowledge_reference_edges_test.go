@@ -69,6 +69,7 @@ func TestKnowledgeToolDescriptionAndCatalogPromptContext(t *testing.T) {
 		}
 	}))
 	defer srv.Close()
+	t.Setenv("LOOPFORGE_KNOWLEDGE_INTERNAL_ORIGINS", srv.URL)
 
 	store, err := repo.OpenTest()
 	if err != nil {
@@ -132,6 +133,7 @@ func TestKnowledgeProxyRPCHandleInitializeAndToolsList(t *testing.T) {
 		}
 	}))
 	defer srv.Close()
+	t.Setenv("LOOPFORGE_KNOWLEDGE_INTERNAL_ORIGINS", srv.URL)
 
 	store, err := repo.OpenTest()
 	if err != nil {

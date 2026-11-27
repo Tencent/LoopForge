@@ -33,6 +33,7 @@ func TestResolveNodeAssetsInjectsUserConnectorCatalogAndEnforcesOwnerIsolation(t
 		}
 	}))
 	defer wkServer.Close()
+	t.Setenv("LOOPFORGE_KNOWLEDGE_INTERNAL_ORIGINS", wkServer.URL)
 
 	svc := knowledge.NewService(store, nil)
 	exec := knowledge.NewExecutor(svc)
@@ -58,7 +59,7 @@ func TestResolveNodeAssetsInjectsUserConnectorCatalogAndEnforcesOwnerIsolation(t
 	// 1. User 1 runs the SOP: connU1 is bound and L0 catalog probes guide-test.md.
 	runU1 := domain.Run{
 		ID:               "run-u1",
-		ExecutionContext: domain.TelemetryContext{ProjectID: "default", ResponsibleUserID: 1},
+		ExecutionContext: domain.TelemetryContext{ProjectID: "default", ResponsibleUserID: 1, KnowledgeUserID: 1},
 		Nodes:            map[string]*domain.NodeRun{"n1": {NodeID: "n1", Attempt: 1}},
 	}
 	bundle1 := eng.resolveNodeAssets(context.Background(), agent, runU1, "wf-1", node)
@@ -82,7 +83,7 @@ func TestResolveNodeAssetsInjectsUserConnectorCatalogAndEnforcesOwnerIsolation(t
 	// 2. User 2 runs the SAME workflow without overriding refs: User 1's connector MUST NOT be injected!
 	runU2 := domain.Run{
 		ID:               "run-u2",
-		ExecutionContext: domain.TelemetryContext{ProjectID: "default", ResponsibleUserID: 2},
+		ExecutionContext: domain.TelemetryContext{ProjectID: "default", ResponsibleUserID: 2, KnowledgeUserID: 2},
 		Nodes:            map[string]*domain.NodeRun{"n1": {NodeID: "n1", Attempt: 1}},
 	}
 	bundle2 := eng.resolveNodeAssets(context.Background(), agent, runU2, "wf-1", node)
@@ -205,6 +206,7 @@ func TestResolveNodeAssetsRoleKnowledgeBasePropagatesRunClaims(t *testing.T) {
 		ExecutionContext: domain.TelemetryContext{
 			ProjectID:         "default",
 			ResponsibleUserID: 7,
+			KnowledgeUserID:   7,
 		},
 		Nodes: map[string]*domain.NodeRun{
 			"n1": {NodeID: "n1", Attempt: 3},
@@ -348,6 +350,7 @@ func TestResolveNodeAssetsUnionOfNodeAndRoleKnowledgeRefs(t *testing.T) {
 		ExecutionContext: domain.TelemetryContext{
 			ProjectID:         "p1",
 			ResponsibleUserID: 42,
+			KnowledgeUserID:   42,
 		},
 		Nodes: map[string]*domain.NodeRun{
 			"n1": {NodeID: "n1", Attempt: 1},
@@ -433,6 +436,15 @@ func TestResolveNodeAssetsUnionOfNodeAndRoleKnowledgeRefs(t *testing.T) {
 	for _, r := range bundleEmpty.Rules {
 		if r.ID == domain.SOPKnowledgeUsageRuleID {
 			t.Fatalf("expected explicit empty override not to inject SOP KB usage rule, got %+v", r)
+		}
+	}
+
+	for _, initiator := range []int64{0, 43} {
+		runWithoutConsent := runOverride
+		runWithoutConsent.ExecutionContext.KnowledgeUserID = initiator
+		blocked := eng.resolveNodeAssets(context.Background(), agent, runWithoutConsent, "wf-1", node)
+		if len(blocked.MCPServers) != 0 {
+			t.Fatalf("initiator %d should not authorize the executor's personal knowledge", initiator)
 		}
 	}
 }

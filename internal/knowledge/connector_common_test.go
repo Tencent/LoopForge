@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"syscall"
 	"testing"
@@ -21,6 +22,40 @@ type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) {
 	return f(r)
+}
+
+func allowConnectorTestOrigins(t *testing.T, origins ...string) {
+	t.Helper()
+	origins = append([]string{os.Getenv(privateConnectorOriginsEnv)}, origins...)
+	t.Setenv(privateConnectorOriginsEnv, strings.Join(origins, ","))
+}
+
+func TestPrivateConnectorOriginRequiresOperatorOptIn(t *testing.T) {
+	t.Setenv(privateConnectorOriginsEnv, "")
+	t.Setenv("LOOPFORGE_KNOWLEDGE_OAUTH_INSECURE", "1")
+	local := "http://127.0.0.1:27124"
+	if _, _, _, err := (mcpFactory{}).ValidateAndNormalize(local+"/mcp", domain.KnowledgeConnectorConfig{}, domain.KnowledgeConnectorSecret{}, false); !isAppErrKind(err, apperr.Invalid) {
+		t.Fatalf("expected MCP endpoint to require a private origin opt-in, got %v", err)
+	}
+	if _, err := validateNativeBaseURL(local, "", "Test"); !isAppErrKind(err, apperr.Invalid) {
+		t.Fatalf("expected native endpoint to require a private origin opt-in, got %v", err)
+	}
+
+	allowConnectorTestOrigins(t, local, "https://notes.example.test")
+	if _, _, _, err := (mcpFactory{}).ValidateAndNormalize(local+"/mcp", domain.KnowledgeConnectorConfig{}, domain.KnowledgeConnectorSecret{}, false); err != nil {
+		t.Fatalf("explicitly allowed MCP origin rejected: %v", err)
+	}
+	if _, err := validateNativeBaseURL(local, "", "Test"); err != nil {
+		t.Fatalf("explicitly allowed native origin rejected: %v", err)
+	}
+	if !privateConnectorOriginAllowed("https://NOTES.example.test:443/api") {
+		t.Fatal("an explicit default port should match the configured origin")
+	}
+	for _, endpoint := range []string{"https://127.0.0.1:27124", "http://127.0.0.1:27125", "http://localhost:27124"} {
+		if privateConnectorOriginAllowed(endpoint) {
+			t.Fatalf("private origin opt-in matched a different origin: %s", endpoint)
+		}
+	}
 }
 
 func TestSSRFIPBoundariesAndLocalHostDetection(t *testing.T) {
@@ -59,7 +94,7 @@ func TestSSRFIPBoundariesAndLocalHostDetection(t *testing.T) {
 		}
 	}
 
-	// Loopback policy: allowed with allowLocalOrPrivate=true; when false, governed by insecure flag.
+	// The OAuth development flag does not relax the connector IP policy.
 	for _, raw := range []string{"127.0.0.1", "::1"} {
 		ip := net.ParseIP(raw)
 		if isBlockedConnectorIP(ip, true) {
@@ -70,8 +105,8 @@ func TestSSRFIPBoundariesAndLocalHostDetection(t *testing.T) {
 			t.Fatalf("loopback %s should be blocked when insecure opt-in is off", raw)
 		}
 		t.Setenv("LOOPFORGE_KNOWLEDGE_OAUTH_INSECURE", "1")
-		if isBlockedConnectorIP(ip, false) {
-			t.Fatalf("loopback %s should be allowed when insecure opt-in is 1", raw)
+		if !isBlockedConnectorIP(ip, false) || blockedOAuthIP(ip) {
+			t.Fatalf("OAuth opt-in should only allow loopback %s for OAuth", raw)
 		}
 	}
 
@@ -157,6 +192,7 @@ func TestSSRFGuardedDialContextAndNativeHTTPClient(t *testing.T) {
 		}
 	}))
 	defer srv.Close()
+	allowConnectorTestOrigins(t, srv.URL)
 
 	plainClient, err := newNativeHTTPClient(5*time.Second, srv.URL, false)
 	if err != nil {
@@ -217,6 +253,12 @@ func TestDoRequestWithDockerFallback(t *testing.T) {
 
 	// Docker env + loopback POST with GetBody retries host.docker.internal:6806 with body preserved.
 	dockerEnvCheckHook = func() bool { return true }
+	t.Setenv(privateConnectorOriginsEnv, "")
+	seenHosts = nil
+	if _, err := doRequestWithDockerFallback(client, req1); !errors.Is(err, syscall.ECONNREFUSED) || len(seenHosts) != 1 {
+		t.Fatalf("Docker fallback should require an allowed origin: hosts=%v err=%v", seenHosts, err)
+	}
+	allowConnectorTestOrigins(t, "http://host.docker.internal:6806", "http://host.docker.internal")
 	seenHosts = nil
 	req2, _ := http.NewRequest(http.MethodPost, "http://127.0.0.1:6806/api", strings.NewReader(`{"hello":1}`))
 	resp, err := doRequestWithDockerFallback(client, req2)

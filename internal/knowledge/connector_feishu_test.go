@@ -107,6 +107,7 @@ func TestFeishuTATAndAPIErrorHandling(t *testing.T) {
 		}
 	}))
 	defer srv.Close()
+	allowConnectorTestOrigins(t, srv.URL)
 
 	conn, err := newFeishuFactory().New(ConnectorSpec{
 		ID:       "fs-err",
@@ -259,6 +260,7 @@ func TestFeishuWikiPaginationBFSTreeSearchAndReadDoc(t *testing.T) {
 		}
 	}))
 	defer srv.Close()
+	allowConnectorTestOrigins(t, srv.URL)
 
 	conn, err := newFeishuFactory().New(ConnectorSpec{
 		ID:       "fs-wiki",

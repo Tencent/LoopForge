@@ -194,6 +194,7 @@ func TestWeKnoraToolsSearchPartialFailurePaginationAndReadDoc(t *testing.T) {
 		}
 	}))
 	defer srv.Close()
+	allowConnectorTestOrigins(t, srv.URL)
 
 	conn, err := newWeKnoraFactory().New(ConnectorSpec{
 		ID:       "kc-wk",
@@ -330,6 +331,7 @@ func TestWeKnoraErrorMessageParsing(t *testing.T) {
 		_, _ = w.Write([]byte("{invalid-json"))
 	}))
 	defer srv.Close()
+	allowConnectorTestOrigins(t, srv.URL)
 	conn, err := newWeKnoraFactory().New(ConnectorSpec{
 		ID:       "wk-parse",
 		Endpoint: srv.URL,

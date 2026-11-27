@@ -193,6 +193,7 @@ func TestWeKnoraConnectorReadOnlyScopeAndEvidence(t *testing.T) {
 		}
 	}))
 	defer srv.Close()
+	allowConnectorTestOrigins(t, srv.URL)
 
 	store := newMemoryConnectorStore()
 	svc := NewService(store, func() string { return "1" })
@@ -306,6 +307,7 @@ func TestMCPConnectorReadOnlyFilterAndCustomRegistryExtension(t *testing.T) {
 		}
 	}))
 	defer srv.Close()
+	allowConnectorTestOrigins(t, srv.URL)
 
 	reg := DefaultRegistry()
 	reg.Register(customPlugFactory{})
@@ -450,6 +452,7 @@ func TestMCPConnectorAllowedToolsAndVendorAdapters(t *testing.T) {
 		}
 	}))
 	defer srv.Close()
+	allowConnectorTestOrigins(t, srv.URL)
 
 	idSeq := 0
 	ids := []string{"v1", "v2", "v3"}

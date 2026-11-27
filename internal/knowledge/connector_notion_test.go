@@ -315,6 +315,7 @@ func TestNotionHierarchyListSearchReadAndPagination(t *testing.T) {
 		}
 	}))
 	defer srv.Close()
+	allowConnectorTestOrigins(t, srv.URL)
 
 	conn, err := newNotionFactory().New(ConnectorSpec{
 		ID:       "kc-notion",
@@ -460,6 +461,7 @@ func TestNotionErrorMappingAndRateLimit(t *testing.T) {
 		}
 	}))
 	defer srv.Close()
+	allowConnectorTestOrigins(t, srv.URL)
 
 	conn, err := newNotionFactory().New(ConnectorSpec{
 		ID:       "kc-err",

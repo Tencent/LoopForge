@@ -234,6 +234,9 @@ func TestIssueDispatchUsesTriggerUserCredentials(t *testing.T) {
 	if !ok || run.ExecutionContext.ResponsibleUserID != 88 {
 		t.Fatalf("run responsible=%d want trigger user 88", run.ExecutionContext.ResponsibleUserID)
 	}
+	if !run.ExecutionContext.AllowsPersonalKnowledge() {
+		t.Fatal("the user who started their own run should be eligible to use personal knowledge")
+	}
 }
 
 func TestIssueDispatchRejectsMissingOwnerAndResponsibleUser(t *testing.T) {
@@ -389,6 +392,9 @@ func TestIssueSOPBindingsRoundTripAndDispatchOwner(t *testing.T) {
 	run, ok := s.Run(task.RunID)
 	if !ok || run.ExecutionContext.ResponsibleUserID != 7 {
 		t.Fatalf("responsible=%d want step owner 7, run=%+v", run.ExecutionContext.ResponsibleUserID, run.ExecutionContext)
+	}
+	if run.ExecutionContext.AllowsPersonalKnowledge() || run.ExecutionContext.KnowledgeUserID != 0 {
+		t.Fatal("assigning execution must not authorize the assignee's personal knowledge")
 	}
 	if !strings.Contains(run.Input, "design.md") {
 		t.Fatalf("handoff missing from input: %s", run.Input)

@@ -139,6 +139,7 @@ func (h *runsHandlers) runs(c *gin.Context) {
 		executionContext := domain.TelemetryContext{ProjectID: req.ProjectID, ResponsibleUserID: project.OwnerID}
 		if current, ok := h.requestUser(r, true); ok {
 			executionContext.ResponsibleUserID = current.ID
+			executionContext.KnowledgeUserID = current.ID
 			executionContext.WorkspaceRunID = dispatchConversationWorkspace(h.deps, r, current.ID, req.ProjectID)
 		}
 		if executionContext.ResponsibleUserID == 0 {
@@ -147,7 +148,11 @@ func (h *runsHandlers) runs(c *gin.Context) {
 		}
 		var runKnowledgeRefs *[]domain.KnowledgeRef
 		if req.KnowledgeRefs != nil {
-			if err := h.validateUserKnowledgeRefs(executionContext.ResponsibleUserID, *req.KnowledgeRefs); err != nil {
+			if len(*req.KnowledgeRefs) > 0 && !executionContext.AllowsPersonalKnowledge() {
+				c.JSON(http.StatusForbidden, gin.H{"error": "关联个人知识库需要由执行人登录后启动运行"})
+				return
+			}
+			if err := h.validateUserKnowledgeRefs(executionContext.KnowledgeUserID, *req.KnowledgeRefs); err != nil {
 				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 				return
 			}

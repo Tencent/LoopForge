@@ -58,6 +58,7 @@ func newCheckRefHandler(t *testing.T, mode string) (*knowledgeHandlers, *gin.Eng
 
 	upstream := httptest.NewServer(checkRefServer{mode: mode})
 	t.Cleanup(upstream.Close)
+	t.Setenv("LOOPFORGE_KNOWLEDGE_INTERNAL_ORIGINS", upstream.URL)
 
 	user := domain.User{ID: 1, LoginName: "lab"}
 	if err := s.PutUser(user); err != nil {

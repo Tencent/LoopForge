@@ -190,7 +190,7 @@ func TestKnowledgeOAuthCallbackLocationIsCodeOnly(t *testing.T) {
 	srv := httptest.NewServer(fake)
 	t.Cleanup(srv.Close)
 
-	createBody := fmt.Sprintf(`{"name":"cb","type":"mcp","endpoint":"http://127.0.0.1:1/mcp","config":{"extra":{"oauthMode":"custom","oauthTokenUrl":%q,"oauthAuthorizeUrl":%q,"oauthClientId":"cid"}},"secret":{"oauthClientSecret":"cs-echo-secret"}}`, srv.URL+"/token", srv.URL+"/authorize")
+	createBody := fmt.Sprintf(`{"name":"cb","type":"mcp","endpoint":"https://knowledge-fixture.invalid/mcp","config":{"extra":{"oauthMode":"custom","oauthTokenUrl":%q,"oauthAuthorizeUrl":%q,"oauthClientId":"cid"}},"secret":{"oauthClientSecret":"cs-echo-secret"}}`, srv.URL+"/token", srv.URL+"/authorize")
 	rec := doJSON(t, handler, http.MethodPost, "/api/knowledge/connectors", createBody, nil)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("create connector = %d: %s", rec.Code, rec.Body.String())

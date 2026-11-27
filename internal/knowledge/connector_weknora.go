@@ -101,7 +101,7 @@ func (weknoraFactory) New(spec ConnectorSpec) (Connector, error) {
 	}
 	client := &http.Client{
 		Timeout:       timeout,
-		Transport:     newWeKnoraTransport(),
+		Transport:     newGuardedHTTPTransport(privateConnectorOriginAllowed(base), "WeKnora "),
 		CheckRedirect: checkWeKnoraRedirect,
 	}
 	spec.Endpoint = base
@@ -148,14 +148,10 @@ func ValidateOutboundWeKnoraURL(raw string) (string, error) {
 	if s == "" {
 		return "", apperr.New(apperr.Invalid, "WeKnora 服务地址不能为空")
 	}
-	if err := validateConnectorEndpointIP(s, true, "WeKnora "); err != nil {
+	if err := validateConnectorEndpointIP(s, privateConnectorOriginAllowed(s), "WeKnora "); err != nil {
 		return "", err
 	}
 	return s, nil
-}
-
-func newWeKnoraTransport() *http.Transport {
-	return newGuardedHTTPTransport(true, "WeKnora ")
 }
 
 func checkWeKnoraRedirect(req *http.Request, via []*http.Request) error {

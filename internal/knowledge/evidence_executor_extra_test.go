@@ -265,6 +265,7 @@ func TestServiceCRUDNilUsageAndCheckOverrides(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer srv.Close()
+	allowConnectorTestOrigins(t, srv.URL)
 
 	created, err := svc.CreateConnector(ctx, 1, ConnectorInput{
 		ID:       "kc-fixed",
@@ -445,6 +446,7 @@ func TestSiYuanAndObsidianRemainingBranches(t *testing.T) {
 		}
 	}))
 	defer sySrv.Close()
+	allowConnectorTestOrigins(t, sySrv.URL)
 
 	syConn, err := sf.New(ConnectorSpec{ID: "sy-1", Endpoint: sySrv.URL, Secret: domain.KnowledgeConnectorSecret{Token: "sy-tok"}})
 	if err != nil {
@@ -502,6 +504,7 @@ func TestSiYuanAndObsidianRemainingBranches(t *testing.T) {
 		}
 	}))
 	defer obSrv.Close()
+	allowConnectorTestOrigins(t, obSrv.URL)
 
 	obConn, err := of.New(ConnectorSpec{ID: "ob-1", Endpoint: obSrv.URL, Secret: domain.KnowledgeConnectorSecret{Token: "ob-tok"}})
 	if err != nil {

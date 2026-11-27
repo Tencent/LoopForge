@@ -113,7 +113,7 @@ func (mcpFactory) ValidateAndNormalize(endpoint string, cfg domain.KnowledgeConn
 	if u.User != nil {
 		return "", cfg, secret, apperr.New(apperr.Invalid, "MCP 服务地址不能内嵌账号密码")
 	}
-	if err := validateConnectorEndpointIP(endpoint, true, "MCP "); err != nil {
+	if err := validateConnectorEndpointIP(endpoint, privateConnectorOriginAllowed(endpoint), "MCP "); err != nil {
 		return "", cfg, secret, err
 	}
 	if cfg.TimeoutSec < 0 || cfg.TimeoutSec > 300 {
@@ -246,7 +246,7 @@ func getOrCreateMCPClient(ownerUserID int64, connectorID, endpoint string, heade
 	connectorID = strings.TrimSpace(connectorID)
 	newGuardedClient := func() *mcpclient.Client {
 		return mcpclient.New(endpoint, headers).
-			WithTransport(newGuardedHTTPTransport(true, "MCP ")).
+			WithTransport(newGuardedHTTPTransport(privateConnectorOriginAllowed(endpoint), "MCP ")).
 			WithTimeout(timeout)
 	}
 	if !isReusableMCPConnectorID(connectorID) {

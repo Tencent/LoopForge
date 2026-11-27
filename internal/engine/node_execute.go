@@ -889,6 +889,13 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 			if current.ExecutionContext.KnowledgeRefs != nil {
 				effectiveRefs = *current.ExecutionContext.KnowledgeRefs
 			}
+			knowledgeAllowed := current.ExecutionContext.AllowsPersonalKnowledge()
+			if !knowledgeAllowed {
+				if len(effectiveRefs) > 0 || (current.ExecutionContext.KnowledgeRefs == nil && agent.KnowledgeBase) {
+					warnMCPSkipped("本次运行未获执行人的个人知识库授权")
+				}
+				effectiveRefs = nil
+			}
 			hasMountedKB := false
 			for _, server := range assets.MCPServers {
 				if server.ID == domain.KnowledgeMCPServerID || strings.HasPrefix(server.ID, domain.KnowledgeMCPServerID+"-") {
@@ -913,7 +920,7 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 					warnMCPSkipped(msg)
 				}
 			}
-			if current.ExecutionContext.KnowledgeRefs == nil {
+			if knowledgeAllowed && current.ExecutionContext.KnowledgeRefs == nil {
 				if warning := knowledgeSkippedWarning(agent, assets); warning != "" {
 					warnMCPSkipped(warning)
 				}
