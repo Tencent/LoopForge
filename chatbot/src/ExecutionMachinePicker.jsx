@@ -30,13 +30,15 @@ export default function ExecutionMachinePicker({ chat, onManage }) {
   const machine = chat.machines?.find((row) => row.id === runnerId);
   const known = locked ? !!execution : chat.machinesReady;
   const loadError = locked ? "" : chat.machineError;
-  const label = !known
-    ? loadError
-      ? "执行机器加载失败"
-      : "加载执行机器…"
-    : runnerId
-      ? machine?.name || runnerId
-      : "LoopForge 云端";
+  const label = !chat.user || chat.user.isGuest
+    ? "登录后选择机器"
+    : !known
+      ? loadError
+        ? "执行机器加载失败"
+        : "加载执行机器…"
+      : runnerId
+        ? machine?.name || runnerId
+        : "LoopForge 云端";
   const online =
     known &&
     (runnerId

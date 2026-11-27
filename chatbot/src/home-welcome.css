@@ -71,18 +71,18 @@
 .chat-shell.home-shell .home-welcome .home-welcome-title {
   position: relative;
   margin: 0;
-  color: var(--text);
+  color: var(--home-ink, var(--text));
   font-size: 36px;
-  font-weight: 600;
+  font-weight: 650;
   line-height: 1.2;
-  letter-spacing: -1px;
+  letter-spacing: -0.03em;
   white-space: nowrap;
 }
 
 .home-welcome-title-ink {
   display: block;
-  clip-path: inset(0 -1px);
-  animation: home-welcome-title-reveal calc(1120ms * var(--home-intro-tempo, .45)) calc(1480ms * var(--home-intro-tempo, .45)) linear both;
+  color: var(--home-ink, var(--text));
+  animation: home-welcome-title-reveal calc(700ms * var(--home-intro-tempo, .45)) 120ms var(--home-ease, cubic-bezier(0.22, 1, 0.36, 1)) both;
 }
 
 .home-welcome-title-light {
@@ -192,8 +192,8 @@
 }
 
 @keyframes home-welcome-title-reveal {
-  from { clip-path: inset(0 100% 0 -1px); }
-  to { clip-path: inset(0 -1px); }
+  from { opacity: 0.15; }
+  to { opacity: 1; }
 }
 
 @keyframes home-welcome-title-light {

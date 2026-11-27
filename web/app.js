@@ -1318,6 +1318,7 @@ function bind(){
   if($('#sopCreateForm')){$('#sopCreateForm').onsubmit=createSOPFromWizard;$('#sopPrev').onclick=()=>setSOPWizardStep(state.sopWizardStep-1);$('#sopNext').onclick=()=>setSOPWizardStep(state.sopWizardStep+1);$$('[data-wizard-steps="sop"] [data-step-target]').forEach(b=>b.onclick=()=>setSOPWizardStep(Number(b.dataset.stepTarget)));$$('.sop-create-close').forEach(b=>b.onclick=()=>$('#sopCreateModal').classList.remove('open'))}
   $('#newSOP')&&($('#newSOP').onclick=openSOPWizard);
   $('#newSOPFromFlow')&&($('#newSOPFromFlow').onclick=openSOPWizard);
+  ['#sopHealthFilter','#sopSort'].forEach(sel=>window.enhanceSelect?.($(sel)));
   $('#sopHealthFilter').onchange=renderSOPCatalog;$('#sopSort').onchange=renderSOPCatalog;
   if($('#manageRepositories'))$('#manageRepositories').onclick=openRepositoryModal;
   $$('.repository-close').forEach(b=>b.onclick=()=>$('#repositoryModal').classList.remove('open'));
@@ -2068,7 +2069,7 @@ function switchView(name){
   // user comes into settings from another page, and closes once a settings
   // page is picked (or deep-linked) so the page itself is visible.
   const narrowSettings=isPureManagement&&matchMedia('(max-width:1000px)').matches;
-  setSettingsSidebarExpanded(!narrowSettings?isPureManagement:staying?settingsSidebarExpanded():!!prevView&&!isSettingsManagementView(previous));
+  setSettingsSidebarExpanded(!narrowSettings?(name==='flow'?(staying?settingsSidebarExpanded():false):isPureManagement):staying?settingsSidebarExpanded():!!prevView&&!isSettingsManagementView(previous));
   $('#managementEntry')?.classList.toggle('active', isPureManagement);
   $('#railSettingsEntry')?.classList.toggle('active', isPureManagement);
   const noSidebarViews = ['issues', 'approvals', 'observability'];

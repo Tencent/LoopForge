@@ -117,6 +117,27 @@ html[data-theme] .topbar {
 .topbar .hui-select-chevron { flex: none; margin-left: auto; color: var(--muted-2); transition: transform .2s var(--topbar-ease); }
 .topbar .hui-select-trigger[aria-expanded="true"] .hui-select-chevron { transform: rotate(180deg); }
 
+.topbar .user-badge {
+  border-radius: 999px;
+  border-color: var(--line);
+  background: var(--bg-soft);
+}
+.topbar .user-badge:hover {
+  border-color: var(--line-strong);
+  background: color-mix(in srgb, var(--text) 4%, var(--bg-soft));
+}
+.topbar .ai-launch {
+  border-radius: 9px;
+  border-color: color-mix(in srgb, var(--topbar-accent) 24%, var(--line));
+  background: color-mix(in srgb, var(--topbar-accent) 8%, var(--panel));
+  color: var(--topbar-accent);
+  font-weight: 600;
+}
+.topbar .ai-launch:hover {
+  border-color: color-mix(in srgb, var(--topbar-accent) 45%, var(--line));
+  background: color-mix(in srgb, var(--topbar-accent) 14%, var(--panel));
+}
+
 @media (max-width: 1140px) {
   .topbar .hui-select-trigger { min-width: 110px; max-width: 155px; }
 }

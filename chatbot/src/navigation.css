@@ -2,13 +2,13 @@
 .chat-shell {
   --sidebar-width: 304px;
   --navigation-header-height: 78px;
-  --navigation-rail: #fff;
-  --navigation-border: #e5e5e899;
+  --navigation-rail: #f2f3f7;
+  --navigation-border: #e2e4ea;
   --navigation-secondary: #52525b;
   --surface: #fff;
-  --subtle: #f8f8f8;
-  --hover: #f4f4f5;
-  --selected: #f1f1f1;
+  --subtle: #f6f7fa;
+  --hover: #f1f2f6;
+  --selected: #ebedf2;
   --text: #18181b;
   --muted: #71717a;
   --line: #e5e5e8;
@@ -17,13 +17,13 @@
 }
 
 [data-theme="dark"] .chat-shell {
-  --navigation-rail: #0a0a0b;
-  --navigation-border: #36363e;
+  --navigation-rail: #0b0b0e;
+  --navigation-border: #2c2c34;
   --navigation-secondary: #a1a1aa;
   --surface: #141417;
-  --subtle: #202025;
-  --hover: #25252b;
-  --selected: #26262c;
+  --subtle: #1d1d22;
+  --hover: #24242b;
+  --selected: #282830;
   --text: #ededf0;
   --muted: #a1a1aa;
   --line: #26262b;
@@ -66,7 +66,7 @@
   border: 1px solid var(--navigation-border);
   border-radius: 16px;
   background: var(--surface);
-  box-shadow: 0 2px 8px #00000006;
+  box-shadow: 0 6px 24px rgba(15, 23, 42, .05), 0 1px 3px rgba(15, 23, 42, .04);
   pointer-events: none;
 }
 
@@ -133,18 +133,20 @@
   gap: 9px;
   min-height: 40px;
   margin: 6px 0 18px;
-  padding: 8px 10px;
-  border: 0;
+  padding: 8px 12px;
+  border: 1px solid color-mix(in srgb, var(--hui-accent, #7b61ff) 22%, transparent);
   border-radius: 10px;
-  background: transparent;
+  background: color-mix(in srgb, var(--hui-accent, #7b61ff) 9%, var(--surface));
   box-shadow: none;
-  color: var(--text);
+  color: var(--hui-accent, #7b61ff);
   font-size: 13px;
   font-weight: 600;
+  transition: background-color 150ms ease, border-color 150ms ease;
 }
 
 .chat-shell .new-chat-button:hover {
-  background: var(--hover);
+  background: color-mix(in srgb, var(--hui-accent, #7b61ff) 15%, var(--surface));
+  border-color: color-mix(in srgb, var(--hui-accent, #7b61ff) 36%, transparent);
   box-shadow: none;
 }
 
@@ -258,14 +260,17 @@
   color: var(--text);
   font-weight: 600;
 }
+.chat-shell .session-row.active {
+  box-shadow: inset 3px 0 0 var(--hui-accent, #7b61ff);
+}
 
 /* Compact workspace navigation, with the same quiet hierarchy as Grasp. */
 .chat-shell .sidebar-create-row {
   display: flex;
   align-items: center;
-  gap: 1px;
+  gap: 6px;
   min-height: 40px;
-  margin: 4px 0 20px;
+  margin: 4px 0 18px;
 }
 
 .chat-shell .sidebar-create-row .new-chat-button {

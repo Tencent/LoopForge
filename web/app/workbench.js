@@ -2311,7 +2311,7 @@ function renderUserProfilePopover() {
             <span class="upp-name">访客身份</span>
             <span class="upp-badge-tag is-guest">未认证</span>
           </div>
-          <div class="upp-login-sub">Guest Session</div>
+          <div class="upp-login-sub">访客会话 · 未登录</div>
         </div>
       </div>
       <div class="upp-divider"></div>

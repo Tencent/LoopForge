@@ -3,7 +3,7 @@
 .sop-page{width:100%;display:flex;flex-direction:column;gap:12px}
 .sop-stats{margin:0}
 .sop-overview{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px;width:100%;margin:0}
-.overview-metric{position:relative;overflow:hidden;padding:14px 15px;border:1px solid var(--line);border-radius:12px;background:linear-gradient(135deg,var(--panel) 0%,var(--bg-soft) 100%)}
+.overview-metric{position:relative;overflow:hidden;padding:14px 16px;border:1px solid var(--line);border-radius:12px;background:var(--panel)}
 .overview-metric:before{content:"";position:absolute;inset:0 auto 0 0;width:3px;background:var(--muted-2)}
 .overview-metric.primary:before{background:var(--blue)}
 .overview-metric.success:before{background:var(--green)}
@@ -23,7 +23,7 @@
 .sop-card.health-blocked{border-color:rgba(248,113,113,.4)}
 .sop-card.health-active{border-color:rgba(139,92,246,.4)}
 .sop-card.health-closed{border-color:rgba(52,211,153,.4)}
-.sop-card:hover{transform:translateY(-2px);border-color:rgba(91,140,255,.45);box-shadow:var(--shadow)}
+.sop-card:hover{transform:none;border-color:var(--line-strong);box-shadow:var(--shadow-sm)}
 .sop-card-head,.sop-card-foot{display:flex;justify-content:space-between;align-items:center;gap:12px;color:var(--muted);font-size:10px}
 .sop-card-head>div{display:flex;align-items:center;gap:8px;min-width:0}
 .sop-card-head>div small{display:block;font-size:10px;color:var(--muted-2);line-height:1.35}
@@ -72,7 +72,7 @@
 @media(max-width:720px){.sop-overview{grid-template-columns:1fr 1fr}.sop-toolbar{align-items:flex-start;gap:10px;flex-direction:column}.sop-toolbar-filters{width:100%;margin-left:0}.sop-toolbar .select{min-width:0;flex:1}}
 
 /* 通用模板：平台提供的只读 LOOP 蓝图 */
-.sop-card.generic{border-color:color-mix(in srgb,var(--blue) 26%,var(--line));background:linear-gradient(180deg,color-mix(in srgb,var(--blue) 4%,var(--panel)),var(--panel) 46%)}
+.sop-card.generic{border-color:color-mix(in srgb,var(--blue) 26%,var(--line));background:var(--panel)}
 .sop-status.generic{color:var(--blue);background:var(--blue-soft)}
 .sop-card .sop-requirements{display:flex;flex-wrap:wrap;gap:6px;margin-top:12px}
 .req-chip{display:inline-flex;align-items:center;gap:5px;padding:3px 8px;border-radius:999px;border:1px solid var(--line);background:var(--panel-2);color:var(--muted);font-size:10px;font-weight:700;white-space:nowrap}

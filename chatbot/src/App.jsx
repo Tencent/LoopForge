@@ -182,7 +182,7 @@ const homeStarters = [
     icon: "workflow",
     tone: "green",
     title: "选用 LOOP 与角色",
-    description: "了解产品、前端、后端三套交付 LOOP 和其中的角色，按需求推荐一套。",
+    description: "了解产品、前端与后端交付 LOOP 及角色分工，按场景推荐模板。",
     steps: ["产品", "前端", "后端"],
     prompt:
       "我准备写需求了。平台内置的产品、前端、后端交付 LOOP 分别适合什么场景、好在哪里、里面有哪些角色？请结合当前项目推荐一套，并告诉我怎么绑定和派发第一条需求。我的需求是：",
@@ -644,6 +644,10 @@ export default function App() {
   useEffect(() => {
     const wide = sidebarViewport().matchMedia("(min-width:1001px)");
     const apply = () => setSidebarWidth(readSidebarWidth());
+    const onBreakpoint = () => {
+      apply();
+      if (!wide.matches) setSidebar(false);
+    };
     const onStorage = (event) => {
       if (
         !event.key ||
@@ -652,10 +656,10 @@ export default function App() {
       ) apply();
     };
     apply();
-    wide.addEventListener("change", apply);
+    wide.addEventListener("change", onBreakpoint);
     window.addEventListener("storage", onStorage);
     return () => {
-      wide.removeEventListener("change", apply);
+      wide.removeEventListener("change", onBreakpoint);
       window.removeEventListener("storage", onStorage);
     };
   }, []);
@@ -1693,7 +1697,9 @@ export default function App() {
             !sidebarSections.groups.length ? (
               <div className="empty-session-list">
                 <p className="end-label">
-                  {chat.ready
+                  {chat.user?.isGuest
+                    ? "登录后查看历史会话"
+                    : chat.ready
                     ? archived
                       ? "还没有归档会话"
                       : mineOnly
