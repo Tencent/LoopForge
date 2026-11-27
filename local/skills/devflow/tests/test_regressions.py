@@ -349,6 +349,12 @@ class LifecycleTests(unittest.TestCase):
             self.assertIn("修复边界行为", result.stdout)
             state = json.loads(state_path.read_text(encoding="utf-8"))
             self.assertIsNotNone(state["stages"]["SOLO"]["prepared_at"])
+            baseline = state["stages"]["SOLO"]["artifact_baseline"]
+            report = state_path.parent / "01-solo/solo-report.md"
+            report.write_text("work in progress", encoding="utf-8")
+            run_script("workflow_state.py", "prepare", "--state", state_path, "--stage", "SOLO")
+            retried = json.loads(state_path.read_text(encoding="utf-8"))
+            self.assertEqual(baseline, retried["stages"]["SOLO"]["artifact_baseline"])
 
     def test_codebuddy_adapter_requires_team_member_dispatch(self):
         manifest = json.loads(
