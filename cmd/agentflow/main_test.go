@@ -151,3 +151,57 @@ func TestResolveRole(t *testing.T) {
 		}
 	}
 }
+
+func TestResolveDatabaseURLPrecedence(t *testing.T) {
+	t.Setenv("AGENTFLOW_DATABASE_URL", "postgres://postgres.cesar:pw@127.0.0.1:5432/loopforge?sslmode=disable")
+	t.Setenv("AGENTFLOW_MYSQL_DSN", "loopforge:pw@tcp(127.0.0.1:33315)/loopforge")
+	cases := []struct {
+		name         string
+		databaseURL  string
+		deprecated   string
+		want         string
+		wantDepracat bool
+	}{
+		{
+			name:        "the explicit flag wins",
+			databaseURL: "postgres://explicit/db",
+			deprecated:  "loopforge:pw@tcp(127.0.0.1:33315)/loopforge",
+			want:        "postgres://explicit/db",
+		},
+		{
+			name:       "the environment wins over the deprecated alias",
+			deprecated: "loopforge:pw@tcp(127.0.0.1:33315)/loopforge",
+			want:       "postgres://postgres.cesar:pw@127.0.0.1:5432/loopforge?sslmode=disable",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, deprecated := resolveDatabaseURL(tc.databaseURL, tc.deprecated)
+			if got != tc.want {
+				t.Fatalf("resolveDatabaseURL() = %q, want %q", got, tc.want)
+			}
+			if deprecated != tc.wantDepracat {
+				t.Fatalf("resolveDatabaseURL() deprecated = %v, want %v", deprecated, tc.wantDepracat)
+			}
+		})
+	}
+}
+
+func TestResolveDatabaseURLFallsBackToTheDeprecatedAlias(t *testing.T) {
+	t.Setenv("AGENTFLOW_DATABASE_URL", "")
+	t.Setenv("AGENTFLOW_MYSQL_DSN", "loopforge:pw@tcp(127.0.0.1:33315)/loopforge")
+	got, deprecated := resolveDatabaseURL("", "loopforge:pw@tcp(127.0.0.1:33315)/loopforge")
+	if got != "loopforge:pw@tcp(127.0.0.1:33315)/loopforge" {
+		t.Fatalf("resolveDatabaseURL() = %q, want the deprecated alias", got)
+	}
+	if !deprecated {
+		t.Fatal("resolveDatabaseURL() must report that the deprecated alias won")
+	}
+	got, deprecated = resolveDatabaseURL("", "")
+	if got != "loopforge:pw@tcp(127.0.0.1:33315)/loopforge" {
+		t.Fatalf("resolveDatabaseURL() = %q, want AGENTFLOW_MYSQL_DSN", got)
+	}
+	if deprecated {
+		t.Fatal("resolveDatabaseURL() must not report the deprecated alias when the environment won")
+	}
+}
