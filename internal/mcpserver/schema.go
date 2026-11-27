@@ -5,14 +5,17 @@ import (
 	"agentflow/internal/application"
 	"encoding/json"
 	"fmt"
-	"github.com/goccy/go-yaml"
 	"math"
 	"strings"
 	"sync"
+
+	"github.com/goccy/go-yaml"
 )
 
-var contractOnce sync.Once
-var contract map[string]any
+var (
+	contractOnce sync.Once
+	contract     map[string]any
+)
 
 func contractObject(v any) map[string]any { m, _ := v.(map[string]any); return m }
 func resolveContract(v any, depth int) any {
@@ -146,6 +149,7 @@ func normalizeContractPath(path string) string {
 func ValidateToolInput(op application.Operation, input map[string]any) error {
 	return validateInputValue(ToolInputSchema(op), input, "arguments")
 }
+
 func validateInputValue(schema map[string]any, value any, path string) error {
 	if schema["type"] == nil && (schema["required"] != nil || schema["properties"] != nil) {
 		schema["type"] = "object"
@@ -186,7 +190,7 @@ func validateInputValue(schema map[string]any, value any, path string) error {
 		}
 		for _, name := range required {
 			v, exists := fields[name]
-			if !exists || v == nil || (func() bool { v, ok := v.(string); return ok && strings.TrimSpace(v) == "" })() {
+			if !exists || v == nil || func() bool { v, ok := v.(string); return ok && strings.TrimSpace(v) == "" }() {
 				return fmt.Errorf("%s.%s is required", path, name)
 			}
 		}

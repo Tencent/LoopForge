@@ -18,7 +18,7 @@ func TestBaselineAlignRunKeepsConfiguredCLI(t *testing.T) {
 	}
 	t.Cleanup(store.Close)
 	wf := domain.WorkflowDefinition{
-		ID: BaselineAlignWorkflowID, Name: "Align", SandboxProfileID: "local",
+		ID: BaselineAlignWorkflowID, Name: "Align", SandboxProfileID: repo.TestNativeSandboxID,
 		Nodes: []domain.WorkflowNode{{ID: "resolve", Type: "agent", AgentID: BaselineAlignAgentID}},
 	}
 	if err := store.PutWorkflow(wf); err != nil {

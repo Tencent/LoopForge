@@ -55,7 +55,7 @@ func TestSharedCodeBuddyEffortsIgnoreAnOldPersonalOverride(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if scheduled, _, ok := scheduleCredentialUser(st, member, assistantEngineCodeBuddy); !ok || scheduled.CodeBuddyBaseURL != "" {
+	if scheduled, _, ok := scheduleCredentialUser(st, member, "", assistantEngineCodeBuddy); !ok || scheduled.CodeBuddyBaseURL != "" {
 		t.Fatal("a scheduled run on the shared key must not use the caller's personal endpoint")
 	}
 	c, rec := workbenchContext(afterClear, http.MethodGet, "/api/assistant/models", &bytes.Buffer{})
@@ -246,7 +246,7 @@ func TestOwnKeyKeepsFreeModelChoice(t *testing.T) {
 	}
 }
 
-// The setup guides read bootstrap to tell new users that chat and SOP runs
+// The setup guides read bootstrap to tell new users that chat and LOOP runs
 // work on the shared model before they configure a key.
 func TestBootstrapAdvertisesSponsoredModel(t *testing.T) {
 	st, _ := sponsorFixture(t)

@@ -46,7 +46,7 @@ func TestIssueHeadingMenuKeepsLegacyControls(t *testing.T) {
 	}
 
 	if strings.Contains(menu, `id="newScheduleJob"`) {
-		t.Fatal("SOP trigger configuration lives in 定时任务 › SOP 触发, not the issue list menu")
+		t.Fatal("LOOP trigger configuration lives in 定时任务 › LOOP 触发, not the issue list menu")
 	}
 	if got := strings.Count(page, `id="importTAPDIssue"`); got != 1 {
 		t.Fatalf("the TAPD import must exist once, as the hidden legacy menu item; got %d", got)
@@ -74,7 +74,7 @@ func TestIssuesListStylesheetLoadsLast(t *testing.T) {
 	links := regexp.MustCompile(`<link rel="stylesheet" href="([^"?]+)`).FindAllStringSubmatch(string(html), -1)
 	// Page stylesheets that build on the shared --hui-* tokens, and the
 	// .topbar-scoped sheet, may follow it.
-	pageSheets := map[string]bool{"/app/assets-harness.css": true, "/app/sops-harness.css": true, "/app/sop-catalog.css": true, "/app/approvals-harness.css": true, "/app/observability-harness.css": true, "/app/topbar-harness.css": true, "/app/business-harness.css": true, "/app/requirement-wizard.css": true}
+	pageSheets := map[string]bool{"/app/assets-harness.css": true, "/app/sops-harness.css": true, "/app/sop-catalog.css": true, "/app/approvals-harness.css": true, "/app/observability-harness.css": true, "/app/observability-dashboard.css": true, "/app/topbar-harness.css": true, "/app/business-harness.css": true, "/app/requirement-wizard.css": true}
 	for len(links) > 0 && pageSheets[links[len(links)-1][1]] {
 		links = links[:len(links)-1]
 	}

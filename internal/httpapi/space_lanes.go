@@ -13,7 +13,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// A lane is one SOP run dispatched from the space, projected for the
+// A lane is one LOOP run dispatched from the space, projected for the
 // workbench: its graph, live node state, inputs and workspace.
 
 type spaceLaneNode struct {
@@ -244,7 +244,7 @@ func (h *spacesHandlers) lane(c *gin.Context) {
 	c.JSON(http.StatusOK, detail)
 }
 
-// startSOPs dispatches SOPs from the space. Inputs pin the artifact versions
+// startSOPs dispatches LOOPs from the space. Inputs pin the artifact versions
 // the lanes start from and are appended to the issue description so every
 // agent reads the same spec.
 func (h *spacesHandlers) startSOPs(c *gin.Context) {
@@ -345,7 +345,7 @@ func withInputs(description string, lines []string) string {
 	return strings.TrimSpace(out)
 }
 
-// catalog lists the SOPs, roles and sandboxes the space's project may use.
+// catalog lists the LOOPs, roles and sandboxes the space's project may use.
 func (h *spacesHandlers) catalog(c *gin.Context) {
 	room, _, ok := h.loadSpace(c, false)
 	if !ok {
@@ -416,7 +416,7 @@ type spaceFlowRequest struct {
 	Edges            []spaceLaneEdge `json:"edges"`
 }
 
-// saveFlow turns an orchestration drafted in the space into a real SOP via
+// saveFlow turns an orchestration drafted in the space into a real LOOP via
 // PUT /api/workflows, then keeps it as a versioned "sop" artifact.
 func (h *spacesHandlers) saveFlow(c *gin.Context) {
 	room, _, ok := h.loadSpace(c, true)
@@ -443,7 +443,7 @@ func (h *spacesHandlers) saveFlow(c *gin.Context) {
 	}
 	status, raw := h.internalCall(c, http.MethodPut, "/api/workflows", wf)
 	if status >= 400 {
-		c.JSON(status, gin.H{"error": apiError(raw, "保存 SOP 失败")})
+		c.JSON(status, gin.H{"error": apiError(raw, "保存 LOOP 失败")})
 		return
 	}
 	var stored domain.WorkflowDefinition
@@ -452,7 +452,7 @@ func (h *spacesHandlers) saveFlow(c *gin.Context) {
 		stored = wf
 	}
 	userID, author := h.rooms.roomActor(c)
-	body, _ := json.Marshal(gin.H{"nodes": req.Nodes, "edges": req.Edges, "sandboxProfileId": wf.SandboxProfileID})
+	body, _ := json.Marshal(gin.H{"nodes": req.Nodes, "edges": req.Edges, "sandboxProfileId": stored.SandboxProfileID, "autoSelectSandbox": stored.AutoSelectSandbox})
 	art := domain.SpaceArtifact{ID: req.ArtifactID, SpaceID: room.ID, Kind: "sop", Title: req.Name, Summary: roomTrim(req.Description, 300), Format: "json",
 		Body: string(body), WorkflowID: stored.ID, AuthorID: userID, AuthorName: author}
 	base := 0
@@ -485,11 +485,11 @@ func (h *spacesHandlers) flowWorkflow(room domain.ChatRoom, req spaceFlowRequest
 	if wf.ID != "" {
 		old, ok := h.repo.Workflow(wf.ID)
 		if !ok || old.ProjectID != room.ProjectID {
-			return wf, "只能更新当前项目里由需求空间保存的 SOP"
+			return wf, "只能更新当前项目里由需求空间保存的 LOOP"
 		}
 		wf.Version, wf.Revision, wf.Status, wf.Tags, wf.Notifications = old.Version, old.Revision, old.Status, old.Tags, old.Notifications
 		if wf.SandboxProfileID == "" {
-			wf.SandboxProfileID = old.SandboxProfileID
+			wf.SandboxProfileID, wf.AutoSelectSandbox = old.SandboxProfileID, old.AutoSelectSandbox
 		}
 		if wf.Version == 0 {
 			wf.Version = 1
@@ -497,24 +497,19 @@ func (h *spacesHandlers) flowWorkflow(room domain.ChatRoom, req spaceFlowRequest
 	} else {
 		wf.ID = newChatID("wf")
 	}
-	if wf.SandboxProfileID == "" {
+	if !wf.AutoSelectSandbox && wf.SandboxProfileID == "" {
 		for _, s := range h.repo.Sandboxes() {
 			if s.ProjectID == room.ProjectID {
 				wf.SandboxProfileID = s.ID
 				break
 			}
-		}
-	}
-	if wf.SandboxProfileID == "" {
-		for _, s := range h.repo.Sandboxes() {
-			if s.Shared {
+			if wf.SandboxProfileID == "" && s.Shared {
 				wf.SandboxProfileID = s.ID
-				break
 			}
 		}
-	}
-	if wf.SandboxProfileID == "" {
-		return wf, "项目还没有可用的沙箱，请先在「沙箱」里创建一个"
+		if wf.SandboxProfileID == "" {
+			return wf, "项目还没有可用的沙箱，请先在「沙箱」里创建一个"
+		}
 	}
 	ids := map[string]bool{}
 	for i, n := range req.Nodes {

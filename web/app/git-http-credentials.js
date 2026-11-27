@@ -1,13 +1,5 @@
 const GIT_HTTP_PLATFORMS = [['github', 'GitHub / GitHub Enterprise'], ['gitlab', 'GitLab'], ['other', '其他平台']];
 
-// Mirrors gitwork.HTTPSHostScope closely enough to prefill the form; the server
-// remains the authority on what a host scope is.
-function gitHTTPHostScope(raw) {
-  let host = String(raw || '').trim().toLowerCase().replace(/^https:\/\//, '').replace(/\/$/, '');
-  if (host.endsWith(':443')) host = host.slice(0, -4);
-  return host;
-}
-
 function gitHTTPDefaultUsername(platform) {
   return platform === 'gitlab' ? 'oauth2' : 'x-access-token';
 }
@@ -21,9 +13,11 @@ function openGitHTTPCredentials(options = {}) {
   const opener = document.activeElement;
   const endpoint = `/api/users/${encodeURIComponent(user.id)}/git-http-credentials`;
   let creds = [];
+  let instances = [];
   let editing = null;
   let deleting = '';
   let busy = false;
+  let repoCheckOpener = null;
 
   const dialog = document.createElement('dialog');
   dialog.id = 'gitHTTPCredentialDialog';
@@ -34,13 +28,19 @@ function openGitHTTPCredentials(options = {}) {
       <h2 id="gitHTTPCredentialTitle">Git 访问令牌（按主机）</h2>
       <button type="button" class="credential-btn ghost icon" data-http-cred-close aria-label="关闭">${credentialGlyph('close', 16)}</button>
     </header>
-    <p class="git-ssh-description">每个 HTTPS 主机配置一个个人访问令牌。平台与工作区访问该主机时，使用本轮责任人或发言人的凭据。</p>
+    <p class="git-ssh-description">令牌按协议、主机和端口匹配。平台与工作区使用本轮责任人或发言人的凭据。</p>
     <p class="git-ssh-status" role="status">正在读取凭据…</p>
     <div class="git-ssh-key-list"></div>
     <button type="button" class="credential-btn primary" data-http-cred-add disabled>添加令牌</button>
     <form class="git-ssh-key-form" hidden>
       <h3></h3>
-      ${credentialFieldHTML({label:'HTTPS 主机', name:'host', type:'text', placeholder:'github.com 或 gitlab.example.org:8443', hint:'只填主机名，可附带端口；令牌只提供给这台主机。'})}
+      <label class="credential-field" data-git-https-instance hidden>
+        <span>${lfT('Git 实例', 'Git instance')}</span>
+        <div class="credential-input is-plain">
+          <select name="instance" class="git-http-select"></select>
+        </div>
+      </label>
+      ${credentialFieldHTML({label:'Git 主机', name:'host', type:'text', placeholder:'github.com 或 gitlab.example.org:8443', hint:'手动输入时填写 HTTPS 主机。HTTP 实例由平台管理员授权。'})}
       <label class="credential-field">
         <span>平台</span>
         <div class="credential-input is-plain">
@@ -51,11 +51,19 @@ function openGitHTTPCredentials(options = {}) {
         <small id="gitHTTPCredentialPlatformHint">GitHub 和 GitLab 支持 gh / glab 认证和 PR/MR 合并状态同步。其他平台也可由 Agent 创建 PR/MR，合并状态请到托管平台查看。</small>
       </label>
       ${credentialFieldHTML({label:'名称', name:'name', type:'text', placeholder:'例如 公司 GitLab', hint:null})}
-      ${credentialFieldHTML({label:'Git 认证用户名', name:'username', type:'text', placeholder:'x-access-token', hint:'按托管平台要求填写；这是 HTTPS 认证用户名，不是提交作者名，通常无法从 Token 推导。'})}
       ${credentialFieldHTML({label:'个人访问令牌', name:'token', placeholder:'粘贴个人访问令牌', hint:'保存后不再显示；编辑时留空保留现有令牌。'})}
+      ${credentialFieldHTML({label:'Git 认证用户名（选填）', name:'username', type:'text', placeholder:'x-access-token', hint:'Git 服务器要求指定用户名时填写。'})}
       <footer class="git-ssh-form-actions">
         <button type="button" class="credential-btn secondary" data-http-cred-cancel>取消</button>
         <button type="submit" class="credential-btn primary">保存令牌</button>
+      </footer>
+    </form>
+    <form class="git-ssh-key-form" data-http-repo-check hidden>
+      <h3>${lfT('检查仓库访问', 'Check repository access')}</h3>
+      ${credentialFieldHTML({label:lfT('HTTP 仓库克隆地址', 'HTTP clone URL'), name:'repoUrl', type:'url'})}
+      <footer class="git-ssh-form-actions">
+        <button type="button" class="credential-btn secondary" data-http-repo-check-cancel>${lfT('取消', 'Cancel')}</button>
+        <button type="submit" class="credential-btn primary">${lfT('检查', 'Check')}</button>
       </footer>
     </form>`;
 
@@ -63,9 +71,15 @@ function openGitHTTPCredentials(options = {}) {
   const status = dialog.querySelector('.git-ssh-status');
   const add = dialog.querySelector('[data-http-cred-add]');
   const form = dialog.querySelector('form');
+  const repoCheck = dialog.querySelector('[data-http-repo-check]');
+  const repoURL = repoCheck.elements.repoUrl;
+  repoURL.required = true;
   const field = key => form.elements.namedItem(key);
-  const [host, platform, name, username, token] = ['host', 'platform', 'name', 'username', 'token'].map(field);
-  host.maxLength = 255;
+  const [instance, host, platform, name, username, token] = ['instance', 'host', 'platform', 'name', 'username', 'token'].map(field);
+  const instanceField = instance.closest('.credential-field');
+  const manualFields = [host, platform, name, username].map(input => input.closest('.credential-field'));
+  const submit = form.querySelector('button[type="submit"]');
+  host.maxLength = 267;
   name.maxLength = 80;
   username.maxLength = 128;
   token.maxLength = 4096;
@@ -86,7 +100,9 @@ function openGitHTTPCredentials(options = {}) {
   function renderList() {
     list.innerHTML = creds.map(cred => {
       const id = escapeHTML(cred.id);
-      const verify = cred.platform !== 'other' || cred.managed ? `<button type="button" class="credential-btn ghost" data-http-cred-verify="${id}">校验令牌</button>` : '';
+      const verify = cred.host.startsWith('http://')
+        ? `<button type="button" class="credential-btn ghost" data-http-cred-verify="${id}">${lfT('检查仓库访问', 'Check repository access')}</button>`
+        : cred.platform !== 'other' || cred.managed ? `<button type="button" class="credential-btn ghost" data-http-cred-verify="${id}">校验令牌</button>` : '';
       const actions = cred.managed
         ? verify
         : deleting === cred.id
@@ -97,6 +113,7 @@ function openGitHTTPCredentials(options = {}) {
   }
 
   function openForm(cred) {
+    closeRepoCheck(false);
     editing = cred;
     deleting = '';
     renderList();
@@ -104,6 +121,14 @@ function openGitHTTPCredentials(options = {}) {
     form.hidden = false;
     add.hidden = true;
     form.querySelector('h3').textContent = cred ? '编辑令牌' : '添加令牌';
+    const choices = cred ? [] : instances.filter(item =>
+      (!options.platform || item.platform === options.platform) && !creds.some(saved => saved.host === item.host));
+    instanceField.hidden = !choices.length;
+    instance.innerHTML = choices.length ? `
+      <option value="" disabled selected>${lfT('选择实例', 'Select an instance')}</option>
+      ${choices.map(item => `<option value="${escapeHTML(item.host)}">${escapeHTML(item.host)}</option>`).join('')}
+      <option value="@manual">${lfT('手动输入 HTTPS 主机', 'Enter an HTTPS host')}</option>` : '';
+    updateInstanceFields();
     host.value = cred?.host || '';
     host.readOnly = !!cred;
     platform.value = cred?.platform || options.platform || 'github';
@@ -113,7 +138,16 @@ function openGitHTTPCredentials(options = {}) {
     username.placeholder = gitHTTPDefaultUsername(platform.value);
     token.required = !cred;
     token.placeholder = cred ? '留空保留现有令牌' : '粘贴个人访问令牌';
-    (cred ? name : host).focus();
+    (cred ? name : instanceField.hidden ? host : instance).focus();
+  }
+
+  function updateInstanceFields() {
+    const manual = instanceField.hidden || instance.value === '@manual';
+    manualFields.forEach(label => { label.hidden = !manual; });
+    if (!manual && instance.value.startsWith('http://')) username.closest('.credential-field').hidden = false;
+    host.required = manual;
+    instance.required = !instanceField.hidden;
+    submit.disabled = busy || (!manual && !instance.value);
   }
 
   function closeForm() {
@@ -127,11 +161,12 @@ function openGitHTTPCredentials(options = {}) {
   function setBusy(on) {
     busy = on;
     dialog.toggleAttribute('aria-busy', on);
-    form.querySelector('button[type="submit"]').disabled = on;
+    updateInstanceFields();
   }
 
   async function request(method, body, id) {
     if (busy) return;
+    closeRepoCheck(false);
     setBusy(true);
     setStatus(method === 'PUT' ? '正在保存…' : '正在删除…');
     try {
@@ -152,13 +187,38 @@ function openGitHTTPCredentials(options = {}) {
     }
   }
 
-  async function verify(id) {
+  function closeRepoCheck(restoreFocus = true) {
+    repoCheck.hidden = true;
+    repoCheck.reset();
+    repoCheck.onsubmit = null;
+    if (restoreFocus) repoCheckOpener?.focus({preventScroll:true});
+    repoCheckOpener = null;
+  }
+
+  function openRepoCheck(cred, button) {
+    repoCheckOpener = button;
+    repoCheck.reset();
+    repoURL.placeholder = `${cred.host}/team/repo.git`;
+    repoCheck.hidden = false;
+    repoURL.focus();
+    repoCheck.onsubmit = event => {
+      event.preventDefault();
+      const repoUrl = repoURL.value.trim();
+      if (busy || !repoUrl) return;
+      closeRepoCheck();
+      return verify(cred, repoUrl);
+    };
+  }
+
+  async function verify(cred, repoUrl) {
     if (busy) return;
+    const body = repoUrl ? JSON.stringify({repoUrl}) : undefined;
     setBusy(true);
     setStatus('正在校验…');
     try {
-      const result = await api(`${endpoint}/${encodeURIComponent(id)}/verify`, {method:'POST', silent:true});
-      if (result?.valid) setStatus(result.login ? `令牌有效，账号 ${result.login}` : '令牌有效');
+      const result = await api(`${endpoint}/${encodeURIComponent(cred.id)}/verify`, {method:'POST', silent:true, ...(body ? {body} : {})});
+      if (result?.repositoryReadable) setStatus(lfT('仓库可读', 'Repository is readable'));
+      else if (result?.valid) setStatus(result.login ? `令牌有效，账号 ${result.login}` : '令牌有效');
       else setStatus(result?.error || '令牌校验未通过', true);
     } catch (error) {
       setStatus(error.message, true);
@@ -173,11 +233,18 @@ function openGitHTTPCredentials(options = {}) {
     const action = button.dataset;
     if ('httpCredClose' in action) return dialog.close();
     if ('httpCredCancel' in action) return closeForm();
+    if ('httpRepoCheckCancel' in action) return closeRepoCheck();
     if ('httpCredAdd' in action) return openForm(null);
-    if (action.httpCredVerify) return verify(action.httpCredVerify);
+    if (action.httpCredVerify) {
+      const cred = creds.find(item => item.id === action.httpCredVerify);
+      if (cred?.host.startsWith('http://')) return openRepoCheck(cred, button);
+      closeRepoCheck(false);
+      if (cred) return verify(cred);
+    }
     if (action.httpCredEdit) return openForm(creds.find(cred => cred.id === action.httpCredEdit));
     if (action.httpCredRemove) return request('DELETE', null, action.httpCredRemove);
     if (action.httpCredDelete || 'httpCredKeep' in action) {
+      closeRepoCheck(false);
       deleting = action.httpCredDelete || '';
       renderList();
       (list.querySelector('[data-http-cred-remove]') || add).focus();
@@ -185,18 +252,24 @@ function openGitHTTPCredentials(options = {}) {
   };
   host.addEventListener('change', () => {
     if (editing) return;
-    const scope = gitHTTPHostScope(host.value);
+    const scope = globalThis.LoopForgeGitHTTPSHost(host.value);
     if (scope === 'github.com') platform.value = 'github';
     else if (/(^|\.)gitlab\./.test(scope)) platform.value = 'gitlab';
     username.placeholder = gitHTTPDefaultUsername(platform.value);
     name.placeholder = scope || '例如 公司 GitLab';
   });
   platform.addEventListener('change', () => { username.placeholder = gitHTTPDefaultUsername(platform.value); });
+  instance.addEventListener('change', updateInstanceFields);
   form.onsubmit = event => {
     event.preventDefault();
-    const body = {
-      host:host.value, platform:platform.value, name:name.value.trim() || gitHTTPHostScope(host.value),
-      username:username.value.trim() || gitHTTPDefaultUsername(platform.value),
+    if (submit.disabled) return;
+    const selected = instanceField.hidden ? null : instances.find(item => item.host === instance.value);
+    const body = selected ? {
+      host:selected.host, platform:selected.platform, name:selected.host.slice(0, 80), token:token.value,
+      ...(selected.host.startsWith('http://') && username.value.trim() ? {username:username.value.trim()} : {}),
+    } : {
+      host:host.value, platform:platform.value, name:name.value.trim() || globalThis.LoopForgeGitHTTPSHost(host.value),
+      username:username.value.trim() || (editing ? '' : gitHTTPDefaultUsername(platform.value)),
       token:token.value,
     };
     if (editing) body.id = editing.id;
@@ -205,7 +278,10 @@ function openGitHTTPCredentials(options = {}) {
   dialog.addEventListener('keydown', event => {
     if (event.key === 'Escape' || event.metaKey || event.ctrlKey) event.stopPropagation();
   });
-  dialog.addEventListener('cancel', event => { if (busy) event.preventDefault(); });
+  dialog.addEventListener('cancel', event => {
+    if (busy || !repoCheck.hidden) event.preventDefault();
+    if (!busy && !repoCheck.hidden) closeRepoCheck();
+  });
   dialog.addEventListener('close', () => {
     form.reset();
     dialog.remove();
@@ -214,9 +290,14 @@ function openGitHTTPCredentials(options = {}) {
   document.body.append(dialog);
   dialog.showModal();
   hydrateCredentialIcons(dialog);
-  api(endpoint, {silent:true}).then(items => {
+  Promise.all([
+    api(endpoint, {silent:true}),
+    api('/api/git-https-hosts', {silent:true}).catch(() => []),
+    api('/api/git-http-hosts', {silent:true}).catch(() => []),
+  ]).then(([items, secureChoices, plainChoices]) => {
     if (!dialog.open) return;
     creds = Array.isArray(items) ? items : [];
+    instances = [secureChoices, plainChoices].flatMap(choices => Array.isArray(choices) ? choices : []);
     add.disabled = false;
     setStatus(creds.length ? '' : '还没有配置 Git 访问令牌');
     renderList();

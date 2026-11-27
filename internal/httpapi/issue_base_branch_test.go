@@ -193,7 +193,7 @@ func TestDispatchCustomBaseBranchSkipsScheduledIntegration(t *testing.T) {
 	if err := st.PutRepository(domain.Repository{ID: "dispatch-branch-repo", ProjectID: "platform", Name: "Repo", DefaultBranch: "master", IntegrateBranch: "agentflow/integration"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.PutWorkflow(domain.WorkflowDefinition{ID: "branch-flow", Name: "Branch flow", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "approval", Name: "Approval", Type: "approval"}}}); err != nil {
+	if err := st.PutWorkflow(domain.WorkflowDefinition{ID: "branch-flow", Name: "Branch flow", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{ID: "approval", Name: "Approval", Type: "approval"}}}); err != nil {
 		t.Fatal(err)
 	}
 	eng := engine.New(st, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces")))
@@ -303,7 +303,7 @@ func TestDispatchEmptyBaseBranchUsesCurrentConfiguredMainBranch(t *testing.T) {
 	if err := st.PutRepository(repository); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.PutWorkflow(domain.WorkflowDefinition{ID: "configured-main-flow", Name: "Main branch flow", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "approval", Name: "Approval", Type: "approval"}}}); err != nil {
+	if err := st.PutWorkflow(domain.WorkflowDefinition{ID: "configured-main-flow", Name: "Main branch flow", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{ID: "approval", Name: "Approval", Type: "approval"}}}); err != nil {
 		t.Fatal(err)
 	}
 	eng := engine.New(st, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces")))
@@ -369,7 +369,7 @@ func TestDispatchLegacyDefaultBranchCreatesNewWorkBranchWithoutChangingRecord(t 
 	if err := st.PutRepository(repository); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.PutWorkflow(domain.WorkflowDefinition{ID: "legacy-main-flow", Name: "Legacy main", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "approval", Name: "Approval", Type: "approval"}}}); err != nil {
+	if err := st.PutWorkflow(domain.WorkflowDefinition{ID: "legacy-main-flow", Name: "Legacy main", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{ID: "approval", Name: "Approval", Type: "approval"}}}); err != nil {
 		t.Fatal(err)
 	}
 	issue := domain.Issue{ID: "legacy-main", ProjectID: "platform", Title: "历史主分支", Kind: "issue", RepositoryID: repository.ID, BaseBranch: repository.DefaultBranch, WorkflowID: "legacy-main-flow"}

@@ -2,515 +2,554 @@ package knowledge
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"fmt"
 	"net/url"
-	"slices"
-	"sort"
+	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"agentflow/internal/apperr"
 	"agentflow/internal/domain"
-	"agentflow/internal/mcpclient"
 )
 
-const CallTimeout = 30 * time.Second
-
-// Store is the persistence the 知识库 module needs.
+// Store is the persistence contract required by the knowledge Service.
 type Store interface {
-	KnowledgeSettings() domain.KnowledgeSettings
-	PutKnowledgeSettings(domain.KnowledgeSettings) error
-	KnowledgeSubmissions(projectID, status string, limit int) []domain.KnowledgeSubmission
-	KnowledgeSubmission(id string) (domain.KnowledgeSubmission, bool)
-	KnowledgeSubmissionIDsByArtifact(artifactIDs []string) map[string]string
-	PutKnowledgeSubmission(domain.KnowledgeSubmission) error
-	DeleteKnowledgeSubmission(id string) error
-	KnowledgeArtifacts(projectID string, limit int) []domain.KnowledgeCandidate
-	Artifact(runID, artifactID string) (domain.Artifact, bool)
-	RunHeader(id string) (domain.Run, error)
-	Agents() []domain.AgentDefinition
-	Workflows() []domain.WorkflowDefinition
+	ListKnowledgeConnectors(ownerUserID int64) []domain.KnowledgeConnector
+	GetKnowledgeConnector(ownerUserID int64, id string) (domain.KnowledgeConnector, bool)
+	PutKnowledgeConnector(conn domain.KnowledgeConnector) error
+	DeleteKnowledgeConnector(ownerUserID int64, id string) (bool, error)
 }
 
-// Upstream is the subset of the KB MCP client the service calls.
-type Upstream interface {
-	Tools(ctx context.Context) ([]mcpclient.Tool, error)
-	ListSources(ctx context.Context) ([]Source, error)
-	Search(ctx context.Context, query string, sources []string) (SearchResult, error)
-	Fetch(ctx context.Context, source, path string, start, end int) (Document, error)
-	WriteDocument(ctx context.Context, source, path, content string) (WriteResult, error)
+// ConnectorInput captures create/update/check requests for a user's Connector.
+type ConnectorInput struct {
+	ID          string                           `json:"id,omitempty"`
+	Name        string                           `json:"name"`
+	Type        string                           `json:"type"`
+	Endpoint    string                           `json:"endpoint"`
+	Config      *domain.KnowledgeConnectorConfig `json:"config,omitempty"`
+	Secret      domain.KnowledgeConnectorSecret  `json:"secret,omitempty"`
+	ClearSecret bool                             `json:"clearSecret,omitempty"`
+	Enabled     *bool                            `json:"enabled,omitempty"`
 }
 
-// Service holds the 知识库 business rules: settings validation, source
-// scoping, and the review queue that writes distilled knowledge upstream.
+type cachedConnectorEntry struct {
+	stamp    string
+	instance Connector
+}
+
+// Service manages user-owned knowledge connectors, credential sealing,
+// validation via ConnectorFactory, and runtime Connector lifecycle.
 type Service struct {
-	store Store
-	dial  func(domain.KnowledgeSettings) (Upstream, error)
-	now   func() time.Time
-	newID func() string
+	store    Store
+	registry *Registry
+	usage    *UsageCounter
+	now      func() time.Time
+	newID    func() string
+
+	mu        sync.Mutex
+	instances map[string]cachedConnectorEntry
+
+	// OAuth state (service_oauth.go): in-flight authorizations, per-connector
+	// refresh mutexes, discovery cache and the platform's public base URL.
+	oauthMu       sync.Mutex
+	oauthLocksMu  sync.Mutex
+	oauthPending  map[string]pendingOAuth
+	oauthLocks    sync.Map
+	oauthCache    map[string]discoveredOAuth
+	publicBaseURL string
 }
 
+// NewService constructs a Service backed by Store and DefaultRegistry().
 func NewService(store Store, newID func() string) *Service {
+	return NewServiceWithRegistry(store, DefaultRegistry(), newID)
+}
+
+// NewServiceWithRegistry constructs a Service with a custom Registry (useful
+// for registering additional connector plugins or test mocks).
+func NewServiceWithRegistry(store Store, registry *Registry, newID func() string) *Service {
+	if registry == nil {
+		registry = DefaultRegistry()
+	}
+	var usage *UsageCounter
+	if us, ok := store.(UsageStore); ok {
+		usage = NewUsageCounter(us)
+	}
 	return &Service{
-		store: store,
-		dial:  func(s domain.KnowledgeSettings) (Upstream, error) { return NewClient(s) },
-		now:   time.Now,
-		newID: newID,
+		store:         store,
+		registry:      registry,
+		usage:         usage,
+		now:           time.Now,
+		newID:         newID,
+		instances:     map[string]cachedConnectorEntry{},
+		oauthPending:  map[string]pendingOAuth{},
+		oauthCache:    map[string]discoveredOAuth{},
+		publicBaseURL: strings.TrimRight(strings.TrimSpace(os.Getenv("LOOPFORGE_PUBLIC_BASE_URL")), "/"),
 	}
 }
 
-func (s *Service) Settings() domain.KnowledgeSettings { return s.store.KnowledgeSettings() }
-
-type SettingsInput struct {
-	Enabled        bool                `json:"enabled"`
-	URL            string              `json:"url"`
-	Token          string              `json:"token"`
-	ClearToken     bool                `json:"clearToken"`
-	WriteEnabled   bool                `json:"writeEnabled"`
-	DefaultSources []string            `json:"defaultSources"`
-	ProjectSources map[string][]string `json:"projectSources"`
-}
-
-// UpdateSettings replaces the settings. An empty token keeps the saved one
-// unless ClearToken is set.
-func (s *Service) UpdateSettings(input SettingsInput, actor string) (domain.KnowledgeSettings, error) {
-	current := s.store.KnowledgeSettings()
-	rawURL := strings.TrimSpace(input.URL)
-	if rawURL != "" {
-		u, err := url.Parse(rawURL)
-		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
-			return current, apperr.New(apperr.Invalid, "知识库地址必须是 http(s)://host/mcp 形式")
-		}
-	}
-	next := domain.KnowledgeSettings{
-		Enabled: input.Enabled, URL: rawURL, WriteEnabled: input.WriteEnabled,
-		Token:          resolveSettingsToken(input, current.Token),
-		DefaultSources: cleanSources(input.DefaultSources),
-		ProjectSources: cleanProjectSources(input.ProjectSources), UpdatedBy: actor,
-	}
-	if next.Enabled && (next.URL == "" || next.Token == "") {
-		return current, apperr.New(apperr.Invalid, "启用前需要填写知识库地址和 Token")
-	}
-	if err := s.store.PutKnowledgeSettings(next); err != nil {
-		return current, err
-	}
-	return s.store.KnowledgeSettings(), nil
-}
-
-// cleanProjectSources normalizes the per-project source lists, dropping
-// blank project keys. A nil map stays nil so "no overrides" is preserved.
-func cleanProjectSources(in map[string][]string) map[string][]string {
-	if in == nil {
+// Usage returns the UsageCounter associated with this Service (may be nil if
+// the underlying Store does not implement UsageStore).
+func (s *Service) Usage() *UsageCounter {
+	if s == nil {
 		return nil
 	}
-	out := map[string][]string{}
-	for project, list := range in {
-		if project = strings.TrimSpace(project); project != "" {
-			out[project] = cleanSources(list)
+	return s.usage
+}
+
+// UsageSummary returns aggregated connector and document invocation counts for
+// ownerUserID.
+func (s *Service) UsageSummary(ownerUserID int64, connectorID string, docLimit int) domain.KnowledgeUsageSummary {
+	if s == nil || s.usage == nil {
+		return domain.KnowledgeUsageSummary{
+			Connectors: []domain.KnowledgeConnectorUsage{},
+			Documents:  []domain.KnowledgeDocumentUsage{},
 		}
+	}
+	return s.usage.Summary(s.ListConnectors(ownerUserID), ownerUserID, connectorID, docLimit)
+}
+
+// UsageEvents returns paginated per-document caller events for ownerUserID.
+func (s *Service) UsageEvents(ownerUserID int64, filter domain.KnowledgeUsageEventFilter) domain.KnowledgeUsageEventPage {
+	if s == nil || s.usage == nil {
+		return domain.KnowledgeUsageEventPage{Items: []domain.KnowledgeUsageEvent{}}
+	}
+	return s.usage.Events(s.ListConnectors(ownerUserID), ownerUserID, filter)
+}
+
+// MarkUsageCited records final-answer citation status on recorded document
+// usage events for ownerUserID.
+func (s *Service) MarkUsageCited(ctx context.Context, ownerUserID int64, reads []domain.KnowledgeRead) error {
+	if s == nil || s.usage == nil {
+		return nil
+	}
+	return s.usage.MarkCited(ctx, ownerUserID, reads)
+}
+
+// ResetUsage clears recorded invocation counts for ownerUserID.
+func (s *Service) ResetUsage(ownerUserID int64, connectorID string) error {
+	if s == nil || s.usage == nil {
+		return nil
+	}
+	return s.usage.Reset(ownerUserID, connectorID)
+}
+
+// Registry returns the underlying ConnectorFactory registry.
+func (s *Service) Registry() *Registry {
+	return s.registry
+}
+
+// ConnectorTypes returns declarative UI/validation metadata for every
+// registered connector type.
+func (s *Service) ConnectorTypes() []domain.ConnectorTypeMeta {
+	return s.registry.Types()
+}
+
+// ListConnectors returns client-safe connectors owned by ownerUserID.
+func (s *Service) ListConnectors(ownerUserID int64) []domain.KnowledgeConnector {
+	rows := s.store.ListKnowledgeConnectors(ownerUserID)
+	out := make([]domain.KnowledgeConnector, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, s.decorateOAuth(r).Public())
 	}
 	return out
 }
 
-// resolveSettingsToken picks the token to save: a new token (without its
-// Bearer prefix), else the current one unless the input asks to clear it.
-func resolveSettingsToken(input SettingsInput, current string) string {
-	switch token := strings.TrimSpace(input.Token); {
-	case token != "":
-		return stripBearer(token)
-	case !input.ClearToken:
-		return current
-	}
-	return ""
-}
-
-type CheckResult struct {
-	OK        bool     `json:"ok"`
-	Error     string   `json:"error,omitempty"`
-	LatencyMs int64    `json:"latencyMs"`
-	Sources   []Source `json:"sources"`
-	Tools     []string `json:"tools,omitempty"`
-}
-
-// Check probes the upstream with the saved settings, overridden by any
-// unsaved URL/token so admins can verify a token before enabling it.
-func (s *Service) Check(ctx context.Context, overrideURL, overrideToken string) CheckResult {
-	settings := s.store.KnowledgeSettings()
-	if u := strings.TrimSpace(overrideURL); u != "" {
-		settings.URL = u
-	}
-	if t := strings.TrimSpace(overrideToken); t != "" {
-		settings.Token = stripBearer(t)
-	}
-	client, err := s.dial(settings)
-	if err != nil {
-		return CheckResult{Error: err.Error()}
-	}
-	ctx, cancel := context.WithTimeout(ctx, CallTimeout)
-	defer cancel()
-	started := s.now()
-	sources, err := client.ListSources(ctx)
-	latency := s.now().Sub(started).Milliseconds()
-	if err != nil {
-		return CheckResult{Error: err.Error(), LatencyMs: latency}
-	}
-	if sources == nil {
-		sources = []Source{}
-	}
-	tools := []string{}
-	if list, err := client.Tools(ctx); err == nil {
-		for _, tool := range list {
-			tools = append(tools, tool.Name)
-		}
-	}
-	return CheckResult{OK: true, LatencyMs: latency, Sources: sources, Tools: tools}
-}
-
-type SourceView struct {
-	Source
-	Allowed bool `json:"allowed"`
-}
-
-// Sources lists upstream sources, marking which ones projectID may read.
-func (s *Service) Sources(ctx context.Context, projectID string) ([]SourceView, error) {
-	settings := s.store.KnowledgeSettings()
-	client, err := s.connect(settings)
-	if err != nil {
-		return nil, err
-	}
-	ctx, cancel := context.WithTimeout(ctx, CallTimeout)
-	defer cancel()
-	list, err := client.ListSources(ctx)
-	if err != nil {
-		return nil, apperr.New(apperr.Upstream, "知识库不可达："+err.Error())
-	}
-	allowed := settings.SourcesForProject(projectID)
-	out := make([]SourceView, 0, len(list))
-	for _, src := range list {
-		out = append(out, SourceView{Source: src, Allowed: SourceAllowed(allowed, src.ID)})
-	}
-	return out, nil
-}
-
-type SearchOutput struct {
-	Result    SearchResult `json:"result"`
-	Sources   []string     `json:"sources"`
-	LatencyMs int64        `json:"latencyMs"`
-}
-
-// Search runs a trial search limited to the sources projectID may read.
-func (s *Service) Search(ctx context.Context, projectID, query string, sources []string) (SearchOutput, error) {
-	query = strings.TrimSpace(query)
-	if query == "" {
-		return SearchOutput{}, apperr.New(apperr.Invalid, "请输入要检索的问题或关键词")
-	}
-	settings := s.store.KnowledgeSettings()
-	scoped, err := ScopeSources(settings.SourcesForProject(projectID), sources)
-	if err != nil {
-		return SearchOutput{}, apperr.New(apperr.Invalid, err.Error())
-	}
-	client, err := s.connect(settings)
-	if err != nil {
-		return SearchOutput{}, err
-	}
-	ctx, cancel := context.WithTimeout(ctx, CallTimeout)
-	defer cancel()
-	started := s.now()
-	result, err := client.Search(ctx, query, scoped)
-	if err != nil {
-		return SearchOutput{}, apperr.New(apperr.Upstream, "检索失败："+err.Error())
-	}
-	return SearchOutput{Result: result, Sources: scoped, LatencyMs: s.now().Sub(started).Milliseconds()}, nil
-}
-
-// Document fetches a source document (optionally a line range) if the
-// source is within projectID's scope.
-func (s *Service) Document(ctx context.Context, projectID, source, path string, start, end int) (Document, error) {
-	source, path = strings.TrimSpace(source), strings.TrimSpace(path)
-	if source == "" || path == "" {
-		return Document{}, apperr.New(apperr.Invalid, "source 和 path 必填")
-	}
-	settings := s.store.KnowledgeSettings()
-	if !SourceAllowed(settings.SourcesForProject(projectID), source) {
-		return Document{}, apperr.New(apperr.Forbidden, "该知识库来源不在当前项目的授权范围")
-	}
-	client, err := s.connect(settings)
-	if err != nil {
-		return Document{}, err
-	}
-	ctx, cancel := context.WithTimeout(ctx, CallTimeout)
-	defer cancel()
-	doc, err := client.Fetch(ctx, source, path, start, end)
-	if err != nil {
-		return Document{}, apperr.New(apperr.Upstream, "读取原文失败："+err.Error())
-	}
-	return doc, nil
-}
-
-type UsageAgent struct {
-	ID        string   `json:"id"`
-	Name      string   `json:"name"`
-	ProjectID string   `json:"projectId,omitempty"`
-	Shared    bool     `json:"shared,omitempty"`
-	Workflows []string `json:"workflows"`
-}
-
-// Usage lists the agents visible to projectID that have the KB enabled, with
-// the workflows that use them, plus the number of visible agents.
-func (s *Service) Usage(projectID string) ([]UsageAgent, int) {
-	projectID = strings.TrimSpace(projectID)
-	workflowsByAgent := map[string][]string{}
-	for _, wf := range s.store.Workflows() {
-		for _, node := range wf.Nodes {
-			if node.AgentID != "" {
-				workflowsByAgent[node.AgentID] = appendUnique(workflowsByAgent[node.AgentID], wf.Name)
-			}
-		}
-	}
-	agents := make([]UsageAgent, 0)
-	total := 0
-	for _, agent := range s.store.Agents() {
-		if projectID != "" && agent.ProjectID != projectID && !agent.Shared {
-			continue
-		}
-		total++
-		if !agent.KnowledgeBase {
-			continue
-		}
-		wfs := workflowsByAgent[agent.ID]
-		if wfs == nil {
-			wfs = []string{}
-		}
-		agents = append(agents, UsageAgent{ID: agent.ID, Name: agent.Name, ProjectID: agent.ProjectID, Shared: agent.Shared, Workflows: wfs})
-	}
-	sort.Slice(agents, func(i, j int) bool { return agents[i].Name < agents[j].Name })
-	return agents, total
-}
-
-// Candidates lists recent run artifacts that look like distilled knowledge,
-// annotated with their queue entry if already submitted.
-func (s *Service) Candidates(projectID string) []domain.KnowledgeCandidate {
-	list := s.store.KnowledgeArtifacts(strings.TrimSpace(projectID), 100)
-	ids := make([]string, 0, len(list))
-	for _, item := range list {
-		ids = append(ids, item.Artifact.ID)
-	}
-	queued := s.store.KnowledgeSubmissionIDsByArtifact(ids)
-	for i := range list {
-		list[i].SubmissionID = queued[list[i].Artifact.ID]
-	}
-	return list
-}
-
-func (s *Service) Submissions(projectID, status string) []domain.KnowledgeSubmission {
-	return s.store.KnowledgeSubmissions(projectID, status, 200)
-}
-
-func (s *Service) Submission(id string) (domain.KnowledgeSubmission, error) {
-	item, ok := s.store.KnowledgeSubmission(id)
+// GetConnector returns one client-safe connector only if owned by ownerUserID.
+func (s *Service) GetConnector(ownerUserID int64, id string) (domain.KnowledgeConnector, bool) {
+	c, ok := s.store.GetKnowledgeConnector(ownerUserID, id)
 	if !ok {
-		return item, apperr.New(apperr.NotFound, "沉淀条目不存在")
+		return domain.KnowledgeConnector{}, false
 	}
-	return item, nil
+	return s.decorateOAuth(c).Public(), true
 }
 
-type SubmissionInput struct {
-	RunID      string `json:"runId"`
-	ArtifactID string `json:"artifactId"`
-	ProjectID  string `json:"projectId"`
-	Title      string `json:"title"`
-	Source     string `json:"source"`
-	Path       string `json:"path"`
-	Content    string `json:"content"`
-}
-
-// Submit queues knowledge for review, either from a run artifact (whose
-// front matter supplies defaults) or from raw content.
-func (s *Service) Submit(input SubmissionInput, actor string) (domain.KnowledgeSubmission, error) {
-	item := domain.KnowledgeSubmission{
-		ID: "kbs-" + s.newID(), ProjectID: strings.TrimSpace(input.ProjectID),
-		Status: domain.KnowledgeSubmissionPending, CreatedBy: actor,
+// CreateConnector validates, seals credentials, and saves a new connector
+// owned by ownerUserID.
+func (s *Service) CreateConnector(_ context.Context, ownerUserID int64, input ConnectorInput) (domain.KnowledgeConnector, error) {
+	typ := strings.ToLower(strings.TrimSpace(input.Type))
+	factory, ok := s.registry.Factory(typ)
+	if !ok {
+		return domain.KnowledgeConnector{}, apperr.New(apperr.Invalid, fmt.Sprintf("不支持的知识库连接器类型 %q", input.Type))
 	}
-	content := input.Content
-	if input.ArtifactID != "" {
-		run, err := s.store.RunHeader(input.RunID)
-		if err != nil {
-			return item, err
-		}
-		if run.IsPersonalWorkspace() {
-			return item, apperr.New(apperr.Forbidden, "个人工作区产物不能提交到共享知识库")
-		}
-		if run.ID == "" {
-			return item, apperr.New(apperr.NotFound, "运行产物不存在")
-		}
-		if existing := s.store.KnowledgeSubmissionIDsByArtifact([]string{input.ArtifactID})[input.ArtifactID]; existing != "" {
-			return item, apperr.New(apperr.Conflict, "该产物已加入沉淀队列").With("id", existing)
-		}
-		art, ok := s.store.Artifact(input.RunID, input.ArtifactID)
-		if !ok {
-			return item, apperr.New(apperr.NotFound, "运行产物不存在")
-		}
-		item.RunID, item.NodeID, item.ArtifactID = art.RunID, art.NodeID, art.ID
-		content = art.Content
-		item.ProjectID, item.IssueID, item.WorkflowID = run.ExecutionContext.ProjectID, run.ExecutionContext.IssueID, run.WorkflowID
+	name := strings.TrimSpace(input.Name)
+	if name == "" {
+		return domain.KnowledgeConnector{}, apperr.New(apperr.Invalid, "连接器名称不能为空")
 	}
-	parsed := ParseDistilled(content)
-	item.Content = parsed.Body
-	item.Title = strings.TrimSpace(firstNonEmpty(input.Title, parsed.Title, "未命名知识"))
-	item.Source = strings.TrimSpace(firstNonEmpty(input.Source, parsed.Source))
-	item.Path = strings.TrimSpace(firstNonEmpty(input.Path, parsed.Path))
-	if strings.TrimSpace(item.Content) == "" {
-		return item, apperr.New(apperr.Invalid, "沉淀内容不能为空")
+
+	var rawCfg domain.KnowledgeConnectorConfig
+	if input.Config != nil {
+		rawCfg = *input.Config
 	}
-	return s.save(item)
-}
-
-type SubmissionEdit struct {
-	Title      string `json:"title"`
-	Source     string `json:"source"`
-	Path       string `json:"path"`
-	Content    string `json:"content"`
-	ReviewNote string `json:"reviewNote"`
-}
-
-// Edit revises a queued item and moves it back to pending review.
-func (s *Service) Edit(id string, input SubmissionEdit) (domain.KnowledgeSubmission, error) {
-	item, err := s.mutable(id, "已写回知识库的条目不能再编辑")
+	endpoint, cfg, secret, err := factory.ValidateAndNormalize(input.Endpoint, rawCfg, input.Secret, false)
 	if err != nil {
-		return item, err
+		return domain.KnowledgeConnector{}, err
 	}
-	item.Title = strings.TrimSpace(firstNonEmpty(input.Title, item.Title))
-	item.Source = strings.TrimSpace(input.Source)
-	item.Path = strings.TrimSpace(input.Path)
-	if strings.TrimSpace(input.Content) != "" {
-		item.Content = input.Content
+
+	id := strings.TrimSpace(input.ID)
+	if id == "" {
+		id = s.generateID(typ)
 	}
-	item.ReviewNote = input.ReviewNote
-	item.Status = domain.KnowledgeSubmissionPending
-	item.Error = ""
-	return s.save(item)
+	if _, exists := s.store.GetKnowledgeConnector(ownerUserID, id); exists {
+		return domain.KnowledgeConnector{}, apperr.New(apperr.Invalid, fmt.Sprintf("连接器标识 %q 已存在", id))
+	}
+
+	sealed, err := SealSecret(ownerUserID, id, secret)
+	if err != nil {
+		return domain.KnowledgeConnector{}, err
+	}
+	enabled := true
+	if input.Enabled != nil {
+		enabled = *input.Enabled
+	}
+	now := s.now().UTC()
+	conn := domain.KnowledgeConnector{
+		ID:               id,
+		OwnerUserID:      ownerUserID,
+		Name:             name,
+		Type:             factory.Meta().Type,
+		Endpoint:         endpoint,
+		Config:           cfg,
+		SecretEnc:        sealed,
+		SecretConfigured: sealed != "",
+		Enabled:          enabled,
+		CreatedAt:        now,
+		UpdatedAt:        now,
+	}
+	if err := s.store.PutKnowledgeConnector(conn); err != nil {
+		return domain.KnowledgeConnector{}, apperr.New(apperr.Invalid, err.Error())
+	}
+	saved, ok := s.store.GetKnowledgeConnector(ownerUserID, id)
+	if !ok {
+		return conn.Public(), nil
+	}
+	return saved.Public(), nil
 }
 
-func (s *Service) Delete(id string) error {
-	item, err := s.mutable(id, "已写回知识库的条目不能删除")
+// UpdateConnector updates an existing connector belonging to ownerUserID.
+// Omitting secret preserves the existing encrypted credential unless ClearSecret is true.
+func (s *Service) UpdateConnector(_ context.Context, ownerUserID int64, id string, input ConnectorInput) (domain.KnowledgeConnector, error) {
+	existing, ok := s.store.GetKnowledgeConnector(ownerUserID, id)
+	if !ok {
+		return domain.KnowledgeConnector{}, apperr.New(apperr.NotFound, ErrConnectorNotFound.Error())
+	}
+	// Edits share the connector lock with OAuth start/refresh/callback so a
+	// concurrent authorization cannot persist results onto a changed connector.
+	lockKey := instanceKey(ownerUserID, existing.ID)
+	lockEntry := s.acquireOAuthLock(lockKey)
+	defer s.releaseOAuthLock(lockKey, lockEntry)
+	if latest, found := s.store.GetKnowledgeConnector(ownerUserID, existing.ID); found {
+		existing = latest
+	} else {
+		return domain.KnowledgeConnector{}, apperr.New(apperr.NotFound, ErrConnectorNotFound.Error())
+	}
+	typ := strings.ToLower(strings.TrimSpace(firstNonEmpty(input.Type, existing.Type)))
+	factory, ok := s.registry.Factory(typ)
+	if !ok {
+		return domain.KnowledgeConnector{}, apperr.New(apperr.Invalid, fmt.Sprintf("不支持的知识库连接器类型 %q", typ))
+	}
+	name := strings.TrimSpace(firstNonEmpty(input.Name, existing.Name))
+	if name == "" {
+		return domain.KnowledgeConnector{}, apperr.New(apperr.Invalid, "连接器名称不能为空")
+	}
+	endpointIn := strings.TrimSpace(input.Endpoint)
+	if endpointIn == "" {
+		endpointIn = existing.Endpoint
+	}
+
+	rawCfg := existing.Config
+	if input.Config != nil {
+		rawCfg = *input.Config
+	}
+	keepExistingSecret := !input.ClearSecret && !input.Secret.HasCredential() && strings.TrimSpace(existing.SecretEnc) != ""
+	endpoint, cfg, secret, err := factory.ValidateAndNormalize(endpointIn, rawCfg, input.Secret, keepExistingSecret)
+	if err != nil {
+		return domain.KnowledgeConnector{}, err
+	}
+	if keepExistingSecret && strings.TrimSpace(existing.Endpoint) != "" && !sameConnectorEndpoint(existing.Endpoint, endpoint) {
+		return domain.KnowledgeConnector{}, apperr.New(apperr.Invalid, "修改连接器地址时必须重新填写凭据或清空旧凭据")
+	}
+
+	var sealed string
+	switch {
+	case input.Secret.HasCredential():
+		sealed, err = SealSecret(ownerUserID, existing.ID, secret)
+		if err != nil {
+			return domain.KnowledgeConnector{}, err
+		}
+	case keepExistingSecret:
+		sealed = existing.SecretEnc
+	default:
+		sealed = ""
+	}
+
+	enabled := existing.Enabled
+	if input.Enabled != nil {
+		enabled = *input.Enabled
+	}
+	updated := domain.KnowledgeConnector{
+		ID:               existing.ID,
+		OwnerUserID:      ownerUserID,
+		Name:             name,
+		Type:             factory.Meta().Type,
+		Endpoint:         endpoint,
+		Config:           cfg,
+		SecretEnc:        sealed,
+		SecretConfigured: sealed != "",
+		Enabled:          enabled,
+		CreatedAt:        existing.CreatedAt,
+	}
+	if err := s.store.PutKnowledgeConnector(updated); err != nil {
+		return domain.KnowledgeConnector{}, err
+	}
+	s.evictInstance(ownerUserID, existing.ID)
+	s.clearOAuthDiscovery(ownerUserID, existing.ID)
+	saved, ok := s.store.GetKnowledgeConnector(ownerUserID, existing.ID)
+	if !ok {
+		return updated.Public(), nil
+	}
+	return saved.Public(), nil
+}
+
+// DeleteConnector deletes a connector only if owned by ownerUserID.
+func (s *Service) DeleteConnector(ownerUserID int64, id string) error {
+	id = strings.TrimSpace(id)
+	lockKey := instanceKey(ownerUserID, id)
+	lockEntry := s.acquireOAuthLock(lockKey)
+	defer s.releaseOAuthLock(lockKey, lockEntry)
+	deleted, err := s.store.DeleteKnowledgeConnector(ownerUserID, id)
 	if err != nil {
 		return err
 	}
-	return s.store.DeleteKnowledgeSubmission(item.ID)
+	if !deleted {
+		return apperr.New(apperr.NotFound, ErrConnectorNotFound.Error())
+	}
+	s.evictInstance(ownerUserID, id)
+	s.clearOAuthState(ownerUserID, id)
+	return nil
 }
 
-func (s *Service) Reject(id, note, actor string) (domain.KnowledgeSubmission, error) {
-	item, err := s.mutable(id, "已写回知识库的条目不能驳回")
-	if err != nil {
-		return item, err
-	}
-	item.Status = domain.KnowledgeSubmissionRejected
-	item.ReviewNote = strings.TrimSpace(note)
-	item.ReviewedBy = actor
-	return s.save(item)
-}
+// CheckConnector runs a live connectivity probe for either an existing saved
+// connector (with optional unsaved overrides) or an unsaved form input.
+func (s *Service) CheckConnector(ctx context.Context, ownerUserID int64, id string, override *ConnectorInput) CheckResult {
+	id = strings.TrimSpace(id)
+	var spec ConnectorSpec
+	var factory ConnectorFactory
 
-// Publish writes a reviewed item into the upstream KB. It requires the
-// platform-level write switch and a source within the item's project scope;
-// upstream failures are recorded on the item.
-func (s *Service) Publish(ctx context.Context, id, actor string) (domain.KnowledgeSubmission, error) {
-	item, err := s.mutable(id, "该条目已写回知识库")
-	if err != nil {
-		return item, err
-	}
-	settings := s.store.KnowledgeSettings()
-	if !settings.Ready() {
-		return item, apperr.New(apperr.Unavailable, ErrNotConfigured.Error())
-	}
-	if !settings.WriteEnabled {
-		return item, apperr.New(apperr.Forbidden, "平台未开启知识写回：请管理员在「接入配置」中打开「允许审核后写回」")
-	}
-	source := strings.TrimSpace(item.Source)
-	if source == "" {
-		return item, apperr.New(apperr.Invalid, "请先选择写入的知识库来源")
-	}
-	if !SourceAllowed(settings.SourcesForProject(item.ProjectID), source) {
-		return item, apperr.New(apperr.Forbidden, "该知识库来源不在项目授权范围内")
-	}
-	path, ok := NormalizeDocPath(item.Path)
-	if !ok {
-		return item, apperr.New(apperr.Invalid, "写入路径必须是仓库内的 .md 相对路径，例如 guides/xxx.md")
-	}
-	content := item.Content
-	if title := strings.TrimSpace(item.Title); title != "" && !strings.HasPrefix(strings.TrimSpace(content), "#") {
-		content = "# " + title + "\n\n" + content
-	}
-	client, err := s.dial(settings)
-	if err != nil {
-		return item, err
-	}
-	ctx, cancel := context.WithTimeout(ctx, 2*CallTimeout)
-	defer cancel()
-	result, err := client.WriteDocument(ctx, source, path, content)
-	item.Path = path
-	item.ReviewedBy = actor
-	if err != nil {
-		item.Error = err.Error()
-		_ = s.store.PutKnowledgeSubmission(item)
-		return item, apperr.New(apperr.Upstream, "写回知识库失败："+err.Error())
-	}
-	item.Status = domain.KnowledgeSubmissionPublished
-	item.Commit = result.Commit
-	item.Error = ""
-	item.PublishedAt = s.now().UTC()
-	return s.save(item)
-}
-
-// mutable loads an item that has not been published yet.
-func (s *Service) mutable(id, publishedMessage string) (domain.KnowledgeSubmission, error) {
-	item, err := s.Submission(id)
-	if err != nil {
-		return item, err
-	}
-	if item.Status == domain.KnowledgeSubmissionPublished {
-		return item, apperr.New(apperr.Conflict, publishedMessage)
-	}
-	return item, nil
-}
-
-func (s *Service) save(item domain.KnowledgeSubmission) (domain.KnowledgeSubmission, error) {
-	if err := s.store.PutKnowledgeSubmission(item); err != nil {
-		return item, err
-	}
-	saved, _ := s.store.KnowledgeSubmission(item.ID)
-	return saved, nil
-}
-
-// connect dials the upstream, reporting missing configuration as Unavailable.
-func (s *Service) connect(settings domain.KnowledgeSettings) (Upstream, error) {
-	client, err := s.dial(settings)
-	if err != nil {
-		return nil, apperr.New(apperr.Unavailable, err.Error())
-	}
-	return client, nil
-}
-
-func stripBearer(token string) string { return strings.TrimPrefix(token, "Bearer ") }
-
-func cleanSources(in []string) []string {
-	out, _ := ScopeSources(nil, in)
-	if out == nil {
-		out = []string{}
-	}
-	return out
-}
-
-func appendUnique(list []string, v string) []string {
-	if slices.Contains(list, v) {
-		return list
-	}
-	return append(list, v)
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, v := range values {
-		if strings.TrimSpace(v) != "" {
-			return v
+	if id != "" {
+		saved, ok := s.store.GetKnowledgeConnector(ownerUserID, id)
+		if !ok {
+			return CheckResult{ConnectorID: id, OK: false, Error: ErrConnectorNotFound.Error()}
+		}
+		typ := saved.Type
+		endpoint := saved.Endpoint
+		cfg := saved.Config
+		var secret domain.KnowledgeConnectorSecret
+		hasSavedSecret := strings.TrimSpace(saved.SecretEnc) != ""
+		if hasSavedSecret {
+			opened, err := OpenSecret(ownerUserID, saved.ID, saved.SecretEnc)
+			if err != nil {
+				return CheckResult{ConnectorID: id, OK: false, Error: err.Error()}
+			}
+			secret = opened
+		}
+		useSavedSecret := hasSavedSecret
+		if override != nil {
+			if strings.TrimSpace(override.Type) != "" {
+				typ = override.Type
+			}
+			if strings.TrimSpace(override.Endpoint) != "" {
+				endpoint = override.Endpoint
+			}
+			if override.Config != nil {
+				cfg = *override.Config
+			}
+			if override.ClearSecret {
+				secret = domain.KnowledgeConnectorSecret{}
+				useSavedSecret = false
+			} else if override.Secret.HasCredential() {
+				secret = override.Secret
+				useSavedSecret = false
+			}
+		}
+		f, ok := s.registry.Factory(typ)
+		if !ok {
+			return CheckResult{ConnectorID: id, OK: false, Error: fmt.Sprintf("不支持的知识库连接器类型 %q", typ)}
+		}
+		factory = f
+		normEndpoint, normCfg, normSecret, err := factory.ValidateAndNormalize(endpoint, cfg, secret, hasSavedSecret && useSavedSecret)
+		if err != nil {
+			return CheckResult{ConnectorID: id, OK: false, Error: err.Error()}
+		}
+		if useSavedSecret && strings.TrimSpace(saved.Endpoint) != "" && !sameConnectorEndpoint(saved.Endpoint, normEndpoint) {
+			return CheckResult{ConnectorID: id, OK: false, Error: "修改连接器地址进行测试时必须重新填写凭据"}
+		}
+		if useSavedSecret {
+			normSecret = secret
+		}
+		spec = ConnectorSpec{
+			ID:          saved.ID,
+			OwnerUserID: ownerUserID,
+			Name:        saved.Name,
+			Type:        factory.Meta().Type,
+			Endpoint:    normEndpoint,
+			Config:      normCfg,
+			Secret:      normSecret,
+			UpdatedAt:   saved.UpdatedAt,
+		}
+		if useSavedSecret {
+			spec.ResolveSecret = func(ctx context.Context, forceRefresh bool, failedToken string) (domain.KnowledgeConnectorSecret, error) {
+				return s.EnsureValidSecret(ctx, ownerUserID, saved.ID, forceRefresh, failedToken)
+			}
+		}
+	} else {
+		if override == nil {
+			return CheckResult{OK: false, Error: "请提供连接器配置参数"}
+		}
+		f, ok := s.registry.Factory(override.Type)
+		if !ok {
+			return CheckResult{OK: false, Error: fmt.Sprintf("不支持的知识库连接器类型 %q", override.Type)}
+		}
+		factory = f
+		var rawCfg domain.KnowledgeConnectorConfig
+		if override.Config != nil {
+			rawCfg = *override.Config
+		}
+		normEndpoint, normCfg, normSecret, err := factory.ValidateAndNormalize(override.Endpoint, rawCfg, override.Secret, false)
+		if err != nil {
+			return CheckResult{OK: false, Error: err.Error()}
+		}
+		spec = ConnectorSpec{
+			ID:          "probe",
+			OwnerUserID: ownerUserID,
+			Name:        override.Name,
+			Type:        factory.Meta().Type,
+			Endpoint:    normEndpoint,
+			Config:      normCfg,
+			Secret:      normSecret,
 		}
 	}
-	return ""
+
+	conn, err := factory.New(spec)
+	if err != nil {
+		return CheckResult{ConnectorID: spec.ID, OK: false, Error: RedactSecrets(err.Error(), spec.Secret)}
+	}
+	res := conn.Check(ctx)
+	res.ConnectorID = id
+	return res
+}
+
+// ListConnectorSources lists sub-sources exposed by one connector belonging
+// to ownerUserID (regardless of whether it is currently enabled, so admins/owners
+// can browse sources in management UI).
+func (s *Service) ListConnectorSources(ctx context.Context, ownerUserID int64, id string) ([]Source, error) {
+	saved, conn, err := s.resolveConnector(ownerUserID, id, false)
+	if err != nil {
+		return nil, err
+	}
+	_ = saved
+	cctx, cancel := context.WithTimeout(ctx, CallTimeout)
+	defer cancel()
+	return conn.ListSources(cctx)
+}
+
+// ResolveEnabledConnector loads and builds the runtime Connector for id only if
+// owned by ownerUserID and currently enabled.
+func (s *Service) ResolveEnabledConnector(ownerUserID int64, id string) (domain.KnowledgeConnector, Connector, error) {
+	return s.resolveConnector(ownerUserID, id, true)
+}
+
+func (s *Service) resolveConnector(ownerUserID int64, id string, requireEnabled bool) (domain.KnowledgeConnector, Connector, error) {
+	saved, ok := s.store.GetKnowledgeConnector(ownerUserID, id)
+	if !ok {
+		return domain.KnowledgeConnector{}, nil, apperr.New(apperr.NotFound, ErrConnectorNotFound.Error())
+	}
+	if requireEnabled && !saved.Enabled {
+		return domain.KnowledgeConnector{}, nil, apperr.New(apperr.Forbidden, ErrConnectorDisabled.Error())
+	}
+	cacheKey := instanceKey(ownerUserID, saved.ID)
+	stamp := fmt.Sprintf("%d|%s|%s|%s", saved.UpdatedAt.UTC().UnixNano(), saved.Type, saved.Endpoint, saved.SecretEnc)
+
+	s.mu.Lock()
+	if entry, ok := s.instances[cacheKey]; ok && entry.stamp == stamp {
+		s.mu.Unlock()
+		return s.decorateOAuth(saved).Public(), entry.instance, nil
+	}
+	s.mu.Unlock()
+
+	factory, ok := s.registry.Factory(saved.Type)
+	if !ok {
+		return domain.KnowledgeConnector{}, nil, apperr.New(apperr.Unavailable, fmt.Sprintf("不支持的知识库连接器类型 %q", saved.Type))
+	}
+	secret, err := OpenSecret(ownerUserID, saved.ID, saved.SecretEnc)
+	if err != nil {
+		return domain.KnowledgeConnector{}, nil, apperr.New(apperr.Unavailable, err.Error())
+	}
+	spec := ConnectorSpec{
+		ID:          saved.ID,
+		OwnerUserID: ownerUserID,
+		Name:        saved.Name,
+		Type:        saved.Type,
+		Endpoint:    saved.Endpoint,
+		Config:      saved.Config,
+		Secret:      secret,
+		UpdatedAt:   saved.UpdatedAt,
+		ResolveSecret: func(ctx context.Context, forceRefresh bool, failedToken string) (domain.KnowledgeConnectorSecret, error) {
+			return s.EnsureValidSecret(ctx, ownerUserID, saved.ID, forceRefresh, failedToken)
+		},
+	}
+	instance, err := factory.New(spec)
+	if err != nil {
+		return domain.KnowledgeConnector{}, nil, err
+	}
+	s.mu.Lock()
+	if len(s.instances) >= 256 {
+		s.instances = map[string]cachedConnectorEntry{}
+	}
+	s.instances[cacheKey] = cachedConnectorEntry{stamp: stamp, instance: instance}
+	s.mu.Unlock()
+	return s.decorateOAuth(saved).Public(), instance, nil
+}
+
+func (s *Service) evictInstance(ownerUserID int64, id string) {
+	s.mu.Lock()
+	delete(s.instances, instanceKey(ownerUserID, id))
+	s.mu.Unlock()
+}
+
+func instanceKey(ownerUserID int64, id string) string {
+	return fmt.Sprintf("%d:%s", ownerUserID, strings.TrimSpace(id))
+}
+
+func sameConnectorEndpoint(a, b string) bool {
+	a, b = strings.TrimSpace(a), strings.TrimSpace(b)
+	if a == b {
+		return true
+	}
+	ua, errA := url.Parse(a)
+	ub, errB := url.Parse(b)
+	if errA != nil || errB != nil || ua.Scheme == "" || ub.Scheme == "" || ua.Host == "" || ub.Host == "" {
+		return false
+	}
+	return strings.EqualFold(ua.Scheme, ub.Scheme) &&
+		strings.EqualFold(ua.Host, ub.Host) &&
+		ua.EscapedPath() == ub.EscapedPath() &&
+		ua.RawQuery == ub.RawQuery && ua.ForceQuery == ub.ForceQuery
+}
+
+func (s *Service) generateID(typ string) string {
+	prefix := "kc"
+	if typ != "" {
+		prefix = typ
+	}
+	if s.newID != nil {
+		if raw := strings.TrimSpace(s.newID()); raw != "" {
+			return prefix + "-" + raw
+		}
+	}
+	buf := make([]byte, 6)
+	_, _ = rand.Read(buf)
+	return prefix + "-" + hex.EncodeToString(buf)
 }

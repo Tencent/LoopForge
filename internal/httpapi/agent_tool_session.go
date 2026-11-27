@@ -55,6 +55,8 @@ type AgentToolSession struct {
 	toolsMu           sync.RWMutex
 	pendingMode       string
 	modeAction        func(context.Context) error
+	knowledgeReads    []domain.KnowledgeRead
+	KnowledgeRefs     []domain.KnowledgeRef
 	SelectedMCPIDs    map[string]bool
 	ExecutionRunnerID string
 	runnerLogin       bool
@@ -72,18 +74,26 @@ type AgentToolSession struct {
 	// belongs to, so Main Bot can open and bind a temporary workspace there.
 	ChatSessionID string
 	ChatOwnerID   int64
+
+	requireRunnerShare      bool
+	projectCredentialIDs    []string
+	projectCredentialValues []string // protected by mu
+
 	// turnMessages is the transcript this chat request is sending. A new
 	// personal session is stored only after the reply, so proposal checks
 	// read the request before the saved session.
 	turnMessages     []assistantMessage
 	SandboxProfileID string
 	// workspaceRunID is the one workspace an ordinary conversation is bound
-	// to: one it opened itself, or the SOP run of an issue.
+	// to: one it opened itself, or the LOOP run of an issue.
 	workspaceRunID string
 	workspaceMu    sync.Mutex
 	workspaceTurn  *assistantWorkspaceTurn
-	SpaceID        string
-	Surface        string // entry of the turn; see sopDesigner
+	// The rest of this turn stays in platform mode after a startup failure.
+	workspaceStartFailed atomic.Bool
+
+	SpaceID string
+	Surface string // entry of the turn; see sopDesigner
 	// DesignerCanvas is the canvas a designer turn edits; operations in its
 	// workflows_save draft are applied to it.
 	DesignerCanvas   json.RawMessage
@@ -118,7 +128,7 @@ type AgentToolSession struct {
 	// toolCalls cancels the tools/call requests still running, by JSON-RPC
 	// id, when the CLI sends notifications/cancelled for them.
 	toolCalls map[string]*agentToolCallCancel
-	// gitHosts maps each host an HTTPS Git token was handed out for this turn
+	// gitHosts maps each endpoint a Git token was handed out for this turn
 	// onto its platform, for the end-of-turn PR scan. gitScrubbed names the
 	// credentials the agent wrote by hand that were removed after its CLI.
 	gitHosts          map[string]string
@@ -556,7 +566,7 @@ func (s *AgentToolSession) diagnostics() *assistantDiagnosticsCollector {
 	return assistantDiagnosticsFrom(s.ctx)
 }
 
-// sopDesigner reports a SOP designer turn: read-only platform tools plus one
+// sopDesigner reports a LOOP designer turn: read-only platform tools plus one
 // workflows_save draft, no workspace, browser or external MCP.
 func (s *AgentToolSession) sopDesigner() bool {
 	return s != nil && s.Surface == assistantSurfaceSOPDesigner

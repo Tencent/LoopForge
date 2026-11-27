@@ -9,7 +9,7 @@ import (
 	"gorm.io/gorm"
 )
 
-var ErrIssueBusy = errors.New("需求正在澄清或执行 SOP，请先停止后再删除")
+var ErrIssueBusy = errors.New("需求正在澄清或执行 LOOP，请先停止后再删除")
 var ErrIssueSucceeded = errors.New("需求已有成功运行记录，不允许删除")
 var ErrIssueForceRequired = errors.New("需求已有执行记录或已完成，请确认强制删除")
 var ErrIssueNotFound = errors.New("issue not found")
@@ -69,7 +69,7 @@ func (r *IssuesRepo) DeleteIssue(id string) error {
 }
 
 // DeleteIssueAfterRunCleanup rechecks the deletion conditions and removes the
-// issue, comments and tasks atomically after the engine has cleaned all runs.
+// issue, comments, images and tasks atomically after the engine has cleaned all runs.
 func (r *IssuesRepo) DeleteIssueAfterRunCleanup(id string, mode IssueDeletionMode) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -85,6 +85,9 @@ func (r *IssuesRepo) DeleteIssueAfterRunCleanup(id string, mode IssueDeletionMod
 			return err
 		}
 		if err := tx.Where("issue_id = ?", id).Delete(&issueCommentRow{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("issue_id = ?", id).Delete(&issueImageRow{}).Error; err != nil {
 			return err
 		}
 		return tx.Where("id = ?", id).Delete(&issueRow{}).Error

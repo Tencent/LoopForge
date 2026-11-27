@@ -26,20 +26,22 @@ const (
 )
 
 type protocolAdapter struct {
-	ex            domain.ExecutorDefinition
-	sink          EventSink
-	parser        protocolParser
-	adapterID     string
-	mu            sync.Mutex
-	result        string
-	lastOutput    string
-	failed        bool
-	reasoningBuf  strings.Builder
-	done          chan struct{}
-	once          sync.Once
-	tools         map[string]*toolUseBuf
-	currentToolID string
-	translate     func(string) []string
+	ex                 domain.ExecutorDefinition
+	sink               EventSink
+	parser             protocolParser
+	adapterID          string
+	mu                 sync.Mutex
+	result             string
+	lastOutput         string
+	preGateCitedOutput string
+	failed             bool
+	reasoningBuf       strings.Builder
+	done               chan struct{}
+	once               sync.Once
+	tools              map[string]*toolUseBuf
+	currentToolID      string
+	translate          func(string) []string
+	codeBuddyStream    *codeBuddyBackgroundStream
 }
 
 // ProtocolObserver normalizes process output from a remotely executed Agent
@@ -74,7 +76,11 @@ func (o *ProtocolObserver) VisibleOutput() string {
 }
 
 func (o *ProtocolObserver) Finalize(success bool) {
-	if o == nil || o.adapter == nil || o.adapter.Finished() {
+	if o == nil || o.adapter == nil {
+		return
+	}
+	o.adapter.finishCodeBuddyStream()
+	if o.adapter.Finished() {
 		return
 	}
 	level := "error"
@@ -86,6 +92,15 @@ func (o *ProtocolObserver) Finalize(success bool) {
 	o.adapter.emit(domain.TelemetryEvent{Category: "lifecycle", Name: "agent.completed", Phase: "finish", Level: level, Message: message})
 }
 
+// CodeBuddySOPResultError preserves a protocol failure when the command exits
+// on EOF or when the Runner has to stop it after the output drain.
+func (o *ProtocolObserver) CodeBuddySOPResultError() error {
+	if o == nil || o.adapter == nil || o.adapter.codeBuddyStream == nil || !o.adapter.Failed() {
+		return nil
+	}
+	return executorReportedError(o.adapter.Result(), "")
+}
+
 func newProtocolAdapter(ex domain.ExecutorDefinition, sink EventSink) *protocolAdapter {
 	return providerForKind(ex.Kind).Protocol(ex, sink)
 }
@@ -94,7 +109,12 @@ func makeProtocolAdapter(ex domain.ExecutorDefinition, sink EventSink, parser pr
 	return &protocolAdapter{ex: ex, sink: sink, parser: parser, adapterID: adapterID, done: make(chan struct{})}
 }
 
-func (a *protocolAdapter) Completed() <-chan struct{} { return a.done }
+func (a *protocolAdapter) Completed() <-chan struct{} {
+	if a.codeBuddyStream != nil {
+		return a.codeBuddyStream.drained
+	}
+	return a.done
+}
 
 func (a *protocolAdapter) Finished() bool {
 	select {
@@ -109,6 +129,22 @@ func (a *protocolAdapter) Failed() bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return a.failed
+}
+
+func (a *protocolAdapter) recordResult(result string, failed bool) {
+	a.mu.Lock()
+	a.result, a.failed = result, failed
+	a.mu.Unlock()
+	a.once.Do(func() { close(a.done) })
+}
+
+func (a *protocolAdapter) finishCodeBuddyStream() {
+	if stream := a.codeBuddyStream; stream != nil {
+		stream.stop()
+		if ev := stream.timeoutEvent(); ev.Name != "" {
+			a.emit(ev)
+		}
+	}
 }
 
 func ObservabilitySpec() domain.ObservabilitySpec {
@@ -136,13 +172,28 @@ func (a *protocolAdapter) Result() string {
 // VisibleOutput is the text that belongs in a node inspector. A terminal
 // result frame wins. Otherwise the latest assistant message is used, so a
 // missing result frame does not surface the raw stream-json envelope.
+// When a succeeded node emitted a cited report right before submit_gate_result
+// and followed up with a brief uncited confirmation, keep the pre-gate report
+// so knowledge citations are not lost.
 func (a *protocolAdapter) VisibleOutput() string {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	out := a.lastOutput
 	if strings.TrimSpace(a.result) != "" {
-		return a.result
+		out = a.result
 	}
-	return a.lastOutput
+	if !a.failed && a.preGateCitedOutput != "" && !domain.HasKnowledgeCitationMarkers(out) && isBriefPostGateClosing(out, a.preGateCitedOutput) {
+		return a.preGateCitedOutput
+	}
+	return out
+}
+
+func isBriefPostGateClosing(out, preGate string) bool {
+	trimmed := strings.TrimSpace(out)
+	if trimmed == "" || trimmed == strings.TrimSpace(preGate) {
+		return true
+	}
+	return len([]rune(trimmed)) <= 120 && !strings.Contains(trimmed, "\n#")
 }
 
 func (a *protocolAdapter) noteOutput(text string) {
@@ -152,7 +203,25 @@ func (a *protocolAdapter) noteOutput(text string) {
 	}
 	a.mu.Lock()
 	a.lastOutput = text
+	if a.preGateCitedOutput != "" && text != a.preGateCitedOutput && !domain.HasKnowledgeCitationMarkers(text) && !isBriefPostGateClosing(text, a.preGateCitedOutput) {
+		a.preGateCitedOutput = ""
+	}
 	a.mu.Unlock()
+}
+
+func (a *protocolAdapter) snapshotPreGateCitedOutput() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if domain.HasKnowledgeCitationMarkers(a.lastOutput) {
+		a.preGateCitedOutput = a.lastOutput
+	} else {
+		a.preGateCitedOutput = ""
+	}
+}
+
+func isSubmitGateToolName(name string) bool {
+	name = strings.TrimSpace(name)
+	return name == "submit_gate_result" || strings.HasSuffix(name, "__submit_gate_result")
 }
 
 func (a *protocolAdapter) emit(event domain.TelemetryEvent) {
@@ -232,6 +301,9 @@ func (a *protocolAdapter) handleClaudeStream(raw map[string]any) {
 	switch typ {
 	case "system":
 		if stringValue(raw["subtype"]) != "init" {
+			if stream := a.codeBuddyStream; stream != nil {
+				stream.observeTask(raw, a.emit)
+			}
 			return
 		}
 		a.emit(domain.TelemetryEvent{Category: "lifecycle", Name: "agent.initialized", Phase: "start", Message: "agent session initialized", Model: stringValue(raw["model"]), SessionID: sessionID, Attributes: map[string]any{"permissionMode": raw["permissionMode"]}})
@@ -241,6 +313,7 @@ func (a *protocolAdapter) handleClaudeStream(raw map[string]any) {
 	case "assistant":
 		message, _ := raw["message"].(map[string]any)
 		var parts []string
+		calledSubmitGate := false
 		for _, block := range sliceValue(message["content"]) {
 			content, _ := block.(map[string]any)
 			switch stringValue(content["type"]) {
@@ -250,11 +323,18 @@ func (a *protocolAdapter) handleClaudeStream(raw map[string]any) {
 					a.emit(domain.TelemetryEvent{Category: "output", Name: "agent.output", Phase: "progress", Message: text, Model: stringValue(message["model"]), SessionID: sessionID})
 				}
 			case "tool_use":
-				a.emitToolStart(stringValue(content["id"]), stringValue(content["name"]), sessionID, "", content["input"])
+				name := stringValue(content["name"])
+				if isSubmitGateToolName(name) {
+					calledSubmitGate = true
+				}
+				a.emitToolStart(stringValue(content["id"]), name, sessionID, "", content["input"])
 			}
 		}
 		if len(parts) > 0 {
 			a.noteOutput(strings.Join(parts, "\n"))
+		}
+		if calledSubmitGate {
+			a.snapshotPreGateCitedOutput()
 		}
 	case "user":
 		message, _ := raw["message"].(map[string]any)
@@ -270,22 +350,37 @@ func (a *protocolAdapter) handleClaudeStream(raw map[string]any) {
 			msg := summarizeToolResult(name, failed, content["content"])
 			a.emit(domain.TelemetryEvent{Category: "tool", Name: "tool.call", Phase: "finish", Level: map[bool]string{true: "error", false: "info"}[failed], Message: msg, SessionID: sessionID, ToolCallID: id, Tool: &domain.ToolObservation{Name: name, Operation: "tool.result", CallID: id, Success: &success}})
 		}
+	case "error":
+		stream := a.codeBuddyStream
+		if stream == nil || stringValue(raw["parent_tool_use_id"]) != "" {
+			return
+		}
+		if !a.Finished() {
+			message := firstNonEmpty(stringValue(raw["error"]), stringValue(raw["message"]), "CodeBuddy reported a stream error")
+			a.recordResult(message, true)
+			a.emit(domain.TelemetryEvent{Category: "lifecycle", Name: "agent.completed", Phase: "finish", Level: "error", Message: message, SessionID: sessionID})
+		}
+		stream.finishParent(true)
 	case "result":
+		// The root result already includes subagent consumption. A child's
+		// message-scoped result must not reset the session billing cursor.
+		if stringValue(raw["parent_tool_use_id"]) != "" {
+			return
+		}
 		result := stringValue(raw["result"])
 		failed, _ := raw["is_error"].(bool)
-		a.mu.Lock()
-		a.result = result
-		a.failed = failed
-		a.mu.Unlock()
-		a.once.Do(func() { close(a.done) })
+		a.recordResult(result, failed)
 		usage := tokenUsage(raw["usage"])
 		usage.CostUSD = float64Value(raw["total_cost_usd"])
 		// 适配器显式上报成本时标记 reported，用于区分"真实零成本"与"成本未识别"。
-		if _, ok := raw["total_cost_usd"]; ok {
+		if _, ok := raw["total_cost_usd"]; ok && (a.ex.Kind != "codebuddy" || usage.CostUSD != 0) {
 			usage.CostStatus = "reported"
 		}
-		a.emit(domain.TelemetryEvent{Category: "usage", Name: "usage.final", Phase: "finish", Message: "final model usage", SessionID: sessionID, Usage: &usage, Attributes: map[string]any{"durationMs": raw["duration_ms"], "turns": raw["num_turns"], "isError": raw["is_error"]}})
+		a.emit(domain.TelemetryEvent{Category: "usage", Name: "usage.final", Phase: "finish", Message: "final model usage", SessionID: sessionID, Usage: &usage, Attributes: map[string]any{"durationMs": raw["duration_ms"], "turns": raw["num_turns"], "isError": raw["is_error"], "usageReported": raw["usage"] != nil}})
 		a.emit(domain.TelemetryEvent{Category: "lifecycle", Name: "agent.completed", Phase: "finish", Message: result, SessionID: sessionID})
+		if stream := a.codeBuddyStream; stream != nil {
+			stream.finishParent(failed)
+		}
 	default:
 		// File snapshots and provider-specific housekeeping events are intentionally hidden from the portable view.
 	}
@@ -297,6 +392,7 @@ func (a *protocolAdapter) handleAnthropicEvent(event map[string]any, sessionID, 
 	case "message_start":
 		message, _ := event["message"].(map[string]any)
 		a.emit(domain.TelemetryEvent{Category: "model", Name: "model.request", Phase: "start", Message: "model generation started", Model: stringValue(message["model"]), SessionID: sessionID, ParentID: parentID})
+		a.emitAnthropicUsage(message["usage"], sessionID, parentID)
 	case "content_block_start":
 		block, _ := event["content_block"].(map[string]any)
 		if stringValue(block["type"]) == "tool_use" {
@@ -329,9 +425,13 @@ func (a *protocolAdapter) handleAnthropicEvent(event map[string]any, sessionID, 
 		}
 		a.emit(domain.TelemetryEvent{Category: "model", Name: "model.request", Phase: "finish", Message: "model generation finished", SessionID: sessionID, ParentID: parentID})
 	case "message_delta":
-		if usage := tokenUsage(event["usage"]); usage.InputTokens+usage.OutputTokens+usage.CacheReadTokens+usage.CacheWriteTokens > 0 {
-			a.emit(domain.TelemetryEvent{Category: "usage", Name: "usage.update", Phase: "progress", SessionID: sessionID, ParentID: parentID, Usage: &usage})
-		}
+		a.emitAnthropicUsage(event["usage"], sessionID, parentID)
+	}
+}
+
+func (a *protocolAdapter) emitAnthropicUsage(value any, sessionID, parentID string) {
+	if usage := tokenUsage(value); usage.InputTokens+usage.OutputTokens+usage.CacheReadTokens+usage.CacheWriteTokens+usage.ReasoningTokens > 0 {
+		a.emit(domain.TelemetryEvent{Category: "usage", Name: "usage.update", Phase: "progress", SessionID: sessionID, ParentID: parentID, Usage: &usage})
 	}
 }
 
@@ -371,6 +471,9 @@ func (a *protocolAdapter) handleCodexJSON(raw map[string]any) {
 			name := stringValue(item["command"])
 			if name == "" {
 				name = stringValue(item["name"])
+			}
+			if isSubmitGateToolName(name) {
+				a.snapshotPreGateCitedOutput()
 			}
 			msg := summarizeToolCall(name, item)
 			success := int64Value(item["exit_code"]) == 0 && stringValue(item["status"]) != "failed"

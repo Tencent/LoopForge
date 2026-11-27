@@ -75,6 +75,21 @@ test('markdown renderer covers tables, alerts, quotes, lists, tasks, rules, link
   assert.equal(app.evaluate(`isMarkdownArtifact({},'# inferred')`), true);
 });
 
+test('inline code and snake_case identifiers survive markdown emphasis rules', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  const html = app.evaluate(`renderMarkdown('调用 \`TodoStore.complete(todo_id)\` 后 _强调_ 生效，**加粗** 和 __下划线加粗__ 也生效。')`);
+  const host = app.document.createElement('div');
+  host.innerHTML = html;
+  assert.equal(host.querySelector('code').textContent, 'TodoStore.complete(todo_id)');
+  assert.equal(host.querySelectorAll('em').length, 1);
+  assert.equal(host.querySelector('em').textContent, '强调');
+  assert.equal(host.querySelectorAll('strong').length, 2);
+  // A bare identifier must not turn the text between two underscores italic.
+  assert.equal(app.evaluate(`parseInlineMarkdown('todo_id 和 test_complete_unknown_id')`), 'todo_id 和 test_complete_unknown_id');
+  assert.equal(app.evaluate(`parseInlineMarkdown('`+"`a_b`"+` 与 \`c_d\`')`), '<code>a_b</code> 与 <code>c_d</code>');
+});
+
 test('global confirm, prompt, alert, toast, and code editor controls resolve through real handlers', async (t) => {
   const app = await loadApp();
   t.after(app.close);
@@ -126,7 +141,14 @@ test('theme, settings sidebar, merged asset tabs, and route helpers persist UI s
   assert.equal(app.document.documentElement.dataset.theme, 'dark');
   assert.equal(app.document.querySelector('#configurationNav .nav[data-view="mcp"]')?.classList.contains('active'), true);
   assert.equal(app.document.querySelector('#assetsView [data-asset-type-tab="rules"]')?.getAttribute('aria-selected'), 'true');
-  assert.equal(app.document.querySelector('#assetsView [data-asset-type-group="environment"]')?.hidden, true);
+  assert.equal(app.document.querySelector('#assetsView [data-asset-type-group="capability"]')?.hidden, false);
+  for (const legacy of ['dockerfiles', 'environments']) {
+    app.evaluate(`switchView(${JSON.stringify(legacy)})`);
+    assert.equal(app.evaluate('activeViewName()'), 'sandboxes', `${legacy} opens 沙箱管理`);
+  }
+  assert.equal(app.document.querySelector('#assetsView [data-asset-type-group="capability"]')?.hidden, true, '沙箱管理 has no type tabs');
+  assert.equal(app.document.querySelector('#configurationNav .nav[data-view="sandboxes"]')?.classList.contains('active'), true);
+  assert.equal(app.document.querySelector('#assetPageTitle')?.textContent, '沙箱管理');
   assert.match(app.evaluate(`viewTitles().settings`), /个人配置/);
   assert.equal(app.evaluate(`viewTitles().bots`), '通道管理');
 });

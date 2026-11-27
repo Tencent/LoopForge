@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"encoding/json"
 	"path/filepath"
 	"strings"
 
@@ -55,6 +56,13 @@ func (codeBuddyProvider) Prepare(in providerInvocation) (CommandSpec, error) {
 	argv := buildProviderArgs(in)
 	argv = dropArgWithValue(argv, "--resume")
 	argv = isolateCodeBuddyFlagsWithSource(argv, "none")
+	if in.SOP {
+		if !hasArg(argv, "-p") && !hasArg(argv, "--print") {
+			argv = append(argv, "-p")
+		}
+		argv = append(dropArgWithValue(argv, "--input-format", "--output-format"),
+			"--input-format", "stream-json", "--output-format", "stream-json")
+	}
 	argv = appendEffortArgs(argv, in.Executor.Effort)
 	if in.Compiled.HasMCP {
 		// --tools is a built-in allowlist. CodeBuddy also applies it to MCP
@@ -71,17 +79,32 @@ func (codeBuddyProvider) Prepare(in providerInvocation) (CommandSpec, error) {
 	if sessionID := strings.TrimSpace(in.Options.ResumeSessionID); sessionID != "" {
 		argv = append(argv, "--resume", sessionID)
 	}
-	return CommandSpec{
-		// CodeBuddy declares --plugin-dir as variadic (<dirs...>). Terminate
-		// option parsing explicitly so the positional prompt is not consumed as
-		// another plugin directory.
-		Argv:               append(argv, "--", positionalPrompt(in)),
+	command := CommandSpec{
+		// End the variadic --plugin-dir list before any positional prompt.
+		Argv:               append(argv, "--"),
 		Provider:           "codebuddy",
 		CredentialBindings: []CredentialBinding{BindCodeBuddy, BindGit, BindMCP},
 		PrivateHome:        true,
 		HookOutput:         in.Compiled.HookOutput,
 		Telemetry:          &options,
-	}, nil
+	}
+	prompt := positionalPrompt(in)
+	if !in.SOP {
+		command.Argv = append(command.Argv, prompt)
+		return command, nil
+	}
+	input, err := json.Marshal(map[string]any{
+		"type": "user",
+		"message": map[string]string{
+			"role":    "user",
+			"content": prompt,
+		},
+	})
+	if err != nil {
+		return CommandSpec{}, err
+	}
+	command.codeBuddySOPInput = append(input, '\n')
+	return command, nil
 }
 
 func (codeBuddyProvider) Protocol(ex domain.ExecutorDefinition, sink EventSink) *protocolAdapter {

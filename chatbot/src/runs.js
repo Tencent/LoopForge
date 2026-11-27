@@ -49,7 +49,7 @@ export function runProblems(run) {
       nodeId: id,
       nodeName: def.name || id,
       kind: waiting ? "waiting_approval" : "failed",
-      // approval: a gate set in the SOP; agent: the agent asked a person.
+      // approval: a gate set in the LOOP; agent: the agent asked a person.
       ...(waiting
         ? { gate: def.type === "approval" ? "approval" : "agent" }
         : {}),
@@ -83,7 +83,7 @@ export function approvalWaitReason(run, nodeId) {
     upstream = index > 0 ? [name(nodes[index - 1].id)] : [];
     downstream = index + 1 < nodes.length ? [name(nodes[index + 1].id)] : [];
   }
-  const sop = (wf.name || "").trim() ? `SOP「${wf.name.trim()}」` : "该 SOP";
+  const sop = (wf.name || "").trim() ? `LOOP「${wf.name.trim()}」` : "该 LOOP";
   let text = `${sop}在这一步设置了人工门禁`;
   text += upstream.length
     ? `：${upstream.join("、")}已完成，需要有权限的成员检查结果后确认`
@@ -130,8 +130,8 @@ export function conversationRunIDs(session) {
 }
 
 // A retired 自由协作 run or a chat workspace is where the assistant edits
-// files, not a SOP: it has no nodes and never finishes, so the panel's
-// 「SOP 运行」 list showed it as "等待审批 · 0/0 节点" — even for a conversation
+// files, not a LOOP: it has no nodes and never finishes, so the panel's
+// 「LOOP 运行」 list showed it as "等待审批 · 0/0 节点" — even for a conversation
 // that is itself such a run. None of them are listed.
 export function isConversationWorkspaceRun(run) {
   return Boolean(

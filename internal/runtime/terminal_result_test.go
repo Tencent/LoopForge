@@ -85,3 +85,89 @@ func TestVisibleOutputPrefersTerminalResultOverAssistantEnvelope(t *testing.T) {
 		t.Fatalf("terminal result should replace assistant text, got %q", adapter.VisibleOutput())
 	}
 }
+
+func TestVisibleOutputPreservesPreGateCitedReportOverShortClosing(t *testing.T) {
+	adapter := newProtocolAdapter(domain.ExecutorDefinition{Kind: "codebuddy", Protocol: "stream-json"}, nil)
+	report := "# 知识库验收报告\n\n核心结论来自玄武-2026 [[knowledge:ev_abc123_1]]。"
+	adapter.handleClaudeStream(map[string]any{"type": "assistant", "message": map[string]any{
+		"role":    "assistant",
+		"content": []any{map[string]any{"type": "text", "text": report}},
+	}})
+	adapter.handleClaudeStream(map[string]any{"type": "assistant", "message": map[string]any{
+		"role": "assistant",
+		"content": []any{
+			map[string]any{"type": "tool_use", "id": "gate-1", "name": "mcp__agentflow-gate__submit_gate_result", "input": map[string]any{"decision": "pass", "reason": "ok"}},
+		},
+	}})
+	adapter.handleClaudeStream(map[string]any{"type": "assistant", "message": map[string]any{
+		"role":    "assistant",
+		"content": []any{map[string]any{"type": "text", "text": "节点终态已提交为 pass。"}},
+	}})
+	adapter.handleClaudeStream(map[string]any{"type": "result", "result": "节点终态已提交为 pass。", "is_error": false})
+	if adapter.VisibleOutput() != report {
+		t.Fatalf("expected pre-gate cited report, got %q", adapter.VisibleOutput())
+	}
+}
+
+func TestVisibleOutputDoesNotLeakIntermediateChatterOrMaskFailure(t *testing.T) {
+	// 1. Intermediate chatter with a citation followed by an uncited pre-gate conclusion must not revert to chatter.
+	adapter := newProtocolAdapter(domain.ExecutorDefinition{Kind: "codebuddy", Protocol: "stream-json"}, nil)
+	adapter.handleClaudeStream(map[string]any{"type": "assistant", "message": map[string]any{
+		"role":    "assistant",
+		"content": []any{map[string]any{"type": "text", "text": "我先查到了 [[knowledge:ev_old_1]]，下面改代码。"}},
+	}})
+	adapter.handleClaudeStream(map[string]any{"type": "assistant", "message": map[string]any{
+		"role": "assistant",
+		"content": []any{
+			map[string]any{"type": "text", "text": "代码已修改并通过单测。"},
+			map[string]any{"type": "tool_use", "id": "gate-1", "name": "submit_gate_result", "input": map[string]any{"decision": "pass", "reason": "ok"}},
+		},
+	}})
+	adapter.handleClaudeStream(map[string]any{"type": "result", "result": "全部完成。", "is_error": false})
+	if adapter.VisibleOutput() != "全部完成。" {
+		t.Fatalf("unexpected fallback to earlier chatter: %q", adapter.VisibleOutput())
+	}
+
+	// 2. Failed result must never be masked by pre-gate cited output.
+	failedAdapter := newProtocolAdapter(domain.ExecutorDefinition{Kind: "codebuddy", Protocol: "stream-json"}, nil)
+	failedAdapter.handleClaudeStream(map[string]any{"type": "assistant", "message": map[string]any{
+		"role": "assistant",
+		"content": []any{
+			map[string]any{"type": "text", "text": "结论 [[knowledge:ev_fail_1]]"},
+			map[string]any{"type": "tool_use", "id": "gate-2", "name": "submit_gate_result", "input": map[string]any{}},
+		},
+	}})
+	failedAdapter.handleClaudeStream(map[string]any{"type": "result", "result": "Max turns (120) exceeded", "is_error": true})
+	if failedAdapter.VisibleOutput() != "Max turns (120) exceeded" {
+		t.Fatalf("failed result was masked: %q", failedAdapter.VisibleOutput())
+	}
+
+	// 3. Inline code marker does not count as a real citation.
+	codeAdapter := newProtocolAdapter(domain.ExecutorDefinition{Kind: "codebuddy", Protocol: "stream-json"}, nil)
+	codeAdapter.handleClaudeStream(map[string]any{"type": "assistant", "message": map[string]any{
+		"role": "assistant",
+		"content": []any{
+			map[string]any{"type": "text", "text": "示例：`[[knowledge:ev_code_1]]`"},
+			map[string]any{"type": "tool_use", "id": "gate-3", "name": "submit_gate_result", "input": map[string]any{}},
+		},
+	}})
+	codeAdapter.handleClaudeStream(map[string]any{"type": "result", "result": "最终回复", "is_error": false})
+	if codeAdapter.VisibleOutput() != "最终回复" {
+		t.Fatalf("code-only marker should not override final result: %q", codeAdapter.VisibleOutput())
+	}
+
+	// 4. Substantial new post-gate conclusion must not be masked by pre-gate cited output.
+	longPostGate := strings.Repeat("这是门禁提交后补充的完整排障分析与修复报告，不包含知识库引用但属于实质性终态输出。", 4)
+	postGateAdapter := newProtocolAdapter(domain.ExecutorDefinition{Kind: "codebuddy", Protocol: "stream-json"}, nil)
+	postGateAdapter.handleClaudeStream(map[string]any{"type": "assistant", "message": map[string]any{
+		"role": "assistant",
+		"content": []any{
+			map[string]any{"type": "text", "text": "前序引用 [[knowledge:ev_pre_1]]"},
+			map[string]any{"type": "tool_use", "id": "gate-4", "name": "submit_gate_result", "input": map[string]any{}},
+		},
+	}})
+	postGateAdapter.handleClaudeStream(map[string]any{"type": "result", "result": longPostGate, "is_error": false})
+	if postGateAdapter.VisibleOutput() != longPostGate {
+		t.Fatalf("substantial post-gate conclusion was masked: %q", postGateAdapter.VisibleOutput())
+	}
+}

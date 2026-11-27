@@ -107,22 +107,26 @@ func TestEnvironmentAssetsAreFilteredByProjectAndSharedScope(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	for _, item := range []domain.DockerfileDefinition{
-		{ID: "alpha-dockerfile", Name: "Alpha", ProjectID: "alpha", Content: "FROM alpine"},
-		{ID: "beta-shared-dockerfile", Name: "Beta shared", ProjectID: "beta", Shared: true, Content: "FROM alpine"},
-		{ID: "beta-private-dockerfile", Name: "Beta private", ProjectID: "beta", Content: "FROM alpine"},
+	recipe := &domain.SandboxDockerfile{Content: "FROM alpine"}
+	for _, item := range []domain.SandboxProfile{
+		{ID: "alpha-box", Name: "Alpha", ProjectID: "alpha", Driver: "docker", Dockerfile: recipe},
+		{ID: "beta-shared-box", Name: "Beta shared", ProjectID: "beta", Shared: true, Driver: "docker", Dockerfile: recipe},
+		{ID: "beta-private-box", Name: "Beta private", ProjectID: "beta", Driver: "docker", Dockerfile: recipe},
 	} {
-		if err := s.PutDockerfile(item); err != nil {
+		if err := s.PutSandbox(item); err != nil {
 			t.Fatal(err)
 		}
 	}
 	h := New(s, engine.New(s, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
-	items := requestEmptyJSON[[]domain.DockerfileDefinition](t, h, http.MethodGet, "/api/dockerfiles?projectId=alpha", http.StatusOK)
+	items := requestEmptyJSON[[]domain.SandboxProfile](t, h, http.MethodGet, "/api/sandboxes?projectId=alpha", http.StatusOK)
 	visible := map[string]bool{}
 	for _, item := range items {
 		visible[item.ID] = true
+		if item.ID == "beta-shared-box" && (item.Dockerfile == nil || item.Dockerfile.Content != "FROM alpine") {
+			t.Fatalf("a shared sandbox carries its Dockerfile: %+v", item)
+		}
 	}
-	if !visible["alpha-dockerfile"] || !visible["beta-shared-dockerfile"] || visible["beta-private-dockerfile"] {
+	if !visible["alpha-box"] || !visible["beta-shared-box"] || visible["beta-private-box"] {
 		t.Fatalf("unexpected project catalog visibility: %#v", visible)
 	}
 }
@@ -159,7 +163,7 @@ func TestWorkflowAgentsAreFilteredAndValidatedByProject(t *testing.T) {
 	}
 
 	invalid := domain.WorkflowDefinition{
-		ID: "alpha-flow", Name: "Alpha flow", ProjectID: "alpha", SandboxProfileID: "local",
+		ID: "alpha-flow", Name: "Alpha flow", ProjectID: "alpha", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{{ID: "work", Name: "Work", Type: "agent", AgentID: "beta-private-role"}},
 	}
 	requestJSON[map[string]string](t, h, http.MethodPut, "/api/workflows", invalid, http.StatusBadRequest)
@@ -169,7 +173,7 @@ func TestWorkflowAgentsAreFilteredAndValidatedByProject(t *testing.T) {
 		t.Fatalf("shared role was not saved: %+v", saved.Nodes)
 	}
 	legacyPayload := map[string]any{
-		"id": "legacy-node-gate", "name": "Legacy node gate", "projectId": "alpha", "sandboxProfileId": "local",
+		"id": "legacy-node-gate", "name": "Legacy node gate", "projectId": "alpha", "sandboxProfileId": "test-native",
 		"nodes": []any{map[string]any{
 			"id": "work", "name": "Work", "type": "agent", "agentId": "alpha-role",
 			"verification": []any{map[string]any{"id": "obsolete", "mode": "command", "commands": []string{"false"}}},
@@ -183,7 +187,10 @@ func TestWorkflowAgentsAreFilteredAndValidatedByProject(t *testing.T) {
 	}
 }
 
-func TestSharingSandboxCascadesDependenciesAndSharedWorkflowRequiresSharedSandbox(t *testing.T) {
+// The sandbox editor sends a description like every other catalog asset; it
+// must survive the save, a reload of the list and a share toggle that PUTs the
+// listed item back.
+func TestSandboxDescriptionRoundTrips(t *testing.T) {
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -192,30 +199,52 @@ func TestSharingSandboxCascadesDependenciesAndSharedWorkflowRequiresSharedSandbo
 	if err := s.PutProject(domain.Project{ID: "alpha", Key: "ALPHA", Name: "Alpha"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.PutDockerfile(domain.DockerfileDefinition{ID: "alpha-dockerfile", Name: "Alpha image", ProjectID: "alpha", Content: "FROM alpine"}); err != nil {
+	h := New(s, engine.New(s, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
+	requestJSON[map[string]bool](t, h, http.MethodPut, "/api/sandboxes", map[string]any{
+		"id": "alpha-native", "name": "Alpha native", "description": "前端构建用，含 Node 22", "projectId": "alpha", "driver": "native",
+	}, http.StatusOK)
+	find := func() domain.SandboxProfile {
+		t.Helper()
+		for _, item := range requestEmptyJSON[[]domain.SandboxProfile](t, h, http.MethodGet, "/api/sandboxes?projectId=alpha", http.StatusOK) {
+			if item.ID == "alpha-native" {
+				return item
+			}
+		}
+		t.Fatal("saved sandbox is missing from the list")
+		return domain.SandboxProfile{}
+	}
+	listed := find()
+	if listed.Description != "前端构建用，含 Node 22" {
+		t.Fatalf("description lost on save: %+v", listed)
+	}
+	listed.Shared = true
+	requestJSON[map[string]bool](t, h, http.MethodPut, "/api/sandboxes", listed, http.StatusOK)
+	if shared := find(); !shared.Shared || shared.Description != "前端构建用，含 Node 22" {
+		t.Fatalf("description lost on share toggle: %+v", shared)
+	}
+	if spec := domain.RunnerSandbox(find()); spec.Profile.Description != "" {
+		t.Fatalf("runner spec carries the description: %+v", spec.Profile)
+	}
+}
+
+func TestSharedWorkflowRequiresSharedSandbox(t *testing.T) {
+	s, err := repo.OpenTest()
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.PutEnvironment(domain.EnvironmentDefinition{ID: "alpha-tools", Name: "Alpha tools", ProjectID: "alpha", InstallScript: "true"}); err != nil {
+	t.Cleanup(func() { s.Close() })
+	if err := s.PutProject(domain.Project{ID: "alpha", Key: "ALPHA", Name: "Alpha"}); err != nil {
 		t.Fatal(err)
 	}
 	h := New(s, engine.New(s, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
 	requestJSON[map[string]bool](t, h, http.MethodPut, "/api/sandboxes", domain.SandboxProfile{
-		ID: "alpha-container", Name: "Alpha container", ProjectID: "alpha", Shared: true, Driver: "docker", DockerfileID: "alpha-dockerfile",
-	}, http.StatusOK)
-	dockerfile, _ := s.Dockerfile("alpha-dockerfile")
-	if !dockerfile.Shared {
-		t.Fatal("sharing a sandbox did not share its Dockerfile")
-	}
-	requestJSON[map[string]bool](t, h, http.MethodPut, "/api/sandboxes", domain.SandboxProfile{
-		ID: "alpha-process", Name: "Alpha process", ProjectID: "alpha", Driver: "bwrap", EnvironmentID: "alpha-tools",
+		ID: "alpha-process", Name: "Alpha process", ProjectID: "alpha", Driver: "bwrap",
 	}, http.StatusOK)
 	requestJSON[domain.WorkflowDefinition](t, h, http.MethodPut, "/api/workflows", domain.WorkflowDefinition{
 		ID: "alpha-flow", Name: "Alpha flow", ProjectID: "alpha", Shared: true, SandboxProfileID: "alpha-process",
 	}, http.StatusBadRequest)
-	profile, _ := s.Sandbox("alpha-process")
-	environment, _ := s.Environment("alpha-tools")
-	if profile.Shared || environment.Shared {
-		t.Fatalf("rejected workflow unexpectedly shared its environment chain: sandbox=%+v environment=%+v", profile, environment)
+	if profile, _ := s.Sandbox("alpha-process"); profile.Shared {
+		t.Fatalf("rejected workflow unexpectedly shared its sandbox: %+v", profile)
 	}
 }
 
@@ -304,7 +333,7 @@ func TestAgentDeleteRequiresUnusedAndUnshared(t *testing.T) {
 	}
 	h := New(s, engine.New(s, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
 	saved := requestJSON[domain.WorkflowDefinition](t, h, http.MethodPut, "/api/workflows", domain.WorkflowDefinition{
-		ID: "alpha-flow", Name: "Alpha flow", ProjectID: "alpha", SandboxProfileID: "local",
+		ID: "alpha-flow", Name: "Alpha flow", ProjectID: "alpha", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{{ID: "work", Name: "Work", Type: "agent", AgentID: "referenced-role"}},
 	}, http.StatusOK)
 	if saved.Nodes[0].AgentID != "referenced-role" {
@@ -362,17 +391,9 @@ func TestCatalogAssetDeleteRequiresUnusedAndUnshared(t *testing.T) {
 	must(s.PutSkill(domain.SkillDefinition{ID: "used-skill", Name: "Used skill", ProjectID: "alpha"}))
 	must(s.PutSkill(domain.SkillDefinition{ID: "shared-skill", Name: "Shared skill", ProjectID: "alpha", Shared: true}))
 	must(s.PutSkillFiles("free-skill", []repo.SkillFileInput{{Path: "SKILL.md", Content: []byte("# free\n")}}))
-	must(s.PutDockerfile(domain.DockerfileDefinition{ID: "free-df", Name: "Free df", ProjectID: "alpha", Content: "FROM scratch"}))
-	must(s.PutDockerfile(domain.DockerfileDefinition{ID: "used-df", Name: "Used df", ProjectID: "alpha", Content: "FROM scratch"}))
-	must(s.PutDockerfile(domain.DockerfileDefinition{ID: "shared-df", Name: "Shared df", ProjectID: "alpha", Shared: true, Content: "FROM scratch"}))
-	must(s.PutEnvironment(domain.EnvironmentDefinition{ID: "free-env", Name: "Free env", ProjectID: "alpha"}))
-	must(s.PutEnvironment(domain.EnvironmentDefinition{ID: "used-env", Name: "Used env", ProjectID: "alpha"}))
-	must(s.PutEnvironment(domain.EnvironmentDefinition{ID: "shared-env", Name: "Shared env", ProjectID: "alpha", Shared: true}))
-	must(s.PutSandbox(domain.SandboxProfile{ID: "free-box", Name: "Free box", ProjectID: "alpha", Driver: "local"}))
-	must(s.PutSandbox(domain.SandboxProfile{ID: "used-box", Name: "Used box", ProjectID: "alpha", Driver: "local"}))
-	must(s.PutSandbox(domain.SandboxProfile{ID: "shared-box", Name: "Shared box", ProjectID: "alpha", Shared: true, Driver: "local"}))
-	must(s.PutSandbox(domain.SandboxProfile{ID: "df-box", Name: "DF box", ProjectID: "alpha", Driver: "docker", DockerfileID: "used-df"}))
-	must(s.PutSandbox(domain.SandboxProfile{ID: "env-box", Name: "Env box", ProjectID: "alpha", Driver: "seatbelt", EnvironmentID: "used-env"}))
+	must(s.PutSandbox(domain.SandboxProfile{ID: "free-box", Name: "Free box", ProjectID: "alpha", Driver: "docker", Dockerfile: &domain.SandboxDockerfile{Content: "FROM scratch"}}))
+	must(s.PutSandbox(domain.SandboxProfile{ID: "used-box", Name: "Used box", ProjectID: "alpha", Driver: "native"}))
+	must(s.PutSandbox(domain.SandboxProfile{ID: "shared-box", Name: "Shared box", ProjectID: "alpha", Shared: true, Driver: "native"}))
 	must(s.PutAgent(domain.AgentDefinition{
 		ID: "asset-user", Name: "Asset user", ProjectID: "alpha", Version: 1,
 		Rules: []string{"used-rule"}, Skills: []string{"used-skill"},
@@ -426,19 +447,9 @@ func TestCatalogAssetDeleteRequiresUnusedAndUnshared(t *testing.T) {
 		t.Fatal("skill_files rows were not cascaded")
 	}
 
-	assertConflict("/api/dockerfiles?id=used-df")
-	assertConflict("/api/dockerfiles?id=shared-df")
-	assertGone("/api/dockerfiles?id=free-df", func() bool { _, ok := s.Dockerfile("free-df"); return ok }, "free dockerfile")
-
-	assertConflict("/api/environments?id=used-env")
-	assertConflict("/api/environments?id=shared-env")
-	assertGone("/api/environments?id=free-env", func() bool { _, ok := s.Environment("free-env"); return ok }, "free environment")
-
 	assertConflict("/api/sandboxes?id=used-box")
 	assertConflict("/api/sandboxes?id=shared-box")
-	assertConflict("/api/sandboxes?id=local")
 	assertConflict("/api/sandboxes?id=" + repo.GenericDockerSandboxID)
-	assertConflict("/api/dockerfiles?id=" + repo.GenericBackendDockerfileID)
 	assertGone("/api/sandboxes?id=free-box", func() bool { _, ok := s.Sandbox("free-box"); return ok }, "free sandbox")
 }
 
@@ -503,7 +514,7 @@ func TestCloneAgentMCPServersCopiesByTargetScope(t *testing.T) {
 	t.Cleanup(func() { s.Close() })
 	for _, server := range []domain.MCPServerDefinition{
 		{ID: "project-source", Name: "Project", Scope: "project", ProjectID: "source", Transport: "http", URL: "https://example.com/project"},
-		{ID: "personal-source", Name: "Personal", Scope: "personal", OwnerUserID: 9, Transport: "http", URL: "https://example.com/personal"},
+		{ID: "personal-source", Name: "Personal", Scope: "personal", OwnerUserID: 2, Transport: "http", URL: "https://example.com/personal"},
 	} {
 		if err := s.PutMCPServer(server); err != nil {
 			t.Fatal(err)
@@ -511,7 +522,9 @@ func TestCloneAgentMCPServersCopiesByTargetScope(t *testing.T) {
 	}
 	server := &Server{deps: &deps{repo: s}}
 	server.catalog = &catalogHandlers{deps: server.deps}
-	ids, err := server.catalog.cloneAgentMCPServers([]string{"project-source", "personal-source"}, "target", 2)
+	ids, err := server.catalog.cloneAgentMCPServers([]string{"project-source", "personal-source"}, "target", 2, func(projectID string) bool {
+		return projectID == "source"
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -523,8 +536,8 @@ func TestCloneAgentMCPServersCopiesByTargetScope(t *testing.T) {
 		t.Fatalf("project MCP copy = %+v", project)
 	}
 	personal, ok := s.MCPServer(ids[1])
-	if !ok || personal.Scope != "personal" || personal.OwnerUserID != 2 || personal.ProjectID != "" {
-		t.Fatalf("personal MCP copy = %+v", personal)
+	if !ok || personal.ID != "personal-source" || personal.Scope != "personal" || personal.OwnerUserID != 2 || personal.ProjectID != "" {
+		t.Fatalf("personal MCP reference = %+v", personal)
 	}
 }
 
@@ -653,13 +666,13 @@ func TestNewProjectDefaultsToGenericBackendDeliverySOP(t *testing.T) {
 	h := New(s, engine.New(s, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
 	created := requestJSON[domain.Project](t, h, http.MethodPost, "/api/projects", domain.Project{ID: "fresh", Key: "FRESH", Name: "Fresh"}, http.StatusOK)
 	if created.WorkflowID != repo.GenericBackendDeliveryWorkflowID {
-		t.Fatalf("new project should default to the LoopForge SOP, got %q", created.WorkflowID)
+		t.Fatalf("new project should default to the LoopForge LOOP, got %q", created.WorkflowID)
 	}
 	assertProjectHasDefaultTrackerMCPs(t, s, "fresh")
-	// 显式指定或修改 SOP 不被覆盖。
+	// 显式指定或修改 LOOP 不被覆盖。
 	updated := requestJSON[domain.Project](t, h, http.MethodPut, "/api/projects", domain.Project{ID: "fresh", Name: "Fresh 2", WorkflowID: "custom-sop"}, http.StatusOK)
 	if updated.WorkflowID != "custom-sop" {
-		t.Fatalf("explicit SOP must be kept, got %q", updated.WorkflowID)
+		t.Fatalf("explicit LOOP must be kept, got %q", updated.WorkflowID)
 	}
 }
 
@@ -769,13 +782,13 @@ func TestGlobalRuleWorkflowBinding(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := s.PutWorkflow(domain.WorkflowDefinition{
-		ID: "alpha-sop", Name: "Alpha SOP", ProjectID: "alpha", SandboxProfileID: "local",
+		ID: "alpha-sop", Name: "Alpha LOOP", ProjectID: "alpha", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{{ID: "dev", Name: "实现", Type: "agent", AgentID: "developer"}},
 	}); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.PutWorkflow(domain.WorkflowDefinition{
-		ID: "beta-private", Name: "Beta private", ProjectID: "beta", SandboxProfileID: "local",
+		ID: "beta-private", Name: "Beta private", ProjectID: "beta", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{{ID: "dev", Name: "实现", Type: "agent", AgentID: "developer"}},
 	}); err != nil {
 		t.Fatal(err)
@@ -794,14 +807,14 @@ func TestGlobalRuleWorkflowBinding(t *testing.T) {
 		Global: true, WorkflowIDs: []string{"missing-sop"},
 	}, http.StatusBadRequest)
 	if missing["error"] == "" {
-		t.Fatal("expected missing SOP error")
+		t.Fatal("expected missing LOOP error")
 	}
 	foreign := requestJSON[map[string]string](t, h, http.MethodPut, "/api/rules", domain.RuleDefinition{
 		ID: "alpha-global", Name: "全局约束", ProjectID: "alpha", Content: "所有节点都要遵守",
 		Global: true, WorkflowIDs: []string{"beta-private"},
 	}, http.StatusBadRequest)
 	if foreign["error"] == "" {
-		t.Fatal("expected foreign SOP error")
+		t.Fatal("expected foreign LOOP error")
 	}
 	requestJSON[map[string]bool](t, h, http.MethodPut, "/api/rules", domain.RuleDefinition{
 		ID: "alpha-global", Name: "全局约束", ProjectID: "alpha", Content: "所有节点都要遵守",
@@ -809,7 +822,7 @@ func TestGlobalRuleWorkflowBinding(t *testing.T) {
 	}, http.StatusOK)
 	cleared, _ := s.Rule("alpha-global")
 	if cleared.Global || len(cleared.WorkflowIDs) != 0 {
-		t.Fatalf("turning the switch off must drop SOP bindings: %#v", cleared)
+		t.Fatalf("turning the switch off must drop LOOP bindings: %#v", cleared)
 	}
 }
 
@@ -822,6 +835,7 @@ func TestExecutorModelsCatalogUsesOnlyTheEditorsSavedModels(t *testing.T) {
 		ClaudeCodeModels: []domain.CLIModel{{ID: "custom-sonnet", Name: "Personal Sonnet"}},
 		AgentCLICredentials: map[string]domain.AgentCLICredential{
 			"opencode": {Models: []domain.CLIModel{{ID: "alibaba/qwen3.7-plus", Name: "Qwen3.7 Plus"}}},
+			"dsh":      {APIKey: "fixture-dsh-secret"},
 		},
 	}
 	if err := assistant.repo.PutUser(user); err != nil {
@@ -850,10 +864,173 @@ func TestExecutorModelsCatalogUsesOnlyTheEditorsSavedModels(t *testing.T) {
 	if !catalogs["codex"].CustomModel || len(catalogs["codex"].Efforts) == 0 {
 		t.Fatalf("built-in Codex options disappeared: %+v", catalogs["codex"])
 	}
+	for id, want := range map[string]bool{"codex": true, "dsh": true, "claude": false, "opencode": false, "codebuddy": false} {
+		if got := catalogs[id].Configured; got != want {
+			t.Errorf("%s configured = %t, want %t", id, got, want)
+		}
+	}
 	other, _ := assistant.repo.UserByLoginName("workbench-owner")
 	c, rec = workbenchContext(other, "GET", "/api/executor-models", bytes.NewBuffer(nil))
 	handler.executorModels(c)
 	if rec.Code != http.StatusOK || strings.Contains(rec.Body.String(), "gateway/second") || !strings.Contains(rec.Body.String(), "gpt-6.1-sol") {
 		t.Fatalf("other user did not receive built-in models: %d %s", rec.Code, rec.Body)
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &catalogs); err != nil || catalogs["codex"].Configured || catalogs["dsh"].Configured {
+		t.Fatal("other user received executor availability from the editor's account")
+	}
+}
+
+// Role and SOP pickers offer the executors a SOP run can use: a personal key,
+// the platform's shared CodeBuddy Key, or account login on the default runner.
+func TestExecutorModelsConfiguredMatchesRunTimeCredentials(t *testing.T) {
+	assistant, _ := workbenchFixture(t)
+	stubCLIModelDiscovery(t)
+	st := assistant.repo
+	for _, user := range []domain.User{
+		{LoginName: "picker-personal", CodexAPIKey: "fixture-codex"},
+		{LoginName: "picker-shared"},
+		{LoginName: "picker-login"},
+	} {
+		if err := st.PutUser(user); err != nil {
+			t.Fatal(err)
+		}
+	}
+	personal, _ := st.UserByLoginName("picker-personal")
+	shared, _ := st.UserByLoginName("picker-shared")
+	login, _ := st.UserByLoginName("picker-login")
+	machine := domain.Runner{ID: "picker-login-machine", OwnerUserID: login.ID, Status: domain.RunnerStatusOnline,
+		RunnerVersion: domain.RunnerVersionCLISettings, Runtimes: []domain.RunnerRuntime{
+			{Provider: assistantEngineCodex, Status: domain.RuntimeStatusOnline, AuthMode: domain.RuntimeAuthLocal},
+			{Provider: assistantEngineClaude, Status: domain.RuntimeStatusOnline, AuthMode: domain.RuntimeAuthPersonal},
+		},
+	}
+	if err := st.PutRunner(machine); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetDefaultRunner(login.ID, machine.ID, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	handler := &catalogHandlers{deps: assistant.deps}
+	executorModels := func(user domain.User) map[string]map[string]any {
+		t.Helper()
+		c, rec := workbenchContext(user, http.MethodGet, "/api/executor-models", &bytes.Buffer{})
+		handler.executorModels(c)
+		var catalogs map[string]map[string]any
+		if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &catalogs) != nil {
+			t.Fatalf("executor models: %d %s", rec.Code, rec.Body)
+		}
+		return catalogs
+	}
+	assistantEngines := func(user domain.User, query string) map[string]assistantEngineOption {
+		t.Helper()
+		c, rec := workbenchContext(user, http.MethodGet, "/api/assistant/models"+query, &bytes.Buffer{})
+		assistant.models(c)
+		var catalog assistantModelCatalog
+		if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &catalog) != nil {
+			t.Fatalf("assistant models: %d %s", rec.Code, rec.Body)
+		}
+		out := map[string]assistantEngineOption{}
+		for _, option := range catalog.Engines {
+			out[option.ID] = option
+		}
+		return out
+	}
+	type availability struct{ configured, personal bool }
+	check := func(name string, user domain.User, want map[string]availability) {
+		t.Helper()
+		catalogs := executorModels(user)
+		for id, entry := range catalogs {
+			expected := want[id]
+			if entry["configured"] != expected.configured || entry["personal"] != expected.personal {
+				t.Errorf("%s: %s configured=%v personal=%v, want %+v", name, id, entry["configured"], entry["personal"], expected)
+			}
+		}
+	}
+
+	check("no credentials", shared, nil)
+	check("personal key", personal, map[string]availability{"codex": {true, true}})
+	if err := st.SetPlatformCodeBuddyKey(repo.PlatformCodeBuddyKeyUpdate{APIKey: "shared-fixture", Models: []string{"glm-5.1"}}, 0); err != nil {
+		t.Fatal(err)
+	}
+	check("shared CodeBuddy key", shared, map[string]availability{"codebuddy": {true, false}})
+	if engine := assistantEngines(shared, "")[assistantEngineCodeBuddy]; !engine.Configured || engine.Personal {
+		t.Fatalf("assistant models disagree for the shared key: %+v", engine)
+	}
+	check("runner login", login, map[string]availability{"codebuddy": {true, false}, "codex": {true, false}})
+	engines := assistantEngines(login, "?schedule=1")
+	if !engines[assistantEngineCodex].Configured || engines[assistantEngineClaude].Configured {
+		t.Fatalf("assistant models disagree for runner login: %+v", engines)
+	}
+	check("personal key with a shared key", personal, map[string]availability{"codebuddy": {true, false}, "codex": {true, true}})
+
+	// A project SOP runs on the user's project default machine, even when the
+	// user has no personal default.
+	if err := st.PutUser(domain.User{LoginName: "picker-project"}); err != nil {
+		t.Fatal(err)
+	}
+	member, _ := st.UserByLoginName("picker-project")
+	if err := st.PutProject(domain.Project{ID: "picker-project", Name: "Picker project", OwnerID: member.ID}); err != nil {
+		t.Fatal(err)
+	}
+	projectMachine := machine
+	projectMachine.ID, projectMachine.OwnerUserID = "picker-project-machine", member.ID
+	if err := st.PutRunner(projectMachine); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetRunnerSharedProjects(projectMachine.ID, member.ID, []string{"picker-project"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetProjectDefaultRunner(member.ID, "picker-project", projectMachine.ID); err != nil {
+		t.Fatal(err)
+	}
+	for query, want := range map[string]bool{"": false, "?projectId=picker-project": true, "?projectId=other-project": false} {
+		c, rec := workbenchContext(member, http.MethodGet, "/api/executor-models"+query, &bytes.Buffer{})
+		handler.executorModels(c)
+		var catalogs map[string]map[string]any
+		if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &catalogs) != nil {
+			t.Fatalf("executor models%s: %d %s", query, rec.Code, rec.Body)
+		}
+		if catalogs["codex"]["configured"] != want || catalogs["claude"]["configured"] != false {
+			t.Errorf("project default%s: codex=%v claude=%v, want codex=%t", query, catalogs["codex"]["configured"], catalogs["claude"]["configured"], want)
+		}
+	}
+}
+
+// Without a default machine a project SOP runs on a cloud pool runner with
+// that runner's account login, so the picker offers those CLIs too.
+func TestExecutorModelsConfiguredFollowsTheCloudPool(t *testing.T) {
+	assistant, _ := workbenchFixture(t)
+	stubCLIModelDiscovery(t)
+	st := assistant.repo
+	if err := st.PutUser(domain.User{LoginName: "picker-pool"}); err != nil {
+		t.Fatal(err)
+	}
+	user, _ := st.UserByLoginName("picker-pool")
+	for _, id := range []string{"pool-project", "plain-project"} {
+		if err := st.PutProject(domain.Project{ID: id, Name: id, OwnerID: user.ID}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := st.PutRunner(domain.Runner{ID: "pool-machine", Status: domain.RunnerStatusOnline, RunnerVersion: "99.0.0",
+		Labels: []string{"pool"}, Runtimes: []domain.RunnerRuntime{
+			{Provider: assistantEngineCodex, Status: domain.RuntimeStatusOnline, AuthMode: domain.RuntimeAuthLocal},
+		}}); err != nil {
+		t.Fatal(err)
+	}
+	runs := engine.New(st, runtime.NewManager(t.TempDir()))
+	runs.ConfigureCloudRunnerPool(engine.CloudRunnerPool{Label: "pool", Projects: []string{"pool-project"}})
+	assistant.deps.engine = runs
+	handler := &catalogHandlers{deps: assistant.deps}
+	for query, want := range map[string]bool{"": false, "?projectId=pool-project": true, "?projectId=plain-project": false} {
+		c, rec := workbenchContext(user, http.MethodGet, "/api/executor-models"+query, &bytes.Buffer{})
+		handler.executorModels(c)
+		var catalogs map[string]map[string]any
+		if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &catalogs) != nil {
+			t.Fatalf("executor models%s: %d %s", query, rec.Code, rec.Body)
+		}
+		if catalogs["codex"]["configured"] != want || catalogs["codex"]["personal"] != false || catalogs["claude"]["configured"] != false {
+			t.Errorf("cloud pool%s: codex=%v/%v claude=%v, want codex configured=%t", query,
+				catalogs["codex"]["configured"], catalogs["codex"]["personal"], catalogs["claude"]["configured"], want)
+		}
 	}
 }

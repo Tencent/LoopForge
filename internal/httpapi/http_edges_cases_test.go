@@ -18,21 +18,29 @@ import (
 )
 
 func TestKnowledgeHTTPBranches(t *testing.T) {
-	_, h, _, _ := newKnowledgeTestServer(t)
+	_, h, _, mcpURL := newKnowledgeTestServer(t)
+	created := doJSON(t, h, http.MethodPost, "/api/knowledge/connectors", `{"name":"Local MCP","type":"mcp","endpoint":"`+mcpURL+`"}`, nil)
+	if created.Code != 201 {
+		t.Fatalf("POST /api/knowledge/connectors = %d: %s", created.Code, created.Body.String())
+	}
+	var conn domain.KnowledgeConnector
+	_ = json.Unmarshal(created.Body.Bytes(), &conn)
+
 	for _, tc := range []struct {
 		method, path, body string
 		code               int
 	}{
-		{http.MethodPost, "/api/knowledge/check", `{}`, 200},
-		{http.MethodGet, "/api/knowledge/sources?projectId=p1", "", 200},
-		{http.MethodPost, "/api/knowledge/search", `{"query":"x","projectId":"p1"}`, 200},
-		{http.MethodPost, "/api/knowledge/search", `{`, 400},
-		{http.MethodGet, "/api/knowledge/document?projectId=p1&source=a&path=x.md&start=1&end=2", "", 200},
-		{http.MethodGet, "/api/knowledge/submissions?projectId=p1", "", 200},
-		{http.MethodGet, "/api/knowledge/submissions/missing", "", 404},
-		{http.MethodPut, "/api/knowledge/submissions/missing", `{}`, 404},
-		{http.MethodDelete, "/api/knowledge/submissions/missing", "", 404},
-		{http.MethodPost, "/api/knowledge/submissions/missing/reject", `{}`, 404},
+		{http.MethodGet, "/api/knowledge/connector-types", "", 200},
+		{http.MethodGet, "/api/knowledge/connectors", "", 200},
+		{http.MethodPost, "/api/knowledge/connectors", `{`, 400},
+		{http.MethodGet, "/api/knowledge/connectors/" + conn.ID, "", 200},
+		{http.MethodGet, "/api/knowledge/connectors/missing", "", 404},
+		{http.MethodPut, "/api/knowledge/connectors/missing", `{}`, 404},
+		{http.MethodDelete, "/api/knowledge/connectors/missing", "", 404},
+		{http.MethodPost, "/api/knowledge/connectors/" + conn.ID + "/check", `{}`, 200},
+		{http.MethodGet, "/api/knowledge/connectors/" + conn.ID + "/sources", "", 200},
+		{http.MethodGet, "/api/knowledge/reference-options", "", 200},
+		{http.MethodPost, "/api/knowledge/reference-check", `{`, 400},
 	} {
 		rec := doJSON(t, h, tc.method, tc.path, tc.body, nil)
 		if rec.Code != tc.code {
@@ -115,7 +123,7 @@ func TestMCPMarketFileAndBotIdentityErrors(t *testing.T) {
 
 	_ = st.PutUser(domain.User{LoginName: "bot-user"})
 	user, _ := st.UserByLoginName("bot-user")
-	ident := &botIdentityHandlers{deps: &deps{repo: st}, publicURL: "https://example.com"}
+	ident := &botIdentityHandlers{deps: &deps{repo: st}, publicURL: staticPublicURL("https://example.com")}
 	if botIdentityCommand("@bot /bind abc") != "/bind abc" {
 		t.Fatal("bot command")
 	}
@@ -149,8 +157,8 @@ func TestMCPMarketFileAndBotIdentityErrors(t *testing.T) {
 	if ok, msg, err := ident.message(domain.NotificationBot{BotID: "b"}, domain.BotInteraction{SenderID: "s", Content: "hello"}); !ok || err != nil || !strings.Contains(msg, "关联") {
 		t.Fatalf("unbound message=%v %q %v", ok, msg, err)
 	}
-	ident.publicURL = "bad"
-	if ok, msg, _ := ident.message(domain.NotificationBot{BotID: "b"}, domain.BotInteraction{SenderID: "s2", Content: "hello"}); !ok || !strings.Contains(msg, "尚未配置") {
+	ident.publicURL = staticPublicURL("bad")
+	if ok, msg, _ := ident.message(domain.NotificationBot{BotID: "b"}, domain.BotInteraction{SenderID: "s2", Content: "hello"}); !ok || !strings.Contains(msg, "外部访问地址") {
 		t.Fatalf("bad public URL=%v %q", ok, msg)
 	}
 }

@@ -3,6 +3,7 @@ package engine
 import (
 	"agentflow/internal/domain"
 	"agentflow/internal/observability"
+	"context"
 	"fmt"
 	"strings"
 	"time"
@@ -19,7 +20,7 @@ func (e *Engine) event(r *domain.Run, nodeID, t, msg string) {
 }
 
 func (e *Engine) observe(runID, nodeID string, observation domain.TelemetryEvent) {
-	if current, ok := e.repo.RunState(runID); ok && domain.TerminalRunStatus(current.Status) && observation.Name != "sandbox.closed" {
+	if status, ok, _ := e.repo.ReadRunStatus(context.Background(), runID); ok && domain.TerminalRunStatus(status) && observation.Name != "sandbox.closed" {
 		return
 	}
 	e.enqueueObservation(runID, nodeID, observation)
@@ -35,7 +36,7 @@ func (e *Engine) IngestOTLPTraces(events []domain.TelemetryEvent) int {
 		if runID == "" {
 			continue
 		}
-		run, ok := e.repo.RunState(runID)
+		run, ok := e.repo.RunProgress(runID)
 		if !ok {
 			continue
 		}
@@ -59,7 +60,7 @@ func (e *Engine) IngestWorkerEnvelope(runID string, envelope domain.WorkerEnvelo
 	if envelope.SpecVersion != domain.ObservabilitySpecVersion {
 		return fmt.Errorf("unsupported observability spec %q", envelope.SpecVersion)
 	}
-	run, ok := e.repo.RunState(runID)
+	run, ok := e.repo.RunProgress(runID)
 	if !ok {
 		return fmt.Errorf("run not found")
 	}
@@ -289,4 +290,36 @@ func appendControlTelemetry(r *domain.Run, nodeID, name, message string) {
 	now := time.Now().UTC()
 	r.TelemetrySequence++
 	r.Telemetry = append(r.Telemetry, domain.TelemetryEvent{ID: fmt.Sprintf("obs-%d", now.UnixNano()), RunID: r.ID, NodeID: nodeID, Sequence: r.TelemetrySequence, Timestamp: now, Category: "verification", Name: name, Phase: "finish", Level: "info", Message: message})
+}
+
+func (e *Engine) NodeKnowledgeReads(runID, nodeID string, attempt int) []domain.KnowledgeRead {
+	if e == nil || e.repo == nil || runID == "" || nodeID == "" {
+		return nil
+	}
+	e.stateMu.Lock()
+	defer e.stateMu.Unlock()
+	r, ok := e.repo.RunState(runID)
+	if !ok {
+		return nil
+	}
+	node := r.Nodes[nodeID]
+	if node == nil || len(node.KnowledgeReads) == 0 {
+		return nil
+	}
+	out := make([]domain.KnowledgeRead, 0, len(node.KnowledgeReads))
+	for _, kr := range node.KnowledgeReads {
+		if attempt > 0 && kr.Attempt > 0 && kr.Attempt != attempt {
+			continue
+		}
+		out = append(out, kr)
+	}
+	return out
+}
+
+func (e *Engine) RecordKnowledgeRead(runID, nodeID string, read domain.KnowledgeRead) {
+	e.updateRun(runID, func(r *domain.Run) {
+		if node := r.Nodes[nodeID]; node != nil && node.Status == "running" && node.Attempt == read.Attempt {
+			node.KnowledgeReads = append(node.KnowledgeReads, read)
+		}
+	})
 }

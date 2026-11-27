@@ -19,7 +19,12 @@ func (h issuesHandlers) issueDetail(c *gin.Context, issue domain.Issue) {
 		respond(c, err)
 		return
 	}
-	c.JSON(200, map[string]any{"issue": views[0], "comments": h.repo.Comments(issue.ID)})
+	images, err := h.repo.IssueImages(issue.ID)
+	if err != nil {
+		respond(c, err)
+		return
+	}
+	c.JSON(200, map[string]any{"issue": views[0], "comments": h.repo.Comments(issue.ID), "images": images})
 }
 
 func (h issuesHandlers) addIssueComment(c *gin.Context, issue domain.Issue) {
@@ -316,15 +321,22 @@ func (h issuesHandlers) dispatchIssueRoute(c *gin.Context, issue domain.Issue) {
 	if current, ok := h.requestUser(c.Request, true); ok && current != nil && current.ID > 0 {
 		triggerUserID = current.ID
 	}
-	task, err := dispatchIssue(h.deps, dispatchRequest{IssueID: issue.ID, WorkflowID: request.WorkflowID, Rerun: request.Rerun, TriggerUserID: triggerUserID})
+	req := dispatchRequest{
+		IssueID: issue.ID, WorkflowID: request.WorkflowID, Rerun: request.Rerun, TriggerUserID: triggerUserID,
+		WorkspaceRunID: dispatchConversationWorkspace(h.deps, c.Request, triggerUserID, issue.ProjectID),
+	}
+	if origin, ok := botStartOriginFrom(c.Request.Context()); ok {
+		req.ChatOrigin = &origin
+	}
+	task, err := dispatchIssue(h.deps, req)
 	if err != nil {
 		respond(c, err)
 		return
 	}
 	linkDispatchingConversation(h.deps, c.Request, triggerUserID, issue)
-	detail := "触发 SOP"
+	detail := "触发 LOOP"
 	if request.Rerun {
-		detail = "重新运行 SOP"
+		detail = "重新运行 LOOP"
 	}
 	_, _ = h.appendStoredOperation(c, issue.ID, "dispatch", detail)
 	c.JSON(201, publicTask(task))
@@ -337,7 +349,7 @@ func (h issuesHandlers) deleteIssue(c *gin.Context, issue domain.Issue) {
 		mode = repo.IssueDeleteForce
 	}
 	// Same as close: Task status trails a just-cancelled Run until the next
-	// sync, which would answer 409 "正在执行 SOP" for a stopped requirement.
+	// sync, which would answer 409 "正在执行 LOOP" for a stopped requirement.
 	if h.tasks != nil {
 		h.tasks.settleIssueTasks(issue.ID)
 	}

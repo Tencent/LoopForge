@@ -211,9 +211,15 @@ func prepareAssistantClaudeInvocation(o assistantEngineInvocationOpts) (assistan
 		return assistantCLIInvocation{}, err
 	}
 	sessionID := assistantClaudeSessionID(o.SessionID)
+	maxTurns := nativeAssistantUnlimitedTurns
+	settingSources := "user"
+	if o.ReviewOnly {
+		maxTurns = "1"
+		settingSources = ""
+	}
 	argv := []string{o.Bin, "-p", "--verbose", "--output-format", "stream-json", "--include-partial-messages",
-		"--max-turns", nativeAssistantUnlimitedTurns, "--system-prompt", o.SystemPrompt,
-		"--mcp-config", mcpPath, "--strict-mcp-config", "--settings", settingsPath, "--setting-sources", "user",
+		"--max-turns", maxTurns, "--system-prompt", o.SystemPrompt,
+		"--mcp-config", mcpPath, "--strict-mcp-config", "--settings", settingsPath, "--setting-sources", settingSources,
 		"--permission-mode", "bypassPermissions"}
 	if o.Model != "" {
 		argv = append(argv, "--model", o.Model)
@@ -240,7 +246,7 @@ func prepareAssistantClaudeInvocation(o assistantEngineInvocationOpts) (assistan
 		if o.RunnerLogin {
 			frameLimit = runtime.ClaudeLoginMaxInputLine
 		}
-		command, err = withAssistantStreamImageInput(command, o.Prompt, o.ImagePaths, frameLimit)
+		command, err = withAssistantStreamInput(command, o.Prompt, o.ImagePaths, frameLimit)
 		if err != nil {
 			return assistantCLIInvocation{}, err
 		}
@@ -253,7 +259,7 @@ func prepareAssistantClaudeInvocation(o assistantEngineInvocationOpts) (assistan
 	}, nil
 }
 
-func withAssistantStreamImageInput(command runtime.CommandSpec, prompt string, imagePaths []string, frameLimit int) (runtime.CommandSpec, error) {
+func withAssistantStreamInput(command runtime.CommandSpec, prompt string, imagePaths []string, frameLimit int) (runtime.CommandSpec, error) {
 	input, err := assistantStreamImageInput(prompt, imagePaths)
 	if err != nil {
 		return runtime.CommandSpec{}, err

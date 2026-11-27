@@ -13,6 +13,7 @@ import (
 
 	"agentflow/internal/domain"
 	"agentflow/internal/engine"
+	"agentflow/internal/knowledge"
 	"agentflow/internal/mcpserver"
 
 	"github.com/gin-gonic/gin"
@@ -83,7 +84,14 @@ func (h *agentToolGateway) ServeHTTP(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, agentToolRPCResponse{JSONRPC: "2.0", Error: &agentToolRPCError{Code: -32700, Message: "parse error", Data: err.Error()}})
 		return
 	}
-	response := h.handleRPC(withAgentToolToken(c.Request.Context(), token), session, request)
+	ctx := withAgentToolToken(c.Request.Context(), token)
+	if request.Method == "tools/call" && request.ID != nil && mcpserver.AcceptsEventStream(c.Request) {
+		mcpserver.WriteToolResponse(c.Writer, c.Request, request.ID, func() (json.RawMessage, error) {
+			return json.Marshal(h.handleRPC(ctx, session, request))
+		})
+		return
+	}
+	response := h.handleRPC(ctx, session, request)
 	if response == nil {
 		c.Status(http.StatusAccepted)
 		return
@@ -160,7 +168,7 @@ func agentToolProtocolVersion(params json.RawMessage) string {
 func agentToolInstructions(mode AgentToolMode) string {
 	switch mode {
 	case AgentToolReport:
-		return "只能基于提供的资料汇总本次 SOP，完成后调用 submit_notification_report。普通文本不算提交。"
+		return "只能基于提供的资料汇总本次 LOOP，完成后调用 submit_notification_report。普通文本不算提交。"
 	case AgentToolClarify:
 		return "只读查询 LoopForge 及当前项目已安装的外部 MCP。本轮结束时调用 submit_clarification。"
 	case AgentToolAssistant:
@@ -181,9 +189,8 @@ func (h *agentToolGateway) toolList(ctx context.Context, session *AgentToolSessi
 			"description": tool.Description,
 			"inputSchema": json.RawMessage(defaultToolSchema(tool.InputSchema)),
 		}
-		if len(tool.OutputSchema) > 0 && string(tool.OutputSchema) != "null" {
-			item["outputSchema"] = json.RawMessage(tool.OutputSchema)
-		}
+		// Do not advertise outputSchema: callTool wraps tool results as plain text
+		// content without structuredContent, which would fail MCP client validation (-32600).
 		if len(tool.Annotations) > 0 && string(tool.Annotations) != "null" {
 			item["annotations"] = json.RawMessage(tool.Annotations)
 		}
@@ -305,6 +312,39 @@ func (h *agentToolGateway) callTool(ctx context.Context, session *AgentToolSessi
 			return nil, err
 		}
 	}
+	if tool.Kind == "knowledge" {
+		exec := h.deps.executor()
+		if exec == nil {
+			return nil, errAgentToolForbidden
+		}
+		for _, ref := range session.KnowledgeRefs {
+			if ref.ConnectorID == tool.ServerID {
+				if exec.ToolMayWrite(ctx, session.UserID, ref, tool.UpstreamName) {
+					if session.Mode != AgentToolAssistant {
+						return mcpToolTextResult("当前运行模式不允许调用知识库写入工具："+tool.Name, true), nil
+					}
+					if reason, allowed := h.approveKnowledgeWrite(ctx, session, tool.Name, params.Arguments); !allowed {
+						return mcpToolTextResult(reason, true), nil
+					}
+				}
+				session.mu.Lock()
+				priorReads := append([]domain.KnowledgeRead(nil), session.knowledgeReads...)
+				session.mu.Unlock()
+				caller := h.buildSessionUsageCaller(session)
+				read, text, err := exec.ExecuteReferenceToolWithHistory(knowledge.WithUsageCaller(ctx, caller), session.UserID, ref, tool.UpstreamName, args, domain.KnowledgeCallOriginModelTool, priorReads)
+				read.Query = knowledge.KnowledgeCallQuerySummary(args)
+				session.mu.Lock()
+				session.knowledgeReads = append(session.knowledgeReads, read)
+				session.mu.Unlock()
+				logAgentToolEvent("call", "mode="+string(session.Mode), "origin="+domain.KnowledgeCallOriginModelTool, "tool="+tool.Name, "status="+read.Status, fmt.Sprintf("ok=%t", err == nil))
+				if err != nil {
+					return mcpToolTextResult(err.Error(), true), nil
+				}
+				return mcpToolTextResult(text, false), nil
+			}
+		}
+		return nil, errAgentToolForbidden
+	}
 	if tool.Kind == "browser" {
 		result, err := h.callMainBotBrowser(ctx, session, tool.Name, args)
 		logAgentToolEvent("call", "mode="+string(session.Mode), "tool="+tool.Name, fmt.Sprintf("ok=%t", err == nil && result["isError"] != true))
@@ -341,6 +381,9 @@ func (h *agentToolGateway) callTerminal(session *AgentToolSession, name string, 
 		}
 		return mcpToolTextResult("提交成功，本轮结束。", false), nil
 	case name == submitAssistantReplyTool && session.Mode == AgentToolAssistant:
+		if session.ExecMode.ReviewWrites && !session.sopDesigner() {
+			return mcpToolTextResult("当前为「帮我批准」模式，不需要人工审批草稿。请直接调用对应的平台写入工具（由 AI 独立审查并直接决定放行或拒绝），或用自然语言直接回复用户说明执行结果或被拒原因。", true), nil
+		}
 		if session.sopDesigner() {
 			expanded, err := expandSOPDesignerReply(raw, session.DesignerCanvas)
 			if err != nil {
@@ -371,7 +414,7 @@ func (h *agentToolGateway) callTerminal(session *AgentToolSession, name string, 
 		}
 		if len(reply.Drafts) == 0 {
 			// This tool ends the model process. Accepting a progress message here
-			// used to kill sibling read calls before a requested SOP was prepared.
+			// used to kill sibling read calls before a requested LOOP was prepared.
 			return mcpToolTextResult("未提交草稿，本轮继续。submit_assistant_reply 仅用于提交待确认写入草稿；进度说明请用普通文本并继续执行工具查询。请完成用户请求或说明具体阻塞原因后，以自然语言结束；不要提交占位回复。", true), nil
 		}
 		if err := session.commitFinal(AgentTerminalResult{Kind: AgentTerminalAssistant, Assistant: &reply}); err != nil {
@@ -391,6 +434,9 @@ func (h *agentToolGateway) dispatch(ctx context.Context, session *AgentToolSessi
 		return readClarifySource(session, tool.Name, args)
 	}
 	if tool.Kind == "workspace" {
+		if session.ExecMode.ReadOnly {
+			return "", fmt.Errorf("%w: 只读模式不开放工作区工具 %s", errAgentToolForbidden, tool.Name)
+		}
 		return h.callMainBotWorkspace(ctx, session, tool.Name, args)
 	}
 	if tool.Kind == "agentflow" {
@@ -413,6 +459,14 @@ func (h *agentToolGateway) dispatch(ctx context.Context, session *AgentToolSessi
 		}
 		if scope := scheduledAssetsFrom(session.ctx); scope.Version.ID != "" {
 			ctx = context.WithValue(ctx, scheduledAssetsKey{}, scope)
+		}
+		if session.ctx != nil {
+			if origin, ok := botStartOriginFrom(session.ctx); ok {
+				ctx = withBotStartOrigin(ctx, origin)
+			}
+			if actor, ok := botChatActorFrom(session.ctx); ok {
+				ctx = withBotChatActor(ctx, actor.Channel, actor.SenderID, actor.SenderName)
+			}
 		}
 		call := assistantMCPCall{Server: "agentflow", Tool: tool.UpstreamName, Arguments: args}
 		if session.canOpenConversationWorkspace() {
@@ -475,6 +529,9 @@ func (h *agentToolGateway) dispatch(ctx context.Context, session *AgentToolSessi
 	}
 	if session.Mode == AgentToolAssistant && mcpCallMayWrite(kind, call) {
 		name := mcpCallName(kind, call)
+		if session.ExecMode.ReadOnly {
+			return "", fmt.Errorf("只读模式拒绝可能写入外部系统的 MCP 调用 %s，请到平台页面操作", name)
+		}
 		if !session.ExecMode.AutoWrite {
 			if err := h.waitForMCPWriteApproval(ctx, session, name, call); err != nil {
 				return "", err
@@ -483,7 +540,7 @@ func (h *agentToolGateway) dispatch(ctx context.Context, session *AgentToolSessi
 				return "", errMCPApprovalExpired
 			}
 		} else if session.ExecMode.ReviewWrites {
-			review := reviewAssistantAction(ctx, name, mcpServerName(h, session, call.Server)+" MCP 写入外部系统", map[string]any{"server": call.Server, "tool": call.Tool, "arguments": call.Arguments})
+			review := reviewAssistantAction(withApprovalActionSource(ctx, approvalSourceExternalMCP), name, mcpServerName(h, session, call.Server)+" MCP 写入外部系统", map[string]any{"server": call.Server, "tool": call.Tool, "arguments": call.Arguments})
 			if !review.allows() {
 				return "", assistantReviewRefusal(name, review)
 			}
@@ -511,6 +568,88 @@ func (h *agentToolGateway) dispatch(ctx context.Context, session *AgentToolSessi
 		return "", err
 	}
 	return redactAgentToolResult(text, session.User), nil
+}
+
+func (h *agentToolGateway) buildSessionUsageCaller(session *AgentToolSession) domain.KnowledgeUsageCaller {
+	if session == nil {
+		return domain.KnowledgeUsageCaller{}
+	}
+	caller := domain.KnowledgeUsageCaller{
+		SessionID: strings.TrimSpace(session.ChatSessionID),
+		SpaceID:   strings.TrimSpace(session.SpaceID),
+		IssueID:   strings.TrimSpace(session.IssueID),
+		RunID:     strings.TrimSpace(session.RunID),
+		ProjectID: strings.TrimSpace(session.ProjectID),
+	}
+	switch {
+	case caller.SpaceID != "":
+		caller.Kind = domain.KnowledgeCallerSpace
+	case session.Mode == AgentToolClarify:
+		caller.Kind = domain.KnowledgeCallerClarify
+	case session.Mode == AgentToolScheduled:
+		caller.Kind = domain.KnowledgeCallerScheduled
+	case session.Mode == AgentToolReport:
+		caller.Kind = domain.KnowledgeCallerReport
+	default:
+		caller.Kind = domain.KnowledgeCallerChat
+	}
+
+	if h != nil && h.repo != nil {
+		if caller.SessionID != "" {
+			ownerID := session.ChatOwnerID
+			if ownerID == 0 {
+				ownerID = session.UserID
+			}
+			if sess, ok := h.repo.AssistantSession(ownerID, caller.SessionID); ok {
+				caller.SessionTitle = strings.TrimSpace(sess.Title)
+				if caller.Kind == domain.KnowledgeCallerChat && strings.EqualFold(strings.TrimSpace(sess.Source), "scheduled") {
+					caller.Kind = domain.KnowledgeCallerScheduled
+				}
+				if caller.IssueID == "" {
+					caller.IssueID = strings.TrimSpace(sess.IssueID)
+				}
+				if caller.ProjectID == "" {
+					caller.ProjectID = strings.TrimSpace(sess.ProjectID)
+				}
+			}
+		}
+		if caller.SpaceID != "" {
+			if space, ok := h.repo.Space(caller.SpaceID); ok {
+				caller.SpaceTitle = strings.TrimSpace(space.Summary)
+				if caller.IssueID == "" {
+					caller.IssueID = strings.TrimSpace(space.IssueID)
+				}
+				if caller.ProjectID == "" {
+					caller.ProjectID = strings.TrimSpace(space.ProjectID)
+				}
+			}
+		}
+		if caller.IssueID != "" {
+			if issue, ok := h.repo.Issue(caller.IssueID); ok {
+				caller.IssueTitle = strings.TrimSpace(issue.Title)
+				if caller.SpaceTitle == "" && caller.SpaceID != "" {
+					caller.SpaceTitle = caller.IssueTitle
+				}
+			}
+		}
+	}
+	if caller.SessionTitle == "" && len(session.turnMessages) > 0 {
+		for _, msg := range session.turnMessages {
+			if msg.Role != "user" {
+				continue
+			}
+			if text := strings.TrimSpace(msg.Content); text != "" {
+				runes := []rune(text)
+				if len(runes) > 36 {
+					caller.SessionTitle = string(runes[:36]) + "…"
+				} else {
+					caller.SessionTitle = text
+				}
+				break
+			}
+		}
+	}
+	return caller
 }
 
 func (h *agentToolGateway) serverIDForKind(session *AgentToolSession, kind string) string {

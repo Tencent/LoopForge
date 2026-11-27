@@ -1,0 +1,1283 @@
+/* SOP 维度 RSI 工作台样式；仅引用 Harness UI（MIT）共享令牌 --hui-*。 */
+.evo-sop-home,
+.evo-sop-detail {
+  min-width: 0;
+  display: grid;
+  gap: 14px;
+}
+
+.evo-sop-mode-banner {
+  margin-bottom: 10px;
+}
+
+/* 覆盖 knowledge.css 对 .kb-btn.quiet 的红色和自动右边距，保持工作台次要按钮中性克制 */
+#evolutionView :is(.evo-sop-home, .evo-sop-detail, .evo-sop-dialog) .kb-btn.quiet {
+  margin-right: 0;
+  color: var(--hui-secondary);
+}
+
+#evolutionView :is(.evo-sop-home, .evo-sop-detail, .evo-sop-dialog) .kb-btn.quiet:hover:not(:disabled) {
+  background: var(--hui-soft);
+  color: var(--hui-text);
+}
+
+.evo-sop-panel {
+  border: 1px solid var(--hui-border);
+  border-radius: 12px;
+  background: var(--hui-surface);
+  overflow: hidden;
+}
+
+.evo-sop-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px 12px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--hui-border-soft);
+}
+
+.evo-sop-filters {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.evo-sop-filter-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 11px;
+  border: 1px solid var(--hui-border);
+  border-radius: 999px;
+  background: var(--hui-surface);
+  color: var(--hui-secondary);
+  font: 12px/1.4 var(--hui-sans);
+  cursor: pointer;
+}
+
+.evo-sop-filter-btn span {
+  color: var(--hui-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.evo-sop-filter-btn:hover {
+  border-color: var(--hui-border-strong);
+  color: var(--hui-text);
+}
+
+.evo-sop-filter-btn[aria-pressed="true"] {
+  border-color: var(--hui-accent);
+  background: var(--hui-accent-soft);
+  color: var(--hui-accent);
+  font-weight: 600;
+}
+
+.evo-sop-filter-btn[aria-pressed="true"] span {
+  color: var(--hui-accent);
+}
+
+.evo-sop-toolbar-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1 1 240px;
+  justify-content: flex-end;
+  min-width: 0;
+}
+
+.evo-sop-toolbar-right .evo-home-search {
+  max-width: 280px;
+}
+
+.evo-sop-columns,
+.evo-sop-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.45fr) minmax(150px, .95fr) minmax(190px, 1.05fr) 86px 70px 24px;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 11px 14px;
+}
+
+.evo-sop-columns {
+  background: var(--hui-soft);
+  color: var(--hui-muted);
+  font-size: 12px;
+  border-bottom: 1px solid var(--hui-border-soft);
+}
+
+.evo-sop-row {
+  border-top: 1px solid var(--hui-border-soft);
+  background: var(--hui-surface);
+  transition: background .12s ease;
+}
+
+.evo-sop-row:first-child {
+  border-top: 0;
+}
+
+.evo-sop-row:hover {
+  background: var(--hui-canvas);
+}
+
+.evo-sop-row.is-paused .evo-sop-row-main {
+  opacity: .72;
+}
+
+.evo-sop-row-main {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  border: 0;
+  padding: 0;
+  background: none;
+  color: var(--hui-text);
+  text-align: left;
+  font: 13px/1.45 var(--hui-sans);
+  cursor: pointer;
+}
+
+.evo-sop-row-title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.evo-sop-row-title b {
+  font-size: 14px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.evo-sop-ver {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 7px;
+  border-radius: 6px;
+  background: var(--hui-soft);
+  border: 1px solid var(--hui-border);
+  color: var(--hui-secondary);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.evo-sop-paused-tag {
+  font-size: 11px;
+  color: var(--hui-muted);
+}
+
+.evo-sop-row-note {
+  font-size: 12px;
+  color: var(--hui-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.evo-sop-pref-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  max-width: 100%;
+  padding: 5px 9px;
+  border: 1px solid var(--hui-border);
+  border-radius: 8px;
+  background: var(--hui-canvas);
+  color: var(--hui-text);
+  font: 12px/1.4 var(--hui-sans);
+  text-align: left;
+  cursor: pointer;
+}
+
+.evo-sop-pref-trigger:hover {
+  border-color: var(--hui-accent);
+  background: var(--hui-accent-soft);
+}
+
+.evo-sop-pref-trigger small {
+  color: var(--hui-muted);
+  font-size: 11px;
+}
+
+.evo-sop-pref-pills {
+  font-weight: 500;
+}
+
+.evo-sop-cell-metrics {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.evo-sop-cell-metrics b {
+  font-weight: 600;
+  color: var(--hui-text);
+}
+
+.evo-sop-cell-metrics b.is-score {
+  color: var(--hui-accent);
+}
+
+.evo-sop-cell-metrics small,
+.evo-sop-cell-metrics i {
+  font-style: normal;
+  color: var(--hui-muted);
+  font-size: 11px;
+}
+
+.evo-sop-row-switch {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.evo-sop-row-go {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--hui-muted);
+  cursor: pointer;
+}
+
+.evo-sop-row-go:hover {
+  background: var(--hui-soft);
+  color: var(--hui-text);
+}
+
+.evo-sop-row-go svg {
+  width: 13px;
+  height: 13px;
+}
+
+/* ---------- SOP 详情页 ---------- */
+
+.evo-sop-detail > .evo-back {
+  justify-self: start;
+  min-height: 34px;
+}
+
+.evo-sop-detail-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px 16px;
+  flex-wrap: wrap;
+}
+
+.evo-sop-detail-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.evo-sop-detail-title-row h1 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.evo-sop-detail-desc {
+  margin: 4px 0 0;
+  font-size: 13px;
+  color: var(--hui-muted);
+}
+
+.evo-sop-detail-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.evo-sop-callout {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px 16px;
+  flex-wrap: wrap;
+  padding: 12px 16px;
+  border: 1px solid var(--hui-border);
+  border-radius: 12px;
+  background: var(--hui-surface);
+}
+
+.evo-sop-callout strong {
+  display: block;
+  font-size: 14px;
+  margin-bottom: 2px;
+}
+
+.evo-sop-callout p {
+  margin: 0;
+  font-size: 12px;
+  color: var(--hui-secondary);
+  line-height: 1.5;
+}
+
+.evo-sop-callout.is-ready {
+  border-color: color-mix(in srgb, var(--hui-accent) 42%, var(--hui-border));
+  background: color-mix(in srgb, var(--hui-accent-soft) 55%, var(--hui-surface));
+}
+
+.evo-sop-callout.is-gray {
+  border-color: color-mix(in srgb, var(--hui-success) 42%, var(--hui-border));
+  background: color-mix(in srgb, var(--hui-success) 7%, var(--hui-surface));
+}
+
+.evo-sop-callout.is-warn {
+  border-color: color-mix(in srgb, var(--hui-warn) 42%, var(--hui-border));
+}
+
+.evo-sop-callout.is-muted {
+  background: var(--hui-soft);
+}
+
+.evo-sop-callout-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* ---------- 5 核心指标卡 ---------- */
+
+.evo-sop-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.evo-sop-kpi {
+  min-width: 0;
+  padding: 13px 14px;
+  border: 1px solid var(--hui-border);
+  border-radius: 12px;
+  background: var(--hui-surface);
+  display: grid;
+  gap: 5px;
+}
+
+.evo-sop-kpi.is-primary {
+  border-color: color-mix(in srgb, var(--hui-accent) 45%, var(--hui-border));
+  background: color-mix(in srgb, var(--hui-accent-soft) 45%, var(--hui-surface));
+}
+
+.evo-sop-kpi-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--hui-muted);
+}
+
+.evo-sop-kpi-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+
+.evo-sop-kpi-p1 {
+  font-style: normal;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.4;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--hui-accent-soft);
+  color: var(--hui-accent);
+  white-space: nowrap;
+}
+
+.evo-sop-kpi.is-p1-target {
+  border-color: color-mix(in srgb, var(--hui-accent) 32%, var(--hui-border));
+}
+
+.evo-sop-kpi-val {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  font-variant-numeric: tabular-nums;
+}
+
+.evo-sop-kpi-val b {
+  font-size: 24px;
+  font-weight: 650;
+  line-height: 1.2;
+}
+
+.evo-sop-kpi.is-primary .evo-sop-kpi-val b {
+  color: var(--hui-accent);
+}
+
+.evo-sop-kpi-val small {
+  font-size: 12px;
+  color: var(--hui-muted);
+}
+
+.evo-sop-kpi-note {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--hui-muted);
+}
+
+.evo-sop-delta {
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.evo-sop-delta.good {
+  color: var(--hui-success);
+}
+
+.evo-sop-delta.bad {
+  color: var(--hui-error);
+}
+
+.evo-sop-delta.flat {
+  color: var(--hui-muted);
+}
+
+/* ---------- 详情双 Tab ---------- */
+
+.evo-sop-tabs {
+  display: flex;
+  gap: 18px;
+  border-bottom: 1px solid var(--hui-border);
+}
+
+.evo-sop-tabs [role="tab"] {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 2px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: none;
+  color: var(--hui-muted);
+  font: 14px/1.4 var(--hui-sans);
+  cursor: pointer;
+}
+
+.evo-sop-tabs [role="tab"]:hover {
+  color: var(--hui-text);
+}
+
+.evo-sop-tabs [role="tab"][aria-selected="true"] {
+  border-bottom-color: var(--hui-accent);
+  color: var(--hui-accent);
+  font-weight: 600;
+}
+
+.evo-sop-trend-wrap,
+.evo-sop-change-wrap {
+  display: grid;
+  gap: 14px;
+}
+
+.evo-sop-trend-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.evo-sop-seg {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--hui-border);
+  border-radius: 9px;
+  background: var(--hui-soft);
+}
+
+.evo-sop-seg button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--hui-secondary);
+  font: 12px/1.3 var(--hui-sans);
+  cursor: pointer;
+}
+
+.evo-sop-seg button[aria-pressed="true"] {
+  background: var(--hui-surface);
+  color: var(--hui-text);
+  font-weight: 600;
+  box-shadow: var(--hui-ind-shadow);
+}
+
+.evo-sop-seg button span {
+  font-size: 11px;
+  color: var(--hui-muted);
+}
+
+.evo-sop-chart-box {
+  padding: 14px;
+  border: 1px solid var(--hui-border);
+  border-radius: 12px;
+  background: var(--hui-surface);
+}
+
+.evo-sop-chart-box canvas {
+  display: block;
+  width: 100%;
+}
+
+.evo-sop-chart-empty {
+  padding: 36px 16px;
+  text-align: center;
+  font-size: 13px;
+  color: var(--hui-muted);
+}
+
+.evo-sop-table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--hui-border);
+  border-radius: 12px;
+  background: var(--hui-surface);
+}
+
+.evo-sop-data-table,
+.evo-sop-sub-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.evo-sop-data-table th,
+.evo-sop-data-table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--hui-border-soft);
+  text-align: left;
+  white-space: nowrap;
+}
+
+.evo-sop-data-table th {
+  background: var(--hui-soft);
+  color: var(--hui-muted);
+  font-weight: 500;
+}
+
+.evo-sop-data-table tr:last-child td {
+  border-bottom: 0;
+}
+
+.evo-sop-data-table .num,
+.evo-sop-sub-table .num {
+  text-align: right;
+}
+
+.evo-sop-cell-sub {
+  display: block;
+  font-size: 11px;
+  color: var(--hui-muted);
+}
+
+.evo-sop-gray-detail-row td {
+  padding: 10px 14px;
+  background: var(--hui-canvas);
+}
+
+.evo-sop-sub-table th,
+.evo-sop-sub-table td {
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--hui-border-soft);
+  text-align: left;
+}
+
+.evo-sop-method {
+  padding: 10px 14px;
+  border: 1px solid var(--hui-border-soft);
+  border-radius: 10px;
+  background: var(--hui-canvas);
+  font-size: 12px;
+  color: var(--hui-secondary);
+}
+
+.evo-sop-method summary {
+  cursor: pointer;
+  font-weight: 500;
+  color: var(--hui-text);
+}
+
+.evo-sop-method ul {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 5px;
+  line-height: 1.6;
+}
+
+/* ---------- 本次修改与问题 ---------- */
+
+.evo-sop-batch-summary {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--hui-border);
+  border-radius: 12px;
+  background: var(--hui-surface);
+}
+
+.evo-sop-batch-summary small {
+  display: block;
+  font-size: 11px;
+  color: var(--hui-muted);
+  margin-bottom: 2px;
+}
+
+.evo-sop-batch-summary b {
+  font-size: 16px;
+  font-variant-numeric: tabular-nums;
+}
+
+.evo-sop-section {
+  display: grid;
+  gap: 8px;
+}
+
+.evo-sop-section h3 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.evo-sop-problem-list {
+  display: grid;
+  gap: 8px;
+}
+
+.evo-sop-problem-card {
+  padding: 12px 14px;
+  border: 1px solid var(--hui-border);
+  border-radius: 10px;
+  background: var(--hui-surface);
+  display: grid;
+  gap: 4px;
+}
+
+.evo-sop-problem-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.evo-sop-problem-head b {
+  font-size: 13px;
+}
+
+.evo-sop-problem-hits {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--hui-muted);
+}
+
+.evo-sop-problem-card p {
+  margin: 0;
+  font-size: 12px;
+  color: var(--hui-secondary);
+  line-height: 1.5;
+}
+
+.evo-sop-problem-fix {
+  color: var(--hui-accent);
+  font-weight: 500;
+}
+
+.evo-sop-diff-card {
+  border: 1px solid var(--hui-border);
+  border-radius: 12px;
+  background: var(--hui-surface);
+  overflow: hidden;
+}
+
+.evo-sop-file-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+  flex-wrap: wrap;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--hui-border-soft);
+  background: var(--hui-soft);
+}
+
+.evo-sop-file-tabs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.evo-sop-file-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-left: auto;
+}
+
+.evo-sop-file-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--hui-secondary);
+  font: 12px/1.4 var(--hui-sans);
+  cursor: pointer;
+}
+
+.evo-sop-file-tab[aria-selected="true"] {
+  border-color: var(--hui-border);
+  background: var(--hui-surface);
+  color: var(--hui-text);
+  font-weight: 600;
+}
+
+.evo-sop-file-tab small {
+  color: var(--hui-muted);
+}
+
+.evo-sop-edit-time {
+  font-size: 11px;
+  color: var(--hui-muted);
+  white-space: nowrap;
+}
+
+/* 左右对比 Diff */
+.evo-sop-split-diff {
+  display: grid;
+  font: 12px/1.6 var(--hui-mono);
+}
+
+.evo-sop-split-head {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  border-bottom: 1px solid var(--hui-border-soft);
+  background: var(--hui-canvas);
+  color: var(--hui-muted);
+  font: 500 11px/1.4 var(--hui-sans);
+}
+
+.evo-sop-split-head span {
+  padding: 7px 12px;
+}
+
+.evo-sop-split-head span:first-child {
+  border-right: 1px solid var(--hui-border-soft);
+}
+
+.evo-sop-split-body {
+  max-height: 400px;
+  overflow: auto;
+}
+
+.evo-sop-split-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  border-bottom: 1px solid color-mix(in srgb, var(--hui-border-soft) 60%, transparent);
+}
+
+.evo-sop-split-row:last-child {
+  border-bottom: 0;
+}
+
+.evo-sop-split-cell {
+  display: grid;
+  grid-template-columns: 32px 16px minmax(0, 1fr);
+  align-items: baseline;
+  min-width: 0;
+  padding: 2px 10px 2px 6px;
+}
+
+.evo-sop-split-cell.is-left {
+  border-right: 1px solid var(--hui-border-soft);
+}
+
+.evo-sop-split-cell code {
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: inherit;
+  color: var(--hui-text);
+}
+
+.evo-sop-split-no {
+  text-align: right;
+  padding-right: 6px;
+  color: var(--hui-tertiary);
+  user-select: none;
+  font-size: 11px;
+}
+
+.evo-sop-split-sign {
+  text-align: center;
+  user-select: none;
+  font-weight: 600;
+}
+
+.evo-sop-split-cell.is-del {
+  background: color-mix(in srgb, var(--hui-error) 10%, var(--hui-surface));
+}
+
+.evo-sop-split-cell.is-del .evo-sop-split-sign {
+  color: var(--hui-error);
+}
+
+.evo-sop-split-cell.is-add {
+  background: color-mix(in srgb, var(--hui-success) 10%, var(--hui-surface));
+}
+
+.evo-sop-split-cell.is-add .evo-sop-split-sign {
+  color: var(--hui-success);
+}
+
+.evo-sop-split-cell.is-empty {
+  background: var(--hui-canvas);
+}
+
+.evo-sop-compact-diff {
+  max-height: 360px;
+  overflow: auto;
+  border: 0;
+  border-radius: 0;
+}
+
+.evo-sop-empty-card {
+  padding: 20px 16px;
+  border: 1px dashed var(--hui-border-strong);
+  border-radius: 10px;
+  background: var(--hui-canvas);
+  color: var(--hui-muted);
+  font-size: 13px;
+  text-align: center;
+}
+
+/* ---------- 偏好、周期与模型弹窗 ---------- */
+
+.evo-sop-dialog {
+  padding: 0;
+  border: 1px solid var(--hui-border);
+  border-radius: 14px;
+  background: var(--hui-surface);
+  color: var(--hui-text);
+  box-shadow: var(--hui-popover-shadow);
+  width: min(500px, calc(100vw - 32px));
+}
+
+.evo-sop-dialog::backdrop {
+  background: var(--hui-scrim);
+}
+
+.evo-sop-dialog-card {
+  display: grid;
+  gap: 14px;
+  padding: 18px 20px;
+}
+
+.evo-sop-dialog-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.evo-sop-dialog-title-wrap {
+  min-width: 0;
+  flex: 1;
+}
+
+.evo-sop-dialog-head h2 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.evo-sop-dialog-head p {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--hui-muted);
+}
+
+.evo-sop-dialog-close {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 30px;
+  height: 30px;
+  margin: -4px -6px 0 0;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--hui-muted);
+  cursor: pointer;
+  transition: background-color .14s ease, color .14s ease;
+}
+
+.evo-sop-dialog-close:hover {
+  background: var(--hui-soft);
+  color: var(--hui-text);
+}
+
+.evo-sop-dialog-close:focus-visible {
+  outline: 2px solid var(--hui-focus-ring);
+  outline-offset: 1px;
+}
+
+.evo-sop-pref-presets-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.evo-sop-pref-presets-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--hui-muted);
+  white-space: nowrap;
+}
+
+.evo-sop-pref-presets {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.evo-sop-pref-preset {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 9px;
+  border: 1px solid var(--hui-border);
+  border-radius: 999px;
+  background: var(--hui-canvas);
+  color: var(--hui-secondary);
+  font: 12px/1.3 var(--hui-sans);
+  cursor: pointer;
+  transition: border-color .14s ease, background-color .14s ease, color .14s ease;
+}
+
+.evo-sop-pref-preset small {
+  font-size: 11px;
+  color: var(--hui-muted);
+}
+
+.evo-sop-pref-preset:hover {
+  border-color: var(--hui-accent);
+  color: var(--hui-text);
+}
+
+.evo-sop-pref-preset[aria-pressed="true"] {
+  border-color: var(--hui-accent);
+  background: var(--hui-accent-soft);
+  color: var(--hui-accent);
+  font-weight: 600;
+}
+
+.evo-sop-pref-preset[aria-pressed="true"] small {
+  color: var(--hui-accent);
+  opacity: .85;
+}
+
+.evo-sop-pref-list {
+  display: grid;
+  gap: 7px;
+}
+
+.evo-sop-pref-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 11px;
+  border: 1px solid var(--hui-border);
+  border-radius: 10px;
+  background: var(--hui-canvas);
+  transition: border-color .14s ease, background-color .14s ease, opacity .14s ease;
+}
+
+.evo-sop-pref-option.is-checked {
+  border-color: color-mix(in srgb, var(--hui-accent) 45%, var(--hui-border));
+  background: color-mix(in srgb, var(--hui-accent-soft) 55%, var(--hui-surface));
+}
+
+.evo-sop-pref-option.is-p1 {
+  border-color: var(--hui-accent);
+  background: var(--hui-accent-soft);
+}
+
+.evo-sop-pref-option.is-dragging {
+  opacity: .45;
+}
+
+.evo-sop-pref-option.is-drag-over {
+  border-style: dashed;
+  border-color: var(--hui-accent);
+}
+
+.evo-sop-pref-grip {
+  flex: none;
+  font-size: 13px;
+  line-height: 1;
+  letter-spacing: -1px;
+  color: var(--hui-muted);
+  cursor: grab;
+  user-select: none;
+  padding: 2px 1px;
+}
+
+.evo-sop-pref-grip:active {
+  cursor: grabbing;
+}
+
+.evo-sop-pref-check {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  cursor: pointer;
+}
+
+.evo-sop-pref-check input {
+  margin-top: 2px;
+  flex: none;
+}
+
+.evo-sop-rank {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 28px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--hui-soft);
+  border: 1px solid var(--hui-border);
+  color: var(--hui-secondary);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+
+.evo-sop-rank.is-p1 {
+  background: var(--hui-accent);
+  border-color: var(--hui-accent);
+  color: var(--hui-on-accent);
+}
+
+.evo-sop-pref-copy {
+  flex: 1;
+  min-width: 0;
+}
+
+.evo-sop-pref-option b {
+  display: block;
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.evo-sop-pref-option small {
+  display: block;
+  font-size: 11px;
+  color: var(--hui-muted);
+  margin-top: 2px;
+}
+
+.evo-sop-pref-order {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.evo-sop-order-btn {
+  display: inline-grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid var(--hui-border);
+  border-radius: 6px;
+  background: var(--hui-surface);
+  color: var(--hui-secondary);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.evo-sop-order-btn:hover:not(:disabled) {
+  border-color: var(--hui-accent);
+  color: var(--hui-accent);
+  background: var(--hui-surface);
+}
+
+.evo-sop-order-btn:disabled {
+  opacity: .35;
+  cursor: not-allowed;
+}
+
+.evo-sop-pref-divider {
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--hui-muted);
+}
+
+.evo-sop-pref-empty {
+  padding: 10px 12px;
+  border: 1px dashed var(--hui-border-strong);
+  border-radius: 8px;
+  color: var(--hui-muted);
+  font-size: 12px;
+  text-align: center;
+}
+
+.evo-sop-batch-editor {
+  display: grid;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.evo-sop-batch-editor > label,
+.evo-sop-model-head > label {
+  font-weight: 600;
+}
+
+.evo-sop-model-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.evo-sop-model-hint {
+  margin: 0;
+  font-size: 12px;
+  color: var(--hui-muted);
+}
+
+.evo-sop-model-picker {
+  display: grid;
+  grid-template-columns: minmax(0, .85fr) minmax(0, 1.15fr);
+  gap: 8px;
+}
+
+.evo-sop-model-picker[hidden] {
+  display: none;
+}
+
+.evo-sop-model-picker select,
+.evo-sop-model-picker input {
+  width: 100%;
+  min-width: 0;
+  min-height: 34px;
+  font-size: 12px;
+}
+
+.evo-sop-batch-presets {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.evo-sop-preset-btn {
+  padding: 5px 10px;
+  border: 1px solid var(--hui-border);
+  border-radius: 8px;
+  background: var(--hui-surface);
+  color: var(--hui-secondary);
+  font: 12px/1.3 var(--hui-sans);
+  cursor: pointer;
+}
+
+.evo-sop-preset-btn[aria-pressed="true"] {
+  border-color: var(--hui-accent);
+  background: var(--hui-accent);
+  color: var(--hui-on-accent);
+  font-weight: 600;
+}
+
+.evo-sop-batch-custom-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--hui-muted);
+}
+
+.evo-sop-batch-custom-row input {
+  width: 84px;
+}
+
+.evo-sop-dialog-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--hui-border-soft);
+}
+
+@container (max-width: 860px) {
+  .evo-sop-kpi-grid,
+  .evo-sop-batch-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .evo-sop-columns {
+    display: none;
+  }
+  .evo-sop-row {
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    align-items: start;
+  }
+  .evo-sop-row-pref,
+  .evo-sop-row-metrics {
+    grid-column: 1 / -1;
+  }
+  .evo-sop-split-head {
+    display: none;
+  }
+  .evo-sop-split-row {
+    grid-template-columns: 1fr;
+  }
+  .evo-sop-split-cell.is-left {
+    border-right: 0;
+  }
+  .evo-sop-split-cell.is-empty {
+    display: none;
+  }
+}

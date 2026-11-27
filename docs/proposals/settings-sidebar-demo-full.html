@@ -378,7 +378,7 @@
     <h3>移动</h3>
     <ol>
       <li><b>流程模板、运行记录、定时任务</b>从图标栏移入设置，组成「流程与任务」</li>
-      <li>需求列表「更多」里的<b>触发配置</b>移入定时任务，作为「SOP 触发」标签</li>
+      <li>需求列表「更多」里的<b>触发配置</b>移入定时任务，作为「LOOP 触发」标签</li>
       <li><b>Bot 管理</b>更名为<b>通道管理</b>并归「项目」，<b>执行机器</b>归「运行环境」</li>
     </ol>
     <h3>合并与简化</h3>
@@ -480,27 +480,27 @@ const FACTOR={'p-pay':1,'p-app':.56,'p-ops':.31};
 const DB={
   me:{name:'林悦',login:'linyue',email:'linyue@example.com'},
   projects:[
-    {id:'p-pay',name:'支付中台',key:'PAY',owner:'林悦',repos:3,sop:'需求交付 SOP',updated:'今天 10:24'},
-    {id:'p-app',name:'会员 App',key:'APP',owner:'陈默',repos:2,sop:'前端交付 SOP',updated:'昨天 18:02'},
-    {id:'p-ops',name:'运维平台',key:'OPS',owner:'周宁',repos:1,sop:'缺陷修复 SOP',updated:'3 天前'}
+    {id:'p-pay',name:'支付中台',key:'PAY',owner:'林悦',repos:3,sop:'需求交付 LOOP',updated:'今天 10:24'},
+    {id:'p-app',name:'会员 App',key:'APP',owner:'陈默',repos:2,sop:'前端交付 LOOP',updated:'昨天 18:02'},
+    {id:'p-ops',name:'运维平台',key:'OPS',owner:'周宁',repos:1,sop:'缺陷修复 LOOP',updated:'3 天前'}
   ],
   members:{'p-pay':[['林悦','负责人'],['陈默','成员'],['许然','成员'],['宋一','成员'],['唐果','只读']],'p-app':[['陈默','负责人'],['林悦','成员'],['唐果','成员']],'p-ops':[['周宁','负责人'],['许然','成员']]},
   repos:{'p-pay':['pay/gateway','pay/settlement','pay/admin-web'],'p-app':['app/member-ios','app/member-web'],'p-ops':['ops/inspector']},
   issues:[
-    {id:'PAY-1024',p:'p-pay',title:'登录状态在 Token 过期后自动恢复',status:'running',sop:'需求交付 SOP',owner:'林悦',prio:'P1',updated:'5 分钟前',run:'r-8812'},
-    {id:'PAY-1023',p:'p-pay',title:'任务完成后推送企业微信通知',status:'waiting',sop:'需求交付 SOP',owner:'陈默',prio:'P1',updated:'12 分钟前',run:'r-8810'},
-    {id:'PAY-1021',p:'p-pay',title:'退款单导出支持按商户筛选',status:'waiting',sop:'需求交付 SOP',owner:'许然',prio:'P2',updated:'40 分钟前',run:'r-8806'},
-    {id:'PAY-1019',p:'p-pay',title:'对账报表增加手续费列',status:'merged',sop:'需求交付 SOP',owner:'宋一',prio:'P2',updated:'2 小时前',run:'r-8799'},
-    {id:'PAY-1017',p:'p-pay',title:'导出 CSV 时中文乱码',status:'failed',sop:'缺陷修复 SOP',owner:'林悦',prio:'P0',updated:'3 小时前',run:'r-8790'},
-    {id:'PAY-1016',p:'p-pay',title:'支付回调重试改为指数退避',status:'merged',sop:'需求交付 SOP',owner:'陈默',prio:'P1',updated:'昨天',run:'r-8781'},
+    {id:'PAY-1024',p:'p-pay',title:'登录状态在 Token 过期后自动恢复',status:'running',sop:'需求交付 LOOP',owner:'林悦',prio:'P1',updated:'5 分钟前',run:'r-8812'},
+    {id:'PAY-1023',p:'p-pay',title:'任务完成后推送企业微信通知',status:'waiting',sop:'需求交付 LOOP',owner:'陈默',prio:'P1',updated:'12 分钟前',run:'r-8810'},
+    {id:'PAY-1021',p:'p-pay',title:'退款单导出支持按商户筛选',status:'waiting',sop:'需求交付 LOOP',owner:'许然',prio:'P2',updated:'40 分钟前',run:'r-8806'},
+    {id:'PAY-1019',p:'p-pay',title:'对账报表增加手续费列',status:'merged',sop:'需求交付 LOOP',owner:'宋一',prio:'P2',updated:'2 小时前',run:'r-8799'},
+    {id:'PAY-1017',p:'p-pay',title:'导出 CSV 时中文乱码',status:'failed',sop:'缺陷修复 LOOP',owner:'林悦',prio:'P0',updated:'3 小时前',run:'r-8790'},
+    {id:'PAY-1016',p:'p-pay',title:'支付回调重试改为指数退避',status:'merged',sop:'需求交付 LOOP',owner:'陈默',prio:'P1',updated:'昨天',run:'r-8781'},
     {id:'PAY-1015',p:'p-pay',title:'商户后台新增风控标签',status:'todo',sop:'—',owner:'唐果',prio:'P2',updated:'昨天'},
     {id:'PAY-1012',p:'p-pay',title:'清算任务失败时自动告警',status:'todo',sop:'—',owner:'未指定',prio:'P3',updated:'2 天前'},
-    {id:'PAY-1009',p:'p-pay',title:'订单详情页加载慢',status:'merged',sop:'缺陷修复 SOP',owner:'许然',prio:'P1',updated:'3 天前',run:'r-8774'},
-    {id:'APP-311',p:'p-app',title:'会员等级页改版',status:'running',sop:'前端交付 SOP',owner:'陈默',prio:'P1',updated:'20 分钟前',run:'r-8805'},
-    {id:'APP-309',p:'p-app',title:'积分兑换弹窗在小屏溢出',status:'waiting',sop:'缺陷修复 SOP',owner:'唐果',prio:'P2',updated:'1 小时前',run:'r-8802'},
-    {id:'APP-305',p:'p-app',title:'签到日历支持补签',status:'merged',sop:'前端交付 SOP',owner:'林悦',prio:'P2',updated:'2 天前',run:'r-8770'},
+    {id:'PAY-1009',p:'p-pay',title:'订单详情页加载慢',status:'merged',sop:'缺陷修复 LOOP',owner:'许然',prio:'P1',updated:'3 天前',run:'r-8774'},
+    {id:'APP-311',p:'p-app',title:'会员等级页改版',status:'running',sop:'前端交付 LOOP',owner:'陈默',prio:'P1',updated:'20 分钟前',run:'r-8805'},
+    {id:'APP-309',p:'p-app',title:'积分兑换弹窗在小屏溢出',status:'waiting',sop:'缺陷修复 LOOP',owner:'唐果',prio:'P2',updated:'1 小时前',run:'r-8802'},
+    {id:'APP-305',p:'p-app',title:'签到日历支持补签',status:'merged',sop:'前端交付 LOOP',owner:'林悦',prio:'P2',updated:'2 天前',run:'r-8770'},
     {id:'OPS-88',p:'p-ops',title:'告警规则支持静默时段',status:'todo',sop:'—',owner:'周宁',prio:'P2',updated:'今天'},
-    {id:'OPS-86',p:'p-ops',title:'主机巡检脚本超时',status:'failed',sop:'缺陷修复 SOP',owner:'许然',prio:'P1',updated:'5 小时前',run:'r-8793'}
+    {id:'OPS-86',p:'p-ops',title:'主机巡检脚本超时',status:'failed',sop:'缺陷修复 LOOP',owner:'许然',prio:'P1',updated:'5 小时前',run:'r-8793'}
   ],
   approvals:[
     {id:'ap1',p:'p-pay',issue:'PAY-1023',title:'任务完成后推送企业微信通知',node:'方案评审',run:'r-8810',waited:'12 分钟',by:'架构师',summary:'新增 notify 模块，复用现有通知通道；影响 gateway 与 settlement 两个服务，无数据库变更，可按开关回滚。'},
@@ -522,12 +522,12 @@ const DB={
     {id:'r-8793',p:'p-ops',issue:'OPS-86',title:'主机巡检脚本超时',sopId:'sop-bug',status:'failed',node:'问题复现',started:'今天 05:10',dur:'12 分钟',tokens:44,by:'许然',error:'沙箱访问 10.0.0.0/8 被拒绝：离线沙箱禁止外网'}
   ],
   sops:[
-    {id:'sop-req',p:'p-pay',scope:'project',name:'需求交付 SOP',desc:'从需求澄清到提交 MR，含方案评审和测试验收两道人工确认。',version:'v5',runs:96,rate:92,last:'5 分钟前',nodes:cloneNodes('req')},
-    {id:'sop-bug',p:'p-pay',scope:'project',name:'缺陷修复 SOP',desc:'复现、定位、修复、回归验证，修复结果需负责人确认。',version:'v3',runs:41,rate:88,last:'3 小时前',nodes:cloneNodes('bug')},
-    {id:'sop-fe',p:'p-app',scope:'project',name:'前端交付 SOP',desc:'交互方案先评审，页面开发后对照设计稿验收。',version:'v2',runs:23,rate:91,last:'20 分钟前',nodes:cloneNodes('fe')},
-    {id:'sop-bug-app',p:'p-app',scope:'project',name:'缺陷修复 SOP',desc:'复现、定位、修复、回归验证。',version:'v1',runs:9,rate:89,last:'1 小时前',nodes:cloneNodes('bug')},
-    {id:'sop-dep',p:'p-ops',scope:'shared',name:'依赖升级 SOP',desc:'扫描过期依赖并提交升级 MR，由运维平台共享。',version:'v4',runs:57,rate:95,last:'昨天',nodes:cloneNodes('dep')},
-    {id:'sop-generic',p:'',scope:'builtin',name:'通用后端交付 SOP',desc:'平台维护的只读蓝图，复制到项目后才能派发和修改。',version:'v8',runs:0,rate:0,last:'—',nodes:cloneNodes('req'),builtin:true}
+    {id:'sop-req',p:'p-pay',scope:'project',name:'需求交付 LOOP',desc:'从需求澄清到提交 MR，含方案评审和测试验收两道人工确认。',version:'v5',runs:96,rate:92,last:'5 分钟前',nodes:cloneNodes('req')},
+    {id:'sop-bug',p:'p-pay',scope:'project',name:'缺陷修复 LOOP',desc:'复现、定位、修复、回归验证，修复结果需负责人确认。',version:'v3',runs:41,rate:88,last:'3 小时前',nodes:cloneNodes('bug')},
+    {id:'sop-fe',p:'p-app',scope:'project',name:'前端交付 LOOP',desc:'交互方案先评审，页面开发后对照设计稿验收。',version:'v2',runs:23,rate:91,last:'20 分钟前',nodes:cloneNodes('fe')},
+    {id:'sop-bug-app',p:'p-app',scope:'project',name:'缺陷修复 LOOP',desc:'复现、定位、修复、回归验证。',version:'v1',runs:9,rate:89,last:'1 小时前',nodes:cloneNodes('bug')},
+    {id:'sop-dep',p:'p-ops',scope:'shared',name:'依赖升级 LOOP',desc:'扫描过期依赖并提交升级 MR，由运维平台共享。',version:'v4',runs:57,rate:95,last:'昨天',nodes:cloneNodes('dep')},
+    {id:'sop-generic',p:'',scope:'builtin',name:'通用后端交付 LOOP',desc:'平台维护的只读蓝图，复制到项目后才能派发和修改。',version:'v8',runs:0,rate:0,last:'—',nodes:cloneNodes('req'),builtin:true}
   ],
   prompts:[
     {id:'s1',p:'p-pay',name:'每日需求整理',when:'工作日 09:00',bot:'研发群',enabled:true,last:'今天 09:00 · 成功',prompt:'整理昨天新增和变更的需求，按优先级列出待澄清的问题，发到研发群。'},
@@ -545,18 +545,18 @@ const DB={
     {id:'m4',name:'需求澄清提醒',desc:'对超过 2 天还没澄清的需求，提醒负责人补充信息。',source:'会员 App',version:1,params:1,subs:2,when:'工作日 09:00'}
   ],
   bots:[
-    {id:'b1',p:'p-pay',name:'研发群',channel:'企业微信群聊',bound:true,usedBy:'2 个定时任务 · 需求交付 SOP',last:'今天 09:00'},
+    {id:'b1',p:'p-pay',name:'研发群',channel:'企业微信群聊',bound:true,usedBy:'2 个定时任务 · 需求交付 LOOP',last:'今天 09:00'},
     {id:'b2',p:'p-pay',name:'周报群',channel:'企业微信群聊',bound:true,usedBy:'1 个定时任务',last:'上周五 17:30'},
     {id:'b3',p:'p-pay',name:'林悦（单聊）',channel:'企业微信单聊',bound:false,usedBy:'未使用',last:'—'},
     {id:'b4',p:'p-app',name:'App 研发群',channel:'企业微信群聊',bound:true,usedBy:'1 个定时任务',last:'今天 09:00'}
   ],
   agents:[
-    {id:'a1',name:'需求分析师',desc:'澄清需求，补全背景和验收标准。',exec:'CodeBuddy',model:'Deepseek-V4.1-Flash',sops:'需求交付 SOP、前端交付 SOP',scope:'本项目'},
-    {id:'a2',name:'架构师',desc:'输出技术方案、影响面和回滚方案。',exec:'Claude Code',model:'Claude Sonnet',sops:'需求交付 SOP',scope:'本项目'},
-    {id:'a3',name:'开发工程师',desc:'按方案实现，并补齐单元测试。',exec:'CodeBuddy',model:'Deepseek-V4.1',sops:'需求交付 SOP、缺陷修复 SOP',scope:'本项目'},
-    {id:'a4',name:'测试工程师',desc:'编写并执行测试用例，输出测试报告。',exec:'Codex',model:'GPT Codex',sops:'需求交付 SOP、缺陷修复 SOP',scope:'本项目'},
-    {id:'a5',name:'前端工程师',desc:'实现页面并补齐组件测试。',exec:'CodeBuddy',model:'Deepseek-V4.1',sops:'前端交付 SOP',scope:'共享'},
-    {id:'a6',name:'对齐 Agent',desc:'解决集成分支与默认分支的合并冲突。',exec:'CodeBuddy',model:'Deepseek-V4.1',sops:'SOP 触发（基线对齐）',scope:'内置'}
+    {id:'a1',name:'需求分析师',desc:'澄清需求，补全背景和验收标准。',exec:'CodeBuddy',model:'Deepseek-V4.1-Flash',sops:'需求交付 LOOP、前端交付 LOOP',scope:'本项目'},
+    {id:'a2',name:'架构师',desc:'输出技术方案、影响面和回滚方案。',exec:'Claude Code',model:'Claude Sonnet',sops:'需求交付 LOOP',scope:'本项目'},
+    {id:'a3',name:'开发工程师',desc:'按方案实现，并补齐单元测试。',exec:'CodeBuddy',model:'Deepseek-V4.1',sops:'需求交付 LOOP、缺陷修复 LOOP',scope:'本项目'},
+    {id:'a4',name:'测试工程师',desc:'编写并执行测试用例，输出测试报告。',exec:'Codex',model:'GPT Codex',sops:'需求交付 LOOP、缺陷修复 LOOP',scope:'本项目'},
+    {id:'a5',name:'前端工程师',desc:'实现页面并补齐组件测试。',exec:'CodeBuddy',model:'Deepseek-V4.1',sops:'前端交付 LOOP',scope:'共享'},
+    {id:'a6',name:'对齐 Agent',desc:'解决集成分支与默认分支的合并冲突。',exec:'CodeBuddy',model:'Deepseek-V4.1',sops:'LOOP 触发（基线对齐）',scope:'内置'}
   ],
   mcps:[
     {id:'c1',name:'GitHub',url:'https://mcp.example.com/github',scope:'project',tools:12,status:'ok',added:'20 天前'},
@@ -598,9 +598,9 @@ const DB={
     {id:'e3',scope:'共享',name:'install-protoc.sh',desc:'安装 protoc 与 Go 插件',updated:'1 个月前',content:'#!/usr/bin/env bash\nset -euo pipefail\napt-get update && apt-get install -y protobuf-compiler\ngo install google.golang.org/protobuf/cmd/protoc-gen-go@latest'}
   ],
   sandboxes:[
-    {id:'x1',name:'默认沙箱',image:'go122-build',net:'仅白名单域名',cpu:'4 核',mem:'8 GB',timeout:'2 小时',used:'需求交付 SOP、缺陷修复 SOP'},
-    {id:'x2',name:'高配沙箱',image:'node20-base',net:'仅白名单域名',cpu:'8 核',mem:'16 GB',timeout:'4 小时',used:'前端交付 SOP'},
-    {id:'x3',name:'离线沙箱',image:'go122-build',net:'禁止外网',cpu:'2 核',mem:'4 GB',timeout:'1 小时',used:'依赖升级 SOP'}
+    {id:'x1',name:'默认沙箱',image:'go122-build',net:'仅白名单域名',cpu:'4 核',mem:'8 GB',timeout:'2 小时',used:'需求交付 LOOP、缺陷修复 LOOP'},
+    {id:'x2',name:'高配沙箱',image:'node20-base',net:'仅白名单域名',cpu:'8 核',mem:'16 GB',timeout:'4 小时',used:'前端交付 LOOP'},
+    {id:'x3',name:'离线沙箱',image:'go122-build',net:'禁止外网',cpu:'2 核',mem:'4 GB',timeout:'1 小时',used:'依赖升级 LOOP'}
   ],
   tokens:[
     {id:'t1',name:'我的 Cursor',prefix:'lf_8a3f',created:'12 天前',used:'2 小时前',expires:'2027-02-08',status:'active'},
@@ -609,7 +609,7 @@ const DB={
   ],
   creds:[
     {key:'codebuddy',name:'CodeBuddy API Key',ok:true,hint:'Agent 调模型执行任务；未配置时使用平台共享模型'},
-    {key:'codex',name:'Codex API Key',ok:false,hint:'公共 SOP 可选的执行器'},
+    {key:'codex',name:'Codex API Key',ok:false,hint:'公共 LOOP 可选的执行器'},
     {key:'claude',name:'Claude Code API Key',ok:false,hint:'可以按角色选择的执行器'},
     {key:'git',name:'GitHub Git Token',ok:true,hint:'目标仓库需要 Contents 和 Pull requests 读写权限'}
   ],
@@ -618,7 +618,7 @@ const DB={
     tokens:[182,210,164,240,268,120,96,230,256,301,278,322,140,118],
     users:[['林悦',820,34],['陈默',640,27],['许然',512,22],['宋一',388,18],['唐果',204,9]],
     weekly:[4,6,5,7,6,8,9,7],
-    bySop:[['需求交付 SOP',96,92,'52 分钟',1900],['缺陷修复 SOP',41,88,'31 分钟',820],['AI 定时任务',64,98,'4 分钟',510]]
+    bySop:[['需求交付 LOOP',96,92,'52 分钟',1900],['缺陷修复 LOOP',41,88,'31 分钟',820],['AI 定时任务',64,98,'4 分钟',510]]
   }
 };
 const DAYS=(()=>{const out=[],end=new Date(2026,10,10);for(let i=13;i>=0;i--){const d=new Date(end);d.setDate(end.getDate()-i);out.push(`${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`)}return out})();
@@ -762,13 +762,13 @@ function vHome(){
   return `<div class="home"><div class="home-inner">
     <div class="home-logo" aria-hidden="true">LF</div>
     <h1>把想法，变成下一步。</h1>
-    <p class="desc">在「${esc(p.name)}」里描述你要做的事，AI 会拆成需求、调用 SOP，或者直接回答。</p>
+    <p class="desc">在「${esc(p.name)}」里描述你要做的事，AI 会拆成需求、调用 LOOP，或者直接回答。</p>
     <form class="composer" data-form="chat"><label class="sr-only" for="chatInput">输入内容</label><textarea id="chatInput" name="text" rows="3" placeholder="例如：把 PAY-1017 的 CSV 乱码修掉，并补上回归测试"></textarea>
       <div class="composer-bar"><button type="button" class="icon-btn" data-act="demoOnly" aria-label="添加附件">${ic('plus')}</button><span class="chip">CodeBuddy</span><span class="chip">${esc(DB.platform.model)}</span><span class="grow"></span><button type="submit" class="btn primary">${ic('send',14)}发送</button></div></form>
     <div class="starters">
-      <button type="button" class="starter" data-act="newIssue">${ic('form')}<b>新建一条需求</b><span>写清目标，选 SOP 自动交付</span></button>
-      <button type="button" class="starter" data-go="schedules/prompt">${ic('clock')}<b>配置定时任务</b><span>按计划执行提示词或派发 SOP</span></button>
-      <button type="button" class="starter" data-go="sops">${ic('workflow')}<b>查看流程模板</b><span>打开 SOP，调整节点和人工确认</span></button>
+      <button type="button" class="starter" data-act="newIssue">${ic('form')}<b>新建一条需求</b><span>写清目标，选 LOOP 自动交付</span></button>
+      <button type="button" class="starter" data-go="schedules/prompt">${ic('clock')}<b>配置定时任务</b><span>按计划执行提示词或派发 LOOP</span></button>
+      <button type="button" class="starter" data-go="sops">${ic('workflow')}<b>查看流程模板</b><span>打开 LOOP，调整节点和人工确认</span></button>
     </div></div></div>`;
 }
 
@@ -779,7 +779,7 @@ function vStats(){
   if(t==='usage'){
     const tokens=DB.stats.tokens.map(v=>v*k),total=tokens.reduce((a,b)=>a+b,0);
     const users=DB.stats.users.map(([n,tk,r])=>`<tr><td>${esc(n)}</td><td class="num">${fmtK(tk*k)}</td><td class="num">${Math.max(1,Math.round(r*k))}</td><td class="num">${Math.round(tk*k/Math.max(1,r*k))}K</td></tr>`).join('');
-    return head+tb+`<div class="kpis">${kpi('近 14 天 Token',fmtK(total),'较前 14 天 +12%','up')}${kpi('运行次数',String(Math.round(128*k)),'SOP 与定时任务')}${kpi('成功率','92%','较前 14 天 +3%','up')}${kpi('人均 Token',fmtK(total/5),'5 名活跃成员')}</div>
+    return head+tb+`<div class="kpis">${kpi('近 14 天 Token',fmtK(total),'较前 14 天 +12%','up')}${kpi('运行次数',String(Math.round(128*k)),'LOOP 与定时任务')}${kpi('成功率','92%','较前 14 天 +3%','up')}${kpi('人均 Token',fmtK(total/5),'5 名活跃成员')}</div>
       <section class="panel"><div class="panel-head"><b>每日 Token 用量</b><span class="r">单位 K</span></div><div class="chart-box">${barChart(tokens,DAYS,v=>fmtK(v),'近 14 天每日 Token 用量')}</div></section>
       <section class="panel"><div class="panel-head"><b>成员用量</b></div><div class="table-wrap"><table class="table"><thead><tr><th>成员</th><th class="num">Token</th><th class="num">运行</th><th class="num">单次平均</th></tr></thead><tbody>${users}</tbody></table></div></section>`;
   }
@@ -787,7 +787,7 @@ function vStats(){
   const bySop=DB.stats.bySop.map(([n,r,rate,d,tk])=>`<tr><td>${esc(n)}</td><td class="num">${Math.max(1,Math.round(r*k))}</td><td class="num">${rate}%</td><td class="num">${esc(d)}</td><td class="num">${fmtK(tk*k)}</td></tr>`).join('');
   return head+tb+`<div class="kpis">${kpi('交付需求',String(weekly.reduce((a,b)=>a+b,0)),'近 8 周')}${kpi('合入 MR',String(Math.round(41*k)),'含缺陷修复')}${kpi('平均交付周期','1.8 天','较上月 -0.4 天','up')}${kpi('人工确认',String(Math.round(52*k)),'平均等待 23 分钟')}</div>
     <section class="panel"><div class="panel-head"><b>每周交付需求数</b></div><div class="chart-box">${barChart(weekly,WEEKS,v=>v+' 条','近 8 周每周交付需求数')}</div></section>
-    <section class="panel"><div class="panel-head"><b>按 SOP 统计</b></div><div class="table-wrap"><table class="table"><thead><tr><th>SOP</th><th class="num">运行</th><th class="num">成功率</th><th class="num">平均耗时</th><th class="num">Token</th></tr></thead><tbody>${bySop}</tbody></table></div></section>`;
+    <section class="panel"><div class="panel-head"><b>按 LOOP 统计</b></div><div class="table-wrap"><table class="table"><thead><tr><th>LOOP</th><th class="num">运行</th><th class="num">成功率</th><th class="num">平均耗时</th><th class="num">Token</th></tr></thead><tbody>${bySop}</tbody></table></div></section>`;
 }
 
 function filteredIssues(){
@@ -797,14 +797,14 @@ function filteredIssues(){
 function issueTable(){
   const list=filteredIssues();
   if(!list.length)return empty('没有匹配的需求','换个关键词或状态试试。');
-  return `<div class="table-wrap"><table class="table"><thead><tr><th>编号</th><th>标题</th><th>状态</th><th>SOP</th><th>负责人</th><th>优先级</th><th>更新</th></tr></thead><tbody>${list.map(i=>`<tr><td class="mono">${esc(i.id)}</td><td><button type="button" class="link" data-act="issue" data-id="${esc(i.id)}">${esc(i.title)}</button></td><td>${st(i.status)}</td><td>${esc(i.sop)}</td><td>${esc(i.owner)}</td><td>${tag(i.prio)}</td><td class="muted">${esc(i.updated)}</td></tr>`).join('')}</tbody></table></div>`;
+  return `<div class="table-wrap"><table class="table"><thead><tr><th>编号</th><th>标题</th><th>状态</th><th>LOOP</th><th>负责人</th><th>优先级</th><th>更新</th></tr></thead><tbody>${list.map(i=>`<tr><td class="mono">${esc(i.id)}</td><td><button type="button" class="link" data-act="issue" data-id="${esc(i.id)}">${esc(i.title)}</button></td><td>${st(i.status)}</td><td>${esc(i.sop)}</td><td>${esc(i.owner)}</td><td>${tag(i.prio)}</td><td class="muted">${esc(i.updated)}</td></tr>`).join('')}</tbody></table></div>`;
 }
 function vIssues(){
   const all=projIssues(),cnt=s=>all.filter(i=>i.status===s).length,open=state.menu==='issueMore';
   const menu=`<div class="menu-anchor"><button type="button" class="btn" data-act="menu" data-menu="issueMore" aria-haspopup="menu" aria-expanded="${open}">更多${ic('down',14)}</button>${open?`<div class="menu" role="menu"><button type="button" role="menuitem" data-act="toast" data-msg="外部同步尚未配置（模拟）">${ic('sync',15)}<span>外部同步</span><small>未配置</small></button><hr><button type="button" role="menuitem" data-act="toast" data-msg="已从 GitHub 同步，没有新需求（模拟）">${ic('git',15)}<span>同步 GitHub</span></button></div>`:''}</div>`;
   const actions=`<button type="button" class="icon-btn" data-act="toast" data-msg="已刷新" aria-label="刷新">${ic('refresh')}</button>${menu}<button type="button" class="btn primary" data-act="newIssue">${ic('plus',14)}新建需求</button>`;
   return heading('需求列表','查看每条需求的执行结果。失败的点进去看卡在哪，再决定重试或修改。',actions,'需求与缺陷')+
-    note(`「更多」里的<b>触发配置</b>已移到 设置 › 定时任务 › SOP 触发。<button type="button" class="btn sm soft" data-go="schedules/trigger">去看看</button>`)+
+    note(`「更多」里的<b>触发配置</b>已移到 设置 › 定时任务 › LOOP 触发。<button type="button" class="btn sm soft" data-go="schedules/trigger">去看看</button>`)+
     `<section class="panel"><div class="toolbar"><label class="search">${ic('search',15)}<input type="search" data-input="issueQuery" value="${esc(state.ui.issueQuery)}" placeholder="搜索编号、标题或负责人" aria-label="搜索需求"></label>${seg('issueStatus',[['all','全部',all.length],['running','运行中',cnt('running')],['waiting','待确认',cnt('waiting')],['failed','失败',cnt('failed')],['merged','已合入',cnt('merged')],['todo','未开始',cnt('todo')]],'按状态筛选')}</div><div id="issueTable">${issueTable()}</div></section>`;
 }
 
@@ -826,11 +826,11 @@ function vSettings(){
 function vProjects(){
   const rows=DB.projects.map(p=>`<tr><td><button type="button" class="link" data-act="project" data-id="${p.id}">${esc(p.name)}</button> <span class="mono muted">${esc(p.key)}</span>${p.id===state.project?' '+badge('run','当前'):''}</td><td>${esc(p.owner)}</td><td class="num">${(DB.members[p.id]||[]).length}</td><td class="num">${(DB.repos[p.id]||[]).length}</td><td>${esc(p.sop)}</td><td class="muted">${esc(p.updated)}</td></tr>`).join('');
   return heading('项目配置','项目、成员和仓库。需求、角色和运行都归属到顶栏选中的项目。',`<button type="button" class="btn primary" data-act="newProject">${ic('plus',14)}新建项目</button>`)+
-    `<section class="panel"><div class="table-wrap"><table class="table"><thead><tr><th>项目</th><th>负责人</th><th class="num">成员</th><th class="num">仓库</th><th>默认 SOP</th><th>更新</th></tr></thead><tbody>${rows}</tbody></table></div></section>`;
+    `<section class="panel"><div class="table-wrap"><table class="table"><thead><tr><th>项目</th><th>负责人</th><th class="num">成员</th><th class="num">仓库</th><th>默认 LOOP</th><th>更新</th></tr></thead><tbody>${rows}</tbody></table></div></section>`;
 }
 function vBots(){
   const list=projBots();
-  return heading('通道管理','配置通知通道，把任务进展发到企业微信单聊或群聊，在 SOP 和定时任务里选用。',`<button type="button" class="btn primary" data-act="newBot">${ic('plus',14)}新建通道</button>`)+
+  return heading('通道管理','配置通知通道，把任务进展发到企业微信单聊或群聊，在 LOOP 和定时任务里选用。',`<button type="button" class="btn primary" data-act="newBot">${ic('plus',14)}新建通道</button>`)+
     `<section class="panel"><div class="panel-head"><b>「${esc(proj().name)}」的通道</b><span class="r">${list.length} 个</span></div>${list.length?list.map(b=>row({icon:'robot',title:`${esc(b.name)} ${tag(b.channel)} ${b.bound?badge('ok','已绑定'):badge('wait','待绑定')}`,sub:`用于：${esc(b.usedBy)} · 最近发送 ${esc(b.last)}`,right:`<button type="button" class="btn sm" data-act="testBot" data-id="${b.id}"${b.bound?'':' disabled'}>发送测试</button><button type="button" class="btn sm danger-outline" data-act="deleteBot" data-id="${b.id}">删除</button>`})).join(''):empty('还没有通道','新建一个，把运行结果发到群里。')}</section>`;
 }
 
@@ -844,10 +844,10 @@ function vSops(){
     return `<article class="card"><div class="card-head"><h3>${esc(s.name)}</h3>${tag(s.version)}</div><p>${esc(s.desc)}</p><div class="chain">${chain}</div><div class="meta"><span>${s.nodes.length} 个节点</span>${s.builtin?'':`<span>运行 ${s.runs} 次</span><span>成功率 ${s.rate}%</span><span>最近 ${esc(s.last)}</span>`}</div><footer>${health}<span class="grow"></span>${btns}</footer></article>`;
   }).join('');
   const count=k=>DB.sops.filter(s=>k==='project'?s.scope==='project'&&s.p===state.project:s.scope===k).length;
-  return heading('流程模板','可复用的 AI 协作流程。点「打开」进入设计器，编辑节点和人工确认。',`<button type="button" class="btn primary" data-act="newSop">${ic('plus',14)}新建 SOP</button>`)+
+  return heading('流程模板','可复用的 AI 协作流程。点「打开」进入设计器，编辑节点和人工确认。',`<button type="button" class="btn primary" data-act="newSop">${ic('plus',14)}新建 LOOP</button>`)+
     note('设置里不再单独放「流程设计」入口，从卡片上的<b>打开</b>进入设计器。')+
     `<div style="margin-bottom:14px">${seg('sopScope',[['project','本项目',count('project')],['shared','共享',count('shared')],['builtin','内置',count('builtin')]],'流程范围')}</div>`+
-    (list.length?`<div class="cards">${cards}</div>`:`<section class="panel">${empty('这里还没有 SOP','从「内置」复制一个，或者新建。')}</section>`);
+    (list.length?`<div class="cards">${cards}</div>`:`<section class="panel">${empty('这里还没有 LOOP','从「内置」复制一个，或者新建。')}</section>`);
 }
 function flowSvg(s){
   const W=168,H=72,gap=44,y=56,width=40+s.nodes.length*(W+gap)-gap+40,height=y*2+H;
@@ -875,7 +875,7 @@ function filteredRuns(){
 function runTable(){
   const list=filteredRuns();
   if(!list.length)return empty('没有匹配的运行','换个关键词或状态试试。');
-  return `<div class="table-wrap"><table class="table"><thead><tr><th>运行</th><th>需求</th><th>SOP</th><th>状态</th><th>当前节点</th><th>开始</th><th class="num">耗时</th><th class="num">Token</th></tr></thead><tbody>${list.map(r=>`<tr><td><button type="button" class="link mono" data-act="run" data-id="${esc(r.id)}">${esc(r.id)}</button></td><td>${esc(r.title)}</td><td>${esc(sopById(r.sopId)?.name||'AI 定时任务')}</td><td>${st(r.status)}</td><td>${esc(r.node)}</td><td class="muted">${esc(r.started)}</td><td class="num">${esc(r.dur)}</td><td class="num">${fmtK(r.tokens)}</td></tr>`).join('')}</tbody></table></div>`;
+  return `<div class="table-wrap"><table class="table"><thead><tr><th>运行</th><th>需求</th><th>LOOP</th><th>状态</th><th>当前节点</th><th>开始</th><th class="num">耗时</th><th class="num">Token</th></tr></thead><tbody>${list.map(r=>`<tr><td><button type="button" class="link mono" data-act="run" data-id="${esc(r.id)}">${esc(r.id)}</button></td><td>${esc(r.title)}</td><td>${esc(sopById(r.sopId)?.name||'AI 定时任务')}</td><td>${st(r.status)}</td><td>${esc(r.node)}</td><td class="muted">${esc(r.started)}</td><td class="num">${esc(r.dur)}</td><td class="num">${fmtK(r.tokens)}</td></tr>`).join('')}</tbody></table></div>`;
 }
 function vRuns(){
   const all=projRuns(),cnt=s=>all.filter(r=>r.status===s).length,done=all.filter(r=>r.status==='succeeded'||r.status==='failed');
@@ -901,10 +901,10 @@ function vSchedules(){
     const sops=projSops();
     const hist=trig.history.length?trig.history.map(([time,text,tone])=>row({icon:'sync',title:`${esc(time)} ${badge(tone,tone==='ok'?'已派发':tone==='wait'?'已暂停':'无候选')}`,sub:esc(text)})).join(''):empty('还没有运行记录','保存并启用后，按间隔扫描需求。');
     body=note('原来在需求列表「更多 → 触发配置」，现在和提示词任务放在一起管理。')+
-      `<div class="grid2"><form class="panel" data-form="trigger" novalidate><div class="panel-head"><b>SOP 自动派发</b><span class="r">每个项目一份配置</span></div><div class="fields">
+      `<div class="grid2"><form class="panel" data-form="trigger" novalidate><div class="panel-head"><b>LOOP 自动派发</b><span class="r">每个项目一份配置</span></div><div class="fields">
         <label class="field-row"><span>启用自动派发</span><input type="checkbox" class="switch" name="enabled"${trig.enabled?' checked':''}></label>
         ${field('扫描间隔',`<select name="interval">${opts(INTERVALS,trig.interval)}</select>`)}
-        ${field('默认 SOP',sops.length?`<select name="sop">${opts(sops.map(s=>[s.id,s.name]),trig.sop)}</select>`:`<select name="sop" disabled><option value="">本项目还没有 SOP</option></select>`,'需求没指定 SOP 时使用')}
+        ${field('默认 LOOP',sops.length?`<select name="sop">${opts(sops.map(s=>[s.id,s.name]),trig.sop)}</select>`:`<select name="sop" disabled><option value="">本项目还没有 LOOP</option></select>`,'需求没指定 LOOP 时使用')}
         <fieldset class="field"><legend>触发状态</legend><div class="checks">${TRIGGER_STATUSES.map(([v,l])=>`<label><input type="checkbox" name="status" value="${v}"${trig.statuses.includes(v)?' checked':''}>${l}</label>`).join('')}</div></fieldset>
         ${field('单次最多派发',`<input type="number" name="max" min="1" max="10" value="${trig.max}">`,'1–10 个需求')}
       </div><div class="form-foot"><button type="submit" class="btn primary">保存触发配置</button></div></form>
@@ -912,13 +912,13 @@ function vSchedules(){
   }else{
     body=`<div style="margin-bottom:14px"><label class="search">${ic('search',15)}<input type="search" data-input="marketQuery" value="${esc(state.ui.marketQuery)}" placeholder="搜索名称、用途或来源项目" aria-label="搜索共享任务"></label></div><div id="marketGrid">${marketGrid()}</div>`;
   }
-  return heading('定时任务','提示词任务和 SOP 自动派发统一在这里管理。',actions)+
-    tabs('schedules',[['prompt','提示词任务',prompts.length],['trigger','SOP 触发',trig.enabled?'已启用':'未启用',['new','从需求列表移入']],['market','共享任务市场',DB.market.length]],t,'定时任务类型')+body;
+  return heading('定时任务','提示词任务和 LOOP 自动派发统一在这里管理。',actions)+
+    tabs('schedules',[['prompt','提示词任务',prompts.length],['trigger','LOOP 触发',trig.enabled?'已启用':'未启用',['new','从需求列表移入']],['market','共享任务市场',DB.market.length]],t,'定时任务类型')+body;
 }
 
 function vAgents(){
   const scopeTone={'本项目':'run','共享':'ok','内置':'off'};
-  return heading('角色定义','每个角色有自己的职责、执行器和模型，在 SOP 节点里选用。',`<button type="button" class="btn primary" data-act="newAgent">${ic('plus',14)}新建角色</button>`)+
+  return heading('角色定义','每个角色有自己的职责、执行器和模型，在 LOOP 节点里选用。',`<button type="button" class="btn primary" data-act="newAgent">${ic('plus',14)}新建角色</button>`)+
     `<section class="panel"><div class="table-wrap"><table class="table"><thead><tr><th>角色</th><th>职责</th><th>执行器</th><th>模型</th><th>用于</th><th>范围</th></tr></thead><tbody>${DB.agents.map(a=>`<tr><td><b style="font-weight:500">${esc(a.name)}</b></td><td class="muted">${esc(a.desc)}</td><td>${esc(a.exec)}</td><td class="mono">${esc(a.model)}</td><td>${esc(a.sops)}</td><td>${badge(scopeTone[a.scope]||'off',a.scope)}</td></tr>`).join('')}</tbody></table></div></section>`;
 }
 
@@ -1027,17 +1027,17 @@ function randomToken(){const b=new Uint8Array(16);crypto.getRandomValues(b);retu
 function openIssue(id){
   const i=DB.issues.find(x=>x.id===id);if(!i)return;
   const r=i.run&&DB.runs.find(x=>x.id===i.run),sops=projSops();
-  const body=`<dl class="kv"><dt>状态</dt><dd>${st(i.status)}</dd><dt>优先级</dt><dd>${tag(i.prio)}</dd><dt>负责人</dt><dd>${esc(i.owner)}</dd><dt>SOP</dt><dd>${esc(i.sop)}</dd><dt>更新</dt><dd>${esc(i.updated)}</dd></dl>
+  const body=`<dl class="kv"><dt>状态</dt><dd>${st(i.status)}</dd><dt>优先级</dt><dd>${tag(i.prio)}</dd><dt>负责人</dt><dd>${esc(i.owner)}</dd><dt>LOOP</dt><dd>${esc(i.sop)}</dd><dt>更新</dt><dd>${esc(i.updated)}</dd></dl>
     <h3 class="sec">验收标准</h3><ol class="list muted"><li>${esc(i.title)}，覆盖正常和异常分支</li><li>补齐单元测试，CI 全部通过</li><li>合入前完成方案评审与测试验收</li></ol>
     ${r?`<h3 class="sec">关联运行</h3><div class="panel">${row({icon:'runs',title:`<button type="button" class="link mono" data-act="run" data-id="${esc(r.id)}">${esc(r.id)}</button> ${st(r.status)}`,sub:`当前节点：${esc(r.node)} · ${esc(r.dur)}`})}</div>`:''}
-    ${i.status==='todo'?`<h3 class="sec">派发</h3>${sops.length?`<form class="panel inline-form" data-form="dispatch" data-id="${esc(i.id)}">${field('选择 SOP',`<select name="sop">${opts(sops.map(s=>[s.id,s.name]),sops[0].id)}</select>`)}<button type="submit" class="btn primary">${ic('play',12)}派发</button></form>`:'<p class="muted">本项目还没有 SOP，先到流程模板复制一个。</p>'}`:''}`;
+    ${i.status==='todo'?`<h3 class="sec">派发</h3>${sops.length?`<form class="panel inline-form" data-form="dispatch" data-id="${esc(i.id)}">${field('选择 LOOP',`<select name="sop">${opts(sops.map(s=>[s.id,s.name]),sops[0].id)}</select>`)}<button type="submit" class="btn primary">${ic('play',12)}派发</button></form>`:'<p class="muted">本项目还没有 LOOP，先到流程模板复制一个。</p>'}`:''}`;
   openDrawer(`${i.id} ${i.title}`,`${esc(proj().name)} · ${esc(i.owner)}`,body);
 }
 function openRun(id){
   const r=DB.runs.find(x=>x.id===id);if(!r)return;
   const s=sopById(r.sopId),nodes=s?s.nodes:[],cur=nodes.findIndex(n=>n.name===r.node);
   const tl=nodes.map((n,i)=>{let tone='off',label='未开始';if(r.status==='succeeded'||i<cur){tone='ok';label='完成'}else if(i===cur){[tone,label]=STATUS[r.status]}return `<li class="tl ${tone}"><span class="dot"></span><div><b>${esc(n.name)}</b><small>${esc(n.agent||KIND[n.kind])}${tone==='ok'?` · ${3+i*2} 分钟`:''}</small></div>${badge(tone,label)}</li>`}).join('');
-  const log=[`[${esc(r.started)}] 运行开始，SOP：${esc(s?.name||'AI 定时任务')}`,`[+00:01] 准备工作区：默认沙箱 · go122-build`,`[+00:02] 拉取仓库并切到集成分支`,`[+00:05] 进入节点「${esc(r.node)}」`];
+  const log=[`[${esc(r.started)}] 运行开始，LOOP：${esc(s?.name||'AI 定时任务')}`,`[+00:01] 准备工作区：默认沙箱 · go122-build`,`[+00:02] 拉取仓库并切到集成分支`,`[+00:05] 进入节点「${esc(r.node)}」`];
   if(r.error)log.push(`<span class="e">[+${esc(r.dur)}] 失败：${esc(r.error)}</span>`);
   else if(r.status==='waiting')log.push(`[+${esc(r.dur)}] 等待人工确认`);
   else if(r.status==='succeeded')log.push(`[+${esc(r.dur)}] 运行完成`);
@@ -1070,10 +1070,10 @@ const ACT={
   run:a=>openRun(a.dataset.id),
   newIssue:()=>{
     const sops=projSops();
-    openModal({title:'新建需求',desc:`需求会创建在「${proj().name}」。选了 SOP 就会立即派发。`,submit:'创建',body:
+    openModal({title:'新建需求',desc:`需求会创建在「${proj().name}」。选了 LOOP 就会立即派发。`,submit:'创建',body:
       field('标题','<input name="title" maxlength="80" required placeholder="一句话说清要做什么">')+
       field('优先级',`<select name="prio">${opts([['P0','P0 紧急'],['P1','P1 高'],['P2','P2 中'],['P3','P3 低']],'P2')}</select>`)+
-      field('SOP',`<select name="sop"><option value="">暂不派发</option>${opts(sops.map(s=>[s.id,s.name]),'')}</select>`),
+      field('LOOP',`<select name="sop"><option value="">暂不派发</option>${opts(sops.map(s=>[s.id,s.name]),'')}</select>`),
       onSubmit:f=>{
         const title=f.get('title').trim();if(!title){toast('请填写标题','err');return false}
         const i={id:`${proj().key}-${++seq}`,p:state.project,title,status:'todo',sop:'—',owner:DB.me.name,prio:f.get('prio'),updated:'刚刚'};
@@ -1133,10 +1133,10 @@ const ACT={
       DB.bots.push({id:'b'+(++seq),p:state.project,name,channel:f.get('channel'),bound:true,usedBy:'未使用',last:'—'});toast(`已创建「${name}」`,'ok');renderMain();
     }}),
   testBot:a=>{const b=DB.bots.find(x=>x.id===a.dataset.id);if(b){b.last='刚刚';toast(`已向「${b.name}」发送测试消息（模拟）`,'ok');renderMain()}},
-  deleteBot:a=>{const b=DB.bots.find(x=>x.id===a.dataset.id);if(b)confirmModal('删除通道',`删除后，使用「${b.name}」的定时任务和 SOP 将不再发送通知。`,'删除',()=>{DB.bots=DB.bots.filter(x=>x!==b);toast('已删除');renderMain()})},
+  deleteBot:a=>{const b=DB.bots.find(x=>x.id===a.dataset.id);if(b)confirmModal('删除通道',`删除后，使用「${b.name}」的定时任务和 LOOP 将不再发送通知。`,'删除',()=>{DB.bots=DB.bots.filter(x=>x!==b);toast('已删除');renderMain()})},
   newSop:()=>{
     const bases=DB.sops.filter(s=>s.scope!=='project'||s.p===state.project);
-    openModal({title:'新建 SOP',submit:'创建并打开',body:field('名称','<input name="name" maxlength="40" required placeholder="例如：数据修复 SOP">')+field('基于',`<select name="base">${opts(bases.map(s=>[s.id,`${s.name}（${s.scope==='builtin'?'内置':s.scope==='shared'?'共享':'本项目'}）`]),bases[0]?.id)}</select>`,'复制它的节点作为起点'),
+    openModal({title:'新建 LOOP',submit:'创建并打开',body:field('名称','<input name="name" maxlength="40" required placeholder="例如：数据修复 LOOP">')+field('基于',`<select name="base">${opts(bases.map(s=>[s.id,`${s.name}（${s.scope==='builtin'?'内置':s.scope==='shared'?'共享':'本项目'}）`]),bases[0]?.id)}</select>`,'复制它的节点作为起点'),
       onSubmit:f=>{
         const name=f.get('name').trim();if(!name){toast('请填写名称','err');return false}
         const base=sopById(f.get('base'))||DB.sops[0],id='sop-'+(++seq);
@@ -1225,7 +1225,7 @@ const FORM={
     const t=trigger(),statuses=[...f.querySelectorAll('[name=status]:checked')].map(x=>x.value),max=Number(f.elements.max.value);
     if(!statuses.length){toast('至少选择一个触发状态','err');return}
     if(!Number.isInteger(max)||max<1||max>10){toast('单次最多派发需要是 1–10','err');return}
-    if(f.elements.enabled.checked&&!f.elements.sop.value){toast('请先选择默认 SOP','err');return}
+    if(f.elements.enabled.checked&&!f.elements.sop.value){toast('请先选择默认 LOOP','err');return}
     Object.assign(t,{enabled:f.elements.enabled.checked,interval:f.elements.interval.value,sop:f.elements.sop.value,statuses,max,next:INTERVALS.find(x=>x[0]===f.elements.interval.value)[1].replace('每 ','')+'后'});
     toast('触发配置已保存','ok');renderMain();
   },

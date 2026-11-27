@@ -110,7 +110,7 @@ const flowViewport=(()=>{
     if(need&&!pal.classList.contains('collapsed')){pal.classList.add('collapsed');autoCollapsed=true}
     else if(!need&&autoCollapsed){pal.classList.remove('collapsed');autoCollapsed=false}
     const free=total-(pal.classList.contains('collapsed')?PAL_MINI:PAL_W)-drawer;
-    wrap.classList.toggle('tight',free<640);
+    wrap.classList.toggle('tight',free<700);
   }
   function paletteToggled(){autoCollapsed=false}
   function minimapOn(){return localStorage.getItem(MINIMAP_KEY)!=='0'}

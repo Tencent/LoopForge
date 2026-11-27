@@ -16,8 +16,8 @@ import (
 
 // 平台写入与沙箱外写入（外部 MCP、git push 等命令）的审批模式；工作区沙箱内的开发操作默认执行。
 // confirm  请求批准：平台草稿由用户确认后执行（默认）。
-// assisted 帮我批准：独立模型审查具体操作和对话授权，通过后执行；
-// 未通过或审查不可用时交给用户确认。
+// assisted 帮我批准：纯 AI 终审，由规则快路径或独立审查模型直接决定放行或拒绝，
+// 不产生人工确认卡片。
 //
 // auto     自动执行：全部草稿由平台直接执行，不弹出审批卡片。
 const (
@@ -68,9 +68,10 @@ func assistantDraftRisky(d assistantDraft) bool {
 // resolveAssistantDrafts 在回复下发前做两件事：
 //  1. 对每个草稿运行依赖预检（assistantDraftWarnings），把执行必然失败的
 //     原因提前展示给用户，而不是等用户点保存后才收到 409；
-//  2. 按审批模式分流：confirm 全部保留；assisted 审查通过且无依赖冲突
-//     才执行；auto 自动执行。自动执行的草稿标记 Auto 由前端渲染
-//     为执行回执而不是审批卡片。
+//  2. 按审批模式分流：confirm 全部保留供人工确认；assisted 由 AI/规则
+//     直接终审（通过自动执行，未通过或存在冲突直接标记为 AI 已拒绝，不弹出
+//     人工审批卡片）；auto 自动执行。自动处理的草稿标记 Auto 由前端渲染
+//     为只读执行回执而不是待审批卡片。
 func (h *assistantHandlers) resolveAssistantDrafts(ctx context.Context, user domain.User, projectID string, drafts []assistantDraft, mode string) []assistantDraft {
 	out := make([]assistantDraft, 0, len(drafts))
 	auto := make([]assistantDraft, 0, len(drafts))
@@ -80,21 +81,39 @@ func (h *assistantHandlers) resolveAssistantDrafts(ctx context.Context, user dom
 		draft.Decision = ""
 		draft.Body = injectAssistantDraftProjectID(draft.Tool, draft.Body, projectID)
 		draft.Warnings = h.assistantDraftWarnings(draft)
-		// 存在警告（依赖冲突、节点未绑定角色等必然失败或残缺）的草稿，
-		// 即使在 auto 模式也不自动执行，降级为带警告的确认卡片。
-		approved := mode == AssistantApprovalAuto
-		if len(draft.Warnings) == 0 && mode == AssistantApprovalAssisted {
+		if mode == AssistantApprovalAssisted {
+			draft.Auto = true
+			if len(draft.Warnings) > 0 {
+				draft.Review = &assistantApprovalReview{
+					Outcome:           "deny",
+					RiskLevel:         "medium",
+					UserAuthorization: "unknown",
+					Model:             assistantApprovalRuleModel,
+					Rationale:         truncateRunes(strings.Join(draft.Warnings, "；"), 120),
+				}
+				draft.Decision = domain.AssistantDraftRejected
+				out = append(out, draft)
+				continue
+			}
 			args := map[string]any{"path": draft.Path, "query": draft.Query}
 			if len(draft.Body) > 0 {
 				var body any
 				_ = json.Unmarshal(draft.Body, &body)
 				args["body"] = body
 			}
-			review := reviewAssistantAction(ctx, draft.Tool, assistantPublicOperations[draft.Tool].Description, args)
+			review := reviewAssistantAction(withApprovalActionSource(ctx, approvalSourceBuiltinPlatform), draft.Tool, assistantPublicOperations[draft.Tool].Description, args)
 			draft.Review = &review
-			approved = review.allows()
+			if review.allows() {
+				auto = append(auto, draft)
+				continue
+			}
+			draft.Decision = domain.AssistantDraftRejected
+			out = append(out, draft)
+			continue
 		}
-		if len(draft.Warnings) == 0 && approved {
+		// 存在警告（依赖冲突、节点未绑定角色等必然失败或残缺）的草稿，
+		// 即使在 auto 模式也不自动执行，降级为带警告的确认卡片。
+		if len(draft.Warnings) == 0 && mode == AssistantApprovalAuto {
 			draft.Auto = true
 			auto = append(auto, draft)
 			continue
@@ -164,7 +183,7 @@ func injectAssistantDraftProjectID(tool string, body json.RawMessage, projectID 
 
 // workflowDraftNodeWarnings 检查 workflows_save 草稿的节点完整性：
 // agent 节点必须绑定已存在的角色，script 节点必须有脚本。缺失绑定的
-// SOP 保存后无法执行，应在用户确认前暴露而不是等运行时失败。
+// LOOP 保存后无法执行，应在用户确认前暴露而不是等运行时失败。
 func (h *assistantHandlers) workflowDraftNodeWarnings(d assistantDraft) []string {
 	if len(d.Body) == 0 {
 		return nil
@@ -293,23 +312,8 @@ func (h *assistantHandlers) assistantDraftWarnings(d assistantDraft) []string {
 			return []string{fmt.Sprintf("技能 %s 不存在，执行将失败", id)}
 		}
 		return sharedAssetWarnings("技能", skill.Shared, h.agentNamesReferencing("skill", id), "角色")
-	case "dockerfiles_delete":
-		item, ok := h.repo.Dockerfile(id)
-		if !ok {
-			return []string{fmt.Sprintf("Dockerfile %s 不存在，执行将失败", id)}
-		}
-		if id == repo.GenericBackendDockerfileID {
-			return []string{"内置 Dockerfile generic-backend 不能删除"}
-		}
-		return sharedAssetWarnings("Dockerfile", item.Shared, h.sandboxNamesReferencing("dockerfile", id), "沙箱")
-	case "environments_delete":
-		item, ok := h.repo.Environment(id)
-		if !ok {
-			return []string{fmt.Sprintf("环境安装脚本 %s 不存在，执行将失败", id)}
-		}
-		return sharedAssetWarnings("环境安装脚本", item.Shared, h.sandboxNamesReferencing("environment", id), "沙箱")
 	case "sandboxes_delete":
-		if id == "local" || id == repo.GenericDockerSandboxID {
+		if id == repo.GenericDockerSandboxID {
 			return []string{fmt.Sprintf("内置沙箱 %s 不能删除", id)}
 		}
 		item, ok := h.repo.Sandbox(id)
@@ -324,12 +328,12 @@ func (h *assistantHandlers) assistantDraftWarnings(d assistantDraft) []string {
 	}
 }
 
-// workflowDeleteWarnings 汇总删除 SOP 前的冲突：通用模板不可删、仍有进行中的
+// workflowDeleteWarnings 汇总删除 LOOP 前的冲突：通用模板不可删、仍有进行中的
 // 运行、仍被未关闭的 Issue 绑定。
 func (h *assistantHandlers) workflowDeleteWarnings(id string) []string {
 	workflow, ok := h.repo.Workflow(id)
 	if !ok {
-		return []string{fmt.Sprintf("SOP %s 不存在，执行将失败", id)}
+		return []string{fmt.Sprintf("LOOP %s 不存在，执行将失败", id)}
 	}
 	out := []string{}
 	if workflow.Generic {
@@ -342,7 +346,7 @@ func (h *assistantHandlers) workflowDeleteWarnings(id string) []string {
 		}
 	}
 	if running > 0 {
-		out = append(out, fmt.Sprintf("该 SOP 还有 %d 个进行中的运行，请先终止后再删除", running))
+		out = append(out, fmt.Sprintf("该 LOOP 还有 %d 个进行中的运行，请先终止后再删除", running))
 	}
 	var boundIssues []string
 	for _, issue := range h.repo.Issues() {
@@ -351,7 +355,7 @@ func (h *assistantHandlers) workflowDeleteWarnings(id string) []string {
 		}
 	}
 	if len(boundIssues) > 0 {
-		out = append(out, fmt.Sprintf("该 SOP 仍被 %d 个未关闭的 Issue 绑定（%s），请先改绑", len(boundIssues), strings.Join(boundIssues, "、")))
+		out = append(out, fmt.Sprintf("该 LOOP 仍被 %d 个未关闭的 Issue 绑定（%s），请先改绑", len(boundIssues), strings.Join(boundIssues, "、")))
 	}
 	return out
 }
@@ -379,16 +383,6 @@ func (h *assistantHandlers) agentNamesReferencing(kind, id string) []string {
 				names = append(names, agent.Name)
 				break
 			}
-		}
-	}
-	return names
-}
-
-func (h *assistantHandlers) sandboxNamesReferencing(kind, id string) []string {
-	var names []string
-	for _, sandbox := range h.repo.Sandboxes() {
-		if (kind == "dockerfile" && sandbox.DockerfileID == id) || (kind == "environment" && sandbox.EnvironmentID == id) {
-			names = append(names, sandbox.Name)
 		}
 	}
 	return names

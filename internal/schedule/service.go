@@ -68,7 +68,7 @@ type Service struct {
 	startedAt      time.Time
 	running        map[string]bool
 	lastFinishedAt map[string]time.Time
-	// dispatchMu serializes issue scanning and SOP dispatch across jobs so two
+	// dispatchMu serializes issue scanning and LOOP dispatch across jobs so two
 	// trigger jobs cannot both claim the same issue; AI prompts run outside it.
 	dispatchMu sync.Mutex
 }
@@ -219,21 +219,53 @@ func (s *Service) RunNow(id string) (domain.ScheduleJob, error) {
 }
 
 // StartNow claims the job, persists lastStatus=running, and continues in the
-// background. Closing the HTTP client does not cancel the run. Poll
-// ScheduleJobs for lastStatus leaving "running".
+// background. Closing the HTTP client does not cancel the run. For AI jobs it
+// waits briefly for the new conversation to be recorded so the caller can jump
+// straight to the live session without polling.
 func (s *Service) StartNow(id string) (domain.ScheduleJob, error) {
 	job, err := s.claim(id)
 	if err != nil {
 		return job, err
 	}
-	s.executeAsync(job, "manual_run")
+	var opened chan string
+	var done chan struct{}
+	if job.SkipDispatch && s.assistantRun != nil {
+		opened = make(chan string, 1)
+		done = make(chan struct{})
+	}
+	s.executeAsyncWithNotify(job, "manual_run", opened, done)
+	if opened != nil {
+		timer := time.NewTimer(1500 * time.Millisecond)
+		defer timer.Stop()
+		select {
+		case sessionID := <-opened:
+			if sessionID != "" {
+				job.LastSessionID = sessionID
+				if job.UsesFixedSession() {
+					job.FixedSessionID = sessionID
+				}
+			}
+		case <-done:
+			if stored, ok := s.repo.ScheduleJob(id); ok {
+				job = stored
+			}
+		case <-timer.C:
+		}
+	}
 	return job, nil
 }
 
 func (s *Service) executeAsync(job domain.ScheduleJob, triggerOrigin string) {
+	s.executeAsyncWithNotify(job, triggerOrigin, nil, nil)
+}
+
+func (s *Service) executeAsyncWithNotify(job domain.ScheduleJob, triggerOrigin string, opened chan<- string, done chan struct{}) {
 	go func() {
 		defer s.release(job.ID)
-		if _, execErr := s.execute(job, triggerOrigin); execErr != nil {
+		if done != nil {
+			defer close(done)
+		}
+		if _, execErr := s.executeWithOpened(job, triggerOrigin, opened); execErr != nil {
 			log.Printf("schedule job %s trace=%s: %v", job.ID, job.LastTraceID, execErr)
 		}
 	}()
@@ -296,11 +328,15 @@ func (s *Service) release(id string) {
 
 // execute runs a claimed job and records it as one ScheduleJobExecution.
 func (s *Service) execute(job domain.ScheduleJob, triggerOrigin string) (domain.ScheduleJob, error) {
-	exec := s.beginExecution(job, triggerOrigin)
-	return s.executeJob(job, triggerOrigin, exec)
+	return s.executeWithOpened(job, triggerOrigin, nil)
 }
 
-func (s *Service) executeJob(job domain.ScheduleJob, triggerOrigin string, exec *domain.ScheduleJobExecution) (domain.ScheduleJob, error) {
+func (s *Service) executeWithOpened(job domain.ScheduleJob, triggerOrigin string, opened chan<- string) (domain.ScheduleJob, error) {
+	exec := s.beginExecution(job, triggerOrigin)
+	return s.executeJob(job, triggerOrigin, exec, opened)
+}
+
+func (s *Service) executeJob(job domain.ScheduleJob, triggerOrigin string, exec *domain.ScheduleJobExecution, opened chan<- string) (domain.ScheduleJob, error) {
 	// finish records the outcome computed here: saveResult may return a newer
 	// stored state when the job was edited or re-run meanwhile.
 	finish := func(result domain.ScheduleJob, err error) (domain.ScheduleJob, error) {
@@ -308,7 +344,7 @@ func (s *Service) executeJob(job domain.ScheduleJob, triggerOrigin string, exec 
 		return s.saveResult(result), err
 	}
 	if (s.assistant != nil || s.assistantRun != nil) && (strings.TrimSpace(job.AssistantPrompt) != "" || job.SharedTaskID != "") {
-		run, prepErr := s.runAssistant(job, exec)
+		run, prepErr := s.runAssistant(job, exec, opened)
 		msg, sessionID := run.Message, run.SessionID
 		if sessionID == "" && exec != nil {
 			sessionID = exec.SessionID
@@ -394,9 +430,17 @@ func (s *Service) executeJob(job domain.ScheduleJob, triggerOrigin string, exec 
 	return finish(job, nil)
 }
 
-func (s *Service) runAssistant(job domain.ScheduleJob, exec *domain.ScheduleJobExecution) (AssistantRunResult, error) {
+func (s *Service) runAssistant(job domain.ScheduleJob, exec *domain.ScheduleJobExecution, opened chan<- string) (AssistantRunResult, error) {
 	if s.assistantRun != nil {
-		return s.assistantRun(job, func(sessionID string) { s.recordOpenedSession(job, exec, sessionID) })
+		return s.assistantRun(job, func(sessionID string) {
+			s.recordOpenedSession(job, exec, sessionID)
+			if opened != nil && sessionID != "" {
+				select {
+				case opened <- sessionID:
+				default:
+				}
+			}
+		})
 	}
 	msg, err := s.assistant(job)
 	return AssistantRunResult{Message: msg}, err

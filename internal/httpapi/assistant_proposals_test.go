@@ -17,7 +17,7 @@ import (
 
 func proposalReply(t *testing.T, drafts ...assistantDraft) string {
 	t.Helper()
-	raw, err := json.Marshal(map[string]any{"message": "建议走 SOP", "drafts": drafts})
+	raw, err := json.Marshal(map[string]any{"message": "建议走 LOOP", "drafts": drafts})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -25,7 +25,7 @@ func proposalReply(t *testing.T, drafts ...assistantDraft) string {
 }
 
 func sopDraft(issueID, timing string) assistantDraft {
-	return assistantDraft{Tool: "issues_dispatch", Path: map[string]any{"id": issueID}, Body: json.RawMessage(`{}`), Proposal: &assistantProposal{Reason: "整件需求走 SOP", Timing: timing}}
+	return assistantDraft{Tool: "issues_dispatch", Path: map[string]any{"id": issueID}, Body: json.RawMessage(`{}`), Proposal: &assistantProposal{Reason: "整件需求走 LOOP", Timing: timing}}
 }
 
 func TestSOPProposalValidation(t *testing.T) {
@@ -43,14 +43,20 @@ func TestSOPProposalValidation(t *testing.T) {
 	}
 	rebind := assistantDraft{Tool: "issues_save", Body: json.RawMessage(`{"id":"i1","title":"t","projectId":"workbench","workflowId":"sop"}`), Proposal: &assistantProposal{Reason: "x", Timing: "start"}}
 	if err := validateAssistantDraft(&rebind, "workbench"); err != nil || rebind.Proposal != nil {
-		t.Fatalf("binding an existing issue to an SOP is not a proposal: %v %+v", err, rebind.Proposal)
+		t.Fatalf("binding an existing issue to a LOOP is not a proposal: %v %+v", err, rebind.Proposal)
 	}
-	create := assistantDraft{Tool: "issues_save", Body: json.RawMessage(`{"title":"t","projectId":"workbench","workflowId":"sop"}`), Proposal: &assistantProposal{Reason: "整件需求走 SOP", Timing: "start"}}
+	create := assistantDraft{Tool: "issues_save", Body: json.RawMessage(`{"title":"t","projectId":"workbench","workflowId":"sop"}`), Proposal: &assistantProposal{Reason: "整件需求走 LOOP", Timing: "start"}}
 	if err := validateAssistantDraft(&create, "workbench"); err != nil || create.Proposal == nil {
-		t.Fatalf("a new requirement bound to an SOP lost its proposal: %v %+v", err, create.Proposal)
+		t.Fatalf("a new requirement bound to a LOOP lost its proposal: %v %+v", err, create.Proposal)
 	}
 	if target := assistantProposalTarget(create); target != "sop" {
 		t.Fatalf("target=%s", target)
+	}
+	// sopMode none drops the workflowId on save, so the draft hands nothing to
+	// a LOOP and a proposal on it would offer a route the save never takes.
+	withoutSOP := assistantDraft{Tool: "issues_save", Body: json.RawMessage(`{"title":"t","projectId":"workbench","workflowId":"sop","sopMode":"none"}`), Proposal: &assistantProposal{Reason: "x", Timing: "start"}}
+	if err := validateAssistantDraft(&withoutSOP, "workbench"); err != nil || withoutSOP.Proposal != nil || assistantProposalTarget(withoutSOP) != "" {
+		t.Fatalf("a requirement without LOOP kept a proposal: %v %+v", err, withoutSOP.Proposal)
 	}
 }
 
@@ -88,13 +94,13 @@ func TestVetProposalDraftsFollowsHistory(t *testing.T) {
 	plain := sopDraft("i2", "start")
 	plain.Proposal = nil
 	if err := vet(plain); err == nil || !strings.Contains(err.Error(), "自己完成") {
-		t.Fatalf("an unrequested SOP dispatch slipped past the mute: %v", err)
+		t.Fatalf("an unrequested LOOP dispatch slipped past the mute: %v", err)
 	}
 	h.repo.PutAssistantSession(u.ID, domain.AssistantSession{ID: "vet", ProjectID: "workbench", Messages: []domain.AssistantMessage{
-		{Role: "user", Content: "改一下"}, {Role: "assistant", Content: proposalReply(t, muted)}, {Role: "user", Content: "这个还是走 SOP 吧"},
+		{Role: "user", Content: "改一下"}, {Role: "assistant", Content: proposalReply(t, muted)}, {Role: "user", Content: "这个还是走 LOOP 吧"},
 	}})
 	if err := vet(plain); err != nil {
-		t.Fatal("a requested SOP dispatch was blocked by the mute", err)
+		t.Fatal("a requested LOOP dispatch was blocked by the mute", err)
 	}
 }
 
@@ -180,7 +186,7 @@ func TestUnansweredStartProposalHandsTheTurnBack(t *testing.T) {
 		t.Fatal("a proposal without a deadline got a timer")
 	}
 
-	seed(ask, proposal, domain.AssistantMessage{Role: "user", Content: "先别走 SOP，我自己说"})
+	seed(ask, proposal, domain.AssistantMessage{Role: "user", Content: "先别走 LOOP，我自己说"})
 	if steer := h.expireProposal(u.ID, "expire", 1, 0, deadline, u.ID, u.LoginName); steer != nil {
 		t.Fatal("the timeout overrode a message the user already sent")
 	}
@@ -260,63 +266,65 @@ func TestSOPDraftsNeedAProposalUnlessTheUserAskedForTheSOP(t *testing.T) {
 	create := assistantDraft{Tool: "issues_save", Body: json.RawMessage(`{"title":"t","workflowId":"delivery"}`)}
 	update := assistantDraft{Tool: "issues_save", Body: json.RawMessage(`{"id":"i1","title":"t","workflowId":"delivery"}`)}
 
-	// The AI 助手 switches are off: a SOP Main Bot picks itself still asks.
+	// The AI 助手 switches are off: in confirm mode a LOOP Main Bot picks itself asks.
 	seed(domain.AssistantMessage{Role: "user", Content: "积分转赠这个需求帮我推进一下"})
-	for _, exec := range []assistantExecMode{{}, {AutoWrite: true, ReviewWrites: true}} {
-		session.ExecMode = exec
-		for _, d := range []assistantDraft{dispatch, create} {
-			if err := vet(d); err == nil || !strings.Contains(err.Error(), "proposal") {
-				t.Fatalf("%+v: %s without a proposal passed: %v", exec, d.Tool, err)
-			}
+	session.ExecMode = assistantExecMode{}
+	for _, d := range []assistantDraft{dispatch, create} {
+		if err := vet(d); err == nil || !strings.Contains(err.Error(), "proposal") {
+			t.Fatalf("%+v: %s without a proposal passed: %v", session.ExecMode, d.Tool, err)
 		}
 	}
 	if err := vet(update); err != nil {
-		t.Fatalf("editing an issue is not an SOP proposal: %v", err)
+		t.Fatalf("editing an issue is not a LOOP proposal: %v", err)
 	}
 	if err := vet(sopDraft("i1", "start")); err != nil {
 		t.Fatal(err)
 	}
-	session.ExecMode = assistantExecMode{AutoWrite: true}
-	if err := vet(dispatch); err != nil {
-		t.Fatalf("full access starts a SOP without asking: %v", err)
+	for _, exec := range []assistantExecMode{{AutoWrite: true}, {AutoWrite: true, ReviewWrites: true}} {
+		session.ExecMode = exec
+		if err := vet(dispatch); err != nil {
+			t.Fatalf("%+v starts a LOOP without human proposal drafts: %v", exec, err)
+		}
 	}
 	session.ExecMode = assistantExecMode{}
 
-	for _, refused := range []string{"不要走 SOP，你直接改", "这个不需要走完整流程", "别用交付流水线了"} {
+	for _, refused := range []string{"不要走 LOOP，你直接改", "不要走 loop，你直接改", "这个不需要走完整流程", "别用交付流水线了", "帮我修 LoopForge 的 bug", "add a for loop"} {
 		seed(domain.AssistantMessage{Role: "user", Content: refused})
 		if err := vet(dispatch); err == nil || !strings.Contains(err.Error(), "proposal") {
-			t.Fatalf("%q counted as asking for the SOP: %v", refused, err)
+			t.Fatalf("%q counted as asking for the LOOP: %v", refused, err)
 		}
 	}
 	for _, asked := range []domain.AssistantMessage{
-		{Role: "user", Content: "直接走 SOP 完整交付"},
-		{Role: "user", Content: "这个走 SOP，不用你自己写"},
+		{Role: "user", Content: "直接走 LOOP 完整交付"},
+		{Role: "user", Content: "这个走 LOOP，不用你自己写"},
+		{Role: "user", Content: "这个走 loop"},
+		{Role: "user", Content: "这个走 SOP"},
 		{Role: "user", Content: "用交付流水线跑一下"},
 		{Role: "user", Content: "推进一下", References: []domain.AssistantReference{{Type: "sop", ID: "delivery"}}},
 	} {
 		seed(asked)
 		if err := vet(dispatch); err != nil {
-			t.Fatalf("%q asked for the SOP: %v", asked.Content, err)
+			t.Fatalf("%q asked for the LOOP: %v", asked.Content, err)
 		}
 	}
 
 	accepted := create
-	accepted.Proposal, accepted.Decision, accepted.Saved = &assistantProposal{Reason: "走 SOP", Timing: "start"}, "accepted", true
+	accepted.Proposal, accepted.Decision, accepted.Saved = &assistantProposal{Reason: "走 LOOP", Timing: "start"}, "accepted", true
 	reviewed := create
-	reviewed.Proposal, reviewed.Saved, reviewed.Auto = &assistantProposal{Reason: "走 SOP", Timing: "start"}, true, true
+	reviewed.Proposal, reviewed.Saved, reviewed.Auto = &assistantProposal{Reason: "走 LOOP", Timing: "start"}, true, true
 	for _, taken := range []assistantDraft{accepted, reviewed} {
 		seed(domain.AssistantMessage{Role: "user", Content: "推进一下"},
 			domain.AssistantMessage{Role: "assistant", Content: proposalReply(t, taken)},
 			domain.AssistantMessage{Role: "user", Content: "已确认并执行 issues_save。"})
 		if err := vet(dispatch); err != nil {
-			t.Fatalf("the dispatch after a taken SOP proposal asked again: %v", err)
+			t.Fatalf("the dispatch after a taken LOOP proposal asked again: %v", err)
 		}
 	}
 
 	muted := sopDraft("i2", "start")
 	muted.Decision = domain.AssistantProposalMuted
 	thread := []domain.AssistantMessage{
-		{Role: "user", Content: "走 SOP 吧"},
+		{Role: "user", Content: "走 LOOP 吧"},
 		{Role: "assistant", Content: proposalReply(t, accepted)},
 		{Role: "user", Content: "再做个需求"},
 		{Role: "assistant", Content: proposalReply(t, muted)},
@@ -327,12 +335,12 @@ func TestSOPDraftsNeedAProposalUnlessTheUserAskedForTheSOP(t *testing.T) {
 	}
 	// The stored transcript still ends at the mute. A direct chat carries the
 	// new request only on the turn, and that request is what counts.
-	session.turnMessages = append(append([]domain.AssistantMessage{}, thread...), domain.AssistantMessage{Role: "user", Content: "还是走 SOP 吧"})
+	session.turnMessages = append(append([]domain.AssistantMessage{}, thread...), domain.AssistantMessage{Role: "user", Content: "还是走 LOOP 吧"})
 	if err := vet(dispatch); err != nil {
 		t.Fatalf("the unsaved request after a mute was blocked: %v", err)
 	}
 	session.turnMessages = nil
-	seed(append(thread, domain.AssistantMessage{Role: "user", Content: "还是走 SOP 吧"})...)
+	seed(append(thread, domain.AssistantMessage{Role: "user", Content: "还是走 LOOP 吧"})...)
 	if err := vet(dispatch); err != nil {
 		t.Fatalf("asking after the mute was blocked: %v", err)
 	}
@@ -364,12 +372,12 @@ func TestAssistantPreferencesShapeTheContext(t *testing.T) {
 		return req
 	}
 	const asBefore = "任务明显属于某个角色的职责、或需要它的规则和技能时，可以自行派给它；简单问题自己处理。"
-	const askSOP = "## 交给 SOP 前先征得同意"
+	const askSOP = "## 交给 LOOP 前先征得同意"
 
 	for _, exec := range []assistantExecMode{{}, {AutoWrite: true, ReviewWrites: true}, {AutoWrite: true}} {
 		schema, _ := json.Marshal(submitAssistantReplySchema(exec))
-		if got, want := strings.Contains(string(schema), `"proposal"`), !exec.AutoWrite || exec.ReviewWrites; got != want {
-			t.Fatalf("%+v: schema offers proposal=%v", exec, got)
+		if got, want := strings.Contains(string(schema), `"proposal"`), !exec.AutoWrite; got != want {
+			t.Fatalf("%+v: schema offers proposal=%v want=%v", exec, got, want)
 		}
 		if strings.Contains(string(schema), `"subagent_dispatch"`) {
 			t.Fatalf("%+v: schema offers a role dispatch draft", exec)
@@ -377,37 +385,88 @@ func TestAssistantPreferencesShapeTheContext(t *testing.T) {
 	}
 
 	if req := contextFor(AssistantApprovalConfirm); strings.Contains(req.contextText, askSOP) {
-		t.Fatalf("a project without SOPs explains SOP proposals: %s", req.contextText)
+		t.Fatalf("a project without LOOPs explains LOOP proposals: %s", req.contextText)
 	}
 	if err := h.repo.PutWorkflow(domain.WorkflowDefinition{ID: "delivery", Name: "交付流水线", ProjectID: "workbench", Status: "published"}); err != nil {
 		t.Fatal(err)
 	}
 
-	// Both off: roles as before; a SOP Main Bot picks itself still asks
-	// outside full access.
+	// Both off: roles as before; confirm asks via proposal drafts, assisted
+	// reviews directly by AI without drafts, auto starts directly.
 	for _, mode := range []string{AssistantApprovalConfirm, AssistantApprovalAssisted, AssistantApprovalAuto} {
 		req := contextFor(mode)
 		if len(req.roles) != 1 || !strings.Contains(req.contextText, asBefore) {
 			t.Fatalf("%s with both off: roles=%d context=%s", mode, len(req.roles), req.contextText)
 		}
-		for _, unwanted := range []string{"## 自己做", "- 派角色：", "- 走 SOP：", "用户给你的自定义规则"} {
+		for _, unwanted := range []string{"## 自己做", "- 派角色：", "- 走 LOOP：", "用户给你的自定义规则"} {
 			if strings.Contains(req.contextText, unwanted) {
 				t.Fatalf("%s with both off adds %q: %s", mode, unwanted, req.contextText)
 			}
 		}
-		if got := strings.Contains(req.contextText, askSOP); got != (mode != AssistantApprovalAuto) {
-			t.Fatalf("%s with both off: asks before a SOP=%v", mode, got)
+		if got := strings.Contains(req.contextText, askSOP); got != (mode == AssistantApprovalConfirm) {
+			t.Fatalf("%s with both off: asks before a LOOP=%v", mode, got)
 		}
 		if got := strings.Contains(req.contextText, "当前是帮我批准"); got != (mode == AssistantApprovalAssisted) {
 			t.Fatalf("%s: assisted note=%v", mode, got)
 		}
 	}
 
-	code, saved := put(`{"proactiveRoles":true,"proactiveSops":false,"steerOnSend":true,"instructions":"  回复先给结论  "}`)
-	if code != 200 || !saved.ProactiveRoles || saved.ProactiveSOPs || !saved.SteerOnSend || saved.Instructions != "回复先给结论" {
-		t.Fatalf("saved=%d %+v", code, saved)
+	if code, _ := put(`{"approvalReviewModel":"unknowncli:foo"}`); code != 400 {
+		t.Fatalf("unknown cli prefix accepted: %d", code)
+	}
+	if code, _ := put(`{"approvalReviewModel":"claude-code:bad model"}`); code != 400 {
+		t.Fatalf("invalid model id accepted: %d", code)
+	}
+	if code, _ := put(`{"approvalReviewMode":"cli","approvalReviewModel":""}`); code != 400 {
+		t.Fatalf("empty cli model accepted: %d", code)
+	}
+	if code, _ := put(`{"approvalReviewMode":"api","approvalReviewApi":{"protocol":"chat","model":"hy4"}}`); code != 400 {
+		t.Fatalf("api mode without key accepted: %d", code)
+	}
+	if code, _ := put(`{"approvalReviewMode":"api","approvalReviewApi":{"protocol":"bogus","model":"hy4","apiKey":"sk-secret"}}`); code != 400 {
+		t.Fatalf("api mode with invalid protocol accepted: %d", code)
+	}
+	if code, _ := put(`{"approvalReviewMode":"api","approvalReviewApi":{"protocol":"chat","baseUrl":"ftp://bad.example","model":"hy4","apiKey":"sk-secret"}}`); code != 400 {
+		t.Fatalf("api mode with invalid baseUrl accepted: %d", code)
+	}
+	code, saved := put(`{"proactiveRoles":true,"proactiveSops":false,"workspaceDriver":"native","steerOnSend":true,"approvalReviewMode":"api","approvalReviewApi":{"protocol":"gemini","baseUrl":"https://generativelanguage.googleapis.com","model":"gemini-2.5-flash","apiKey":"sk-review-secret"},"instructions":"  回复先给结论  "}`)
+	if code != 200 || !saved.SteerOnSend || saved.WorkspaceDriver != domain.SandboxDriverNative || saved.ApprovalReviewMode != domain.ApprovalReviewModeAPI || saved.ApprovalReviewAPI == nil || !saved.ApprovalReviewAPI.APIKeyConfigured || saved.ApprovalReviewAPI.APIKey != "" || saved.ApprovalReviewAPI.Model != "gemini-2.5-flash" {
+		t.Fatalf("saved api=%d %+v", code, saved)
+	}
+	// Cross-origin Base URL change without a new apiKey must be rejected and preserve original stored config.
+	if code, _ = put(`{"proactiveRoles":true,"proactiveSops":false,"steerOnSend":true,"approvalReviewMode":"api","approvalReviewApi":{"protocol":"chat","baseUrl":"https://gateway.example.com/v1","model":"gpt-4.1-mini"},"instructions":"回复先给结论"}`); code != 400 {
+		t.Fatalf("cross-origin api update without key accepted: %d", code)
+	}
+	if stored := h.repo.AssistantPreferences(u.ID); stored.ApprovalReviewAPI == nil || stored.ApprovalReviewAPI.BaseURL != "https://generativelanguage.googleapis.com" || stored.ApprovalReviewAPI.APIKey != "sk-review-secret" {
+		t.Fatalf("rejected cross-origin update mutated stored api: %+v", stored.ApprovalReviewAPI)
+	}
+	// Same-origin update (path or model change, or official empty baseUrl on same origin) preserves stored key.
+	code, saved = put(`{"proactiveRoles":true,"proactiveSops":false,"steerOnSend":true,"approvalReviewMode":"api","approvalReviewApi":{"protocol":"gemini","baseUrl":"","model":"gemini-2.5-pro"},"instructions":"回复先给结论"}`)
+	if code != 200 || saved.ApprovalReviewAPI == nil || !saved.ApprovalReviewAPI.APIKeyConfigured || saved.ApprovalReviewAPI.APIKey != "" || saved.ApprovalReviewAPI.Model != "gemini-2.5-pro" {
+		t.Fatalf("same-origin api update=%d %+v", code, saved)
+	}
+	if stored := h.repo.AssistantPreferences(u.ID); stored.ApprovalReviewAPI == nil || stored.ApprovalReviewAPI.APIKey != "sk-review-secret" {
+		t.Fatalf("stored key lost on same-origin update: %+v", stored.ApprovalReviewAPI)
+	}
+	// Legacy PUT must preserve the workspace choice and the configured review API.
+	code, saved = put(`{"proactiveRoles":true,"proactiveSops":false,"steerOnSend":true,"instructions":"回复先给结论"}`)
+	if code != 200 || saved.WorkspaceDriver != domain.SandboxDriverNative || saved.ApprovalReviewMode != domain.ApprovalReviewModeAPI || saved.ApprovalReviewAPI == nil || !saved.ApprovalReviewAPI.APIKeyConfigured || saved.ApprovalReviewAPI.Model != "gemini-2.5-pro" {
+		t.Fatalf("legacy PUT should preserve workspace and API review settings: code=%d %+v", code, saved)
+	}
+	if stored := h.repo.AssistantPreferences(u.ID); stored.ApprovalReviewAPI == nil || stored.ApprovalReviewAPI.APIKey != "sk-review-secret" {
+		t.Fatalf("legacy PUT dropped stored api key: %+v", stored.ApprovalReviewAPI)
 	}
 	c, rec := workbenchContext(u, "GET", "/api/assistant/preferences", &bytes.Buffer{})
+	h.preferences(c)
+	if strings.Contains(rec.Body.String(), "sk-review-secret") || !strings.Contains(rec.Body.String(), `"apiKeyConfigured":true`) {
+		t.Fatalf("get leaked or dropped key flag: %s", rec.Body.String())
+	}
+	// Switching to CLI mode works cleanly while preserving steerOnSend.
+	code, saved = put(`{"proactiveRoles":true,"proactiveSops":false,"steerOnSend":true,"approvalReviewModel":"  claude-code:claude-haiku-4-5  ","instructions":"  回复先给结论  "}`)
+	if code != 200 || !saved.ProactiveRoles || saved.ProactiveSOPs || !saved.SteerOnSend || saved.ApprovalReviewMode != domain.ApprovalReviewModeCLI || saved.ApprovalReviewModel != "claude-code:claude-haiku-4-5" || saved.Instructions != "回复先给结论" {
+		t.Fatalf("saved=%d %+v", code, saved)
+	}
+	c, rec = workbenchContext(u, "GET", "/api/assistant/preferences", &bytes.Buffer{})
 	h.preferences(c)
 	if !strings.Contains(rec.Body.String(), `"proactiveRoles":true`) || !strings.Contains(rec.Body.String(), `"steerOnSend":true`) {
 		t.Fatalf("get=%s", rec.Body.String())
@@ -422,31 +481,37 @@ func TestAssistantPreferencesShapeTheContext(t *testing.T) {
 				t.Fatalf("%s roles on: context lacks %q: %s", mode, want, req.contextText)
 			}
 		}
-		if strings.Contains(req.contextText, "- 走 SOP：") {
-			t.Fatalf("SOPs off still describes when to take one: %s", req.contextText)
+		if strings.Contains(req.contextText, "- 走 LOOP：") {
+			t.Fatalf("LOOPs off still describes when to take one: %s", req.contextText)
 		}
 	}
 
-	if code, _ := put(`{"proactiveSops":true}`); code != 200 {
-		t.Fatalf("SOPs on=%d", code)
+	// Legacy PUT while in CLI mode also preserves CLI mode & model; explicit "follow" switches back.
+	code, saved = put(`{"proactiveSops":true}`)
+	if code != 200 || saved.ApprovalReviewMode != domain.ApprovalReviewModeCLI || saved.ApprovalReviewModel != "claude-code:claude-haiku-4-5" {
+		t.Fatalf("legacy PUT should preserve CLI review settings: code=%d %+v", code, saved)
 	}
-	if req := contextFor(AssistantApprovalAuto); !strings.Contains(req.contextText, "- 走 SOP：") || !strings.Contains(req.contextText, "当前是完全权限：走 SOP 时直接调用写入工具") || strings.Contains(req.contextText, askSOP) {
-		t.Fatalf("full access with SOPs on: %s", req.contextText)
+	code, saved = put(`{"proactiveSops":true,"approvalReviewMode":"follow"}`)
+	if code != 200 || saved.ApprovalReviewMode != domain.ApprovalReviewModeFollow {
+		t.Fatalf("explicit follow switch failed: code=%d %+v", code, saved)
 	}
-	if req := contextFor(AssistantApprovalConfirm); !strings.Contains(req.contextText, "- 走 SOP：") || !strings.Contains(req.contextText, askSOP) || !strings.Contains(req.contextText, asBefore) {
-		t.Fatalf("confirm with SOPs on: %s", req.contextText)
+	if req := contextFor(AssistantApprovalAuto); !strings.Contains(req.contextText, "- 走 LOOP：") || !strings.Contains(req.contextText, "当前是完全权限：走 LOOP 时直接调用写入工具") || strings.Contains(req.contextText, askSOP) {
+		t.Fatalf("full access with LOOPs on: %s", req.contextText)
+	}
+	if req := contextFor(AssistantApprovalConfirm); !strings.Contains(req.contextText, "- 走 LOOP：") || !strings.Contains(req.contextText, askSOP) || !strings.Contains(req.contextText, asBefore) {
+		t.Fatalf("confirm with LOOPs on: %s", req.contextText)
 	}
 }
 
 // A direct chat, including SSE, stores the personal session after the reply.
 // The proposal gate has to see the user message on that request, or a named
-// SOP is refused as if Main Bot had suggested it.
+// LOOP is refused as if Main Bot had suggested it.
 func TestDirectChatSeesTheSOPTheUserJustAskedFor(t *testing.T) {
 	h, u := workbenchFixture(t)
 	if err := h.repo.PutWorkflow(domain.WorkflowDefinition{ID: "delivery", Name: "交付流水线", ProjectID: "workbench", Status: "published"}); err != nil {
 		t.Fatal(err)
 	}
-	const asked = "请走 SOP 交付流水线实现新功能"
+	const asked = "请走 LOOP 交付流水线实现新功能"
 	dispatch := json.RawMessage(`{"message":"交给交付流水线","drafts":[{"tool":"issues_dispatch","path":{"id":"i1"},"body":{}}]}`)
 	gateway := &agentToolGateway{deps: h.deps}
 	chat := func(t *testing.T, sessionID string, messages []domain.AssistantMessage, accept, want string) {
@@ -487,15 +552,15 @@ func TestDirectChatSeesTheSOPTheUserJustAskedFor(t *testing.T) {
 		}
 		if want == "" {
 			if toolErr || !strings.Contains(toolText, "提交成功") {
-				t.Fatalf("a named SOP was refused: err=%v %s http=%d %s", toolErr, toolText, rec.Code, rec.Body.String())
+				t.Fatalf("a named LOOP was refused: err=%v %s http=%d %s", toolErr, toolText, rec.Code, rec.Body.String())
 			}
 			if rec.Code >= 400 {
-				t.Fatalf("chat failed after accepting the SOP: %d %s", rec.Code, rec.Body.String())
+				t.Fatalf("chat failed after accepting the LOOP: %d %s", rec.Code, rec.Body.String())
 			}
 			return
 		}
 		if !toolErr || !strings.Contains(toolText, want) {
-			t.Fatalf("an unnamed SOP passed: err=%v %s", toolErr, toolText)
+			t.Fatalf("an unnamed LOOP passed: err=%v %s", toolErr, toolText)
 		}
 	}
 	chat(t, "direct-json", []domain.AssistantMessage{{Role: "user", Content: asked}}, "", "")
