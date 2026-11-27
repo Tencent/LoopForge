@@ -146,7 +146,14 @@ func CreateWorkspaceCheckpointToContext(ctx context.Context, root string, destin
 			return nil
 		}
 		if checkpointExcluded(path) {
-			if checkpointRestoreExcluded(path) || !tracker.keeps(path, entry.IsDir()) {
+			keep := false
+			if !checkpointRestoreExcluded(path) {
+				keep, err = tracker.keeps(path, entry.IsDir())
+				if err != nil {
+					return err
+				}
+			}
+			if !keep {
 				if entry.IsDir() {
 					return fs.SkipDir
 				}
@@ -287,23 +294,26 @@ type checkpointGitTracker struct {
 	indexes   map[string]*checkpointGitIndex
 }
 
-func (t *checkpointGitTracker) keeps(rel string, isDir bool) bool {
+func (t *checkpointGitTracker) keeps(rel string, isDir bool) (bool, error) {
 	repoRel, ok := t.findRepo(pathpkg.Dir(filepath.ToSlash(rel)))
 	if !ok {
-		return false
+		return false, nil
 	}
-	idx := t.repoIndex(repoRel)
-	if idx == nil || len(idx.files) == 0 {
-		return false
+	idx, err := t.repoIndex(repoRel)
+	if err != nil {
+		return false, err
+	}
+	if len(idx.files) == 0 {
+		return false, nil
 	}
 	repoFile := filepath.ToSlash(rel)
 	if repoRel != "." {
 		repoFile = strings.TrimPrefix(repoFile, repoRel+"/")
 	}
 	if isDir {
-		return idx.dirs[repoFile] || idx.files[repoFile]
+		return idx.dirs[repoFile] || idx.files[repoFile], nil
 	}
-	return idx.files[repoFile]
+	return idx.files[repoFile], nil
 }
 
 func (t *checkpointGitTracker) findRepo(startDir string) (string, bool) {
@@ -336,21 +346,25 @@ func (t *checkpointGitTracker) findRepo(startDir string) (string, bool) {
 	}
 }
 
-func (t *checkpointGitTracker) repoIndex(repoRel string) *checkpointGitIndex {
+func (t *checkpointGitTracker) repoIndex(repoRel string) (*checkpointGitIndex, error) {
 	if t.indexes == nil {
 		t.indexes = map[string]*checkpointGitIndex{}
 	}
 	if idx, cached := t.indexes[repoRel]; cached {
-		return idx
+		return idx, nil
 	}
 	idx := &checkpointGitIndex{}
-	t.indexes[repoRel] = idx
-	if indexInfo, statErr := t.base.Lstat(filepath.FromSlash(pathpkg.Join(repoRel, ".git/index"))); statErr == nil {
+	indexPath := filepath.FromSlash(pathpkg.Join(repoRel, ".git/index"))
+	if indexInfo, statErr := t.base.Lstat(indexPath); statErr == nil {
 		if !indexInfo.Mode().IsRegular() {
-			return idx
+			return nil, fmt.Errorf("unsupported checkpoint file: %s", indexPath)
 		}
-	} else if !os.IsNotExist(statErr) {
-		return idx
+	} else if os.IsNotExist(statErr) {
+		// A new repository without an index has no tracked files to retain.
+		t.indexes[repoRel] = idx
+		return idx, nil
+	} else {
+		return nil, fmt.Errorf("inspect checkpoint Git index %s: %w", repoRel, statErr)
 	}
 	repoAbs := t.root
 	if repoRel != "." {
@@ -398,8 +412,14 @@ func (t *checkpointGitTracker) repoIndex(repoRel string) *checkpointGitIndex {
 	)
 	out := &checkpointLimitedBuffer{limit: checkpointGitOutputMaxBytes}
 	cmd.Stdout = out
-	if err := cmd.Run(); err != nil || out.overflow || out.buf.Len() == 0 {
-		return idx
+	if err := cmd.Run(); err != nil {
+		if ctxErr := cmdCtx.Err(); ctxErr != nil {
+			err = ctxErr
+		}
+		return nil, fmt.Errorf("read tracked checkpoint files in %s: %w", repoRel, err)
+	}
+	if out.overflow {
+		return nil, fmt.Errorf("tracked checkpoint files in %s exceed Git output limit", repoRel)
 	}
 	idx.files = map[string]bool{}
 	idx.dirs = map[string]bool{}
@@ -419,7 +439,8 @@ func (t *checkpointGitTracker) repoIndex(repoRel string) *checkpointGitIndex {
 			idx.dirs[dir] = true
 		}
 	}
-	return idx
+	t.indexes[repoRel] = idx
+	return idx, nil
 }
 
 func ensureReplaceableWorkspaceTarget(root string) (bool, error) {
