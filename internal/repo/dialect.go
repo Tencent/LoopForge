@@ -18,6 +18,7 @@ import (
 const (
 	dialectMySQL    = "mysql"
 	dialectPostgres = "postgres"
+	dialectSQLite   = "sqlite"
 )
 
 // dsnDialect classifies a DSN by its scheme. Postgres URLs start with
