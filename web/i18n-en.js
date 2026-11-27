@@ -1174,8 +1174,6 @@ Object.assign(window.LF_I18N_EN, {
   "仅独立 AI 定时任务可以发布共享版本": "Only standalone AI scheduled tasks can publish a shared version",
   "只能从当前项目的独立 AI 定时任务发布共享版本": "Shared versions can only be published from a standalone AI scheduled task in this project",
   "订阅需要明确的共享任务和版本，且必须是 AI 定时任务": "A subscription needs a specific shared task and version, and it must be an AI scheduled task",
-  "共享任务引用资产不可用": "A project asset referenced by the shared task is unavailable",
-  "不支持随 AI 定时任务共享": "can't be shared with an AI scheduled task",
   "读取 AI 定时任务失败": "Failed to load AI scheduled tasks",
   "当前项目还没有 AI 定时任务，点击右上角「新建 AI 定时任务」。": "This project has no AI scheduled tasks yet. Click “New AI scheduled task” at the top right.",
   "请先在顶栏选择项目，再管理 AI 定时任务。": "Select a project in the top bar first, then manage AI scheduled tasks.",

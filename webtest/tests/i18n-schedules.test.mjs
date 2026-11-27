@@ -256,7 +256,6 @@ test('English sentences that embed the new AI schedule terms are translated whol
     ['仅独立 AI 定时任务可以发布共享版本', 'Only standalone AI scheduled tasks can publish a shared version'],
     ['只能从当前项目的独立 AI 定时任务发布共享版本', 'Shared versions can only be published from a standalone AI scheduled task in this project'],
     ['订阅需要明确的共享任务和版本，且必须是 AI 定时任务', 'A subscription needs a specific shared task and version, and it must be an AI scheduled task'],
-    ['共享任务引用资产不可用：issue 不支持随 AI 定时任务共享', "A project asset referenced by the shared task is unavailable: issue can't be shared with an AI scheduled task"],
     ['这是本地模拟执行结果，用于验证消息结构、人工确认和 Bot 通知联动。实际任务状态以平台显示为准。', 'This is a simulated local result for checking the message layout, human review and Bot notifications. The platform shows the actual task status.'],
   ];
   for (const [zh, english] of cases) assert.equal(en.lfTranslate(zh), english, zh);
@@ -271,6 +270,41 @@ test('English sentences that embed the new AI schedule terms are translated whol
   en.document.body.append(node);
   await new Promise((resolve) => en.setTimeout(resolve, 0));
   assert.equal(node.textContent, 'An AI scheduled task can reference up to 12 project assets');
+});
+
+// internal/repo/shared_schedule_assets.go wraps ErrSharedScheduleReferences as
+// "共享任务引用资产不可用：<detail>" with asset ids in the detail. A dictionary key for the
+// prefix alone turned it into "…is unavailable: agent/ghost-agent 不存在".
+test('English shared-task reference errors are translated whole, never half English and half Chinese', async (t) => {
+  const en = await englishPage();
+  t.after(() => en.close());
+  const prefix = 'A project asset referenced by the shared task is unavailable: ';
+  const cases = [
+    ['共享任务引用资产不可用：agent/ghost-agent 不存在', 'agent/ghost-agent doesn\'t exist'],
+    ['共享任务引用资产不可用：agent:ghost 不存在', 'agent:ghost doesn\'t exist'],
+    ['共享任务引用资产不可用：agent/x 不存在或尚未共享', 'agent/x doesn\'t exist or isn\'t shared yet'],
+    ['共享任务引用资产不可用：skill/s1 不属于当前项目且尚未共享', 'skill/s1 isn\'t in this project and isn\'t shared yet'],
+    ['共享任务引用资产不可用：issue 不支持随 AI 定时任务共享', 'issue can\'t be shared with an AI scheduled task'],
+    ['共享任务引用资产不可用：最多引用 12 个资产', 'a task can reference up to 12 assets'],
+    ['共享任务引用资产不可用：直接引用列表与共享版本不一致', 'the referenced assets don\'t match the shared version'],
+    ['共享任务引用资产不可用：agent/a1 的归属已变更，请发布新版本', 'the owner of agent/a1 has changed. Publish a new version'],
+    ['共享任务引用资产不可用：sop/flow-1 的权限或归属已变更', 'the access or owner of sop/flow-1 has changed'],
+    ['共享任务引用资产不可用：共享 agent/a1 失败：database is locked', 'failed to share agent/a1: database is locked'],
+  ];
+  for (const [zh, english] of cases) assert.equal(en.lfTranslate(zh), prefix + english, zh);
+  // Wrapped once more by a caller, the reference error is still one English sentence.
+  assert.equal(en.lfTranslate('执行失败：共享任务引用资产不可用：agent/ghost 不存在'), `Failed: ${prefix}agent/ghost doesn't exist`);
+  // Sentences that only share the wording keep translating as before.
+  assert.equal(en.lfTranslate('沙箱不属于当前项目且尚未共享'), '沙箱不属于当前项目且尚未共享');
+  assert.equal(en.lfTranslate('共享任务使用的角色不属于当前项目且尚未共享'), '共享任务使用的角色不属于当前项目且尚未共享');
+
+  // The publish dialog shows the API error as text, the path the reviewer reproduced.
+  const node = en.document.createElement('div');
+  node.id = 'sharedSchedulePublishError';
+  node.textContent = '共享任务引用资产不可用：agent/ghost-agent 不存在';
+  en.document.body.append(node);
+  await new Promise((resolve) => en.setTimeout(resolve, 0));
+  assert.equal(node.textContent, `${prefix}agent/ghost-agent doesn't exist`);
 });
 
 test('English publish toast names the Shared task market without mixing languages or rewriting the task name', async (t) => {

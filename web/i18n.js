@@ -115,6 +115,23 @@
       return word ? `${n} ${word}` : n;
     }],
   ];
+  // Server errors wrapping ErrSharedScheduleReferences (internal/repo/shared_schedule_assets.go)
+  // read "共享任务引用资产不可用：<detail>", and the detail carries asset ids. No dictionary key
+  // can match such a message whole, and translating only the prefix leaves the detail Chinese,
+  // so each detail is translated as one sentence before the fragment pass runs.
+  const SHARED_REF = 'A project asset referenced by the shared task is unavailable: ';
+  const wrapped = [
+    [/共享任务引用资产不可用：(.+?) 不存在或尚未共享(?=\s*$)/, (_, ref) => `${SHARED_REF}${ref} doesn't exist or isn't shared yet`],
+    [/共享任务引用资产不可用：(.+?) 不属于当前项目且尚未共享(?=\s*$)/, (_, ref) => `${SHARED_REF}${ref} isn't in this project and isn't shared yet`],
+    [/共享任务引用资产不可用：(.+?) 不支持随 AI 定时任务共享(?=\s*$)/, (_, ref) => `${SHARED_REF}${ref} can't be shared with an AI scheduled task`],
+    [/共享任务引用资产不可用：(.+?) 的归属已变更，请发布新版本(?=\s*$)/, (_, ref) => `${SHARED_REF}the owner of ${ref} has changed. Publish a new version`],
+    [/共享任务引用资产不可用：(.+?) 的权限或归属已变更(?=\s*$)/, (_, ref) => `${SHARED_REF}the access or owner of ${ref} has changed`],
+    [/共享任务引用资产不可用：(.+?) 不存在(?=\s*$)/, (_, ref) => `${SHARED_REF}${ref} doesn't exist`],
+    [/共享任务引用资产不可用：最多引用 (\d+) 个资产(?=\s*$)/, (_, n) => `${SHARED_REF}a task can reference up to ${n} assets`],
+    [/共享任务引用资产不可用：直接引用列表与共享版本不一致(?=\s*$)/, () => `${SHARED_REF}the referenced assets don't match the shared version`],
+    // The cause after the last colon comes from the sharing path and goes through the usual passes.
+    [/共享任务引用资产不可用：共享 (\S+) 失败：/, (_, ref) => `${SHARED_REF}failed to share ${ref}: `],
+  ];
   const cache = new Map();
 
   function translateExact(text) {
@@ -131,7 +148,9 @@
     if (Object.prototype.hasOwnProperty.call(dict, trimmed)) {
       out = text.replace(trimmed, dict[trimmed]);
     } else {
-      out = fragmentRE ? text.replace(fragmentRE, m => dict[m]) : text;
+      out = text;
+      for (const [re, rep] of wrapped) out = out.replace(re, rep);
+      if (fragmentRE) out = out.replace(fragmentRE, m => dict[m]);
       if (sentenceRE && HAN.test(out)) out = out.replace(sentenceRE, m => dict[m]);
       for (const [re, rep] of patterns) out = out.replace(re, rep);
     }
