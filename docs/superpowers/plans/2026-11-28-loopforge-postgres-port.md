@@ -282,26 +282,39 @@ git commit -m "feat(db): 支持 Postgres 连接与 DSN 分流
 ### Task 2: Postgres 列类型修正（json→jsonb、blob→bytea、mediumtext→text）
 
 **Files:**
-- Create: `internal/repo/postgres_types.go`
-- Modify: `internal/repo/automigrate.go`（`autoMigrateIncremental` 末尾调用修正 pass）
-- Test: `internal/repo/postgres_types_test.go`
+- Create: `internal/repo/postgres_dialector.go`
+- Modify: `internal/repo/dialect.go`（`openDB` 改用包装后的 dialector）
+- Test: `internal/repo/postgres_dialector_test.go`
 
 **Interfaces:**
 - Consumes: Task 1 的 `dialectPostgres`、`(d *deps) isPostgres()`
-- Produces: `func postgresColumnTypeFixups(db *gorm.DB) error`
+- Produces:
+  - `type postgresDialector struct{ *postgres.Dialector }`（实现 `gorm.Dialector`）
+  - `func postgresTypeFixup(mysqlType string) (string, bool)` → Postgres 类型名
+  - `func (d postgresDialector) DataTypeOf(field *schema.Field) string`
+  - `func (d postgresDialector) Migrator(db *gorm.DB) gorm.Migrator`
 
-背景：`type:json` 的 62 个列在 Postgres 下必须是 `jsonb`（`json` 类型没有等值运算符，upsert 与等值查询会失败）；`type:mediumblob`（7 处）、`type:longblob`（1 处）必须是 `bytea`；`type:mediumtext`（3 处）必须是 `text`。
+背景：模型列 tag 是 MySQL 味的——`type:json` 46 处、`type:mediumblob` 2 处（`internal/repo/models.go:177,189`）、`type:longblob` 1 处（`models.go:502`）、`type:mediumtext` 1 处（`models.go:435`）。gorm 的 postgres 驱动对认不出的类型名直接透传（`getSchemaCustomType`），所以 AutoMigrate 会去建 `mediumblob` / `longblob` / `mediumtext` 列——Postgres 没有这些类型，`CREATE TABLE` 直接失败；而 `json` 类型没有等值运算符，upsert 与等值查询会失效。
+
+**因此类型必须在建表那一刻就是 Postgres 类型，不能等 AutoMigrate 之后再 ALTER**（那样建表就已经失败了）。
+
+方案：包装 postgres dialector，在 `DataTypeOf` 里把 MySQL 类型名映射成 Postgres 类型名；并覆写 `Migrator()`，把 gorm 的 `migrator.Migrator` 绑到这个包装 dialector 上（`migrator.Config.Dialector`）——否则 AutoMigrate 内部仍会用原始 postgres dialector 算类型，映射不生效。
 
 - [ ] **Step 1: 写失败测试**
 
-创建 `internal/repo/postgres_types_test.go`：
+创建 `internal/repo/postgres_dialector_test.go`：
 
 ```go
 package repo
 
-import "testing"
+import (
+	"testing"
 
-func TestPostgresColumnTypeFixupsMapping(t *testing.T) {
+	"gorm.io/driver/postgres"
+	"gorm.io/gorm/schema"
+)
+
+func TestPostgresTypeFixup(t *testing.T) {
 	cases := []struct {
 		mysqlType string
 		pgType    string
@@ -321,31 +334,49 @@ func TestPostgresColumnTypeFixupsMapping(t *testing.T) {
 		t.Fatal("postgresTypeFixup(text) must not be remapped")
 	}
 }
+
+func TestPostgresDialectorDataTypeOf(t *testing.T) {
+	d := postgresDialector{Dialector: &postgres.Dialector{Config: &postgres.Config{}}}
+	cases := map[string]string{
+		"json":       "jsonb",
+		"mediumblob": "bytea",
+		"longblob":   "bytea",
+		"mediumtext": "text",
+	}
+	for mysqlType, want := range cases {
+		field := &schema.Field{DataType: schema.DataType(mysqlType)}
+		if got := d.DataTypeOf(field); got != want {
+			t.Fatalf("DataTypeOf(%q) = %q; want %q", mysqlType, got, want)
+		}
+	}
+}
 ```
 
 - [ ] **Step 2: 跑测试确认失败**
 
-Run: `go test ./internal/repo/ -run TestPostgresColumnTypeFixupsMapping`
+Run: `go test ./internal/repo/ -run 'TestPostgresTypeFixup|TestPostgresDialectorDataTypeOf'`
 Expected: FAIL — `undefined: postgresTypeFixup`
 
-- [ ] **Step 3: 实现 postgres_types.go**
+- [ ] **Step 3: 实现 postgres_dialector.go**
 
-创建 `internal/repo/postgres_types.go`：
+创建 `internal/repo/postgres_dialector.go`：
 
 ```go
 package repo
 
 import (
-	"fmt"
 	"strings"
 
+	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
+	"gorm.io/gorm/migrator"
+	"gorm.io/gorm/schema"
 )
 
-// Postgres has no MEDIUMBLOB/LONGTEXT and its json type has no equality
-// operator, so the columns gorm creates from the MySQL-flavoured model tags
-// are corrected once, right after the incremental DDL pass. The correction is
-// idempotent: a column already at the target type is skipped.
+// Postgres types for the MySQL-flavoured column tags the models use. `json`
+// has no equality operator in Postgres (upserts and equality lookups break on
+// it) and `mediumblob`/`longblob`/`mediumtext` do not exist there at all, so
+// the DDL has to be written in Postgres types from the start.
 var postgresTypeFixups = map[string]string{
 	"json":       "jsonb",
 	"mediumblob": "bytea",
@@ -359,59 +390,76 @@ func postgresTypeFixup(mysqlType string) (string, bool) {
 	return pg, ok
 }
 
-// postgresColumnTypeFixups rewrites the columns gorm created with MySQL type
-// names into their Postgres equivalents. It runs after AutoMigrate, so a
-// column added later is corrected on the next start.
-func postgresColumnTypeFixups(db *gorm.DB) error {
-	rows := []struct {
-		Table  string
-		Column string
-		Type   string
-	}{}
-	if err := db.Raw(`
-SELECT table_name, column_name, data_type
-  FROM information_schema.columns
- WHERE table_schema = current_schema()
-   AND data_type IN ('json', 'mediumblob', 'longblob', 'mediumtext')`).Scan(&rows).Error; err != nil {
-		return fmt.Errorf("inspect json/blob columns: %w", err)
+// postgresDialector is the stock Postgres dialector with the models' MySQL
+// column types translated on the way into DDL.
+type postgresDialector struct {
+	*postgres.Dialector
+}
+
+// DataTypeOf maps the MySQL type names used in the model tags onto their
+// Postgres equivalents and leaves every other type to the stock driver.
+func (d postgresDialector) DataTypeOf(field *schema.Field) string {
+	if pg, ok := postgresTypeFixup(string(field.DataType)); ok {
+		return pg
 	}
-	for _, row := range rows {
-		pgType, ok := postgresTypeFixup(row.Type)
-		if !ok {
-			continue
-		}
-		stmt := fmt.Sprintf(`ALTER TABLE "%s" ALTER COLUMN "%s" TYPE %s USING "%s"::%s`,
-			row.Table, row.Column, pgType, row.Column, pgType)
-		if err := db.Exec(stmt).Error; err != nil {
-			return fmt.Errorf("alter %s.%s to %s: %w", row.Table, row.Column, pgType, err)
-		}
-	}
-	return nil
+	return d.Dialector.DataTypeOf(field)
+}
+
+// Migrator binds gorm's migrator to this dialector so AutoMigrate creates the
+// columns with the translated types.
+func (d postgresDialector) Migrator(db *gorm.DB) gorm.Migrator {
+	return postgres.Migrator{Migrator: migrator.Migrator{Config: migrator.Config{
+		DB:                          db,
+		Dialector:                   d,
+		CreateIndexAfterCreateTable: true,
+	}}}
 }
 ```
 
-- [ ] **Step 4: 在 AutoMigrate 之后调用**
+- [ ] **Step 4: 让 openDB 走包装 dialector**
 
-修改 `internal/repo/automigrate.go` 的 `autoMigrateIncremental` 末尾（`return nil` 之前）：
+修改 `internal/repo/dialect.go` 的 `openDB`：
 
 ```go
-	if db.Dialector.Name() == dialectPostgres {
-		if err := postgresColumnTypeFixups(db); err != nil {
-			return err
+	if dsnDialect(dsn) == dialectPostgres {
+		pg := postgres.Open(postgresDSN(dsn)).(*postgres.Dialector)
+		db, err := gorm.Open(postgresDialector{Dialector: pg}, config)
+		if err != nil {
+			return nil, fmt.Errorf("postgres open: %w", err)
 		}
+		return db, nil
 	}
-	return nil
 ```
 
 - [ ] **Step 5: 跑测试确认通过**
 
-Run: `go build ./... && go test ./internal/repo/ -run TestPostgresColumnTypeFixupsMapping`
+Run: `go build ./... && go test ./internal/repo/ -run 'TestPostgresTypeFixup|TestPostgresDialectorDataTypeOf'`
 Expected: PASS
 
-- [ ] **Step 6: 提交**
+- [ ] **Step 6: 在真实 Postgres 上验证 AutoMigrate 能建表**
+
+用本机 Supabase 的 `loopforge` 库（DSN 见 dispatch 说明）跑一次真实的 AutoMigrate：
 
 ```bash
-git add internal/repo/postgres_types.go internal/repo/postgres_types_test.go internal/repo/automigrate.go
+psql "postgres://postgres.cesar:<password>@127.0.0.1:5432/loopforge?sslmode=disable" \
+  -c 'DROP SCHEMA public CASCADE; CREATE SCHEMA public;'
+```
+
+然后用一个小 Go 程序（或 `go test` 的临时用例）调用 `repo.Open(dsn)`，确认：
+- AutoMigrate 不报 `type "mediumblob" does not exist` 之类的错；
+- `information_schema.columns` 里 `data_type` 只出现 `jsonb` / `bytea` / `text`，不再有 `json` / `mediumblob` / `longblob` / `mediumtext`。
+
+```bash
+psql "postgres://postgres.cesar:<password>@127.0.0.1:5432/loopforge?sslmode=disable" \
+  -c "SELECT data_type, count(*) FROM information_schema.columns WHERE table_schema='public' GROUP BY data_type ORDER BY 2 DESC;"
+```
+
+（`<password>` 由 dispatch 说明给出；密码不得写进版本库。）
+
+- [ ] **Step 7: 提交**
+
+```bash
+git add internal/repo/postgres_dialector.go internal/repo/postgres_dialector_test.go internal/repo/dialect.go
 git commit -m "feat(db): Postgres 列类型修正（json→jsonb、blob→bytea）"
 ```
 
