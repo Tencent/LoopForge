@@ -968,7 +968,7 @@ async function boot(){
   const savedProject=urlParams.get('projectId')||localStorage.getItem('agentflow.activeProject');
   state.projectFilter=(state.data.projects||[]).some(p=>p.id===savedProject)?savedProject:defaultProjectId(state.data.projects,state.currentUser?.id);
   const linkedWorkflow=flowRouteId();
-  if(linkedWorkflow&&!openableWorkflow(linkedWorkflow)){
+  if(linkedWorkflow&&!openableWorkflow(linkedWorkflow)&&!catalogGeneric((state.data?.workflows||[]).find(w=>w.id===linkedWorkflow))){
     // An explicit ?projectId wins; otherwise follow the LOOP to its project.
     const linkedProject=urlParams.get('projectId')?'':linkedWorkflowProjectId(linkedWorkflow);
     if(linkedProject){state.projectFilter=linkedProject;localStorage.setItem('agentflow.activeProject',linkedProject)}
@@ -1986,22 +1986,45 @@ async function applyAgentRoute(){
 }
 // Only LOOPs visible in the active project can be restored from the URL or localStorage.
 function openableWorkflow(id){return id?catalogWorkflows().find(w=>w.id===id)||null:null}
-// A #/flow/<id> link names one LOOP. When that LOOP is not visible in the
-// active project but belongs to another project the user can open, the link
-// should switch to that project instead of silently showing another LOOP.
-function linkedWorkflowProjectId(id){
-  if(!id||openableWorkflow(id))return '';
-  const wf=(state.data?.workflows||[]).find(w=>w.id===id&&!catalogGeneric(w));
-  return wf?.projectId&&(state.data?.projects||[]).some(p=>p.id===wf.projectId)?wf.projectId:'';
+// A #/flow/<id> link names one LOOP. It may be a platform template, which is
+// readable from any project and needs no project switch, or a LOOP owned by
+// another project the user can open, which the link follows. Anything else is
+// left alone so a wrong id never silently opens a different LOOP.
+function linkedWorkflowRoute(id){
+  if(!id)return null;
+  const visible=openableWorkflow(id);
+  if(visible)return {workflow:visible,project:''};
+  const wf=(state.data?.workflows||[]).find(w=>w.id===id);
+  if(!wf)return null;
+  if(catalogGeneric(wf))return {workflow:wf,project:''};
+  return wf.projectId&&(state.data?.projects||[]).some(p=>p.id===wf.projectId)?{workflow:wf,project:wf.projectId}:null;
 }
-function missingWorkflowLinkToast(){toast(lfT('链接中的 LOOP 不存在，或不在你可访问的项目中','The linked LOOP does not exist or is not in a project you can access'),'warn')}
+function linkedWorkflowProjectId(id){return linkedWorkflowRoute(id)?.project||''}
+// ?projectId= pins the project a #/flow/<id> link must open in.
+function pinnedProjectId(){return new URLSearchParams(window.location.search).get('projectId')||''}
+// A LOOP that exists but is pinned out by an explicit ?projectId is not
+// missing; say which project holds it so the user can drop the pin.
+function missingWorkflowLinkToast(){
+  const wf=(state.data?.workflows||[]).find(w=>w.id===flowRouteId());
+  const pinned=pinnedProjectId();
+  if(wf&&pinned&&wf.projectId&&wf.projectId!==pinned&&!catalogGeneric(wf)){
+    const name=(state.data?.projects||[]).find(p=>p.id===wf.projectId)?.name||wf.projectId;
+    toast(lfT(`链接中的 LOOP 属于另一个项目（${name}），地址里指定了项目，已保留当前项目的 LOOP；去掉地址里的 projectId 可打开它`,`The linked LOOP belongs to another project (${name}); the URL pins a project, so the current LOOP is kept`),'warn');
+    return;
+  }
+  toast(lfT('链接中的 LOOP 不存在，或不在你可访问的项目中','The linked LOOP does not exist or is not in a project you can access'),'warn');
+}
 function savedWorkflowId(){
   const id=state.workflow?.id||'';
   return id&&(state.data?.workflows||[]).some(w=>w.id===id)?id:'';
 }
 function flowViewHash(){const id=savedWorkflowId();return id?`#/flow/${encodeURIComponent(id)}`:'#/flow'}
 function restoreOpenWorkflow(){
-  return openableWorkflow(flowRouteId())||openableWorkflow(localStorage.getItem('agentflow.activeWorkflow')||'')||preferredWorkflow();
+  const id=flowRouteId();
+  // An explicit ?projectId pins the project, so only a LOOP visible there is
+  // restored; otherwise the link may follow a template or another project.
+  const route=id&&!pinnedProjectId()?linkedWorkflowRoute(id):null;
+  return route?.workflow||openableWorkflow(id)||openableWorkflow(localStorage.getItem('agentflow.activeWorkflow')||'')||preferredWorkflow();
 }
 function rememberOpenWorkflow(){
   const id=savedWorkflowId();
@@ -2040,8 +2063,9 @@ async function selectProject(projectId){
 async function applyFlowRoute(){
   const id=flowRouteId();
   if(!id||state.workflow?.id===id)return;
-  const project=linkedWorkflowProjectId(id);
-  const wf=project?state.data.workflows.find(w=>w.id===id):openableWorkflow(id);
+  const route=linkedWorkflowRoute(id);
+  const project=route?.project||'';
+  const wf=route?.workflow||null;
   if(!wf){missingWorkflowLinkToast();rememberOpenWorkflow();return}
   if(state.workflowDirty&&!(await afConfirm({title:'未保存更改',message:'当前流程有未保存修改，切换将放弃这些修改。继续？',danger:true}))){rememberOpenWorkflow();return}
   if(flowRouteId()!==id)return;
