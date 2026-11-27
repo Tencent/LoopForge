@@ -28,6 +28,18 @@ var (
 	safeID      = regexp.MustCompile("^[a-zA-Z0-9_-]{1,128}$")
 )
 
+// RejectedError is a 4xx the provider answered definitively: the request was
+// refused, so nothing was created. 408 and 429 are excluded by the client
+// because there the outcome is unknown or the caller may simply retry.
+type RejectedError struct {
+	Method string
+	Status int
+}
+
+func (e *RejectedError) Error() string {
+	return fmt.Sprintf("OpenSandbox %s: HTTP %d", e.Method, e.Status)
+}
+
 type Config struct {
 	Endpoint         string `json:"endpoint"`
 	APIKey           string `json:"apiKey"`
@@ -225,6 +237,12 @@ func (c *Client) do(ctx context.Context, method, path string, input, output any)
 	defer res.Body.Close()
 	if res.StatusCode == http.StatusNotFound && strings.HasPrefix(path, "/sandboxes/") {
 		return ErrNotFound
+	}
+	if res.StatusCode == http.StatusRequestTimeout || res.StatusCode == http.StatusTooManyRequests {
+		return fmt.Errorf("OpenSandbox %s: HTTP %d", method, res.StatusCode)
+	}
+	if res.StatusCode >= 400 && res.StatusCode < 500 {
+		return &RejectedError{Method: method, Status: res.StatusCode}
 	}
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
 		return fmt.Errorf("OpenSandbox %s: HTTP %d", method, res.StatusCode)

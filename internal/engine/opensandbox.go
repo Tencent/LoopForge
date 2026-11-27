@@ -78,9 +78,12 @@ func (e *Engine) OpenSandboxRegistrant(token string) (string, bool) {
 		return "", false
 	}
 	run, ok := e.repo.RunState(id)
+	if !ok {
+		return "", false
+	}
 	ec := run.ExecutionContext
 	client := e.openSandboxForRun(run)
-	if !ok || !isLiveStatus(run.Status) || !isOpenSandboxRun(run) || sharesWorkspace(run) ||
+	if !isLiveStatus(run.Status) || !isOpenSandboxRun(run) || sharesWorkspace(run) ||
 		client == nil || !client.ValidBootstrap(token, id) || (!ec.ExecutionResourcePending && ec.ExecutionResourceID == "") ||
 		ec.ExecutionRunnerID != domain.OpenSandboxRunnerID(id) {
 		return "", false
@@ -170,6 +173,25 @@ func (e *Engine) provisionOpenSandbox(ctx context.Context, client *opensandbox.C
 			return "", errors.New("OpenSandbox 创建结果待确认，请检查原申请或新建运行")
 		}
 		sandbox, err = client.Create(ctx, owner.ID)
+		var rejected *opensandbox.RejectedError
+		if errors.As(err, &rejected) {
+			// The provider refused the request, so nothing was created. Clear
+			// the create intent, otherwise every further attempt reads the
+			// pending flag as an unknown outcome and the run can never recover
+			// from an invalid image or resource request. Only a definitive 4xx
+			// is handled here; a timeout or 5xx keeps the flag for lookup-only
+			// recovery.
+			clearErr := e.updateRunErr(owner.ID, func(current *domain.Run) {
+				ec := &current.ExecutionContext
+				if e.ownsRun(*current) && isLiveStatus(current.Status) && ec.ExecutionResourcePending && ec.ExecutionResourceID == "" {
+					ec.ExecutionResourcePending = false
+					e.event(current, nodeID, "execution.failed", "OpenSandbox 拒绝了创建请求，未创建执行环境")
+				}
+			})
+			if clearErr != nil {
+				return "", clearErr
+			}
+		}
 	}
 	if err != nil {
 		return "", err
@@ -218,8 +240,10 @@ func (e *Engine) releaseOpenSandbox(run domain.Run) error {
 	if err := client.Release(ctx, run.ID, id); err != nil {
 		return err
 	}
-	if err := e.repo.DeregisterRunner(ec.ExecutionRunnerID, time.Now().UTC()); err != nil && !errors.Is(err, repo.ErrRunnerNotFound) {
-		return err
+	if ec.ExecutionRunnerID != "" {
+		if err := e.repo.DeregisterRunner(ec.ExecutionRunnerID, time.Now().UTC()); err != nil && !errors.Is(err, repo.ErrRunnerNotFound) {
+			return err
+		}
 	}
 	return nil
 }
