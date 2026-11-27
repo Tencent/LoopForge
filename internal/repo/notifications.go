@@ -108,17 +108,6 @@ func (r *NotificationsRepo) NotificationBots(projectID string) ([]domain.Notific
 	}
 	return r.decodeBots(rows)
 }
-
-func (r *NotificationsRepo) NotificationBotsByProjects(projectIDs []string) ([]domain.NotificationBot, error) {
-	if len(projectIDs) == 0 {
-		return []domain.NotificationBot{}, nil
-	}
-	var rows []notificationBotRow
-	if err := r.DB.Where("project_id IN ?", projectIDs).Order("id").Find(&rows).Error; err != nil {
-		return nil, err
-	}
-	return r.decodeBots(rows)
-}
 func (r *NotificationsRepo) NotificationBot(id string) (domain.NotificationBot, error) {
 	var row notificationBotRow
 	if err := r.DB.Where("id = ?", id).First(&row).Error; err != nil {

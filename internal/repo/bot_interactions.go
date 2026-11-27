@@ -520,57 +520,6 @@ func (r *BotInteractionsRepo) BotConversations(botID string) ([]domain.BotConver
 	return rows, err
 }
 
-// BotConversationsByBots lists recent IM conversations across the given Bot
-// configuration IDs, newest first.
-func (r *BotInteractionsRepo) BotConversationsByBots(botIDs []string, limit int) ([]domain.BotConversation, error) {
-	if len(botIDs) == 0 {
-		return []domain.BotConversation{}, nil
-	}
-	if limit <= 0 || limit > 200 {
-		limit = 100
-	}
-	rows := []domain.BotConversation{}
-	err := r.DB.Where("bot_id IN ?", botIDs).Order("updated_at desc, id desc").Limit(limit).Find(&rows).Error
-	return rows, err
-}
-
-// BotConversationInteractions lists the newest interactions of one IM
-// conversation in chronological order (oldest first).
-func (r *BotInteractionsRepo) BotConversationInteractions(conversationID string, limit int) ([]domain.BotInteraction, error) {
-	if limit <= 0 || limit > 200 {
-		limit = 100
-	}
-	rows := []domain.BotInteraction{}
-	if err := r.DB.Where("conversation_id = ?", conversationID).Order("created_at desc, id desc").Limit(limit).Find(&rows).Error; err != nil {
-		return nil, err
-	}
-	for i, j := 0, len(rows)-1; i < j; i, j = i+1, j-1 {
-		rows[i], rows[j] = rows[j], rows[i]
-	}
-	return rows, nil
-}
-
-// RecentBotInteractionsByConversations returns recent interactions across the
-// given conversation IDs ordered newest first, selecting only display fields
-// (never reply routes) with a bounded row limit so callers can pick the newest
-// non-binding preview without scanning unbounded history.
-func (r *BotInteractionsRepo) RecentBotInteractionsByConversations(conversationIDs []string) ([]domain.BotInteraction, error) {
-	if len(conversationIDs) == 0 {
-		return []domain.BotInteraction{}, nil
-	}
-	limit := len(conversationIDs) * 8
-	if limit > 500 {
-		limit = 500
-	}
-	var rows []domain.BotInteraction
-	err := r.DB.Select(
-		"id", "bot_id", "conversation_id", "session_id", "sender_id",
-		"content", "quote", "action", "status", "reply", "last_error",
-		"created_at", "updated_at",
-	).Where("conversation_id IN ?", conversationIDs).Order("created_at desc, id desc").Limit(limit).Find(&rows).Error
-	return rows, err
-}
-
 func (r *BotInteractionsRepo) BotInteraction(id string) (domain.BotInteraction, error) {
 	var item domain.BotInteraction
 	err := r.DB.First(&item, "id = ?", id).Error

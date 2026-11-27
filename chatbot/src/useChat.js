@@ -132,7 +132,6 @@ export function useChat() {
     [accountDefaults, setAccountDefaults] = useState(null),
     [modelCatalogRefresh, requestModelCatalogRefresh] = useState(0),
     [sessions, setSessions] = useState([]),
-    [imConversations, setImConversations] = useState([]),
     [session, setSession] = useState(null),
     [activeId, setActiveId] = useState(
       new URLSearchParams(location.search).get("session") || null,
@@ -335,21 +334,6 @@ export function useChat() {
       window.removeEventListener("message", onMessage);
     };
   }, [user?.id, user?.isGuest]);
-  useEffect(() => {
-    if (!ready || !user?.id || user.isGuest) {
-      setImConversations([]);
-      return;
-    }
-    let current = true;
-    api("/api/bot-interactions/conversations")
-      .then((list) => {
-        if (current && Array.isArray(list)) setImConversations(list);
-      })
-      .catch(() => {});
-    return () => {
-      current = false;
-    };
-  }, [ready, user?.id, user?.isGuest]);
   useEffect(() => {
     let current = true,
       timer,
@@ -1707,7 +1691,6 @@ export function useChat() {
     missingServerCLI,
     setExecutor: chooseExecutor,
     sessions,
-    imConversations,
     session,
     activeId,
     revealId,

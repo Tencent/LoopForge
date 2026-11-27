@@ -214,10 +214,9 @@ export function groupScheduledSessionsByTask(
   );
 }
 
-// Computes compact cross-tab indicators for the 3 sidebar tabs (个人 / 定时任务 / IM).
+// Computes compact cross-tab indicators for the 2 sidebar tabs (个人 / 定时任务).
 export function summarizeSidebarTabBadges(
   sessions,
-  imConversations = [],
   {
     activeId = "",
     archived = false,
@@ -253,12 +252,5 @@ export function summarizeSidebarTabBadges(
       else if (st.state === "unread") personal.unread += 1;
     }
   }
-  const imList = Array.isArray(imConversations) ? imConversations : [];
-  const im = {
-    total: imList.length,
-    attention: imList.filter(
-      (item) => item?.status === "reply_failed" || item?.status === "reply_unknown",
-    ).length,
-  };
-  return { personal, scheduled, im };
+  return { personal, scheduled };
 }

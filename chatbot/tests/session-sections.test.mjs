@@ -200,7 +200,7 @@ describe("仅我参与的对话 filter", () => {
   });
 });
 
-describe("sidebar 3-way split (personal / scheduled / IM)", () => {
+describe("sidebar 2-way split (personal / scheduled)", () => {
   test("personal bucket excludes scheduled sessions while scheduled bucket isolates them", () => {
     const items = [
       session("normal-1", { source: "chat" }),
@@ -247,21 +247,14 @@ describe("sidebar 3-way split (personal / scheduled / IM)", () => {
     expect(groups[1].sessions.map((s) => s.id)).toEqual(["s2", "s1"]);
   });
 
-  test("summarizes cross-tab indicators for personal, scheduled, and IM buckets", () => {
-    const badges = summarizeSidebarTabBadges(
-      [
-        session("p1", { source: "chat", generationStatus: "completed", unread: true }),
-        session("sc1", { source: "scheduled", taskId: "job-1", generationStatus: "running" }),
-        session("sc2", { source: "scheduled", taskId: "job-2", generationStatus: "failed" }),
-      ],
-      [
-        { id: "im-1", status: "replied" },
-        { id: "im-2", status: "reply_failed" },
-      ],
-    );
+  test("summarizes cross-tab indicators for personal and scheduled buckets", () => {
+    const badges = summarizeSidebarTabBadges([
+      session("p1", { source: "chat", generationStatus: "completed", unread: true }),
+      session("sc1", { source: "scheduled", taskId: "job-1", generationStatus: "running" }),
+      session("sc2", { source: "scheduled", taskId: "job-2", generationStatus: "failed" }),
+    ]);
 
     expect(badges.personal.unread).toBe(1);
     expect(badges.scheduled).toEqual({ total: 2, running: 1, failed: 1, unread: 0 });
-    expect(badges.im).toEqual({ total: 2, attention: 1 });
   });
 });

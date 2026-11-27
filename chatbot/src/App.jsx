@@ -68,10 +68,6 @@ import "./message-queue.css";
 import ConversationStatusIcon from "./ConversationStatusIcon";
 import { SidebarSection } from "./SidebarPreview";
 import SlidingTabs from "./SlidingTabs";
-import ImConversationPane, {
-  imChannelInfo,
-  imConversationTitle,
-} from "./ImConversationPane";
 import {
   splitSidebarSections,
   groupScheduledSessionsByTask,
@@ -432,7 +428,6 @@ export default function App() {
     try { localStorage.setItem(environmentVisibilityKey, JSON.stringify(next)); } catch {}
   }
   function startNewChat() {
-    setActiveImId(null);
     setSidebarTab("personal");
     setIssueDraft(null);
     setIssueMention(null);
@@ -1095,15 +1090,6 @@ export default function App() {
   const [scheduledGroupMode, setScheduledGroupMode] = useState("task");
   const [collapsedTasks, setCollapsedTasks] = useState({});
   const [expandedTasks, setExpandedTasks] = useState({});
-  const [imChannel, setImChannel] = useState("all");
-  const [imConversationsOverride, setImConversationsOverride] = useState(null);
-  const imConversations = imConversationsOverride ?? chat.imConversations ?? [];
-  const [imLoadingList, setImLoadingList] = useState(false);
-  const [activeImId, setActiveImId] = useState(null);
-  const [imDetail, setImDetail] = useState(null);
-  const [imLoadingDetail, setImLoadingDetail] = useState(false);
-  const [imError, setImError] = useState("");
-  const [imContinuing, setImContinuing] = useState(false);
   const [scheduleJobs, setScheduleJobs] = useState([]);
   const [runningScheduleId, setRunningScheduleId] = useState("");
 
@@ -1115,7 +1101,7 @@ export default function App() {
     [chat.session, chat.sessions, chat.activeId],
   );
   const isViewingScheduled = Boolean(
-    !activeImId && chat.activeId && scheduledSession(activeSessionSummary),
+    chat.activeId && scheduledSession(activeSessionSummary),
   );
   const activeScheduleJob = useMemo(() => {
     const taskId = String(activeSessionSummary?.taskId || "").trim();
@@ -1125,67 +1111,12 @@ export default function App() {
 
   useEffect(() => {
     if (!chat.activeId) return;
-    setActiveImId(null);
     if (scheduledSession(activeSessionSummary)) {
       setSidebarTab("scheduled");
     } else if (activeSessionSummary) {
-      setSidebarTab((current) => (current === "im" || current === "scheduled" ? "personal" : current));
+      setSidebarTab((current) => (current === "scheduled" ? "personal" : current));
     }
   }, [chat.activeId, activeSessionSummary?.source, activeSessionSummary?.title]);
-
-  const loadImConversations = useCallback(() => {
-    if (!chat.ready || chat.local) return;
-    let alive = true;
-    setImLoadingList(true);
-    api("/api/bot-interactions/conversations")
-      .then((list) => {
-        if (alive && Array.isArray(list)) setImConversationsOverride(list);
-      })
-      .catch(() => {})
-      .finally(() => {
-        if (alive) setImLoadingList(false);
-      });
-    return () => {
-      alive = false;
-    };
-  }, [chat.ready, chat.local]);
-
-  useEffect(() => {
-    if (!chat.ready || chat.local || sidebarTab !== "im") return;
-    return loadImConversations();
-  }, [chat.ready, chat.local, sidebarTab, loadImConversations]);
-
-  const loadImDetail = useCallback(
-    (conversationId) => {
-      if (!conversationId) return;
-      let alive = true;
-      setImLoadingDetail(true);
-      setImError("");
-      api(`/api/bot-interactions/conversations/${encodeURIComponent(conversationId)}`)
-        .then((data) => {
-          if (alive) setImDetail(data);
-        })
-        .catch((err) => {
-          if (alive) setImError(err?.message || "加载 IM 会话失败");
-        })
-        .finally(() => {
-          if (alive) setImLoadingDetail(false);
-        });
-      return () => {
-        alive = false;
-      };
-    },
-    [],
-  );
-
-  useEffect(() => {
-    if (!activeImId) {
-      setImDetail(null);
-      setImError("");
-      return;
-    }
-    return loadImDetail(activeImId);
-  }, [activeImId, loadImDetail]);
 
   const loadScheduleJobs = useCallback(() => {
     if (!chat.ready || chat.local) return;
@@ -1220,7 +1151,6 @@ export default function App() {
       }
       await chat.refresh?.();
       if (saved?.lastSessionId) {
-        setActiveImId(null);
         setSidebarTab("scheduled");
         chat.open(saved.lastSessionId);
       }
@@ -1231,30 +1161,9 @@ export default function App() {
     }
   }
 
-  async function continueImInWorkbench() {
-    if (!activeImId || imContinuing) return;
-    setImContinuing(true);
-    try {
-      const created = await write(
-        `/api/bot-interactions/conversations/${encodeURIComponent(activeImId)}/continue`,
-        {},
-      );
-      await chat.refresh?.();
-      if (created?.id) {
-        setActiveImId(null);
-        setSidebarTab("personal");
-        chat.open(created.id);
-      }
-    } catch (err) {
-      setImError(err?.message || "转入个人会话失败");
-    } finally {
-      setImContinuing(false);
-    }
-  }
-
   const sidebarTabBadges = useMemo(
     () =>
-      summarizeSidebarTabBadges(chat.sessions, imConversations, {
+      summarizeSidebarTabBadges(chat.sessions, {
         activeId: chat.activeId,
         archived,
         mineOnly,
@@ -1265,7 +1174,6 @@ export default function App() {
       }),
     [
       chat.sessions,
-      imConversations,
       chat.activeId,
       archived,
       mineOnly,
@@ -1317,19 +1225,6 @@ export default function App() {
       chat.generation,
       chat.busy,
     ],
-  );
-  const visibleImConversations = useMemo(() => {
-    const needle = query.trim().toLocaleLowerCase();
-    return (imConversations || []).filter((item) => {
-      if (imChannel !== "all" && item.channel !== imChannel) return false;
-      if (!needle) return true;
-      const hay = `${item.botName || ""} ${item.channelName || ""} ${item.projectName || ""} ${item.senderId || ""} ${item.preview || ""}`.toLocaleLowerCase();
-      return hay.includes(needle);
-    });
-  }, [imConversations, imChannel, query]);
-  const activeImSummary = useMemo(
-    () => imConversations.find((item) => item.id === activeImId) || null,
-    [imConversations, activeImId],
   );
   const searchGroups = groupSessionHistory(chat.sessions, chat.projects, {
     query,
@@ -1448,7 +1343,6 @@ export default function App() {
             return;
           }
           setSessionContext(null);
-          setActiveImId(null);
           chat.open(s.id);
           setQuery("");
           if (innerWidth < 850) setSidebar(false);
@@ -1587,19 +1481,7 @@ export default function App() {
       </header>
       <header className="conversation-header">
         <div className="conversation-title">
-          {activeImId ? (
-            <>
-              <span
-                className="im-channel-pill"
-                data-channel={imDetail?.conversation?.channel || activeImSummary?.channel || "wecom"}
-              >
-                {imChannelInfo(imDetail?.conversation?.channel || activeImSummary?.channel).short}
-              </span>
-              <span className="conversation-title-static">
-                {imConversationTitle(imDetail?.conversation || activeImSummary)}
-              </span>
-            </>
-          ) : chat.session ? (
+          {chat.session ? (
             <>
               <ConversationStatusIcon
                 status={sessionReplyStatus(chat.session, {
@@ -1676,7 +1558,7 @@ export default function App() {
           ) : null}
         </div>
         <div className="header-actions">
-          {!activeImId && chat.session ? (
+          {chat.session ? (
             <>
               {conversationStarted ? <ExecutionMachinePicker chat={chat} onManage={() => navigate("runners")} /> : null}
               {projectName ? (
@@ -1866,10 +1748,7 @@ export default function App() {
               role="tab"
               aria-selected={sidebarTab === "personal"}
               className={`sidebar-bucket-tab ${sidebarTab === "personal" ? "active" : ""}`}
-              onClick={() => {
-                setActiveImId(null);
-                setSidebarTab("personal");
-              }}
+              onClick={() => setSidebarTab("personal")}
             >
               <span>个人</span>
               {sidebarTab !== "personal" && sidebarTabBadges.personal.unread > 0 ? (
@@ -1886,10 +1765,7 @@ export default function App() {
               role="tab"
               aria-selected={sidebarTab === "scheduled"}
               className={`sidebar-bucket-tab ${sidebarTab === "scheduled" ? "active" : ""}`}
-              onClick={() => {
-                setActiveImId(null);
-                setSidebarTab("scheduled");
-              }}
+              onClick={() => setSidebarTab("scheduled")}
             >
               <span>定时任务</span>
               {sidebarTabBadges.scheduled.running > 0 ? (
@@ -1915,98 +1791,9 @@ export default function App() {
                 />
               ) : null}
             </button>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={sidebarTab === "im"}
-              className={`sidebar-bucket-tab ${sidebarTab === "im" ? "active" : ""}`}
-              onClick={() => setSidebarTab("im")}
-            >
-              <span>IM</span>
-              {sidebarTabBadges.im.attention > 0 ? (
-                <span
-                  className="sidebar-tab-dot"
-                  data-tone="warn"
-                  title={`${sidebarTabBadges.im.attention} 条 IM 消息异常`}
-                />
-              ) : sidebarTabBadges.im.total > 0 ? (
-                <span className="sidebar-tab-count">
-                  {sidebarTabBadges.im.total > 99 ? "99+" : sidebarTabBadges.im.total}
-                </span>
-              ) : null}
-            </button>
           </SlidingTabs>
           <div className="session-list">
-            {sidebarTab === "im" ? (
-              <>
-                <div className="im-filter-chips" role="group" aria-label="按 IM 渠道筛选">
-                  {[
-                    ["all", "全部"],
-                    ["wecom", "企微"],
-                    ["feishu", "飞书"],
-                    ["dingtalk", "钉钉"],
-                  ].map(([key, label]) => (
-                    <button
-                      key={key}
-                      type="button"
-                      className={`im-filter-chip ${imChannel === key ? "active" : ""}`}
-                      aria-pressed={imChannel === key}
-                      onClick={() => setImChannel(key)}
-                    >
-                      {label}
-                    </button>
-                  ))}
-                </div>
-                {visibleImConversations.length ? (
-                  <div className="im-session-list">
-                    {visibleImConversations.map((conv) => {
-                      const ch = imChannelInfo(conv.channel);
-                      const active = activeImId === conv.id;
-                      const when = conv.updatedAt
-                        ? new Date(conv.updatedAt).toLocaleString("zh-CN", {
-                            month: "2-digit",
-                            day: "2-digit",
-                            hour: "2-digit",
-                            minute: "2-digit",
-                            hour12: false,
-                          })
-                        : "";
-                      return (
-                        <button
-                          key={conv.id}
-                          type="button"
-                          className={`im-session-row ${active ? "active" : ""}`}
-                          onClick={() => {
-                            setActiveImId(conv.id);
-                            if (innerWidth < 850) setSidebar(false);
-                          }}
-                        >
-                          <div className="im-session-top">
-                            <span className="im-channel-pill" data-channel={conv.channel}>
-                              {ch.short}
-                            </span>
-                            <span className="im-session-name">
-                              {conv.botName || ch.label} · {conv.chatType === "group" ? "群聊" : "单聊"}
-                            </span>
-                            {when ? <span className="im-session-time">{when}</span> : null}
-                          </div>
-                          <div className="im-session-preview">
-                            {conv.senderId ? `${conv.senderId}：` : ""}
-                            {conv.preview || "暂无消息内容"}
-                          </div>
-                        </button>
-                      );
-                    })}
-                  </div>
-                ) : (
-                  <div className="empty-session-list">
-                    <p className="end-label">
-                      {imLoadingList ? "正在加载 IM 会话…" : "还没有 IM 机器人会话"}
-                    </p>
-                  </div>
-                )}
-              </>
-            ) : sidebarTab === "scheduled" ? (
+            {sidebarTab === "scheduled" ? (
               <>
                 <div className="sidebar-subbar">
                   <div className="sidebar-mode-pills" role="group" aria-label="定时会话视图">
@@ -2335,20 +2122,8 @@ export default function App() {
         </aside>
       ) : null}
       <main
-        className={`conversation-main ${!chat.activeId && !activeImId ? "empty-conversation" : ""}`}
+        className={`conversation-main ${!chat.activeId ? "empty-conversation" : ""}`}
       >
-        {activeImId ? (
-          <ImConversationPane
-            summary={activeImSummary}
-            detail={imDetail}
-            loading={imLoadingDetail}
-            error={imError}
-            continuing={imContinuing}
-            onContinue={continueImInWorkbench}
-            onRefresh={() => loadImDetail(activeImId)}
-          />
-        ) : (
-        <>
         {isViewingScheduled && activeSessionSummary?.taskId ? (
           <div className="scheduled-context-banner" role="region" aria-label="定时任务信息">
             <div className="scheduled-context-meta">
@@ -2364,7 +2139,7 @@ export default function App() {
             <div className="scheduled-context-actions">
               <button
                 type="button"
-                className="im-action-btn"
+                className="scheduled-action-btn"
                 disabled={runningScheduleId === activeSessionSummary.taskId || activeScheduleJob?.lastStatus === "running"}
                 onClick={() => runScheduledJobNow(activeSessionSummary.taskId)}
               >
@@ -2379,7 +2154,7 @@ export default function App() {
               </button>
               <button
                 type="button"
-                className="im-action-btn"
+                className="scheduled-action-btn"
                 onClick={() =>
                   navigate("aiSchedules", {
                     projectId: activeSessionSummary.projectId || chat.projectId,
@@ -2392,7 +2167,7 @@ export default function App() {
               </button>
               <button
                 type="button"
-                className="im-action-btn"
+                className="scheduled-action-btn"
                 onClick={() =>
                   navigate("aiSchedules", {
                     projectId: activeSessionSummary.projectId || chat.projectId,
@@ -3033,8 +2808,6 @@ export default function App() {
             </div>
           </section>
         ) : null}
-        </>
-        )}
       </main>
       {artifactPresence.mounted ? (
         <ArtifactPanel
