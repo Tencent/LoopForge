@@ -91,6 +91,7 @@ func main() {
 	tlsCert := flag.String("tls-cert", "", "optional TLS certificate path")
 	tlsKey := flag.String("tls-key", "", "optional TLS private key path")
 	databaseURL := flag.String("database-url", "", "Database URL (postgres://…) or MySQL DSN; overrides AGENTFLOW_DATABASE_URL and AGENTFLOW_MYSQL_DSN. The database is the only data source.")
+	mysqlDSN := flag.String("mysql-dsn", "", "Deprecated alias for -database-url; kept so existing MySQL deployments keep starting.")
 	roleFlag := flag.String("role", "", "process role: api, worker, or all (default all)")
 	cliAction := flag.String("cli-action", "", "local managed CLI administration: status, update, or rollback; exits without starting services")
 	cliProvider := flag.String("cli-provider", "", "managed CLI provider to roll back")
@@ -138,7 +139,11 @@ func main() {
 	if err := runtime.SetRepositoryCacheRoot(root); err != nil {
 		log.Printf("repository cache disabled: %v", err)
 	}
-	s, err := repo.Open(strings.TrimSpace(*databaseURL))
+	dsn := strings.TrimSpace(*databaseURL)
+	if dsn == "" {
+		dsn = strings.TrimSpace(*mysqlDSN)
+	}
+	s, err := repo.Open(dsn)
 	if err != nil {
 		log.Fatal(err)
 	}

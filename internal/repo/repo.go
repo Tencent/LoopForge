@@ -251,7 +251,7 @@ func Open(dsn string) (*Store, error) {
 		dsn = strings.TrimSpace(os.Getenv("AGENTFLOW_MYSQL_DSN"))
 	}
 	if dsn == "" {
-		return nil, errors.New("AGENTFLOW_DATABASE_URL 未配置：数据库是唯一数据源，缺少 DSN 时拒绝启动")
+		return nil, errors.New("AGENTFLOW_DATABASE_URL 未配置：数据库是唯一数据源，缺少 DSN 时拒绝启动（也接受 AGENTFLOW_MYSQL_DSN）")
 	}
 	if dsnDialect(dsn) == dialectMySQL {
 		if !strings.Contains(dsn, "charset=") {
