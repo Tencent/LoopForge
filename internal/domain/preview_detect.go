@@ -5,6 +5,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
 
@@ -102,6 +103,16 @@ var frontendScriptTokens = []string{
 	"astro dev",
 	"parcel",
 }
+
+var frontendScriptPatterns = func() []*regexp.Regexp {
+	patterns := make([]*regexp.Regexp, len(frontendScriptTokens))
+	for i, token := range frontendScriptTokens {
+		// Match an executable (including a relative .bin path) or a full
+		// subcommand, not substrings such as vitest or invite-users.js.
+		patterns[i] = regexp.MustCompile(`(?:^|[\s/;&|"'])` + regexp.QuoteMeta(token) + `(?:$|[\s;&|"'])`)
+	}
+	return patterns
+}()
 
 type npmPackageJSON struct {
 	Dependencies     map[string]string `json:"dependencies"`
@@ -208,9 +219,9 @@ func packageJSONFrontend(path string) (bool, string) {
 	}
 	for _, cmd := range pkg.Scripts {
 		lower := strings.ToLower(cmd)
-		for _, token := range frontendScriptTokens {
-			if strings.Contains(lower, token) {
-				return true, "scripts:" + token
+		for i, pattern := range frontendScriptPatterns {
+			if pattern.MatchString(lower) {
+				return true, "scripts:" + frontendScriptTokens[i]
 			}
 		}
 	}
