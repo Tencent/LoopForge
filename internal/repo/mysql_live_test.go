@@ -246,6 +246,44 @@ func TestMySQLRunnerTaskWithLargeSkillFileIsListedAndClaimed(t *testing.T) {
 	}
 }
 
+func TestMySQLRunSummariesWithLargeWorkflowSnapshot(t *testing.T) {
+	dsn := os.Getenv("AGENTFLOW_TEST_MYSQL_DSN")
+	if dsn == "" {
+		t.Skip("AGENTFLOW_TEST_MYSQL_DSN is not set")
+	}
+	s, err := Open(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	workflowID := fmt.Sprintf("large-snapshot-%d", time.Now().UnixNano())
+	defer func() { _ = s.DB.Where("workflow_id = ?", workflowID).Delete(&runRow{}).Error }()
+	created := time.Now().UTC().Truncate(time.Second)
+	for _, suffix := range []string{"a", "b"} {
+		run := domain.Run{
+			ID: workflowID + "-" + suffix, WorkflowID: workflowID, CreatedAt: created,
+			WorkflowSnapshot: domain.WorkflowDefinition{ID: workflowID, Name: "Large workflow", Description: strings.Repeat("x", 400<<10)},
+		}
+		if err := s.DB.Table("runs").Create(runRowValues(run)).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	summaries, err := s.RunSummariesFor(domain.AnalyticsFilter{WorkflowID: workflowID}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(summaries) != 2 || summaries[0].ID != workflowID+"-b" || summaries[1].ID != workflowID+"-a" {
+		t.Fatalf("expected both runs in descending ID order for equal creation times, got %v", summaries)
+	}
+	for _, summary := range summaries {
+		if summary.WorkflowSnapshot.ID != workflowID || summary.WorkflowSnapshot.Name != "Large workflow" || summary.WorkflowSnapshot.Description != "" {
+			t.Fatalf("unexpected workflow snapshot summary for %s", summary.ID)
+		}
+	}
+}
+
 func TestMySQLGitSSHCredentialLifecycle(t *testing.T) {
 	dsn := os.Getenv("AGENTFLOW_TEST_MYSQL_DSN")
 	if dsn == "" {
