@@ -396,3 +396,38 @@ func TestSteerRefreshesTheModelListBeforeFallingBack(t *testing.T) {
 		t.Fatalf("steer model = %+v, want claude-opus-5.5", current.Steer)
 	}
 }
+
+// A turn that switches phases (opening a workspace, falling back to the
+// platform, a handoff) streams the paragraphs of every phase, while the CLI
+// result of the last phase repeats all of that phase's paragraphs. Cursor glues
+// them together without the blank line, so neither the whole-reply nor the
+// last-paragraph comparison matched and the phase was stored twice.
+func TestAssistantVisibleReplyDropsTheLastPhaseResult(t *testing.T) {
+	events := []domain.AssistantActivityEvent{
+		{Kind: "text", Text: "先查看仓库和运行环境。"},
+		{Kind: "tool", ID: "open"},
+		{Kind: "status", Text: assistantWorkspaceFallbackStatus},
+		{Kind: "text", Text: "工作区这次没有打开。我先核对需求。"},
+		{Kind: "tool", ID: "issue"},
+		{Kind: "text", Text: "代码还没改。\n\n- 验收：每位会员最多借 3 本。"},
+	}
+	want := "先查看仓库和运行环境。\n\n工作区这次没有打开。我先核对需求。\n\n代码还没改。\n\n- 验收：每位会员最多借 3 本。"
+	for name, final := range map[string]string{
+		"glued":     "工作区这次没有打开。我先核对需求。代码还没改。\n\n- 验收：每位会员最多借 3 本。",
+		"separated": "工作区这次没有打开。我先核对需求。\n\n代码还没改。\n\n- 验收：每位会员最多借 3 本。",
+	} {
+		if got := assistantVisibleReply(final, events); got != want {
+			t.Fatalf("%s: last phase stored twice:\n%s", name, got)
+		}
+	}
+	// A summary that never streamed is still appended once.
+	final := "工作区这次没有打开。我先核对需求。代码还没改。\n\n- 验收：每位会员最多借 3 本。\n\n下一轮继续实现。"
+	if got := assistantVisibleReply(final, events); got != want+"\n\n下一轮继续实现。" {
+		t.Fatalf("new tail: %q", got)
+	}
+	// Text that merely starts like the last phase is not mistaken for it.
+	final = "工作区这次没有打开。我先核对需求。另一个结论。"
+	if got := assistantVisibleReply(final, events); !strings.HasSuffix(got, "\n\n"+final) {
+		t.Fatalf("different result dropped: %q", got)
+	}
+}

@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 	"unicode"
+	"unicode/utf8"
 )
 
 // Coalesce token deltas while retaining the order of thinking, tools and status.
@@ -288,7 +289,43 @@ func assistantVisibleReply(final string, events []domain.AssistantActivityEvent)
 		}
 		return dropRepeatedReply(joined + "\n\n" + suffix)
 	}
+	// A turn that switches phases (opening a workspace, falling back to the
+	// platform, a handoff) streams every phase, while the result of the last
+	// phase repeats all of that phase's paragraphs, sometimes glued together
+	// without the blank line. Match it against the trailing paragraphs.
+	for i := 1; i < len(parts)-1; i++ {
+		rest, ok := cutCompactPrefix(final, replyCompact(strings.Join(parts[i:], "")))
+		if !ok {
+			continue
+		}
+		if rest = trimAssistantReplyText(strings.TrimLeftFunc(rest, unicode.IsSpace)); rest == "" {
+			return joined
+		}
+		return dropRepeatedReply(joined + "\n\n" + rest)
+	}
 	return dropRepeatedReply(joined + "\n\n" + final)
+}
+
+// cutCompactPrefix removes prefix, a replyCompact string, from the start of
+// text while ignoring whitespace in text, and returns what follows it.
+func cutCompactPrefix(text, prefix string) (string, bool) {
+	if prefix == "" {
+		return "", false
+	}
+	for i, r := range text {
+		if prefix == "" {
+			return text[i:], true
+		}
+		if unicode.IsSpace(r) {
+			continue
+		}
+		head, size := utf8.DecodeRuneInString(prefix)
+		if head != r {
+			return "", false
+		}
+		prefix = prefix[size:]
+	}
+	return "", prefix == ""
 }
 
 // stripAssistantCLINotices drops the CLI's "Tool ... does not exist" lines
