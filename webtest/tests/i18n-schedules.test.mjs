@@ -291,16 +291,38 @@ test('English publish toast names the Shared task market without mixing language
   assert.deepEqual(toasts, ['Published version 1 to the Shared task market. Other projects can subscribe to it now']);
 });
 
-test('English Shared task market keeps shared task names, source projects and descriptions as written', async (t) => {
+test('English Shared task market, version dialog and subscription keep shared task data as written, even when it matches a dictionary key', async (t) => {
   const app = await loadApp();
   t.after(app.close);
-  const shared = { id: 'shared-1', version: 2, sourceProjectId: 'p2', sourceProjectName: '基础团队', sourceJobId: 's', name: NAME, description: '跨项目复用巡检规则', changeNote: '新增业务名称', prompt: '检查需求', intervalSec: 86400, parameters: [] };
+  // Every value here is also a dictionary key ("代码审查" → Code review, "测试" → Testing,
+  // "修复" → Fix, "执行记录" → Run history), so data-i18n-data would still rewrite it.
+  app.evaluate('window.lfT = (zh, en) => en;');
+  const shared = { id: 'shared-1', version: 2, sourceProjectId: 'p2', sourceProjectName: '执行记录', sourceJobId: 's', name: '代码审查', description: '测试', changeNote: '修复', prompt: '检查需求', intervalSec: 86400, parameters: [] };
+  app.router.get('/api/shared-schedule-tasks', [shared]);
+  app.router.get('/api/shared-schedule-tasks/shared-1/versions', [shared]);
   app.evaluate(`state.projectFilter='project-1';sharedScheduleCatalog=${JSON.stringify([shared])};renderSharedScheduleMarket()`);
   await settle(2);
-  const root = await englishCopy(t, app, ['#sharedScheduleMarketList, #aiScheduleMarketPanel .mcp-market-grid, #aiScheduleMarketPanel']);
-  const card = root.querySelector('.mcp-market-card');
+  const market = await englishCopy(t, app, ['#aiScheduleMarketPanel']);
+  const card = market.querySelector('.mcp-market-card');
   assert.ok(card, 'the market card renders');
-  assert.equal(card.querySelector('h3').textContent, NAME);
-  assert.equal(card.querySelector('.shared-schedule-market-source').textContent, '基础团队');
-  assert.ok(card.textContent.includes('跨项目复用巡检规则'), 'the description is not fragment-translated');
+  assert.equal(card.querySelector('h3').textContent, '代码审查');
+  assert.equal(card.querySelector('.shared-schedule-market-source').textContent, '执行记录');
+  assert.equal(card.querySelector('p').textContent, '测试');
+
+  await app.evaluate("openSharedScheduleVersions('shared-1', false)");
+  await settle(4);
+  const versions = await englishCopy(t, app, ['#sharedScheduleVersionModal']);
+  const versionText = versions.textContent.replace(/\s+/g, ' ');
+  for (const kept of ['代码审查', '执行记录', '修复']) assert.ok(versionText.includes(kept), `version dialog keeps ${kept}: ${versionText}`);
+  assert.doesNotMatch(versionText, /Code review|Run history|\bFix\b/);
+  app.evaluate("document.querySelector('#sharedScheduleVersionModal').classList.remove('open')");
+
+  await app.evaluate("selectAIScheduleTab('market')");
+  app.document.querySelector('[data-subscribe-shared]').click();
+  await settle(5);
+  const binding = await englishCopy(t, app, ['#sharedScheduleBinding']);
+  const bindingText = binding.textContent.replace(/\s+/g, ' ');
+  for (const kept of ['代码审查', '执行记录', '测试']) assert.ok(bindingText.includes(kept), `subscription keeps ${kept}: ${bindingText}`);
+  assert.doesNotMatch(bindingText, /Code review|Run history|Testing/);
+  assert.match(bindingText, /Source: 执行记录/);
 });
