@@ -698,29 +698,8 @@ function ensureNodeDefaults(n){
   n.retryStrategy=n.retryStrategy||'targeted_fix';
   n.carryOver=n.carryOver||['failed_checks','last_error','upstream_artifacts'];
 }
-function artifactContractKey(a){return String(a?.name||a?.path||'').trim()}
-function sameArtifactContract(a,b){
-  if(!a||!b)return false;
-  const key=artifactContractKey(a);
-  return !!key&&key===artifactContractKey(b)&&String(a.path||'').trim()===String(b.path||'').trim()&&
-    (a.mediaType||'text/markdown')===(b.mediaType||'text/markdown')&&!!a.required===!!b.required;
-}
-function nodeArtifactEntries(n,agent){
-  const roleByKey=new Map((agent?.artifactOutputs||[]).map(a=>[artifactContractKey(a),a]));
-  return (n.artifactOutputs||[]).map((artifact,index)=>({artifact,index})).filter(({artifact})=>{
-    const role=roleByKey.get(artifactContractKey(artifact));
-    return !role||!sameArtifactContract(artifact,role);
-  });
-}
-function nodeArtifactEntriesForEdit(n,agent){
-  return (n.artifactOutputs||[]).map((artifact,index)=>({artifact,index})).filter(({artifact})=>{
-    const key=artifactContractKey(artifact);
-    return !key||!sameArtifactContract(artifact,(agent?.artifactOutputs||[]).find(role=>artifactContractKey(role)===key));
-  });
-}
-function artifactRowsHTML(n,entries){
-  const rows=entries||((n.artifactOutputs||[]).map((artifact,index)=>({artifact,index})));
-  return rows.map(({artifact:a,index:i})=>`<article class="artifact-card" data-artifact-row="${i}">
+function artifactRowsHTML(n){
+  return (n.artifactOutputs||[]).map((a,i)=>`<article class="artifact-card" data-artifact-row="${i}">
       <header><input data-ak="name" value="${escapeHTML(a.name||'')}" placeholder="产物名称，如 checkers-report"><button type="button" data-remove-artifact="${i}" title="删除产物" aria-label="删除产物">${flowPalette.icon('x',12)}</button></header>
       <label>写入路径</label>
       <input data-ak="path" value="${escapeHTML(a.path||'')}" placeholder="相对路径，如 checkers-report.md">
@@ -730,9 +709,11 @@ function artifactRowsHTML(n,entries){
 }
 function bindArtifactRows(host,n){
   const box=host.querySelector('#artifactContractRows');if(!box)return;
-  const visibleEntries=()=>n.type==='agent'?nodeArtifactEntriesForEdit(n,workflowAgent(n.agentId)):undefined;
   box.querySelectorAll('[data-artifact-row]').forEach(row=>row.querySelectorAll('[data-ak]').forEach(el=>el.oninput=()=>{const value=el.dataset.ak==='required'?el.checked:el.value;n.artifactOutputs[Number(row.dataset.artifactRow)][el.dataset.ak]=value;dirty()}));
-  box.querySelectorAll('[data-remove-artifact]').forEach(el=>el.onclick=()=>{n.artifactOutputs.splice(Number(el.dataset.removeArtifact),1);box.innerHTML=artifactRowsHTML(n,visibleEntries());bindArtifactRows(host,n);dirty()});
+  box.querySelectorAll('[data-remove-artifact]').forEach(el=>el.onclick=()=>{
+    n.artifactOutputs.splice(Number(el.dataset.removeArtifact),1);
+    box.innerHTML=artifactRowsHTML(n);bindArtifactRows(host,n);dirty();
+  });
 }
 function listEditorHTML(items, placeholder){
   const rows=(items&&items.length?items:['']).map((v,i)=>`<div class="list-edit-row" data-i="${i}"><textarea rows="2" placeholder="${escapeHTML(placeholder)}">${escapeHTML(v||'')}</textarea><button type="button" data-list-del="${i}" title="删除">×</button></div>`).join('');
@@ -1053,7 +1034,6 @@ function agentBindCard(n){
   const hint=generic?'这些角色打包在通用模板里，和当前项目目录无关。改任务书只影响平台模板，所有项目下次运行生效。':`本项目 ${owned.length} 个 · 共享 ${shared.length} 个；其他项目私有角色已隐藏。`;
   if(!agent)return `<div class="fd-field"><label>这个步骤用哪个角色</label><select class="select" data-p="agentId">${opts}</select><p class="prop-hint">${hint}</p><p class="prop-hint">先选一个已定义的角色。画布只编排顺序和打回，不改编排角色内部的任务。</p></div>`;
   const arts=effectiveNodeArtifacts(n,agent),gates=roleGates(agent);
-  const nodeArtifacts=nodeArtifactEntries(n,agent);
   const duty=String(agent.description||'').trim(),taskHint=duty?(duty.length>48?`${duty.slice(0,48)}…`:duty):'还没写职责，可在角色定义里补';
   const source=(state.workflow?.tags||[]).find(tag=>tag.startsWith('generic-source:'))?.slice('generic-source:'.length);
   const template=(state.data.workflows||[]).find(w=>w.id===source&&catalogGeneric(w));
@@ -1062,9 +1042,8 @@ function agentBindCard(n){
   const inheritsExecutor=!n.executorId&&(!agent.executorId||legacyTemplate)&&
     !String(agent.model||'').trim()&&!String(agent.effort||'').trim();
   const model=inheritsExecutor?'跟随责任人':agent.model||exec?.model||exec?.name||'未选模型';
-  const addNodeArtifact=`<button type="button" class="fd-btn ghost sm" id="addNodeArtifact">增加本节点补充产物</button>`;
   return `<div class="fd-field"><label>这个步骤用哪个角色</label><select class="select" data-p="agentId">${opts}</select><p class="prop-hint">${hint}</p></div>
-    <div class="fd-role"><div class="fd-role-h"><span class="fd-tile" style="--tint:${flowPalette.roleTint(agent.id)}">${escapeHTML(flowPalette.initial(agent.name))}</span><span class="fd-role-t"><b>${escapeHTML(agent.name)}</b><small>${escapeHTML(taskHint)}</small></span>${boundRoleLink(agent)}</div><div class="fd-stats"><div title="${escapeHTML(model)}"><b class="txt">${escapeHTML(model)}</b><small>模型</small></div><div><b>${arts.length}</b><small>产物</small></div><div><b>${gates.length}</b><small>门禁</small></div><div><b>${agent.loop?.enabled?`${agent.loop.maxIterations||1} 轮`:'单轮'}</b><small>Loop</small></div></div></div>${addNodeArtifact}`;
+    <div class="fd-role"><div class="fd-role-h"><span class="fd-tile" style="--tint:${flowPalette.roleTint(agent.id)}">${escapeHTML(flowPalette.initial(agent.name))}</span><span class="fd-role-t"><b>${escapeHTML(agent.name)}</b><small>${escapeHTML(taskHint)}</small></span>${boundRoleLink(agent)}</div><div class="fd-stats"><div title="${escapeHTML(model)}"><b class="txt">${escapeHTML(model)}</b><small>模型</small></div><div><b>${arts.length}</b><small>产物</small></div><div><b>${gates.length}</b><small>门禁</small></div><div><b>${agent.loop?.enabled?`${agent.loop.maxIterations||1} 轮`:'单轮'}</b><small>Loop</small></div></div></div>`;
 }
 function flowDrawerHead(n,kind,label){
   const agent=kind==='agent'?workflowAgent(n.agentId):null;
@@ -1187,11 +1166,8 @@ function renderProperties(){
     const scriptPane=n.type==='script'?`<div class="fd-row2"><div class="fd-field"><label>脚本语言</label><select class="select" data-p="scriptLanguage"><option value="shell" ${n.scriptLanguage!=='python'?'selected':''}>Shell</option><option value="python" ${n.scriptLanguage==='python'?'selected':''}>Python</option></select></div><div class="fd-field"><label>执行范围</label><select class="select" data-p="executionScope"><option value="run" ${n.executionScope!=='repositories'?'selected':''}>Run 工作区</option><option value="repositories" ${n.executionScope==='repositories'?'selected':''}>每个代码仓库</option></select></div></div><div class="fd-field"><label>脚本内容</label><button type="button" class="script-editor-launch-btn btn-open-code-editor" id="openScriptNodeEditor"><span>${flowPalette.icon('code',14)} 打开代码编辑器编写脚本</span><span class="script-btn-badge">${scriptCountText}</span></button>${scriptPreview}<p class="prop-hint">逐仓库执行时会自动进入每个仓库根目录，无需手写 cd。</p></div>`:'';
     const approvalPane=n.type==='approval'?`<div class="fd-field"><label>需要确认什么（可选）</label><textarea class="input" rows="4" data-p="taskPrompt" placeholder="例如：检查 MR 的改动范围和测试结果，确认可以上线">${escapeHTML(n.taskPrompt||'')}</textarea><p class="prop-hint">确认步骤会停在「待我确认」，批准后才继续；这段说明会和上下游一起展示给确认人。</p></div>`:'';
     const nodePromptPane=n.type==='agent'?flowFold('nodePrompt','节点提示词','本节点额外要求',`<div class="fd-field"><label>本节点补充提示词（可选）</label><textarea class="input" rows="4" data-p="nodePrompt" placeholder="例如：只检查登录限流相关代码，并补充边界测试">${escapeHTML(n.nodePrompt||'')}</textarea><p class="prop-hint">执行时会追加到角色 Prompt 后面；同一个角色可以在不同节点使用不同要求。</p></div>`,false):'';
-    const agent=workflowAgent(n.agentId);
-    const nodeArtifacts=n.type==='agent'?nodeArtifactEntriesForEdit(n,agent):null;
-    const ownArtifacts=n.type==='script'?`<div class="fd-field"><label>本节点产物契约</label><div id="artifactContractRows">${artifactRowsHTML(n)}</div><button type="button" class="fd-btn ghost sm" id="addSOPHandoff">${flowPalette.icon('plus',13)}<span>增加产物</span></button></div>`:
-      (n.type==='agent'&&nodeArtifacts.length?`<div class="fd-field"><label>本节点补充/覆盖产物契约</label><div id="artifactContractRows">${artifactRowsHTML(n,nodeArtifacts)}</div><button type="button" class="fd-btn ghost sm" id="addSOPHandoff">${flowPalette.icon('plus',13)}<span>增加产物</span></button><p class="prop-hint">角色产物是默认契约；这里只显示本节点新增或覆盖的产物。</p></div>`:'');
-    const main=`<section class="fd-sec"><div class="fd-sec-h"><span class="fd-sec-t">主配置</span></div><div class="fd-sec-b">${n.type==='agent'?agentBindCard(n):''}${sopSelect}${scriptPane}${approvalPane}${nodePromptPane}${ownArtifacts}</div></section>`;
+    const scriptArtifacts=n.type==='script'?`<div class="fd-field"><label>本节点产物契约</label><div id="artifactContractRows">${artifactRowsHTML(n)}</div><button type="button" class="fd-btn ghost sm" id="addSOPHandoff">${flowPalette.icon('plus',13)}<span>增加产物</span></button></div>`:'';
+    const main=`<section class="fd-sec"><div class="fd-sec-h"><span class="fd-sec-t">主配置</span></div><div class="fd-sec-b">${n.type==='agent'?agentBindCard(n):''}${sopSelect}${scriptPane}${approvalPane}${nodePromptPane}${scriptArtifacts}</div></section>`;
     const gates=n.type==='agent'?flowFold('gates','校验顺序',`${effectiveNodeArtifacts(n,workflowAgent(n.agentId)).length} 产物 · ${roleGates(workflowAgent(n.agentId)).length} 门禁`,nodeGatePane(n),false):'';
     const wantReject=state.flowWantReject??(n.onFailure==='reject');
     const targets=state.workflow.nodes.filter(x=>x.id!==n.id).map(x=>`<option value="${escapeHTML(x.id)}" ${x.id===n.rejectTo?'selected':''}>${escapeHTML(x.name)}</option>`).join('');
@@ -1203,13 +1179,6 @@ function renderProperties(){
   }
   host.querySelector('#closeNodeDrawer')?.addEventListener('click',closeNodeDrawer);
   const del=host.querySelector('#deletePropertyNode');if(del)del.onclick=()=>removeNode(n.id);
-  host.querySelector('#addNodeArtifact')?.addEventListener('click',()=>{
-    flowHistory.record();
-    const agent=workflowAgent(n.agentId);
-    n.artifactOutputs=n.artifactOutputs||[];
-    n.artifactOutputs.push({name:'',path:'',mediaType:'text/markdown',required:true});
-    renderProperties();dirty();
-  });
   host.querySelectorAll('[data-fold]').forEach(d=>d.addEventListener('toggle',()=>{(state.flowFolds||(state.flowFolds={}))[d.dataset.fold]=d.open}));
   if(ro)host.querySelectorAll('.fd-db input,.fd-db select,.fd-db textarea,.fd-db button:not(#openBoundAgent):not(#openBoundAgentValidation),.fd-dh-name,#deletePropertyNode').forEach(el=>el.disabled=true);
   flowPalette.paint(host);
@@ -1271,7 +1240,7 @@ function bindNodeProperties(host,n){  host.querySelectorAll('[data-route-edge]')
     dirty();renderProperties();renderCanvas();
   };
   host.querySelector('#addSOPHandoff')?.addEventListener('click',()=>{flowHistory.record();n.artifactOutputs=n.artifactOutputs||[];n.artifactOutputs.push({name:'',path:'',mediaType:'text/markdown',required:true});renderProperties();dirty()});
-  if(['sop','agent','script'].includes(n.type))bindArtifactRows(host,n);
+  if(['sop','script'].includes(n.type))bindArtifactRows(host,n);
   const openBound=$('#openBoundAgent');if(openBound)openBound.onclick=()=>{const agent=workflowAgent(n.agentId);if(!agent)return;if(!catalogGeneric(state.workflow))switchView('agents');openAgentWizard(agent,2)};
   const openBoundValidation=$('#openBoundAgentValidation');if(openBoundValidation)openBoundValidation.onclick=()=>{const agent=workflowAgent(n.agentId);if(!agent)return;if(!catalogGeneric(state.workflow))switchView('agents');openAgentWizard(agent,3)};
 

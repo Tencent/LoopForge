@@ -44,6 +44,40 @@ test('linear agent drawer hides branch configuration', async (t) => {
   assert.equal(body.textContent.includes('分支与汇合'), false);
 });
 
+test('agent drawer hides the node artifact editor without dropping existing contracts', async (t) => {
+  const app = await loadApp(); t.after(app.close);
+  app.evaluate(`switchView('flow');
+    state.currentUser={...state.currentUser,isGuest:false,isPlatformAdmin:true};
+    state.workflow={id:'artifact-template',name:'通用缺陷修复 LOOP',generic:true,status:'draft',nodes:[
+      {id:'review',name:'独立评审',type:'agent',agentId:'review-role',position:{x:20,y:30},
+       artifactOutputs:[{name:'review',path:'review.md',mediaType:'text/markdown',required:true}]}
+    ],edges:[]};
+    state.genericTemplateAgents=[{id:'review-role',name:'独立评审'}];
+    state.genericTemplateAgentWorkflowId=state.workflow.id;
+    state.selectedNode='review';renderProperties()`);
+  const find = (selector) => app.document.querySelector(`#properties ${selector}`);
+  const assertNoEditor = () => {
+    assert.equal(find('#artifactContractRows, #addNodeArtifact, #addSOPHandoff'), null);
+    assert.doesNotMatch(app.document.querySelector('#properties').textContent, /本节点补充\/覆盖产物契约|增加本节点补充产物/);
+    assert.ok(find('#openBoundAgent'));
+  };
+  assertNoEditor();
+  assert.match(find('.fd-stats').textContent, /1\s*产物/);
+  const contract = JSON.stringify(app.evaluate('state.workflow.nodes[0].artifactOutputs'));
+  const name = find('[data-p="name"]');
+  name.value = '独立评审（更新）';
+  name.dispatchEvent(new app.window.Event('input', { bubbles: true }));
+  app.router.put('/api/workflows', (call) => ({ status: 200, body: {...call.body, revision: 1} }));
+  await app.evaluate('saveWorkflow()');
+  const call = app.router.calls.find(c => c.path === '/api/workflows' && c.method === 'PUT');
+  assert.equal(call.body.nodes[0].name, '独立评审（更新）');
+  assert.equal(JSON.stringify(call.body.nodes[0].artifactOutputs), contract);
+  assertNoEditor();
+
+  app.evaluate(`state.workflow.nodes[0].artifactOutputs=[];renderProperties()`);
+  assertNoEditor();
+});
+
 test('routing picker disables unsupported node kinds and scopes', async (t) => {
   const app = await loadApp(); t.after(app.close);
   app.evaluate(`switchView('flow');state.workflow={id:'route-guards',projectId:'project-1',name:'Guards',nodes:[
