@@ -92,7 +92,7 @@ func (e *Engine) integrateScheduledRun(id string) (bool, []domain.DeliveryMR, er
 		var forgeRepo domain.ForgeRepository
 		if domain.IsForgeRepositoryProvider(rc.Provider) {
 			if domain.IsMainlineBranch(b, rc.DefaultBranch) {
-				return false, nil, fmt.Errorf("Forgejo 定时 SOP 的集成分支必须与默认分支不同")
+				return false, nil, fmt.Errorf("Forgejo 定时 LOOP 的集成分支必须与默认分支不同")
 			}
 			forgeRepo, err = forge.RunRepository(rc)
 			if err != nil {

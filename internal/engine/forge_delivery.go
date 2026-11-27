@@ -37,7 +37,7 @@ func (e *Engine) alignForgeBaseline(rc domain.RepositoryContext, userID int64) e
 	}
 	source := client.DefaultBranch()
 	if source == "" || domain.IsMainlineBranch(target, source) {
-		return errors.New("Forgejo 定时 SOP 只能合入非默认的集成分支")
+		return errors.New("Forgejo 定时 LOOP 只能合入非默认的集成分支")
 	}
 	if !domain.SameGitBranch(rc.DefaultBranch, source) {
 		return errors.New("仓库配置的默认分支与 Forgejo 不一致，请先更新仓库绑定")
@@ -52,7 +52,7 @@ func (e *Engine) alignForgeBaseline(rc domain.RepositoryContext, userID int64) e
 	}
 	_, err = client.SubmitAndMergePull(ctx, source, target, head,
 		fmt.Sprintf("LoopForge: 对齐 %s → %s", source, target),
-		"定时 SOP 派发前，将默认分支的提交同步到集成分支。")
+		"定时 LOOP 派发前，将默认分支的提交同步到集成分支。")
 	return err
 }
 
@@ -66,7 +66,7 @@ func (e *Engine) mergeForgeIntegration(ctx context.Context, run domain.Run, rc d
 		return domain.DeliveryMR{}, err
 	}
 	if client.DefaultBranch() == "" || domain.IsMainlineBranch(target, client.DefaultBranch()) {
-		return domain.DeliveryMR{}, errors.New("Forgejo 定时 SOP 只能合入非默认的集成分支")
+		return domain.DeliveryMR{}, errors.New("Forgejo 定时 LOOP 只能合入非默认的集成分支")
 	}
 	current, err := client.BranchContains(ctx, target, head)
 	if err != nil || current {

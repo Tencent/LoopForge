@@ -48,7 +48,7 @@ func (h *agentToolGateway) submitWorkspaceForgejoPR(ctx context.Context, s *Agen
 		return "", errAgentToolForbidden
 	}
 	if !run.IsWorkspace() && !domain.TerminalRunStatus(run.Status) {
-		return "", fmt.Errorf("SOP 运行结束后才能从对话工作区发起 PR")
+		return "", fmt.Errorf("LOOP 运行结束后才能从对话工作区发起 PR")
 	}
 	arg := func(key string) string {
 		value, _ := args[key].(string)

@@ -14,7 +14,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// forgejoRunMCP authenticates the active SOP node, then narrows PR writes to
+// forgejoRunMCP authenticates the active LOOP node, then narrows PR writes to
 // its frozen repositories and work branches. The node receives no Forgejo PAT.
 func (h *runsHandlers) forgejoRunMCP(c *gin.Context) {
 	token, _ := bearerToken(c.Request)
@@ -45,7 +45,7 @@ func (h *runsHandlers) forgejoRunMCP(c *gin.Context) {
 		response.Result = map[string]any{}
 	case "tools/list":
 		response.Result = map[string]any{"tools": []map[string]any{{
-			"name": "forgejo_pr_submit", "description": "Create or update this SOP node's Forgejo PR after pushing its frozen work branch.",
+			"name": "forgejo_pr_submit", "description": "Create or update this LOOP node's Forgejo PR after pushing its assigned work branch.",
 			"inputSchema": json.RawMessage(`{"type":"object","properties":{"repositoryId":{"type":"string"},"commit":{"type":"string"},"title":{"type":"string","minLength":1,"maxLength":200},"description":{"type":"string","maxLength":20000}},"required":["repositoryId","commit","title"],"additionalProperties":false}`),
 		}}}
 	case "tools/call":
@@ -110,7 +110,7 @@ func (h *runsHandlers) submitRunForgejoPR(ctx context.Context, run domain.Run, g
 	}
 	current, ok := h.repo.RunState(run.ID)
 	if !ok || !activeForgejoNode(current, grant) {
-		return "", fmt.Errorf("当前 SOP 节点已停止")
+		return "", fmt.Errorf("当前 LOOP 节点已停止")
 	}
 	gateway := &agentToolGateway{deps: h.deps}
 	pr, err := gateway.writeWorkspaceForgejoPR(ctx, userID, ref, binding.WorkBranch, repositoryBaseBranchName(binding), input.Commit, input.Title, input.Description)
