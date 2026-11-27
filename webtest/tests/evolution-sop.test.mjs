@@ -394,6 +394,7 @@ test('SOP workbench detail: canvas trend, versions rollback labels, gray publish
     { stage: 'optimize', activeProposal: { id: 'p-pr', status: 'pending', title: '反思通过', refineRound: 1, candidateContent: 'better', summary: { passed: true, verdict: '通过（P1 省 Token 达标）' } } },
     { stage: 'optimize', activeProposal: { id: 'p-u', status: 'pending', summary: { passed: false } } },
     { stage: 'monitor', activeProposal: null, lastProposal: { id: 'p-f', status: 'failed', error: '模型不可用', refineRound: 1 } },
+    { stage: 'monitor', activeProposal: null, lastProposal: null, pendingRuns: 10, batchSize: 10, autoBlockReason: '策略配置人未配置个人模型 Key' },
     { stage: 'monitor', activeProposal: null, lastProposal: null, pendingRuns: 10, batchSize: 10 },
     { stage: 'monitor', activeProposal: null, lastProposal: null, pendingRuns: 2, batchSize: 10, latestMetrics: { runs: 12 }, versions: [], grayRounds: [], changeFiles: [], recentEdits: [], problems: [] },
   ];
@@ -416,12 +417,23 @@ test('SOP workbench detail: canvas trend, versions rollback labels, gray publish
   $('[data-evo-sop-tab="change"]').click();
   assert.match($('#evoSopDetailPage').textContent, /本轮尚未生成修改文件/);
 
-  // Manual trigger optimize button from monitor stage
+  // Manual trigger optimize button from monitor stage: queued response surfaces persistent notice, error response surfaces persistent notice, normal response succeeds
   app.router.get('/api/evolution/sops/wf-bug?projectId=project-1', makeDetail({
     stage: 'monitor', activeProposal: null, lastProposal: null, pendingRuns: 10, batchSize: 10,
   }));
+  app.router.post('/api/evolution/sops/wf-bug/optimize', () => ({ status: 'queued', queueId: 'evq-1', message: '关联资产正处于发布后观察期，已加入排队' }));
   await app.evaluate('evoSOPLoadDetail(evoSOPState.view)');
   await settle(3);
+  $('[data-evo-sop-optimize="wf-bug"]').click();
+  await settle(5);
+  assert.match($('#evoSopDetailPage').textContent, /已加入优化排队/);
+
+  app.router.post('/api/evolution/sops/wf-bug/optimize', { status: 409, body: { error: '暂无私有角色' } });
+  $('[data-evo-sop-optimize="wf-bug"]').click();
+  await settle(5);
+  assert.match($('#evoSopDetailPage').textContent, /暂无私有角色/);
+
+  app.router.post('/api/evolution/sops/wf-bug/optimize', () => ({ id: 'evp-new', status: 'drafting' }));
   $('[data-evo-sop-optimize="wf-bug"]').click();
   await settle(5);
   assert.ok(app.router.calls.some(c => c.method === 'POST' && c.path === '/api/evolution/sops/wf-bug/optimize'));

@@ -378,10 +378,15 @@ func TestEvolutionP0BudgetPrecheckSleepAndWake(t *testing.T) {
 		}
 	}
 
-	// Auto-batch pre-check must skip triggering while daily budget is exceeded!
+	// Auto-batch pre-check must skip triggering while daily budget is exceeded,
+	// and SOP detail must expose autoBlockReason explaining why!
 	env.h.sweepSOPBatches(now)
 	if props := env.store.EvoProposals("evo-p", 20); len(props) != 0 {
 		t.Fatalf("budget-exceeded auto-batch must not create proposals, got %d", len(props))
+	}
+	detailBlocked := requestJSONAuthed[domain.EvoSOPDetail](t, env.router, env.user, http.MethodGet, "/api/evolution/sops/"+env.wf.ID+"?projectId=evo-p", nil, http.StatusOK)
+	if !strings.Contains(detailBlocked.AutoBlockReason, "预算已用尽") {
+		t.Fatalf("expected autoBlockReason to explain budget block, got %q", detailBlocked.AutoBlockReason)
 	}
 
 	// 2. Test 3 consecutive no-gain outcomes put SOP into sleeping state, then wake endpoint reopens it.

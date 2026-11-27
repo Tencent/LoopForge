@@ -351,7 +351,15 @@ func (h *evolutionHandlers) optimizeSOP(c *gin.Context) {
 		return
 	}
 	if queued != nil {
-		c.JSON(http.StatusAccepted, gin.H{"status": queued.Status, "queueId": queued.ID, "queue": queued})
+		msg := fmt.Sprintf("关联资产「%s」已有进行中的优化任务，本次优化已加入排队。", firstNonEmpty(queued.AssetName, queued.AssetID))
+		if occ, busy, err := h.repo.CurrentEvoProposalForAsset(queued.AssetKind, queued.AssetID); err == nil && busy {
+			if occ.Status == domain.EvoProposalReleased && occ.Watch.Active() {
+				msg = fmt.Sprintf("关联资产「%s」正处于 v%d 发布后观察期（%s），本次优化已加入排队，观察期结束后可启动。", firstNonEmpty(queued.AssetName, queued.AssetID), occ.Watch.Version, firstNonEmpty(occ.Watch.Verdict, "观察中"))
+			} else if occ.Open() {
+				msg = fmt.Sprintf("关联资产「%s」已有进行中的提案「%s」，本次优化已加入排队。", firstNonEmpty(queued.AssetName, queued.AssetID), firstNonEmpty(occ.Title, occ.ID))
+			}
+		}
+		c.JSON(http.StatusAccepted, gin.H{"status": queued.Status, "queueId": queued.ID, "queue": queued, "message": msg})
 		return
 	}
 	if created {
@@ -1147,6 +1155,10 @@ func (h *evolutionHandlers) computeSOPSummary(
 	}
 
 	pendingRuns := countSOPPendingRuns(sopRuns, sopProposals, policy.BatchSize)
+	autoBlockReason := ""
+	if stage == domain.EvoSOPStageMonitor && policy.Enabled && pendingRuns >= policy.BatchSize {
+		autoBlockReason = h.diagnoseSOPAutoBlockReason(projectID, wf, policy, sopRuns, last, time.Now().UTC())
+	}
 
 	model := strings.TrimSpace(policy.Model)
 	if model == "" {
@@ -1200,6 +1212,7 @@ func (h *evolutionHandlers) computeSOPSummary(
 		SleepStage:        policy.SleepStage,
 		SleepingUntil:     policy.SleepingUntil,
 		SleepReason:       policy.SleepReason,
+		AutoBlockReason:   autoBlockReason,
 		LastRunNote:       lastNote,
 		LatestMetrics:     latestMetrics,
 		ActiveProposalID:  activeID,
@@ -1217,6 +1230,75 @@ func (h *evolutionHandlers) computeSOPSummary(
 		active:       active,
 		last:         last,
 	}
+}
+
+// diagnoseSOPAutoBlockReason explains why an enabled SOP that has already met
+// its batchSize threshold is not being auto-triggered in the background, so the
+// workbench can surface actionable guidance instead of appearing stuck.
+func (h *evolutionHandlers) diagnoseSOPAutoBlockReason(
+	projectID string,
+	wf domain.WorkflowDefinition,
+	policy domain.EvoSOPPolicy,
+	sopRuns []domain.Run,
+	last *domain.EvoProposal,
+	now time.Time,
+) string {
+	if budget := h.projectBudgetStatus(projectID, now); budget.Exceeded {
+		return budget.Reason
+	}
+	if last != nil && last.Status == domain.EvoProposalFailed && len(sopRuns) > 0 && !sopRuns[0].CreatedAt.After(last.UpdatedAt) {
+		if remain := evoSOPFailedRetryCooldown - now.Sub(last.UpdatedAt); remain > 0 {
+			return fmt.Sprintf("上次优化刚失败，冷却中（约 %d 分钟后自动重试），也可点击右侧按钮立即重试", max(1, int(remain.Minutes())+1))
+		}
+	}
+	// Check whether at least one private evolvable role exists and whether it is occupied.
+	var privateAssets []evoAsset
+	for _, node := range wf.Nodes {
+		if strings.TrimSpace(node.AgentID) == "" {
+			continue
+		}
+		asset, ok := h.loadAsset(domain.EvoAssetAgent, node.AgentID)
+		if !ok || privateEvolutionAsset(asset, projectID) != nil {
+			continue
+		}
+		if h.repo.EvoLevel(asset.Kind, asset.ID) < domain.EvoLevelPropose {
+			continue
+		}
+		privateAssets = append(privateAssets, asset)
+	}
+	if len(privateAssets) == 0 {
+		return "当前 SOP 暂无可自动优化的项目私有角色（共享/平台角色请先复制为项目私有角色，且角色自治级别需 ≥ L2）"
+	}
+	for _, asset := range privateAssets {
+		if occ, busy, err := h.repo.CurrentEvoProposalForAsset(asset.Kind, asset.ID); err == nil && busy {
+			if occ.Status == domain.EvoProposalReleased && occ.Watch.Active() {
+				return fmt.Sprintf("关联角色「%s」正处于 v%d 发布后观察期（%s），观察结束后将自动开启下一轮", firstNonEmpty(asset.Name, asset.ID), occ.Watch.Version, firstNonEmpty(occ.Watch.Verdict, "观察中"))
+			}
+			if occ.Open() {
+				return fmt.Sprintf("关联角色「%s」正被进行中的提案「%s」占用，该提案结束后将自动继续", firstNonEmpty(asset.Name, asset.ID), firstNonEmpty(occ.Title, occ.ID))
+			}
+		}
+	}
+	if policy.UpdatedBy <= 0 {
+		return "自动进化策略未绑定执行账号，请重新保存一次策略或关闭再开启开关"
+	}
+	user, ok := h.repo.User(policy.UpdatedBy)
+	if !ok {
+		return "开启自动进化的账号不可用，请重新保存一次策略"
+	}
+	isAdmin := strings.TrimSpace(user.LoginName) != "" && h.repo.IsPlatformAdmin(strings.TrimSpace(user.LoginName))
+	if !isAdmin && !h.projectMemberWrites(projectID, user.ID) {
+		return "开启自动进化的账号已失去项目写权限，请由具备写权限的成员重新保存策略"
+	}
+	if _, _, credOK := h.resolveSOPActorUser(policy, wf); !credOK {
+		if !evoAutoAllowSharedKey() {
+			if key, found := h.repo.SharedCodeBuddyKey(); found && strings.TrimSpace(key.APIKey) != "" {
+				return "策略配置人未配置个人模型 Key（后台自动任务默认不使用平台共享 Key）；请配置个人 Key 后自动生效，或点击右侧按钮手动发起"
+			}
+		}
+		return "策略配置人尚未配置可用的 AI 模型凭据（CodeBuddy / Codex / Claude 等），请先在个人配置中填写后再开启自动优化"
+	}
+	return ""
 }
 
 func (h *evolutionHandlers) buildSOPGrayRounds(

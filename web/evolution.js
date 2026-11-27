@@ -173,7 +173,7 @@ async function evoRefresh(){
 }
 
 function evoPollInteractionPaused(){
-  if(evo.composing||$('#evoSopPrefDialog')?.open)return true;
+  if(evo.composing||$('#evoSopPrefDialog')?.open||$('#evoBudgetDialog')?.open)return true;
   const active=document.activeElement;
   return !!active?.matches?.('#evolutionView input[type="search"], #evolutionView [data-evo-sop-search], #evolutionView [data-evo-search], #evolutionView [data-evo-task-search], #evolutionView [data-evo-change-search]');
 }

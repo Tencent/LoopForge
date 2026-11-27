@@ -686,6 +686,7 @@ type EvoSOPSummary struct {
 	SleepStage        int           `json:"sleepStage,omitempty"`
 	SleepingUntil     time.Time     `json:"sleepingUntil,omitempty"`
 	SleepReason       string        `json:"sleepReason,omitempty"`
+	AutoBlockReason   string        `json:"autoBlockReason,omitempty"`
 	LastRunNote       string        `json:"lastRunNote,omitempty"`
 	LatestMetrics    EvoSOPMetrics `json:"latestMetrics"`
 	ActiveProposalID string        `json:"activeProposalId,omitempty"`

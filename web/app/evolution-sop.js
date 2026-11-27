@@ -671,6 +671,7 @@ async function evoSOPLoadDetail(view) {
     if (evoSOPState.view !== view || view.seq !== seq || pid !== evoProjectId()) return;
     view.detail = detail;
     view.loading = false;
+    if (detail.stage === 'optimize' || detail.stage === 'gray') view.actionNotice = null;
     if (view.fileIndex >= (detail.changeFiles?.length || 0)) view.fileIndex = 0;
     evoSOPRenderDetail();
   } catch (err) {
@@ -724,7 +725,8 @@ function evoSOPDetailHTML(view) {
     headActions.push(`<button type="button" class="kb-btn primary small" data-evo-sop-wake="${escapeHTML(d.workflowId)}"${busy}>重新开启自动进化</button>`);
   }
   if ((d.stage === 'monitor' || d.stage === 'sleeping') && d.enabled) {
-    headActions.push(`<button type="button" class="kb-btn small" data-evo-sop-optimize="${escapeHTML(d.workflowId)}"${busy}>立即发起优化</button>`);
+    const optLabel = evoSOPState.busyIds.has(d.workflowId) ? '正在发起…' : '立即发起优化';
+    headActions.push(`<button type="button" class="kb-btn small" data-evo-sop-optimize="${escapeHTML(d.workflowId)}"${busy}>${optLabel}</button>`);
   }
   if (active?.id) {
     headActions.push(`<button type="button" class="kb-btn quiet small" data-evo-proposal="${escapeHTML(active.id)}">查看完整提案</button>`);
@@ -847,12 +849,25 @@ function evoSOPCalloutHTML(d) {
     const batchSize = Number(d.batchSize) || 10;
     const pending = Number(d.pendingRuns) || 0;
     const totalRuns = Number(d.latestMetrics?.runs) || 0;
+    const notice = evoSOPState.view?.workflowId === d.workflowId ? evoSOPState.view.actionNotice : null;
+    const optBusy = evoSOPState.busyIds.has(d.workflowId);
+    const optBtn = `<button type="button" class="kb-btn primary small" data-evo-sop-optimize="${escapeHTML(d.workflowId)}"${optBusy ? ' disabled' : ''}>${optBusy ? '正在发起…' : '立即发起优化'}</button>`;
+    if (notice?.text) {
+      return `<div class="evo-sop-callout ${notice.tone === 'info' ? 'is-info' : 'is-warn'}" role="status">
+        <div><strong>${escapeHTML(notice.title || '无法立即启动优化')}</strong><p>${escapeHTML(notice.text)}</p></div>
+        <div class="evo-sop-callout-actions">${optBtn}</div>
+      </div>`;
+    }
     if (pending >= batchSize) {
+      if (d.autoBlockReason) {
+        return `<div class="evo-sop-callout is-warn" role="status">
+          <div><strong>本轮已达触发阈值（${pending}/${batchSize} 次），但后台未自动启动</strong><p>${escapeHTML(d.autoBlockReason)}</p></div>
+          <div class="evo-sop-callout-actions">${optBtn}</div>
+        </div>`;
+      }
       return `<div class="evo-sop-callout is-ready" role="status">
-        <div><strong>本轮已达触发阈值（${pending}/${batchSize} 次）</strong><p>系统将在后台自动发起优化；若未自动启动，可点击右侧按钮立即触发并查看具体提示。</p></div>
-        <div class="evo-sop-callout-actions">
-          <button type="button" class="kb-btn primary small" data-evo-sop-optimize="${escapeHTML(d.workflowId)}">立即发起优化</button>
-        </div>
+        <div><strong>本轮已达触发阈值（${pending}/${batchSize} 次）</strong><p>系统将在后台自动发起优化（约 30 秒内扫描触发）；也可点击右侧按钮立即启动。</p></div>
+        <div class="evo-sop-callout-actions">${optBtn}</div>
       </div>`;
     }
     if (totalRuns >= batchSize && pending < batchSize) {
@@ -1427,19 +1442,50 @@ async function evoSOPPublishGray(proposalId, nextVer, ready, btn) {
 async function evoSOPTriggerOptimize(workflowId, btn) {
   const view = evoSOPState.view;
   const pid = evoProjectId();
-  if (!pid || !workflowId) return;
-  if (btn) btn.disabled = true;
+  if (!pid || !workflowId || evoSOPState.busyIds.has(workflowId)) return;
+  evoSOPState.busyIds.add(workflowId);
+  if (view && view.workflowId === workflowId) {
+    view.actionNotice = null;
+    evoSOPRenderDetail();
+  } else if (btn) {
+    btn.disabled = true;
+    btn.textContent = '正在发起…';
+  }
   try {
-    await api(`/api/evolution/sops/${encodeURIComponent(workflowId)}/optimize`, {
+    const res = await api(`/api/evolution/sops/${encodeURIComponent(workflowId)}/optimize`, {
       method: 'POST',
       body: JSON.stringify({ projectId: pid }),
     });
-    toast('已发起 SOP 优化，正在生成修改稿并回放验证', 'ok');
+    evoSOPState.busyIds.delete(workflowId);
+    if (res?.status === 'queued') {
+      const msg = res.message || '该 SOP 关联角色当前已有进行中的优化或处于发布后观察期，已加入排队。';
+      if (view && evoSOPState.view === view) {
+        view.actionNotice = { title: '已加入优化排队', text: msg, tone: 'warn' };
+      }
+      toast(msg, 'warn');
+    } else if (res?.status === 'failed') {
+      const msg = res.error || '优化发起失败，请检查模型配置与回放条件';
+      if (view && evoSOPState.view === view) {
+        view.actionNotice = { title: '优化发起失败', text: msg, tone: 'warn' };
+      }
+      toast(msg, 'err');
+    } else {
+      if (view && evoSOPState.view === view) view.actionNotice = null;
+      toast('已发起 SOP 优化，正在生成修改稿并回放验证', 'ok');
+    }
     await evoRefresh();
     if (evoSOPState.view === view) await evoSOPLoadDetail(view);
   } catch (err) {
-    toast(err.message, 'err');
+    evoSOPState.busyIds.delete(workflowId);
+    const msg = err?.message || '发起优化失败';
+    if (view && evoSOPState.view === view) {
+      view.actionNotice = { title: '无法发起优化', text: msg, tone: 'warn' };
+      evoSOPRenderDetail();
+    }
+    toast(msg, 'err');
     if (btn?.isConnected) btn.disabled = false;
+  } finally {
+    evoSOPState.busyIds.delete(workflowId);
   }
 }
 
