@@ -538,8 +538,11 @@ func (r *KnowledgeRepo) ListKnowledgeUsageEvents(ownerUserID int64, filter domai
 	}
 	if kw := strings.TrimSpace(filter.Query); kw != "" {
 		like := "%" + escapeSQLLike(kw) + "%"
+		// MySQL's collation ignores the case of the searched text, so Postgres
+		// has to match it case-insensitively as well.
+		op := r.likeOperator()
 		q = q.Where(
-			"title LIKE ? ESCAPE '!' OR file_name LIKE ? ESCAPE '!' OR document_id LIKE ? ESCAPE '!' OR source_name LIKE ? ESCAPE '!' OR query LIKE ? ESCAPE '!' OR workflow_name LIKE ? ESCAPE '!' OR agent_name LIKE ? ESCAPE '!' OR node_name LIKE ? ESCAPE '!' OR session_title LIKE ? ESCAPE '!' OR space_title LIKE ? ESCAPE '!' OR issue_title LIKE ? ESCAPE '!'",
+			"title "+op+" ? ESCAPE '!' OR file_name "+op+" ? ESCAPE '!' OR document_id "+op+" ? ESCAPE '!' OR source_name "+op+" ? ESCAPE '!' OR query "+op+" ? ESCAPE '!' OR workflow_name "+op+" ? ESCAPE '!' OR agent_name "+op+" ? ESCAPE '!' OR node_name "+op+" ? ESCAPE '!' OR session_title "+op+" ? ESCAPE '!' OR space_title "+op+" ? ESCAPE '!' OR issue_title "+op+" ? ESCAPE '!'",
 			like, like, like, like, like, like, like, like, like, like, like,
 		)
 	}

@@ -274,7 +274,14 @@ func (d *deps) jsonBuildObject(pairs ...string) string {
 // collation matches case-insensitively, so Postgres uses ILIKE to keep the
 // same search behaviour.
 func (d *deps) likeOperator() string {
-	if d.isPostgres() {
+	return likeOperatorFor(d.DB)
+}
+
+// likeOperatorFor returns the pattern-matching operator for a database handle.
+// It is the package-level form of deps.likeOperator, for the few call sites
+// that only have a *gorm.DB and no repo.
+func likeOperatorFor(db *gorm.DB) string {
+	if db != nil && db.Dialector.Name() == dialectPostgres {
 		return "ILIKE"
 	}
 	return "LIKE"

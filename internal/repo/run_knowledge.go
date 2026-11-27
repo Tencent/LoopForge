@@ -25,7 +25,7 @@ func (r *RunsRepo) KnowledgeArtifacts(projectID string, limit int) []domain.Know
 		fetch = limit * 4
 	}
 	if err := r.DB.Select("id", "run_id", "node_id", "attempt", "name", "path", "media_type", "size_bytes", "sha256", "repository_dir", "created_at").
-		Where("name = ? OR path = ? OR path LIKE ?", base, base, "%/"+base).
+		Where("name = ? OR path = ? OR path "+r.likeOperator()+" ?", base, base, "%/"+base).
 		Order("created_at DESC").Limit(fetch).Find(&rows).Error; err != nil || len(rows) == 0 {
 		return out
 	}

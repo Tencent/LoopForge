@@ -281,9 +281,10 @@ func (r *RunsRepo) promoteBucket(key string, plans queuedAutoPlans) ([]string, e
 		for id := range plans.byID {
 			planIDs = append(planIDs, id)
 		}
-		buckets, args := admissionBuckets([]string{key})
+		like := likeOperatorFor(tx)
+		buckets, args := admissionBuckets([]string{key}, like)
 		if len(planIDs) > 0 {
-			buckets = "(" + buckets + " OR (quota_bucket LIKE ? AND id IN ?))"
+			buckets = "(" + buckets + " OR (quota_bucket " + like + " ? AND id IN ?))"
 			args = append(args, projectAutoBucketPrefix+"%", planIDs)
 		}
 		var queued []runRow

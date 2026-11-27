@@ -185,7 +185,7 @@ func (r *RunsRepo) beginWorkspaceLease(runID string, now time.Time, touch, resto
 			if strings.HasPrefix(current.LeaseToken, workspaceBackgroundSavePrefix) && len(preempted) > 0 {
 				*preempted[0] = current.LeaseToken
 			}
-			query = query.Where("lease_until IS NULL OR lease_until < ? OR lease_token LIKE ?", now, workspaceBackgroundSavePrefix+"%")
+			query = query.Where("lease_until IS NULL OR lease_until < ? OR lease_token "+r.likeOperator()+" ?", now, workspaceBackgroundSavePrefix+"%")
 		} else {
 			query = query.Where("lease_until IS NULL OR lease_until < ?", now)
 		}

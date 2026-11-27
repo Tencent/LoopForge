@@ -741,9 +741,10 @@ func (r *DeliveryRepo) DiscoverMRDeliveryStatesFromArtifacts() error {
 		NodeID           string `gorm:"column:node_id"`
 		Content          string `gorm:"column:content"`
 	}
+	like := r.likeOperator()
 	if err := r.DB.Table("run_artifacts").
 		Joins("JOIN runs r ON r.id = run_artifacts.run_id").
-		Where("run_artifacts.content LIKE ? AND (run_artifacts.name IN ('mr-body','e2e-report','closeout') OR run_artifacts.node_id='mr' OR run_artifacts.name LIKE '%mr%') AND run_artifacts.name NOT LIKE '%patch%' AND run_artifacts.name NOT LIKE '%diff%'", "%merge_requests/%").
+		Where("run_artifacts.content "+like+" ? AND (run_artifacts.name IN ('mr-body','e2e-report','closeout') OR run_artifacts.node_id='mr' OR run_artifacts.name "+like+" '%mr%') AND run_artifacts.name NOT "+like+" '%patch%' AND run_artifacts.name NOT "+like+" '%diff%'", "%merge_requests/%").
 		Select("r.execution_context AS execution_context, run_artifacts.name AS name, run_artifacts.node_id AS node_id, run_artifacts.content AS content").
 		Find(&rows).Error; err != nil {
 		return err
@@ -1438,7 +1439,8 @@ func (r *DeliveryRepo) mrTextsByRun(runs []domain.Run) map[string]string {
 		byID[run.ID] = run
 	}
 	var rows []runArtifactRow
-	if err := r.DB.Where("run_id IN ? AND content LIKE ? AND name NOT LIKE ? AND name NOT LIKE ?", ids, "%merge_requests/%", "%patch%", "%diff%").
+	like := r.likeOperator()
+	if err := r.DB.Where("run_id IN ? AND content "+like+" ? AND name NOT "+like+" ? AND name NOT "+like+" ?", ids, "%merge_requests/%", "%patch%", "%diff%").
 		Select("run_id", "name", "path", "node_id", "content").Order("created_at, id").Find(&rows).Error; err != nil {
 		return out
 	}

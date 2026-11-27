@@ -71,7 +71,7 @@ func (r *AssistantRepo) EnsureRunAssistantSession(runID, projectID, title string
 	return saved, nil
 }
 func (r *AssistantRepo) ListSharedAssistantSessions() []domain.AssistantSession {
-	rows, err := r.findAssistantSessionSummaries("id LIKE ?", "sop-%")
+	rows, err := r.findAssistantSessionSummaries("id "+r.likeOperator()+" ?", "sop-%")
 	if err != nil {
 		log.Printf("shared assistant session list failed: %v", err)
 		return nil
@@ -91,7 +91,7 @@ func (r *AssistantRepo) ListSharedAssistantSessions() []domain.AssistantSession 
 // and project-shared conversations created by other users. The HTTP layer
 // filters both by project membership.
 func (r *AssistantRepo) ListCrossUserAssistantSessions(excludeUserID int64) (shared, project []domain.AssistantSession) {
-	rows, err := r.findAssistantSessionSummaries("id LIKE ? OR (user_id <> ? AND project_id <> ?)", "sop-%", excludeUserID, "")
+	rows, err := r.findAssistantSessionSummaries("id "+r.likeOperator()+" ? OR (user_id <> ? AND project_id <> ?)", "sop-%", excludeUserID, "")
 	if err != nil {
 		log.Printf("cross-user assistant session list failed: %v", err)
 		return nil, nil
