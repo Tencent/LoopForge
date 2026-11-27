@@ -110,6 +110,16 @@ func applyUsage(run *domain.Run, nr *domain.NodeRun, sessionID string, snap doma
 		nr.UsageSessionID = sessionID
 		nr.UsageCursor = domain.TokenUsage{}
 	}
+	// Token snapshots are cumulative within one session. A late or partial
+	// update must not lower the cursor and charge the same tokens again when
+	// the next complete snapshot arrives. Costs may be revised downward and
+	// retain their existing signed-delta behavior.
+	snap.InputTokens = max(snap.InputTokens, nr.UsageCursor.InputTokens)
+	snap.OutputTokens = max(snap.OutputTokens, nr.UsageCursor.OutputTokens)
+	snap.TotalTokens = max(snap.TotalTokens, nr.UsageCursor.TotalTokens)
+	snap.CacheReadTokens = max(snap.CacheReadTokens, nr.UsageCursor.CacheReadTokens)
+	snap.CacheWriteTokens = max(snap.CacheWriteTokens, nr.UsageCursor.CacheWriteTokens)
+	snap.ReasoningTokens = max(snap.ReasoningTokens, nr.UsageCursor.ReasoningTokens)
 	delta := subUsage(snap, nr.UsageCursor)
 	// 成本识别状态与 token 数值变化解耦：跟随最近一次带状态的快照，
 	// 让"真实零成本"与"成本未识别"在 run 级汇总上也可区分。
