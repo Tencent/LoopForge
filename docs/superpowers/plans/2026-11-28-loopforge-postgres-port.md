@@ -915,7 +915,7 @@ git commit -m "feat(db): JSON 调用点增加 Postgres 分支
 
 **Interfaces:**
 - Consumes: Task 1/3 的方言助手
-- Produces: `func postgresAdvisoryLockKey(name string) int64`
+- Produces: `func OpenPostgresTest(t *testing.T) *Store`（放在 `internal/repo/opentest.go`，Task 5 与 Task 9 共用；Task 5 是第一个需要它的任务，所以在这里建）
 
 改写规则：
 
@@ -972,23 +972,14 @@ func insertIgnore(db *gorm.DB, table string, values map[string]any) (bool, error
 `integration_lock.go` 的 Postgres 写法：
 
 ```go
-// postgresAdvisoryLockKey maps a lock name to a Postgres advisory lock key.
-// hashtext returns a signed 32-bit int; widen it to int64 so different
-// names do not collide in the same 64-bit space.
-func postgresAdvisoryLockKey(name string) int64 {
-	return int64(hashtext(name))
-}
-```
-
-`hashtext` 由 Postgres 内置提供，Go 侧直接用 SQL 表达式：
+锁的 key 由 Postgres 内置的 `hashtext()` 在 SQL 里算，Go 侧不自己实现哈希（Postgres 的 `hashtext` 是内部函数，算法没有稳定性承诺，Go 侧复刻更容易失配）。
 
 ```go
 	if r.isPostgres() {
-		key := postgresAdvisoryLockKey(name)
 		deadline := time.Now().Add(wait)
 		for {
 			var got bool
-			if err := conn.QueryRowContext(ctx, "SELECT pg_try_advisory_lock(?)", key).Scan(&got); err != nil {
+			if err := conn.QueryRowContext(ctx, "SELECT pg_try_advisory_lock(hashtext(?))", name).Scan(&got); err != nil {
 				_ = conn.Close()
 				return nil, err
 			}
@@ -1002,13 +993,13 @@ func postgresAdvisoryLockKey(name string) int64 {
 			time.Sleep(50 * time.Millisecond)
 		}
 		return func() {
-			_, _ = conn.ExecContext(context.Background(), "SELECT pg_advisory_unlock(?)", key)
+			_, _ = conn.ExecContext(context.Background(), "SELECT pg_advisory_unlock(hashtext(?))", name)
 			_ = conn.Close()
 		}, nil
 	}
 ```
 
-注意：`pg_try_advisory_lock` 是**会话级**锁，必须绑定在同一条连接上（上面的 `conn` 已经是独占连接），释放时用同一条连接。MySQL 分支原样保留。
+注意：`pg_try_advisory_lock` 是**会话级**锁，必须绑定在同一条连接上（上面的 `conn` 已经是独占连接），释放时用同一条连接。MySQL 分支原样保留。另外 `!r.isMySQL()` 的本地互斥分支要改成「MySQL 走命名锁、Postgres 走 advisory lock、sqlite 走本地互斥」三路，不能让 Postgres 落到本地互斥上。
 
 `assistant_generations.go:171` 的 Postgres 写法：
 
@@ -1023,9 +1014,46 @@ func (r *AssistantRepo) staleGenerationFilter(q *gorm.DB) *gorm.DB {
 
 （若该函数当前形态与上例不同，按同样的方言分支改写即可；`workspace_checkpoints.go:470` 同理。）
 
-- [ ] **Step 1: 写集成测试**
+- [ ] **Step 1: 先建 Postgres 集成测试基建**
 
-创建 `internal/repo/postgres_mysqlisms_test.go`（依赖 Task 9 的 `OpenPostgresTest`）：
+Task 5 是第一个需要真实 Postgres 的任务，所以测试基建在这里建（后面的 Task 6/9 复用）：
+
+1. 在 `internal/repo/opentest.go` 追加：
+
+```go
+// OpenPostgresTest opens a store against AGENTFLOW_TEST_POSTGRES_DSN and
+// skips the test when the variable is unset. The database must exist before
+// the test runs; the store creates its schema through the same incremental
+// DDL the platform uses.
+func OpenPostgresTest(t *testing.T) *Store {
+	t.Helper()
+	dsn := strings.TrimSpace(os.Getenv("AGENTFLOW_TEST_POSTGRES_DSN"))
+	if dsn == "" {
+		t.Skip("AGENTFLOW_TEST_POSTGRES_DSN is not set")
+	}
+	store, err := Open(dsn)
+	if err != nil {
+		t.Fatalf("open postgres test store: %v", err)
+	}
+	t.Cleanup(func() { store.Close() })
+	return store
+}
+```
+
+（需要在该文件补 `"strings"` 与 `"testing"` import。注意 `opentest.go` 属于生产包但只被测试调用，与 `AGENTS.md` 里「测试专用的默认数据只存在 internal/repo/opentest.go」一致。）
+
+2. 建测试库（`loopforge` 是运行库，测试用独立的 `loopforge_test`）：
+
+```bash
+docker exec supabase-db psql -U supabase_admin -d postgres -tAc "CREATE DATABASE loopforge_test" 2>&1 || true
+docker exec supabase-db psql -U supabase_admin -d postgres -tAc "ALTER DATABASE loopforge_test OWNER TO postgres" 2>&1 || true
+```
+
+（`ALTER DATABASE ... OWNER TO postgres` 不能省：Supabase 的 `public` schema 归 `pg_database_owner`，`postgres` 角色不是库 owner 时建表会报 `permission denied for schema public`。）
+
+- [ ] **Step 2: 写集成测试**
+
+创建 `internal/repo/postgres_mysqlisms_test.go`：
 
 ```go
 package repo
@@ -1072,7 +1100,7 @@ func TestPostgresIntegrationLockSerializes(t *testing.T) {
 	}
 	defer other.Close()
 	var got bool
-	if err := other.QueryRowContext(t.Context(), "SELECT pg_try_advisory_lock(?)", postgresAdvisoryLockKey(integrationLockName("pg-lock-repo"))).Scan(&got); err != nil {
+	if err := other.QueryRowContext(t.Context(), "SELECT pg_try_advisory_lock(hashtext(?))", integrationLockName("pg-lock-repo")).Scan(&got); err != nil {
 		t.Fatalf("advisory lock probe: %v", err)
 	}
 	if got {
@@ -1081,21 +1109,21 @@ func TestPostgresIntegrationLockSerializes(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: 跑测试确认失败**
+- [ ] **Step 3: 跑测试确认失败**
 
 Run: `AGENTFLOW_TEST_POSTGRES_DSN='postgres://postgres.cesar:'"$POSTGRES_PASSWORD"'@127.0.0.1:5432/loopforge_test?sslmode=disable' go test ./internal/repo/ -run TestPostgresInsertIgnore`
-Expected: FAIL（Task 9 的 helper 未实现 → 编译错误）
+Expected: FAIL（当前实现仍走 MySQL 分支，`INSERT IGNORE` 在 Postgres 上是语法错误）
 
-- [ ] **Step 3: 实现改写**
+- [ ] **Step 4: 实现改写**
 
 按上表逐处改写 7 个文件。
 
-- [ ] **Step 4: 编译 + 既有测试**
+- [ ] **Step 5: 编译 + 既有测试**
 
 Run: `go build ./... && go test ./internal/repo/...`
 Expected: PASS（sqlite 用例全绿；MySQL 用例因 `AGENTFLOW_TEST_MYSQL_DSN` 未设置而跳过）
 
-- [ ] **Step 5: 提交**
+- [ ] **Step 6: 提交**
 
 ```bash
 git add internal/repo/
@@ -1516,50 +1544,17 @@ git commit -m "feat(deploy): 部署流程切换到 Postgres（Supabase）"
 
 ---
 
-### Task 9: Postgres 集成测试基建
+### Task 9: Postgres 集成冒烟用例
 
 **Files:**
-- Modify: `internal/repo/opentest.go`（新增 `OpenPostgresTest`）
 - Create: `internal/repo/postgres_smoke_test.go`
 - Modify: `docs/testing/`（如有测试说明文档，补一段）
 
 **Interfaces:**
-- Consumes: Task 1 的 `repo.Open`、Task 2 的列类型修正
-- Produces: `func OpenPostgresTest(t *testing.T) *Store`（供其他包的测试复用）
+- Consumes: Task 5 已建好的 `OpenPostgresTest`、Task 1 的 `repo.Open`、Task 2 的列类型修正
+- Produces: 无新增公共接口
 
-- [ ] **Step 1: 写 helper**
-
-在 `internal/repo/opentest.go` 追加：
-
-```go
-// OpenPostgresTest opens a store against AGENTFLOW_TEST_POSTGRES_DSN and
-// skips the test when the variable is unset. The database must exist before
-// the test runs; the store creates its schema through the same incremental
-// DDL the platform uses.
-func OpenPostgresTest(t *testing.T) *Store {
-	t.Helper()
-	dsn := strings.TrimSpace(os.Getenv("AGENTFLOW_TEST_POSTGRES_DSN"))
-	if dsn == "" {
-		t.Skip("AGENTFLOW_TEST_POSTGRES_DSN is not set")
-	}
-	store, err := Open(dsn)
-	if err != nil {
-		t.Fatalf("open postgres test store: %v", err)
-	}
-	t.Cleanup(func() { store.Close() })
-	return store
-}
-```
-
-（需要在该文件补 `"strings"` 与 `"testing"` import。注意 `opentest.go` 属于生产包但只被测试调用，与 `AGENTS.md` 里「测试专用的默认数据只存在于 internal/repo/opentest.go」一致。）
-
-- [ ] **Step 2: 建测试库**
-
-```bash
-docker exec supabase-db psql -U supabase_admin -d postgres -tAc "CREATE DATABASE loopforge_test" 2>&1 || true
-```
-
-- [ ] **Step 3: 写冒烟测试**
+- [ ] **Step 1: 写冒烟测试**
 
 创建 `internal/repo/postgres_smoke_test.go`：
 
@@ -1590,7 +1585,7 @@ func TestPostgresSmoke(t *testing.T) {
 }
 ```
 
-- [ ] **Step 4: 跑测试**
+- [ ] **Step 2: 跑测试**
 
 ```bash
 cd /Users/caijinhai/Documents/services/supabase && set -a && source .env && set +a && \
@@ -1610,7 +1605,7 @@ go test ./internal/repo/... ./internal/httpapi/...
 
 Expected: PASS（Postgres 用例通过；MySQL 集成用例跳过）
 
-- [ ] **Step 6: 提交**
+- [ ] **Step 4: 提交**
 
 ```bash
 git add internal/repo/opentest.go internal/repo/postgres_smoke_test.go
