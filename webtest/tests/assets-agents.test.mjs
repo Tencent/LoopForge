@@ -288,6 +288,16 @@ test('role editor refreshes configured CLIs and preserves an unavailable saved e
   assert.match(app.document.querySelector('#agentCreateReview').textContent, /跟随责任人默认执行器/);
 });
 
+test('role editor lists TRAE CLI when configured', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  app.router.get('/api/executor-models', { traecli: { configured: true, customModel: true, models: [] } });
+  app.evaluate(`state.data.executors=[{id:'traecli',name:'TRAE CLI'}];openAgentWizard()`);
+  await settle();
+  assert.ok([...app.document.querySelector('#agentForm').elements.executorId.options]
+    .some(option => option.value === 'traecli' && !option.disabled));
+});
+
 test('a new role saves the first model from the refreshed catalog', async (t) => {
   const app = await loadApp();
   t.after(app.close);

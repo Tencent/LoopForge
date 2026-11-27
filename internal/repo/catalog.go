@@ -379,7 +379,11 @@ func (r *CatalogRepo) PutExecutor(v domain.ExecutorDefinition) error {
 func BuiltInExecutors() []domain.ExecutorDefinition {
 	return []domain.ExecutorDefinition{
 		{ID: "codebuddy", Name: "CodeBuddy", Kind: "codebuddy", Binary: "codebuddy", Args: []string{"-p", "--output-format", "stream-json", "--include-partial-messages", "-y", "--setting-sources", "none"}, Protocol: "stream-json"},
-		{ID: "codex", Name: "Codex", Kind: "codex", Binary: "codex", Args: []string{"exec", "--json", "--sandbox", "workspace-write", "--skip-git-repo-check"}, Protocol: "jsonl"},
+		// web_search="disabled" keeps Codex from advertising its builtin
+		// web_search tool: gateways fronting non-OpenAI providers reject the
+		// whole request with 400 responses_feature_not_supported (#1313).
+		// Run nodes route tools through MCP only, matching the chat path.
+		{ID: "codex", Name: "Codex", Kind: "codex", Binary: "codex", Args: []string{"exec", "--json", "--sandbox", "workspace-write", "--skip-git-repo-check", "-c", `web_search="disabled"`}, Protocol: "jsonl"},
 		{ID: "claude", Name: "Claude Code", Kind: "claude-code", Binary: "claude", Args: []string{"-p", "--output-format", "stream-json", "--permission-mode", "dontAsk"}, Protocol: "stream-json"},
 		{ID: "opencode", Name: "OpenCode", Kind: "opencode", Binary: "opencode", Protocol: "stream-json"},
 		{ID: "cursor", Name: "Cursor CLI", Kind: "cursor", Binary: "cursor-agent", Protocol: "stream-json"},
@@ -388,6 +392,7 @@ func BuiltInExecutors() []domain.ExecutorDefinition {
 		{ID: "pi", Name: "Pi", Kind: "pi", Binary: "pi", Protocol: "stream-json"},
 		{ID: "dsh", Name: "DeepSeek Harness", Kind: "dsh", Binary: "dsh", Protocol: "stream-json"},
 		{ID: "zcode", Name: "ZCode", Kind: "zcode", Binary: "zcode", Protocol: "stream-json"},
+		{ID: "traecli", Name: "TRAE CLI", Kind: "traecli", Binary: "traecli", Protocol: "stream-json"},
 	}
 }
 

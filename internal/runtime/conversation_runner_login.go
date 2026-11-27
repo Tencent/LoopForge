@@ -28,6 +28,8 @@ func runnerLoginSpec(provider string) (conversationLoginSpec, bool) {
 		return conversationLoginSpec{"Claude Code", ".claude", ".credentials.json", "CLAUDE_CONFIG_DIR", BindClaudeCode}, true
 	case AgentCLIAntigravity:
 		return conversationLoginSpec{"Antigravity", ".gemini/antigravity-cli", "antigravity-oauth-token", "", BindAgentCLI}, true
+	case AgentCLITraeCLI:
+		return conversationLoginSpec{"TRAE CLI", ".trae/cli", "auth.json", "TRAE_HOME", BindAgentCLI}, true
 	default:
 		return conversationLoginSpec{}, false
 	}
@@ -66,7 +68,11 @@ func PrepareRunnerSandboxLogin(sandbox Sandbox, provider, runID, nodeID string) 
 	}
 	env["HOME"] = homePath
 	if login.configEnv != "" {
-		env[login.configEnv] = filepath.ToSlash(filepath.Join(homePath, login.dir))
+		val := filepath.ToSlash(filepath.Join(homePath, login.dir))
+		if login.configEnv == "TRAE_HOME" {
+			val = filepath.ToSlash(filepath.Join(homePath, ".trae"))
+		}
+		env[login.configEnv] = val
 	}
 	return env, cleanup, nil
 }
@@ -129,6 +135,9 @@ func prepareRunnerLogin(home AgentCLIHome, login conversationLoginSpec, enabled 
 		}
 	}
 	configDir := strings.TrimSpace(os.Getenv(login.configEnv))
+	if configDir != "" && login.configEnv == "TRAE_HOME" {
+		configDir = filepath.Join(configDir, "cli")
+	}
 	if configDir == "" {
 		base, _ := os.UserHomeDir()
 		if base != "" {
@@ -137,7 +146,7 @@ func prepareRunnerLogin(home AgentCLIHome, login conversationLoginSpec, enabled 
 	}
 	var data []byte
 	var keepAntigravity func([]byte) error
-	if login.binding == BindAgentCLI {
+	if login.binding == BindAgentCLI && login.configEnv == "" {
 		data, keepAntigravity, err = readAntigravityRunnerLogin()
 	} else {
 		data, err = readRunnerLoginFile(configDir, login.file)

@@ -177,8 +177,9 @@ func executorModelCatalogs(kimiBaseURL string, codebuddy assistantModelCatalog) 
 		},
 		"kimi":  {CustomModel: true, Efforts: effortOptions(domain.ExecutorEffortLevels["kimi"])},
 		"pi":    {CustomModel: true, Efforts: effortOptions(domain.ExecutorEffortLevels["pi"])},
-		"dsh":   {CustomModel: true, Efforts: effortOptions(domain.ExecutorEffortLevels["dsh"])},
-		"zcode": {CustomModel: true, Efforts: effortOptions(domain.ExecutorEffortLevels["zcode"])},
+		"dsh":     {CustomModel: true, Efforts: effortOptions(domain.ExecutorEffortLevels["dsh"])},
+		"zcode":   {CustomModel: true, Efforts: effortOptions(domain.ExecutorEffortLevels["zcode"])},
+		"traecli": {CustomModel: true, Efforts: effortOptions(domain.ExecutorEffortLevels["traecli"])},
 	}
 	for engine, catalog := range catalogs {
 		modelEngine := engine

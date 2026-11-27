@@ -326,6 +326,24 @@ func agentCLICommand(kind string, o AgentCLICommandOptions, input *AgentCLIConve
 			argv = append(argv, "--attach", path)
 		}
 		argv = append(argv, extra...)
+	case AgentCLITraeCLI:
+		argv = []string{binary, "exec", "--json", "--skip-git-repo-check", "--dangerously-bypass-hook-trust", "-c", `approval_policy="never"`}
+		if readOnly {
+			argv = append(argv, "--sandbox", "read-only")
+		} else {
+			argv = append(argv, "--permission-mode", "bypass_permissions")
+		}
+		if model != "" {
+			argv = append(argv, "--model", model)
+		}
+		if effort != "" {
+			argv = append(argv, "-c", "model_reasoning_effort="+strconv.Quote(effort))
+		}
+		argv = append(argv, extra...)
+		if resume != "" {
+			argv = append(argv, "resume", resume)
+		}
+		argv = append(argv, prompt)
 	}
 	return CommandSpec{Argv: argv, Stdin: stdin, Provider: kind, AgentCLI: options}, nil
 }

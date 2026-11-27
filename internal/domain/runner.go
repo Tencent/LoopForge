@@ -471,7 +471,7 @@ func (r Runner) RuntimeAuthModeForUser(provider string, userID int64) string {
 
 func SupportsRunnerLogin(provider string) bool {
 	switch strings.ToLower(strings.TrimSpace(provider)) {
-	case "codex", "claude-code", "agy":
+	case "codex", "claude-code", "agy", "traecli":
 		return true
 	default:
 		return false
