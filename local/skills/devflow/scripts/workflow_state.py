@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import re
+import shlex
 import shutil
 import tempfile
 import uuid
@@ -989,6 +990,7 @@ def command_resume(args: argparse.Namespace) -> int:
     if errors:
         print(json.dumps({"ok": False, "errors": errors}, ensure_ascii=False, indent=2))
         return 1
+    quoted_state = shlex.quote(str(state_path))
     action = {"ok": True, "task": data["task_slug"], "status": data["status"]}
     if data["status"] == "completed":
         action.update(action="completed", message="流程已经完成，无需恢复")
@@ -996,7 +998,7 @@ def command_resume(args: argparse.Namespace) -> int:
         action.update(
             action="upgrade-team",
             executor_topology="team",
-            command=f"workflow_state.py upgrade-team --state {state_path}",
+            command=f"workflow_state.py upgrade-team --state {quoted_state}",
             message=(
                 "旧 v2 流程尚未登记阶段执行者；先原地升级 Team 策略，"
                 "由升级命令分配唯一 Team 名，再创建 Team member"
@@ -1006,7 +1008,7 @@ def command_resume(args: argparse.Namespace) -> int:
         action.update(
             action="rotate-team",
             delete_team_name=data.get("team_name"),
-            command=f"workflow_state.py rotate-team --state {state_path}",
+            command=f"workflow_state.py rotate-team --state {quoted_state}",
             message="直接删除旧 Team，再分配并创建新 Team；不要检查或唤醒旧成员",
         )
     elif data.get("awaiting_approval"):
@@ -1022,7 +1024,7 @@ def command_resume(args: argparse.Namespace) -> int:
                 if data["awaiting_approval"] == "REQUIREMENT" else None
             ),
             command=(
-                f"workflow_state.py approve --state {state_path} "
+                f"workflow_state.py approve --state {quoted_state} "
                 f"--stage {data['awaiting_approval']}"
                 + (" --user-confirmed" if required_user_confirmation else "")
             ),
@@ -1074,11 +1076,11 @@ def command_resume(args: argparse.Namespace) -> int:
                             "the same knowledge is already documented",
                         ],
                         run_command=(
-                            f"workflow_state.py decide-knowledge --state {state_path} "
+                            f"workflow_state.py decide-knowledge --state {quoted_state} "
                             "--decision run --reason <candidate-and-evidence>"
                         ),
                         skip_command=(
-                            f"workflow_state.py decide-knowledge --state {state_path} "
+                            f"workflow_state.py decide-knowledge --state {quoted_state} "
                             "--decision skip --reason <why-no-reusable-knowledge>"
                         ),
                         message="先基于最终 diff、审查和测试的精简证据判断是否有新增可复用知识；不要按任务规模决定",
