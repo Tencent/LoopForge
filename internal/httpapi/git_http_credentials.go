@@ -2,14 +2,17 @@ package httpapi
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -17,6 +20,7 @@ import (
 	"agentflow/internal/domain"
 	"agentflow/internal/gitegress"
 	"agentflow/internal/gitwork"
+	"agentflow/internal/gongfeng"
 	"agentflow/internal/repo"
 
 	"github.com/gin-gonic/gin"
@@ -194,49 +198,357 @@ func (h *usersHandlers) verifyPlainGitRepository(ctx context.Context, cred domai
 
 func verifyGitHTTPToken(ctx context.Context, cred domain.GitHTTPCredentialSecret, client *http.Client) gitTokenVerifyResult {
 	if cred.Managed {
-		return verifyGongfengToken(ctx, cred.Token)
+		res := verifyGongfengToken(ctx, cred.Token)
+		if res.Valid {
+			if _, name, email, err := fetchManagedCommitIdentity(ctx, cred, client); err == nil {
+				res.CommitName = name
+				res.CommitEmail = email
+				if email != "" {
+					if base := managedGitAPIBase(); base != "" {
+						gitCommitIdentityCache.set(gitCommitIdentityKeyFor(base, cred.Host, cred.Token), name, email, gitCommitIdentityCacheTTL, gitCommitIdentityNow())
+					}
+				}
+			}
+		}
+		return res
 	}
 	base := cred.APIBase()
 	if base == "" {
 		return gitTokenVerifyResult{Error: "该平台不支持在线校验，令牌会在 Git 操作时使用"}
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/user", nil)
+	login, commitName, commitEmail, err := fetchGitHTTPCommitIdentityWithBase(ctx, cred, base, client)
 	if err != nil {
-		return gitTokenVerifyResult{Error: "无效的校验请求"}
+		var statusErr gitHTTPAPIStatusError
+		switch {
+		case errors.Is(err, gitegress.ErrNonPublicAddress):
+			return gitTokenVerifyResult{Error: "此 Git HTTPS 主机尚未授权，请联系平台管理员在「Git 主机信任」中登记。"}
+		case errors.Is(err, gitegress.ErrHTTPSAddressChanged):
+			return gitTokenVerifyResult{Error: "Git 主机解析地址已变更，请联系平台管理员更新该主机的 HTTPS 授权。"}
+		case errors.Is(err, gitegress.ErrHTTPSHostLookup):
+			return gitTokenVerifyResult{Error: "暂时无法读取 Git 主机授权，请稍后重试。"}
+		case errors.As(err, &statusErr):
+			return gitTokenVerifyResult{Error: fmt.Sprintf("%s 返回 HTTP %d，请检查令牌", cred.Host, statusErr.status)}
+		case errors.Is(err, errInvalidGitHostResponse):
+			return gitTokenVerifyResult{Error: fmt.Sprintf("%s 返回了无法识别的响应", cred.Host)}
+		case errors.Is(err, errInvalidGitHostRequest):
+			return gitTokenVerifyResult{Error: "无效的校验请求"}
+		default:
+			return gitTokenVerifyResult{Error: fmt.Sprintf("无法连接 %s：%v", cred.Host, err)}
+		}
+	}
+	if commitEmail != "" {
+		gitCommitIdentityCache.set(gitCommitIdentityKeyFor(base, cred.Host, cred.Token), commitName, commitEmail, gitCommitIdentityCacheTTL, gitCommitIdentityNow())
+	}
+	// Repository permissions are per repository; /user proves identity only.
+	return gitTokenVerifyResult{Valid: true, Login: login, CommitName: commitName, CommitEmail: commitEmail}
+}
+
+var (
+	errInvalidGitHostRequest  = errors.New("invalid git host request")
+	errInvalidGitHostResponse = errors.New("invalid git host response")
+)
+
+type gitHTTPAPIStatusError struct{ status int }
+
+func (e gitHTTPAPIStatusError) Error() string {
+	return fmt.Sprintf("HTTP %d", e.status)
+}
+
+func gitHubCommitIdentity(host string, id int64, login, name, email string) (commitName, commitEmail string) {
+	login = strings.TrimSpace(login)
+	commitName = strings.TrimSpace(name)
+	if commitName == "" {
+		commitName = login
+	}
+	commitEmail = strings.TrimSpace(email)
+	if commitEmail == "" && login != "" {
+		emailHost := strings.TrimSpace(host)
+		if h, _, err := net.SplitHostPort(emailHost); err == nil && h != "" {
+			emailHost = h
+		}
+		if emailHost == "" {
+			emailHost = "github.com"
+		}
+		if id > 0 {
+			commitEmail = fmt.Sprintf("%d+%s@users.noreply.%s", id, login, emailHost)
+		} else {
+			commitEmail = fmt.Sprintf("%s@users.noreply.%s", login, emailHost)
+		}
+	}
+	return commitName, commitEmail
+}
+
+func gitLabCommitIdentity(username, name, commitEmail, publicEmail, email string) (commitName, resolvedEmail string) {
+	commitName = strings.TrimSpace(name)
+	if commitName == "" {
+		commitName = strings.TrimSpace(username)
+	}
+	for _, candidate := range []string{commitEmail, publicEmail, email} {
+		if trimmed := strings.TrimSpace(candidate); trimmed != "" {
+			resolvedEmail = trimmed
+			break
+		}
+	}
+	return commitName, resolvedEmail
+}
+
+func decodeGitHTTPUserIdentity(cred domain.GitHTTPCredential, body io.Reader) (login, commitName, commitEmail string, err error) {
+	login, commitName, commitEmail, _, err = decodeGitHTTPUserIdentityDetail(cred, body)
+	return login, commitName, commitEmail, err
+}
+
+func decodeGitHTTPUserIdentityDetail(cred domain.GitHTTPCredential, body io.Reader) (login, commitName, commitEmail string, explicitEmail bool, err error) {
+	var user struct {
+		ID          int64  `json:"id"`
+		Login       string `json:"login"`
+		Username    string `json:"username"`
+		Name        string `json:"name"`
+		Email       string `json:"email"`
+		PublicEmail string `json:"public_email"`
+		CommitEmail string `json:"commit_email"`
+	}
+	if json.NewDecoder(io.LimitReader(body, 64<<10)).Decode(&user) != nil {
+		return "", "", "", false, errInvalidGitHostResponse
+	}
+	if cred.Platform == domain.GitPlatformGitLab {
+		login = strings.TrimSpace(user.Username)
+		if login == "" {
+			return "", "", "", false, errInvalidGitHostResponse
+		}
+		commitName, commitEmail = gitLabCommitIdentity(login, user.Name, user.CommitEmail, user.PublicEmail, user.Email)
+		return login, commitName, commitEmail, commitEmail != "", nil
+	}
+	login = strings.TrimSpace(user.Login)
+	if login == "" {
+		return "", "", "", false, errInvalidGitHostResponse
+	}
+	explicitEmail = strings.TrimSpace(user.Email) != ""
+	commitName, commitEmail = gitHubCommitIdentity(cred.Host, user.ID, login, user.Name, user.Email)
+	return login, commitName, commitEmail, explicitEmail, nil
+}
+
+func fetchGitHTTPCommitIdentityWithBase(ctx context.Context, cred domain.GitHTTPCredentialSecret, base string, client *http.Client) (login, commitName, commitEmail string, err error) {
+	if base == "" || cred.Token == "" || client == nil {
+		return "", "", "", errInvalidGitHostRequest
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(base, "/")+"/user", nil)
+	if err != nil {
+		return "", "", "", errInvalidGitHostRequest
 	}
 	req.Header.Set(cred.APIAuthHeader())
 	if cred.Platform == domain.GitPlatformGitHub {
 		req.Header.Set("Accept", "application/vnd.github+json")
 	}
 	res, err := client.Do(req)
-	switch {
-	case errors.Is(err, gitegress.ErrNonPublicAddress):
-		return gitTokenVerifyResult{Error: "此 Git HTTPS 主机尚未授权，请联系平台管理员在「Git 主机信任」中登记。"}
-	case errors.Is(err, gitegress.ErrHTTPSAddressChanged):
-		return gitTokenVerifyResult{Error: "Git 主机解析地址已变更，请联系平台管理员更新该主机的 HTTPS 授权。"}
-	case errors.Is(err, gitegress.ErrHTTPSHostLookup):
-		return gitTokenVerifyResult{Error: "暂时无法读取 Git 主机授权，请稍后重试。"}
-	case err != nil:
-		return gitTokenVerifyResult{Error: fmt.Sprintf("无法连接 %s：%v", cred.Host, err)}
+	if err != nil {
+		return "", "", "", err
 	}
 	defer res.Body.Close()
 	if res.StatusCode != http.StatusOK {
-		return gitTokenVerifyResult{Error: fmt.Sprintf("%s 返回 HTTP %d，请检查令牌", cred.Host, res.StatusCode)}
+		return "", "", "", gitHTTPAPIStatusError{status: res.StatusCode}
 	}
-	var user struct {
-		Login    string `json:"login"`
-		Username string `json:"username"`
+	var explicitEmail bool
+	login, commitName, commitEmail, explicitEmail, err = decodeGitHTTPUserIdentityDetail(cred.GitHTTPCredential, res.Body)
+	if err != nil {
+		return "", "", "", err
 	}
-	if json.NewDecoder(io.LimitReader(res.Body, 64<<10)).Decode(&user) != nil {
-		return gitTokenVerifyResult{Error: fmt.Sprintf("%s 返回了无法识别的响应", cred.Host)}
+	if cred.Platform == domain.GitPlatformGitHub && !explicitEmail {
+		if email := fetchGitHubVerifiedEmail(ctx, cred, base, client); email != "" {
+			commitEmail = email
+		}
 	}
-	login := user.Login
-	if cred.Platform == domain.GitPlatformGitLab {
-		login = user.Username
+	return login, commitName, commitEmail, nil
+}
+
+func fetchGitHubVerifiedEmail(ctx context.Context, cred domain.GitHTTPCredentialSecret, base string, client *http.Client) string {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(base, "/")+"/user/emails", nil)
+	if err != nil {
+		return ""
 	}
-	if login == "" {
-		return gitTokenVerifyResult{Error: fmt.Sprintf("%s 返回了无法识别的响应", cred.Host)}
+	req.Header.Set(cred.APIAuthHeader())
+	req.Header.Set("Accept", "application/vnd.github+json")
+	res, err := client.Do(req)
+	if err != nil {
+		return ""
 	}
-	// Repository permissions are per repository; /user proves identity only.
-	return gitTokenVerifyResult{Valid: true, Login: login}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		return ""
+	}
+	var emails []struct {
+		Email    string `json:"email"`
+		Primary  bool   `json:"primary"`
+		Verified bool   `json:"verified"`
+	}
+	if json.NewDecoder(io.LimitReader(res.Body, 64<<10)).Decode(&emails) != nil {
+		return ""
+	}
+	var verifiedFallback, primaryFallback string
+	for _, entry := range emails {
+		addr := strings.TrimSpace(entry.Email)
+		if addr == "" {
+			continue
+		}
+		if entry.Primary && entry.Verified {
+			return addr
+		}
+		if entry.Verified && verifiedFallback == "" {
+			verifiedFallback = addr
+		}
+		if entry.Primary && primaryFallback == "" {
+			primaryFallback = addr
+		}
+	}
+	if verifiedFallback != "" {
+		return verifiedFallback
+	}
+	return primaryFallback
+}
+
+func managedGitAPIBase() string {
+	if gongfengAPIBase != "" {
+		return gongfengAPIBase
+	}
+	return gongfeng.ConfigFromEnv().APIBase
+}
+
+func fetchManagedCommitIdentity(ctx context.Context, cred domain.GitHTTPCredentialSecret, client *http.Client) (login, commitName, commitEmail string, err error) {
+	base := managedGitAPIBase()
+	if base == "" || cred.Token == "" || client == nil {
+		return "", "", "", errInvalidGitHostRequest
+	}
+	res, err := gongfengDo(ctx, client, strings.TrimRight(base, "/")+"/user", cred.Token)
+	if err != nil {
+		return "", "", "", err
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		return "", "", "", gitHTTPAPIStatusError{status: res.StatusCode}
+	}
+	glCred := cred.GitHTTPCredential
+	glCred.Platform = domain.GitPlatformGitLab
+	return decodeGitHTTPUserIdentity(glCred, res.Body)
+}
+
+const (
+	gitCommitIdentityCacheTTL         = 1 * time.Hour
+	gitCommitIdentityNegativeCacheTTL = 1 * time.Minute
+	gitCommitIdentityCacheMaxEntries  = 4096
+)
+
+var gitCommitIdentityNow = time.Now
+
+type gitCommitIdentityKey struct {
+	apiBase   string
+	host      string
+	tokenHash [sha256.Size]byte
+}
+
+type gitCommitIdentityEntry struct {
+	name      string
+	email     string
+	expiresAt time.Time
+}
+
+type gitCommitIdentityStore struct {
+	mu      sync.Mutex
+	entries map[gitCommitIdentityKey]gitCommitIdentityEntry
+}
+
+var gitCommitIdentityCache = &gitCommitIdentityStore{}
+
+func gitCommitIdentityKeyFor(apiBase, host, token string) gitCommitIdentityKey {
+	return gitCommitIdentityKey{
+		apiBase:   strings.TrimRight(strings.TrimSpace(apiBase), "/"),
+		host:      strings.TrimSpace(host),
+		tokenHash: sha256.Sum256([]byte(token)),
+	}
+}
+
+func (s *gitCommitIdentityStore) get(key gitCommitIdentityKey, now time.Time) (string, string, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.entries) == 0 {
+		return "", "", false
+	}
+	entry, ok := s.entries[key]
+	if !ok || !now.Before(entry.expiresAt) {
+		if ok {
+			delete(s.entries, key)
+		}
+		return "", "", false
+	}
+	return entry.name, entry.email, true
+}
+
+func (s *gitCommitIdentityStore) set(key gitCommitIdentityKey, name, email string, ttl time.Duration, now time.Time) {
+	if ttl <= 0 {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.entries == nil {
+		s.entries = make(map[gitCommitIdentityKey]gitCommitIdentityEntry)
+	}
+	if len(s.entries) >= gitCommitIdentityCacheMaxEntries {
+		for k, v := range s.entries {
+			if !now.Before(v.expiresAt) {
+				delete(s.entries, k)
+			}
+		}
+		if len(s.entries) >= gitCommitIdentityCacheMaxEntries {
+			clear(s.entries)
+		}
+	}
+	s.entries[key] = gitCommitIdentityEntry{
+		name:      name,
+		email:     email,
+		expiresAt: now.Add(ttl),
+	}
+}
+
+func (s *gitCommitIdentityStore) reset() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	clear(s.entries)
+}
+
+func resolveGitCommitIdentity(ctx context.Context, st *repo.Store, cred domain.GitHTTPCredentialSecret) (name, email string) {
+	if cred.Token == "" {
+		return "", ""
+	}
+	var base string
+	if cred.Managed {
+		base = managedGitAPIBase()
+	} else {
+		base = gitHostAPIBase(cred.GitHTTPCredential)
+	}
+	if base == "" {
+		return "", ""
+	}
+	now := gitCommitIdentityNow()
+	key := gitCommitIdentityKeyFor(base, cred.Host, cred.Token)
+	if cachedName, cachedEmail, hit := gitCommitIdentityCache.get(key, now); hit {
+		return cachedName, cachedEmail
+	}
+	lookupCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	var client *http.Client
+	if st != nil {
+		client = gitHostClient(st.PlatformGitHTTPSAddresses)
+	} else {
+		client = gitHostClient(nil)
+	}
+	var err error
+	if cred.Managed {
+		_, name, email, err = fetchManagedCommitIdentity(lookupCtx, cred, client)
+	} else {
+		_, name, email, err = fetchGitHTTPCommitIdentityWithBase(lookupCtx, cred, base, client)
+	}
+	if err != nil || strings.TrimSpace(email) == "" {
+		gitCommitIdentityCache.set(key, "", "", gitCommitIdentityNegativeCacheTTL, gitCommitIdentityNow())
+		return "", ""
+	}
+	gitCommitIdentityCache.set(key, name, email, gitCommitIdentityCacheTTL, gitCommitIdentityNow())
+	return name, email
 }

@@ -187,6 +187,9 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 		evolution:       newEvolutionHandlers(d),
 	}
 	e.WorkspaceActive = func(run domain.Run) bool { return api.runs.terminals.HasRunScope(run.ID) }
+	e.ResolveGitCommitIdentity = func(ctx context.Context, _ int64, cred domain.GitHTTPCredentialSecret) (string, string) {
+		return resolveGitCommitIdentity(ctx, s, cred)
+	}
 	api.catalog.notifications = api.notifications
 	api.schedule.notifications = api.notifications
 	if syncSvc != nil {

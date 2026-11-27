@@ -755,7 +755,11 @@ func (e *Engine) gateCommandInvocation(run domain.Run, nodeID string) *domain.Ru
 	assets := e.resolveRunScriptMCPAssets(run)
 	invocation := &domain.RunnerInvocation{
 		RunID: run.ID, NodeID: nodeID, Assets: assets, MCPCallServers: assets.MCPServers}
-	identity := resolveGitIdentity(e.repo, run.ExecutionContext.ResponsibleUserID)
+	var creds map[string]domain.GitHTTPExecutionCredential
+	if e.repo != nil && run.ExecutionContext.ResponsibleUserID > 0 {
+		creds = e.repo.GitHTTPCredentialSecrets(context.Background(), run.ExecutionContext.ResponsibleUserID)
+	}
+	identity := e.resolveGitIdentityForRun(run, creds)
 	bindRunnerRepositories(invocation, run, identity.name, identity.email)
 	return invocation
 }

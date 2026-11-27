@@ -4,6 +4,7 @@ import (
 	"agentflow/internal/config"
 	"agentflow/internal/domain"
 	"agentflow/internal/gitwork"
+	"agentflow/internal/repo"
 	"agentflow/internal/runtime"
 	"bufio"
 	"context"
@@ -628,16 +629,100 @@ func (h *assistantHandlers) bindWorkspaceGit(ctx context.Context, s *AgentToolSe
 		credentials.GitHTTPHosts = hosts
 		command = runtime.WithCommandEnvironment(command, map[string]string{runtime.SessionGatewayEnv: agentToolMCPURL(s.Token)})
 	}
-	if user, ok := h.repo.User(s.User.ID); ok {
-		if login := strings.TrimSpace(user.LoginName); login != "" {
-			credentials.GitUserName = login
-			credentials.GitUserEmail = login + "@users.noreply.loopforge.invalid"
-		}
+	if name, email := h.resolveWorkspaceGitIdentity(ctx, s); name != "" && email != "" {
+		credentials.GitUserName = name
+		credentials.GitUserEmail = email
 	}
 	if !slices.Contains(command.CredentialBindings, runtime.BindGitWorkspace) {
 		command.CredentialBindings = append(append([]runtime.CredentialBinding(nil), command.CredentialBindings...), runtime.BindGitWorkspace)
 	}
 	return command, credentials
+}
+
+func (h *assistantHandlers) resolveWorkspaceGitIdentity(ctx context.Context, s *AgentToolSession) (string, string) {
+	if h.repo == nil || s.User.ID <= 0 {
+		return "", ""
+	}
+	user, ok := h.repo.User(s.User.ID)
+	if !ok {
+		return "", ""
+	}
+	login := strings.TrimSpace(user.LoginName)
+	if login == "" {
+		return "", ""
+	}
+	creds := h.repo.GitHTTPCredentialSecrets(ctx, s.User.ID)
+	if len(creds) > 0 {
+		candidates := workspaceGitCredentialHostOrder(h.repo, s.ProjectID, creds)
+		for _, host := range candidates {
+			cred, ok := creds[host]
+			if !ok || cred.Token == "" || (gitHostAPIBase(cred.GitHTTPCredential) == "" && !cred.Managed) {
+				continue
+			}
+			name, email := resolveGitCommitIdentity(ctx, h.repo, domain.GitHTTPCredentialSecret{
+				GitHTTPCredential: cred.GitHTTPCredential, Token: cred.Token, ExpiresAt: cred.ExpiresAt,
+			})
+			if email = strings.TrimSpace(email); email != "" {
+				name = strings.TrimSpace(name)
+				if name == "" {
+					name = login
+				}
+				return name, email
+			}
+		}
+	}
+	return login, login + "@users.noreply.loopforge.invalid"
+}
+
+func workspaceGitCredentialHostOrder(store *repo.Store, projectID string, creds map[string]domain.GitHTTPExecutionCredential) []string {
+	var out []string
+	seen := make(map[string]bool, len(creds)+2)
+	addHost := func(host string) {
+		host = strings.TrimSpace(host)
+		if host == "" || seen[host] {
+			return
+		}
+		if _, ok := creds[host]; !ok {
+			return
+		}
+		seen[host] = true
+		out = append(out, host)
+	}
+	addRemote := func(raw string) {
+		if ep, ok := gitwork.GitHTTPRemoteEndpoint(raw); ok {
+			addHost(ep.Scope())
+		} else if sshRef, err := gitwork.ParseSSHRemote(raw); err == nil {
+			addHost(sshRef.Host)
+		}
+	}
+	if projectID != "" && store != nil {
+		project, _ := store.Project(projectID)
+		repos := projectRepositories(store.Repositories(), projectID)
+		if defID := strings.TrimSpace(project.DefaultRepositoryID); defID != "" {
+			for _, r := range repos {
+				if r.ID == defID {
+					addRemote(r.CloneURL)
+					addRemote(r.WebURL)
+				}
+			}
+		}
+		for _, r := range repos {
+			addRemote(r.CloneURL)
+			addRemote(r.WebURL)
+		}
+	}
+	addHost("github.com")
+	rest := make([]string, 0, len(creds))
+	for host := range creds {
+		if !seen[host] {
+			rest = append(rest, host)
+		}
+	}
+	slices.Sort(rest)
+	for _, host := range rest {
+		addHost(host)
+	}
+	return out
 }
 
 func (h *assistantHandlers) testRunnerCLI(ctx context.Context, runnerID, provider string, runnerLogin bool, user domain.User) error {

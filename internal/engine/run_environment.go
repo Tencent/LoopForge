@@ -230,7 +230,7 @@ func (e *Engine) resolveRunCredentials(run domain.Run) runtime.RunCredentials {
 	credentials.GitHTTPCredentials = e.repo.GitHTTPCredentialSecrets(context.Background(), userID)
 	credentials.Extra = runtime.ExtraRunCredentials(userID)
 	credentials.GitSSHKeys = e.repo.GitSSHKeysForRemotes(userID, sshRepositoryURLs(run.RepositoryContexts()))
-	identity := resolveGitIdentity(e.repo, userID)
+	identity := e.resolveGitIdentityForRun(run, credentials.GitHTTPCredentials)
 	credentials.GitUserName = identity.name
 	credentials.GitUserEmail = identity.email
 	scriptAssets, _, _ := runtime.PrepareMCPServers(e.resolveRunScriptMCPAssets(run), runtime.MCPTarget{

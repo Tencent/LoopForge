@@ -6,7 +6,9 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
+	"time"
 
 	"agentflow/internal/domain"
 	"agentflow/internal/gitwork"
@@ -90,6 +92,71 @@ func resolveGitIdentity(s *repo.Store, userID int64) gitIdentity {
 	// Local platform accounts do not establish corporate or GitHub identity.
 	// Use a non-deliverable address rather than inventing an employer email.
 	return gitIdentity{name: login, email: login + "@users.noreply.loopforge.invalid"}
+}
+
+func (e *Engine) resolveGitIdentityForRun(run domain.Run, creds map[string]domain.GitHTTPExecutionCredential) gitIdentity {
+	var store *repo.Store
+	if e != nil {
+		store = e.repo
+	}
+	fallback := resolveGitIdentity(store, run.ExecutionContext.ResponsibleUserID)
+	if fallback == (gitIdentity{}) || len(creds) == 0 || e == nil || e.ResolveGitCommitIdentity == nil {
+		return fallback
+	}
+	for _, host := range runGitCredentialHostOrder(run, creds) {
+		cred, ok := creds[host]
+		if !ok || cred.Token == "" || (cred.APIBase() == "" && !cred.Managed) {
+			continue
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		name, email := e.ResolveGitCommitIdentity(ctx, run.ExecutionContext.ResponsibleUserID, domain.GitHTTPCredentialSecret{
+			GitHTTPCredential: cred.GitHTTPCredential, Token: cred.Token, ExpiresAt: cred.ExpiresAt,
+		})
+		cancel()
+		if email = strings.TrimSpace(email); email != "" {
+			name = strings.TrimSpace(name)
+			if name == "" {
+				name = fallback.name
+			}
+			return gitIdentity{name: name, email: email}
+		}
+	}
+	return fallback
+}
+
+func runGitCredentialHostOrder(run domain.Run, creds map[string]domain.GitHTTPExecutionCredential) []string {
+	var out []string
+	seen := make(map[string]bool, len(creds)+2)
+	add := func(host string) {
+		host = strings.TrimSpace(host)
+		if host == "" || seen[host] {
+			return
+		}
+		if _, ok := creds[host]; !ok {
+			return
+		}
+		seen[host] = true
+		out = append(out, host)
+	}
+	for _, rc := range run.RepositoryContexts() {
+		if ep, ok := gitwork.GitHTTPRemoteEndpoint(rc.CloneURL); ok {
+			add(ep.Scope())
+		} else if sshRef, err := gitwork.ParseSSHRemote(rc.CloneURL); err == nil {
+			add(sshRef.Host)
+		}
+	}
+	add("github.com")
+	rest := make([]string, 0, len(creds))
+	for host := range creds {
+		if !seen[host] {
+			rest = append(rest, host)
+		}
+	}
+	slices.Sort(rest)
+	for _, host := range rest {
+		add(host)
+	}
+	return out
 }
 
 func applyWorkspaceGitIdentity(ctx context.Context, workspace string) error {

@@ -63,6 +63,90 @@ func TestResolveGitIdentityUsesResponsibleUserLogin(t *testing.T) {
 	}
 }
 
+func TestResolveGitIdentityForRunMatchesRepositoryAndFallsBack(t *testing.T) {
+	t.Parallel()
+	s, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.Close() })
+	if err := s.PutUser(domain.User{ID: 31, LoginName: "alice"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SaveGitHTTPCredential(31, "", domain.GitHTTPCredentialSecret{
+		GitHTTPCredential: domain.GitHTTPCredential{Name: "GitHub", Platform: domain.GitPlatformGitHub, Host: "github.com"},
+		Token:             "tok-gh",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SaveGitHTTPCredential(31, "", domain.GitHTTPCredentialSecret{
+		GitHTTPCredential: domain.GitHTTPCredential{Name: "GitLab", Platform: domain.GitPlatformGitLab, Host: "gitlab.example.com"},
+		Token:             "tok-gl",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	creds := s.GitHTTPCredentialSecrets(context.Background(), 31)
+	glRun := domain.Run{
+		ExecutionContext: domain.TelemetryContext{ResponsibleUserID: 31},
+		Repositories:     []domain.RepositoryContext{{RepositoryID: "gl", CloneURL: "https://gitlab.example.com/group/app.git"}},
+	}
+
+	// Without ResolveGitCommitIdentity wired, falls back cleanly to Tier 3.
+	offline := &Engine{repo: s}
+	if got := offline.resolveGitIdentityForRun(glRun, creds); got.name != "alice" || got.email != "alice@users.noreply.loopforge.invalid" {
+		t.Fatalf("offline fallback identity = %+v", got)
+	}
+
+	e := &Engine{
+		repo: s,
+		ResolveGitCommitIdentity: func(_ context.Context, userID int64, cred domain.GitHTTPCredentialSecret) (string, string) {
+			if userID != 31 {
+				return "", ""
+			}
+			switch cred.Host {
+			case "github.com":
+				return "Alice GH", "alice@gh.example.com"
+			case "gitlab.example.com":
+				return "Alice GL", "alice@gl.example.com"
+			default:
+				return "", ""
+			}
+		},
+	}
+
+	if got := e.resolveGitIdentityForRun(glRun, creds); got.name != "Alice GL" || got.email != "alice@gl.example.com" {
+		t.Fatalf("gitlab repo identity = %+v", got)
+	}
+
+	sshRun := domain.Run{
+		ExecutionContext: domain.TelemetryContext{ResponsibleUserID: 31},
+		Repositories:     []domain.RepositoryContext{{RepositoryID: "ssh-gh", CloneURL: "git@github.com:org/app.git"}},
+	}
+	if got := e.resolveGitIdentityForRun(sshRun, creds); got.name != "Alice GH" || got.email != "alice@gh.example.com" {
+		t.Fatalf("ssh github repo identity = %+v", got)
+	}
+
+	// If the matched repo host fails to resolve, falls back to secondary configured credential, then Tier 3.
+	if err := s.PutUser(domain.User{ID: 32, LoginName: "bob"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SaveGitHTTPCredential(32, "", domain.GitHTTPCredentialSecret{
+		GitHTTPCredential: domain.GitHTTPCredential{Name: "Other", Platform: domain.GitPlatformOther, Host: "git.other.example"},
+		Token:             "tok-other",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	bobCreds := s.GitHTTPCredentialSecrets(context.Background(), 32)
+	bobRun := domain.Run{
+		ExecutionContext: domain.TelemetryContext{ResponsibleUserID: 32},
+		Repositories:     []domain.RepositoryContext{{RepositoryID: "other", CloneURL: "https://git.other.example/org/svc.git"}},
+	}
+	if got := e.resolveGitIdentityForRun(bobRun, bobCreds); got.name != "bob" || got.email != "bob@users.noreply.loopforge.invalid" {
+		t.Fatalf("unresolvable platform fallback = %+v", got)
+	}
+}
+
 func TestProjectAndRepositoryTokensAreIgnored(t *testing.T) {
 	t.Setenv(gitTokenEnv, "tok_env")
 	s, err := repo.OpenTest()

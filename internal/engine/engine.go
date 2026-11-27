@@ -96,6 +96,7 @@ type Engine struct {
 	WorkspaceCheckpointTransport func(context.Context, domain.Run, domain.RunnerWorkspaceRequest) (domain.RunnerWorkspaceResponse, error)
 	SelectSOPSandbox             func(context.Context, SOPSandboxSelection) string
 	GenerateSOPWorkBranch        func(context.Context, SOPWorkBranchRequest) (string, error)
+	ResolveGitCommitIdentity     func(ctx context.Context, userID int64, cred domain.GitHTTPCredentialSecret) (name, email string)
 	maintenanceOnce              sync.Once
 }
 

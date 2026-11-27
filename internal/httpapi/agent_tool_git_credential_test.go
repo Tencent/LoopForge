@@ -4,11 +4,16 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/gitegress"
 	"agentflow/internal/repo"
 	"agentflow/internal/runtime"
 )
@@ -98,6 +103,14 @@ func TestGatewayGitCredentialServesOnlyTheSpeakersConfiguredHost(t *testing.T) {
 // The workspace command carries the exposed hosts and the session gateway,
 // never a token; a runner too old for the helper gets neither.
 func TestBindWorkspaceGitCarriesHostsNotTokens(t *testing.T) {
+	prevClient := gitHostClient
+	gitHostClient = func(gitegress.HTTPSHostLookup) *http.Client {
+		return &http.Client{Transport: githubTestTransport(func(*http.Request) (*http.Response, error) {
+			return nil, fmt.Errorf("offline test transport")
+		})}
+	}
+	defer func() { gitHostClient = prevClient }()
+
 	f := cvBNewHTTPFixture(t)
 	err := f.s.SaveGitHTTPCredential(f.user.ID, "", domain.GitHTTPCredentialSecret{
 		GitHTTPCredential: domain.GitHTTPCredential{Name: "GitHub", Platform: domain.GitPlatformGitHub, Host: "github.com"},
@@ -143,5 +156,158 @@ func TestBindWorkspaceGitCarriesHostsNotTokens(t *testing.T) {
 				t.Fatalf("runner %q: %s carries the token", tc.runner, key)
 			}
 		}
+	}
+}
+
+func TestBindWorkspaceGitResolvesCommitIdentityAndFallsBack(t *testing.T) {
+	gitCommitIdentityCache.reset()
+	t.Cleanup(gitCommitIdentityCache.reset)
+
+	now := time.Date(2026, 11, 27, 7, 0, 0, 0, time.UTC)
+	prevNow := gitCommitIdentityNow
+	gitCommitIdentityNow = func() time.Time { return now }
+	defer func() { gitCommitIdentityNow = prevNow }()
+
+	glBody := `{"username":"gluser","name":"GL User","commit_email":"gl@example.com"}`
+	glCalls := 0
+	failCalls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/gitlab/user" && (r.Header.Get("PRIVATE-TOKEN") == "gl-token" || r.Header.Get("PRIVATE-TOKEN") == "gl-token-2"):
+			glCalls++
+			_, _ = w.Write([]byte(glBody))
+		case r.URL.Path == "/github/user" && r.Header.Get("Authorization") == "Bearer gh-token":
+			_, _ = w.Write([]byte(`{"id":7,"login":"octo","name":"Octo","email":"octo@example.com"}`))
+		case r.URL.Path == "/flaky/user":
+			failCalls++
+			w.WriteHeader(http.StatusBadGateway)
+		default:
+			w.WriteHeader(http.StatusUnauthorized)
+		}
+	}))
+	defer srv.Close()
+
+	prevBase, prevClient := gitHostAPIBase, gitHostClient
+	gitHostAPIBase = func(cred domain.GitHTTPCredential) string {
+		switch cred.Host {
+		case "gitlab.example.com":
+			return srv.URL + "/gitlab"
+		case "github.com":
+			return srv.URL + "/github"
+		case "flaky.example.com":
+			return srv.URL + "/flaky"
+		default:
+			return ""
+		}
+	}
+	gitHostClient = func(gitegress.HTTPSHostLookup) *http.Client { return srv.Client() }
+	defer func() { gitHostAPIBase, gitHostClient = prevBase, prevClient }()
+
+	f := cvBNewHTTPFixture(t)
+	if err := f.s.PutProject(domain.Project{ID: "proj-gl", Name: "GL", DefaultRepositoryID: "repo-gl"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.s.PutRepository(domain.Repository{ID: "repo-gl", ProjectID: "proj-gl", Name: "GL App", CloneURL: "https://gitlab.example.com/group/app.git"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.s.SaveGitHTTPCredential(f.user.ID, "", domain.GitHTTPCredentialSecret{
+		GitHTTPCredential: domain.GitHTTPCredential{Name: "GitHub", Platform: domain.GitPlatformGitHub, Host: "github.com"},
+		Token:             "gh-token",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.s.SaveGitHTTPCredential(f.user.ID, "", domain.GitHTTPCredentialSecret{
+		GitHTTPCredential: domain.GitHTTPCredential{Name: "GitLab", Platform: domain.GitPlatformGitLab, Host: "gitlab.example.com"},
+		Token:             "gl-token",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	h := &assistantHandlers{deps: &deps{repo: f.s}}
+	s := &AgentToolSession{Token: "ws-gl", UserID: f.user.ID, User: f.user, ProjectID: "proj-gl"}
+	_, creds := h.bindWorkspaceGit(context.Background(), s, runtime.CommandSpec{}, runtime.RunCredentials{})
+	if creds.GitUserName != "GL User" || creds.GitUserEmail != "gl@example.com" || glCalls != 1 {
+		t.Fatalf("resolved workspace identity = %q <%s>, glCalls=%d", creds.GitUserName, creds.GitUserEmail, glCalls)
+	}
+
+	// Within the 1h TTL, consecutive turns reuse the memory cache without calling /user again.
+	glBody = `{"username":"gluser","name":"GL Updated","commit_email":"gl-new@example.com"}`
+	_, credsCached := h.bindWorkspaceGit(context.Background(), s, runtime.CommandSpec{}, runtime.RunCredentials{})
+	if credsCached.GitUserName != "GL User" || credsCached.GitUserEmail != "gl@example.com" || glCalls != 1 {
+		t.Fatalf("cached workspace identity = %q <%s>, glCalls=%d", credsCached.GitUserName, credsCached.GitUserEmail, glCalls)
+	}
+
+	// After TTL expires, remote changes take effect without rotating the token.
+	now = now.Add(gitCommitIdentityCacheTTL + time.Second)
+	_, credsRefreshed := h.bindWorkspaceGit(context.Background(), s, runtime.CommandSpec{}, runtime.RunCredentials{})
+	if credsRefreshed.GitUserName != "GL Updated" || credsRefreshed.GitUserEmail != "gl-new@example.com" || glCalls != 2 {
+		t.Fatalf("refreshed workspace identity = %q <%s>, glCalls=%d", credsRefreshed.GitUserName, credsRefreshed.GitUserEmail, glCalls)
+	}
+
+	// Rotating the token immediately invalidates the cache key.
+	credsList, _ := f.s.GitHTTPCredentials(f.user.ID)
+	var glID string
+	for _, c := range credsList {
+		if c.Host == "gitlab.example.com" {
+			glID = c.ID
+		}
+	}
+	if err := f.s.SaveGitHTTPCredential(f.user.ID, glID, domain.GitHTTPCredentialSecret{
+		GitHTTPCredential: domain.GitHTTPCredential{Name: "GitLab", Platform: domain.GitPlatformGitLab, Host: "gitlab.example.com"},
+		Token:             "gl-token-2",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	glBody = `{"username":"gluser2","name":"GL Rotated","commit_email":"gl-rotated@example.com"}`
+	_, credsRotated := h.bindWorkspaceGit(context.Background(), s, runtime.CommandSpec{}, runtime.RunCredentials{})
+	if credsRotated.GitUserName != "GL Rotated" || credsRotated.GitUserEmail != "gl-rotated@example.com" || glCalls != 3 {
+		t.Fatalf("rotated-token workspace identity = %q <%s>, glCalls=%d", credsRotated.GitUserName, credsRotated.GitUserEmail, glCalls)
+	}
+
+	// Unreachable/erroring hosts use short negative TTL to avoid per-turn timeouts, and retry after expiry.
+	if err := f.s.PutUser(domain.User{ID: 902, LoginName: "flaky-user"}); err != nil {
+		t.Fatal(err)
+	}
+	flakyUser, _ := f.s.User(902)
+	if err := f.s.SaveGitHTTPCredential(flakyUser.ID, "", domain.GitHTTPCredentialSecret{
+		GitHTTPCredential: domain.GitHTTPCredential{Name: "Flaky", Platform: domain.GitPlatformGitHub, Host: "flaky.example.com"},
+		Token:             "flaky-tok",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	sFlaky := &AgentToolSession{Token: "ws-flaky", UserID: flakyUser.ID, User: flakyUser}
+	_, credsFlaky := h.bindWorkspaceGit(context.Background(), sFlaky, runtime.CommandSpec{}, runtime.RunCredentials{})
+	if credsFlaky.GitUserEmail != "flaky-user@users.noreply.loopforge.invalid" || failCalls != 1 {
+		t.Fatalf("flaky fallback = %q <%s>, failCalls=%d", credsFlaky.GitUserName, credsFlaky.GitUserEmail, failCalls)
+	}
+	_, _ = h.bindWorkspaceGit(context.Background(), sFlaky, runtime.CommandSpec{}, runtime.RunCredentials{})
+	if failCalls != 1 {
+		t.Fatalf("negative cache should skip repeat call within TTL, failCalls=%d", failCalls)
+	}
+	now = now.Add(gitCommitIdentityNegativeCacheTTL + time.Second)
+	_, _ = h.bindWorkspaceGit(context.Background(), sFlaky, runtime.CommandSpec{}, runtime.RunCredentials{})
+	if failCalls != 2 {
+		t.Fatalf("negative cache should retry after expiry, failCalls=%d", failCalls)
+	}
+
+	// User without extractable credentials falls back to <login>@users.noreply.loopforge.invalid,
+	// while the workspace system prompt documents Tier 2 agent extraction.
+	if err := f.s.PutUser(domain.User{ID: 901, LoginName: "plain-user"}); err != nil {
+		t.Fatal(err)
+	}
+	plainUser, _ := f.s.User(901)
+	if err := f.s.SaveGitHTTPCredential(plainUser.ID, "", domain.GitHTTPCredentialSecret{
+		GitHTTPCredential: domain.GitHTTPCredential{Name: "Other", Platform: domain.GitPlatformOther, Host: "git.custom.example"},
+		Token:             "other-tok",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	sPlain := &AgentToolSession{Token: "ws-plain", UserID: plainUser.ID, User: plainUser}
+	_, credsPlain := h.bindWorkspaceGit(context.Background(), sPlain, runtime.CommandSpec{}, runtime.RunCredentials{})
+	if credsPlain.GitUserName != "plain-user" || credsPlain.GitUserEmail != "plain-user@users.noreply.loopforge.invalid" {
+		t.Fatalf("tier-3 fallback = %q <%s>", credsPlain.GitUserName, credsPlain.GitUserEmail)
+	}
+	if !strings.Contains(assistantWorkspaceSystemPrompt, ".loopforge.invalid") || !strings.Contains(assistantWorkspaceSystemPrompt, "git config --local") {
+		t.Fatalf("workspace prompt missing Tier 2 Git identity instructions")
 	}
 }
