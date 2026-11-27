@@ -154,6 +154,12 @@ func (h *runsHandlers) runs(c *gin.Context) {
 			copied := make([]domain.KnowledgeRef, len(*req.KnowledgeRefs))
 			copy(copied, *req.KnowledgeRefs)
 			runKnowledgeRefs = &copied
+			if workflow, ok := h.repo.Workflow(strings.TrimSpace(req.WorkflowID)); ok {
+				if convErr := validateRunManagedKnowledge(h.repo, workflow, copied); convErr != nil {
+					c.JSON(http.StatusBadRequest, gin.H{"error": convErr.Error()})
+					return
+				}
+			}
 		}
 		var repositories []domain.RepositoryContext
 		if wf, ok := h.repo.Workflow(req.WorkflowID); ok && wf.Generic && strings.TrimSpace(project.DefaultRepositoryID) != "" {

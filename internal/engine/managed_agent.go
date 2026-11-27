@@ -77,8 +77,38 @@ func (e *Engine) ManagedAgentAvailable(projectID string, userID int64, provider 
 	return e.personalAgentRunner(ec)
 }
 
+// managedNodeKnowledgeUnsupported rejects knowledge bindings a managed Agent
+// turn cannot honour. resolveNodeAssets only runs on the CLI path, so without
+// this guard a node/run-level KnowledgeRef would be saved, a run would
+// succeed, and the managed Agent would answer without the connector's catalog
+// or retrieval instructions — the silent drop the role-level toggle avoids by
+// refusing KnowledgeBase.
+func managedNodeKnowledgeUnsupported(node domain.WorkflowNode, provider string, runRefs *[]domain.KnowledgeRef) error {
+	effector := func(refs []domain.KnowledgeRef) string {
+		ids := make([]string, 0, len(refs))
+		for _, ref := range refs {
+			ids = append(ids, ref.ConnectorID)
+		}
+		return strings.Join(ids, "、")
+	}
+	if len(node.KnowledgeRefs) > 0 {
+		return fmt.Errorf("%s 节点 %q 关联了知识库连接器 %s，但托管 Agent 不支持知识库绑定，运行时会静默丢弃；请改用 CLI 执行器，或在该节点的角色上移除知识库关联",
+			provider, node.Name, effector(node.KnowledgeRefs))
+	}
+	if runRefs != nil && len(*runRefs) > 0 {
+		return fmt.Errorf("%s 节点 %q 无法使用本次运行指定的知识库连接器 %s：托管 Agent 不支持知识库绑定，运行时会静默丢弃；请启动运行时不指定知识库，或把该节点改用 CLI 执行器",
+			provider, node.Name, effector(*runRefs))
+	}
+	return nil
+}
+
 func (e *Engine) executeManagedAgentNode(ctx context.Context, wf domain.WorkflowDefinition, run domain.Run, node domain.WorkflowNode, agent domain.AgentDefinition, provider string, generation, attempt int) error {
 	if err := agent.ValidateManagedExecutor(provider); err != nil {
+		return err
+	}
+	// Check before the dispatch fence below: a rejected node never sends a
+	// turn, so an explicit retry must not be told a turn is already in flight.
+	if err := managedNodeKnowledgeUnsupported(node, provider, run.ExecutionContext.KnowledgeRefs); err != nil {
 		return err
 	}
 	if run.ExecutionContext.IsEvolutionReplay() {
