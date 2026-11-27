@@ -85,6 +85,10 @@ services:
       AGENTFLOW_GATE_MCP_BINARY: /app/bin/agentflow-gate-mcp-{os}-{arch}
       # Claude Code is not bundled; it is installed from npm here on first use.
       AGENTFLOW_RUNTIME_CLI_DIR: ${LOOPFORGE_DATA_DIR}/cli
+    # Docker sandboxes inherit host mappings declared here, so private
+    # registries, mirrors and Git hosts resolve inside them too.
+    # extra_hosts:
+    #   - "internal.example.com:10.0.0.10"
     command: ["-workspaces", "${LOOPFORGE_DATA_DIR}/workspaces"]
     volumes:
       - platform-data:/data

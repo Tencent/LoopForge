@@ -620,6 +620,40 @@ func parseDockerSandboxMounts(out, absRoot string) map[string]string {
 	return found
 }
 
+// dockerInheritedExtraHosts forwards the extra hosts applied to this process's
+// own container to sandbox containers. Compose puts service extra_hosts into
+// that container's HostConfig, so a private-network deployment only declares
+// them once. It also reports the mapped host names so a caller can skip a
+// default entry the operator already overrode. Native processes have no such
+// container and simply inherit nothing.
+func dockerInheritedExtraHosts(ctx context.Context) ([]string, map[string]bool) {
+	names := map[string]bool{}
+	hostname, err := os.Hostname()
+	if err != nil || strings.TrimSpace(hostname) == "" {
+		return nil, names
+	}
+	out, err := exec.CommandContext(ctx, "docker", "inspect", "--type", "container", "--format", "{{json .HostConfig.ExtraHosts}}", hostname).Output()
+	if err != nil {
+		return nil, names
+	}
+	var entries []string
+	if err := json.Unmarshal([]byte(strings.TrimSpace(string(out))), &entries); err != nil {
+		return nil, names
+	}
+	args := make([]string, 0, 2*len(entries))
+	for _, entry := range entries {
+		entry = strings.TrimSpace(entry)
+		name, address, ok := strings.Cut(entry, ":")
+		name, address = strings.TrimSpace(name), strings.TrimSpace(address)
+		if !ok || name == "" || address == "" || names[name] {
+			continue
+		}
+		names[name] = true
+		args = append(args, "--add-host", entry)
+	}
+	return args, names
+}
+
 func createDocker(ctx context.Context, id, workspace string, p domain.SandboxProfile, requirements SandboxRequirements, dockerfile domain.DockerfileDefinition) (Sandbox, error) {
 	if strings.TrimSpace(dockerfile.Content) == "" {
 		return nil, fmt.Errorf("docker sandbox requires a dockerfile")
@@ -933,6 +967,8 @@ func (s *dockerSandbox) start(ctx context.Context, mode dockerStartMode) error {
 			args = append(args, "--user", fmt.Sprintf("%d:%d", os.Geteuid(), os.Getegid()))
 		}
 	}
+	inheritedHosts, inheritedNames := dockerInheritedExtraHosts(ctx)
+	args = append(args, inheritedHosts...)
 	network := strings.TrimSpace(os.Getenv("AGENTFLOW_DOCKER_NETWORK"))
 	if s.requirements.ConversationRoot != "" || s.requirements.RunnerLoginRelay {
 		_, relayNetwork, err := conversationDockerAccess(ctx)
@@ -942,7 +978,9 @@ func (s *dockerSandbox) start(ctx context.Context, mode dockerStartMode) error {
 		if relayNetwork != "" {
 			network = relayNetwork
 		}
-		args = append(args, "--add-host", "host.docker.internal:host-gateway")
+		if !inheritedNames["host.docker.internal"] {
+			args = append(args, "--add-host", "host.docker.internal:host-gateway")
+		}
 	}
 	if network != "" {
 		args = append(args, "--network", network)
