@@ -122,10 +122,11 @@ func TestToastStackStaysOffPageHeaderActions(t *testing.T) {
 	if _, err := fmt.Sscanf(platform[i+len(chat):], "%dpx}", &px); err != nil || px < 130 {
 		t.Errorf("workbench toast lift must clear the ~125px composer, got %q (err %v)", platform[i:i+len(chat)+8], err)
 	}
-	// Settings and the drawers can open over the workbench; their
-	// footer lift must win, so it is declared after the workbench rule.
-	if j := strings.Index(platform, lift); j >= 0 && j < i {
-		t.Error("the footer lift must come after the workbench composer lift so it wins when both match")
+	// A drawer can stay open over the workbench. Both selectors have the same
+	// specificity, so the later rule wins; the workbench lift is higher than the
+	// 84px footer lift and clears the drawer footer too, so it must come last.
+	if j := strings.Index(platform, lift); j >= 0 && j > i {
+		t.Error("the workbench composer lift must come after the footer lift so a drawer open over the workbench does not drop the toast back to 84px")
 	}
 	// Each drawer in the lift must be opened with the class the selector names.
 	for drawer, script := range map[string]string{"kbDrawer": "knowledge.js", "kbConnDrawer": "app/knowledge.js", "repoDrawer": "app/repo_drawer.js"} {
