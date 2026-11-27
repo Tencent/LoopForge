@@ -195,7 +195,7 @@ async function publishSharedSchedule(e){
     sharedScheduleCatalog=sharedScheduleCatalog.filter(item=>item.id!==v.id).concat(v);
     renderScheduleJobs();
     if(request===sharedSchedulePublishRequest){$('#sharedSchedulePublishModal').classList.remove('open');$('#newAISchedule').focus()}
-    toast(`已发布 ${v.name} v${v.version}，其他项目可从「共享任务市场」订阅`);
+    toast(lfT(`已发布 ${v.name} v${v.version}，其他项目可从「共享任务市场」订阅`,`Published ${v.name} v${v.version}. Other projects can subscribe to it from the Shared task market`));
   }catch(err){if(request===sharedSchedulePublishRequest)$('#sharedSchedulePublishError').textContent=err.message}
   finally{if(request===sharedSchedulePublishRequest)button.disabled=false}
 }

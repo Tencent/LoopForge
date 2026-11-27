@@ -1162,4 +1162,26 @@ Object.assign(window.LF_I18N_EN, {
   "派发运行": "Dispatched runs",
   "全部时间": "All time",
   "待对齐基线": "Waiting for baseline alignment",
+  // "AI 定时任务" and "共享任务市场" are 6+ characters, so i18n.js also replaces
+  // them inside longer Chinese sentences. Every sentence that contains them gets
+  // a whole-sentence entry so English never shows "AI scheduled task最多引用…".
+  "AI 定时任务已执行": "AI scheduled task ran",
+  "AI 定时任务引用功能未就绪": "AI scheduled task references are not available yet",
+  "AI 定时任务引用的项目资产无效，请重新选择后保存": "The AI scheduled task references an invalid project asset. Select it again, then save",
+  "AI 定时任务必须填写提示词": "An AI scheduled task needs a prompt",
+  "AI 定时任务最多引用 12 个项目资产": "An AI scheduled task can reference up to 12 project assets",
+  "请填写 AI 定时任务的提示词": "Enter a prompt for the AI scheduled task",
+  "仅独立 AI 定时任务可以发布共享版本": "Only standalone AI scheduled tasks can publish a shared version",
+  "只能从当前项目的独立 AI 定时任务发布共享版本": "Shared versions can only be published from a standalone AI scheduled task in this project",
+  "订阅需要明确的共享任务和版本，且必须是 AI 定时任务": "A subscription needs a specific shared task and version, and it must be an AI scheduled task",
+  "共享任务引用资产不可用": "A project asset referenced by the shared task is unavailable",
+  "不支持随 AI 定时任务共享": "can't be shared with an AI scheduled task",
+  "读取 AI 定时任务失败": "Failed to load AI scheduled tasks",
+  "当前项目还没有 AI 定时任务，点击右上角「新建 AI 定时任务」。": "This project has no AI scheduled tasks yet. Click “New AI scheduled task” at the top right.",
+  "请先在顶栏选择项目，再管理 AI 定时任务。": "Select a project in the top bar first, then manage AI scheduled tasks.",
+  "请先在顶栏选择项目，再查看执行记录。": "Select a project in the top bar first, then view the run history.",
+  "还没有共享任务。在本项目的独立 AI 定时任务旁点击「发布共享」，即可供其他项目订阅。": "No shared tasks yet. Click “Publish as shared” next to a standalone AI scheduled task in this project so other projects can subscribe.",
+  "还没有机器人。三步完成配置，随后在 LOOP 设置或 AI 定时任务中选择这个 Bot。": "No bots yet. Set one up in three steps, then choose it in LOOP settings or in an AI scheduled task.",
+  "端到端 = 该需求最近一次执行的开始到结束，含等待。": "End-to-end = from the start to the end of this requirement's latest run, including waits.",
+  "这是本地模拟执行结果，用于验证消息结构、人工确认和 Bot 通知联动。实际任务状态以平台显示为准。": "This is a simulated local result for checking the message layout, human review and Bot notifications. The platform shows the actual task status.",
 });
