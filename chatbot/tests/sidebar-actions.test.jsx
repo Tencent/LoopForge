@@ -110,6 +110,30 @@ describe("App 2-tab sidebar actions (personal / scheduled & scheduled rerun)", (
     expect(await screen.findByText("每日巡检")).toBeTruthy();
   });
 
+  test("guests see a sign-in hint on both tabs instead of an endless connecting label", async () => {
+    const user = chat.user;
+    const ready = chat.ready;
+    chat.user = { id: 0, loginName: "guest", chineseName: "访客", isGuest: true };
+    chat.ready = false;
+    globalThis.fetch = vi.fn(async () => ({ ok: true, status: 200, json: async () => [] }));
+    try {
+      render(<App />);
+      const toggle = screen.queryByRole("button", { name: "显示会话侧边栏" });
+      if (toggle) fireEvent.click(toggle);
+
+      expect(screen.getByText("登录后查看历史会话")).toBeTruthy();
+      expect(screen.queryByText("正在连接…")).toBeNull();
+
+      fireEvent.click(screen.getByRole("tab", { name: /定时任务/ }));
+      expect(screen.getByText("登录后查看历史会话")).toBeTruthy();
+      expect(screen.queryByText("正在连接…")).toBeNull();
+      expect(screen.queryByText("还没有定时任务会话")).toBeNull();
+    } finally {
+      chat.user = user;
+      chat.ready = ready;
+    }
+  });
+
   test("triggers scheduled job rerun from top context banner and sidebar quick button via POST", async () => {
     const schedSession = {
       id: "sched-s1",

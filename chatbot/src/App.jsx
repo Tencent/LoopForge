@@ -2036,7 +2036,11 @@ export default function App() {
                   ) : (
                     <div className="empty-session-list">
                       <p className="end-label">
-                        {chat.ready ? "还没有定时任务会话" : "正在连接…"}
+                        {chat.user?.isGuest
+                          ? "登录后查看历史会话"
+                          : chat.ready
+                            ? "还没有定时任务会话"
+                            : "正在连接…"}
                       </p>
                     </div>
                   )
@@ -2069,7 +2073,11 @@ export default function App() {
                     ) : (
                       <div className="empty-session-list">
                         <p className="end-label">
-                          {chat.ready ? "还没有定时任务会话" : "正在连接…"}
+                          {chat.user?.isGuest
+                            ? "登录后查看历史会话"
+                            : chat.ready
+                              ? "还没有定时任务会话"
+                              : "正在连接…"}
                         </p>
                       </div>
                     )}

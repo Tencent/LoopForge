@@ -973,6 +973,17 @@ Object.assign(window.LF_I18N_EN, {
   "系统轻量隔离直接使用执行机器上已安装的语言和工具，系统目录只读，只有工作区可写。需要的设置（如 JAVA_HOME、代理）写进下面的环境变量。仓库从执行机器的仓库缓存共享克隆，不重复下载。": "Lightweight system isolation uses the languages and tools installed on the execution machine. System directories are read-only and only the workspace is writable. Put settings such as JAVA_HOME or a proxy in the environment variables below. Repositories are shared clones of the execution machine's repository cache, so they are not downloaded again.",
 });
 
+// #1512 UI polish copy: guest session, role empty states, issue search, runner onboarding.
+Object.assign(window.LF_I18N_EN, {
+  "访客会话 · 未登录": "Guest session · Not signed in",
+  "<登录后自动生成>": "<Generated after sign-in>",
+  "没有匹配的角色": "No matching Roles",
+  "尝试更换关键词，或清除筛选条件。": "Try different keywords, or clear the filters.",
+  "调整搜索关键词，或新建一个角色。": "Adjust your search or create a Role.",
+  "点击右上角「新建角色」即可创建第一个角色。": "Click \"New role\" in the top right to create your first Role.",
+  "模糊搜索标题、编号或描述": "Fuzzy search titles, IDs, or descriptions",
+  "支持 Claude Code / Codex / Antigravity 账号登录": "Account login for Claude Code, Codex and Antigravity",
+});
 Object.assign(window.LF_I18N_EN, {
   "凭据管理": "Credentials",
   "项目凭据": "Project credentials",
