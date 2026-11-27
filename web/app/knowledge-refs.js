@@ -76,7 +76,7 @@ window.editKnowledgeRefs = async function editKnowledgeRefs(project, refs, save)
     for (const ref of (refs || [])) {
       const rid = getRefId(ref);
       if (rid && !options.some(s => s.id === rid)) {
-        options.push({ id: rid, name: rid + '（已失效或无权限）', missing: true });
+        options.push({ id: rid, name: rid + lfT('（已失效或无权限）', ' (expired or unauthorized)'), missing: true });
       }
     }
 

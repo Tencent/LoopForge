@@ -47,6 +47,14 @@ const ROUTES = [
         { kind: 'sop', label: '库存缺陷修复 LOOP', subLabel: '开发实现 · 开发实现', callCount: 2, runId: 'run-1', nodeId: 'implement' },
         { kind: 'chat', label: CHAT_TITLE, subLabel: '个人对话', callCount: 1, sessionId: 'ses-1' },
       ],
+    }, {
+      connectorId: 'kb_obs', connectorName: '团队 Obsidian 笔记', sourceName: '库存系统', documentId: 'doc-2',
+      title: '发布与回滚', searchHitCount: 1, readCount: 0, citedCount: 0, callCount: 2,
+      // Callers without a title: the server falls back to the Chinese kind name.
+      topCallers: [
+        { kind: 'scheduled', label: '定时任务', subLabel: '定时任务', callCount: 1 },
+        { kind: 'chat', label: '个人对话', subLabel: '个人对话', callCount: 1 },
+      ],
     }],
   } },
   { method: 'GET', path: /^\/api\/knowledge\/usage\/events/, body: {
@@ -82,13 +90,15 @@ test('English mode leaves no Chinese copy in 我的知识库 (gallery, connector
   const { root } = await renderEnglishKnowledge(t);
   assert.deepEqual(leftoverChinese(root), []);
   const text = root.textContent.replace(/\s+/g, ' ');
-  assert.match(text, /6 calls in total · 4 document hits\/reads · cited 1 times/);
+  assert.match(text, /6 calls in total · 4 document hits\/reads · cited 1 time\b/);
+  // Connector card: the label keeps its space before the user-named connector.
+  assert.match(text, /Connector: 团队 Obsidian 笔记/);
   assert.match(text, /Timeout: 30s/);
   assert.match(text, /Popular knowledge bases · Quick setup/);
   // User data is shown as written, not run through fragment translation.
   assert.ok(root.querySelector('.kb-card h3, h3[data-i18n-data]').textContent.includes('团队 Obsidian 笔记'));
   const pills = [...root.querySelectorAll('.kb-usage-caller-name')].map(el => el.textContent);
-  assert.deepEqual(pills, ['库存缺陷修复 LOOP · 开发实现', CHAT_TITLE]);
+  assert.deepEqual(pills, ['库存缺陷修复 LOOP · 开发实现', CHAT_TITLE, 'Scheduled task', 'Personal chat']);
 });
 
 test('English mode leaves no Chinese copy in the knowledge call history and keeps user titles intact', async (t) => {
@@ -112,5 +122,51 @@ test('caller sub-labels drop repeated role/node names and the kind already shown
   app.evaluate("switchView('knowledge')");
   await settle(12);
   const names = [...app.document.querySelectorAll('.kb-usage-caller-name')].map(el => el.textContent);
-  assert.deepEqual(names, ['库存缺陷修复 LOOP · 开发实现', CHAT_TITLE]);
+  assert.deepEqual(names, ['库存缺陷修复 LOOP · 开发实现', CHAT_TITLE, '定时任务', '个人对话']);
+});
+
+test('English caller pills translate server fallback names and use the shared dictionary wording', async (t) => {
+  const { root } = await renderEnglishKnowledge(t);
+  const pills = [...root.querySelectorAll('.kb-usage-caller-pill')];
+  const scheduled = pills.find(el => el.querySelector('.kb-usage-caller-tag').textContent === 'Scheduled task');
+  const chat = pills.filter(el => el.querySelector('.kb-usage-caller-tag').textContent === 'Personal chat').pop();
+  assert.ok(scheduled && chat);
+  assert.equal(scheduled.querySelector('.kb-usage-caller-name').textContent, 'Scheduled task');
+  assert.equal(scheduled.getAttribute('title'), 'Scheduled task · Scheduled task');
+  assert.equal(chat.querySelector('.kb-usage-caller-name').textContent, 'Personal chat');
+  assert.equal(chat.getAttribute('title'), 'Personal chat · Personal chat');
+  assert.deepEqual(leftoverChinese(root), []);
+});
+
+test('English counts use singular forms for one item', async (t) => {
+  const app = await loadApp({ routes: ROUTES.map(r => r.path === '/api/knowledge/usage'
+    ? { ...r, body: { ...r.body, totalCalls: 1, totalDocumentCalls: 1, totalCitedCount: 1, connectors: [{ connectorId: 'kb_obs', connectorName: '团队 Obsidian 笔记', callCount: 1 }] } }
+    : r) });
+  t.after(app.close);
+  app.evaluate("window.lfT = (zh, en) => en; toast = () => {};");
+  app.evaluate("switchView('knowledge')");
+  await settle(12);
+  const text = app.document.querySelector('#knowledgeRoot').textContent.replace(/\s+/g, ' ');
+  assert.match(text, /1 call in total · 1 document hit\/read · cited 1 time\b/);
+  assert.match(text, /\b1 call\b/);
+  assert.doesNotMatch(text, /\b1 (calls|times|docs)\b/);
+});
+
+test('English 关联知识库 dialog keeps the unavailable-connector suffix in English', async (t) => {
+  const app = await loadApp({ routes: [{ method: 'GET', path: '/api/knowledge/reference-options', body: [] }] });
+  t.after(app.close);
+  app.evaluate("window.lfT = (zh, en) => en; toast = () => {};");
+  app.evaluate("window.editKnowledgeRefs('', [{ connectorId: 'kb_gone' }], async () => {})");
+  await settle(12);
+  const en = await englishPage();
+  t.after(() => en.close());
+  const root = en.document.createElement('div');
+  const modal = app.document.querySelector('.kr-service')?.closest('.modal, [role="dialog"], .kr-modal') || app.document.querySelector('.kr-service').parentElement;
+  root.innerHTML = modal.outerHTML;
+  en.document.body.append(root);
+  await new Promise(resolve => en.setTimeout(resolve, 0));
+  const titles = [...root.querySelectorAll('.kr-service-title')].map(el => el.textContent);
+  assert.deepEqual(titles, ['kb_gone (expired or unauthorized)']);
+  const aria = root.querySelector('.kr-control[aria-label]').getAttribute('aria-label');
+  assert.equal(aria, 'Allowed source IDs for kb_gone (expired or unauthorized)');
 });

@@ -292,6 +292,11 @@
     ];
   }
 
+  // English count phrase: "1 doc" / "2 docs".
+  function kbPlural(n, one, many) {
+    return `${n} ${Number(n) === 1 ? one : many}`;
+  }
+
   function kbEsc(s) {
     return String(s == null ? '' : s)
       .replace(/&/g, '&amp;')
@@ -505,7 +510,7 @@
     const toolsHTML = tools.length
       ? `<div class="kb-chip-row"><span class="kb-muted">只读工具：</span>${tools.map(t => `<code class="kb-chip">${kbEsc(t)}</code>`).join('')}</div>`
       : '';
-    const srcNote = sources.length ? lfT(` · 发现 ${sources.length} 个子知识库`, ` · ${sources.length} sub-sources found`) : '';
+    const srcNote = sources.length ? lfT(` · 发现 ${sources.length} 个子知识库`, ` · ${kbPlural(sources.length, 'sub-source', 'sub-sources')} found`) : '';
     return `
       <div class="kb-check-banner ok">
         <div><strong>探测通过 · 连接正常</strong> · ${latency} ms${srcNote}</div>
@@ -526,7 +531,7 @@
           ${sources.map(src => `
             <div class="kb-source-pill">
               <div class="kb-source-title" data-i18n-data>${kbEsc(src.name || src.id)}</div>
-              <div class="kb-source-sub"><code>${kbEsc(src.id)}</code>${src.docCount != null ? ` · ${lfT(`${Number(src.docCount)} 篇文档`, `${Number(src.docCount)} docs`)}` : ''}</div>
+              <div class="kb-source-sub"><code>${kbEsc(src.id)}</code>${src.docCount != null ? ` · ${lfT(`${Number(src.docCount)} 篇文档`, kbPlural(Number(src.docCount), 'doc', 'docs'))}` : ''}</div>
             </div>
           `).join('')}
         </div>
@@ -875,7 +880,7 @@
               <span class="hui-badge" data-size="sm" data-tone="neutral">${kbEsc(meta?.name || conn.type)}</span>
               <span class="hui-badge" data-size="sm" data-tone="${conn.enabled ? 'success' : 'neutral'}">${conn.enabled ? '已启用' : '已停用'}</span>
               ${renderConnectorAuthBadgeHTML(conn)}
-              ${kbState.usage ? `<button type="button" class="hui-badge kb-usage-badge-btn" data-size="sm" data-tone="neutral" data-kb-conn-calls="${kbEsc(conn.id)}" title="查看该连接器的调用明细">${lfT(`调用 ${callCount} 次`, `${callCount} ${callCount === 1 ? 'call' : 'calls'}`)}</button>` : ''}
+              ${kbState.usage ? `<button type="button" class="hui-badge kb-usage-badge-btn" data-size="sm" data-tone="neutral" data-kb-conn-calls="${kbEsc(conn.id)}" title="查看该连接器的调用明细">${lfT(`调用 ${callCount} 次`, kbPlural(callCount, 'call', 'calls'))}</button>` : ''}
             </div>
           </div>
           <div class="kb-row-actions">
@@ -930,7 +935,7 @@
                 ${statusBadgeHTML}
               </div>
               <p class="kb-vendor-desc">${kbEsc(v.desc)}</p>
-              ${isConfigured ? `<div class="kb-vendor-meta">已绑定连接器：<span data-i18n-data>${kbEsc(conn.name)}</span></div>` : ''}
+              ${isConfigured ? `<div class="kb-vendor-meta">${lfT('已绑定连接器：', 'Connector: ')}<span data-i18n-data>${kbEsc(conn.name)}</span></div>` : ''}
             </div>
           </div>
           <div class="kb-vendor-actions">
@@ -982,9 +987,9 @@
   function formatUsageCallerKindLabel(kind) {
     switch (String(kind || '').toLowerCase()) {
       case 'sop': return 'SOP';
-      case 'space': return lfT('协作空间', 'Shared space');
-      case 'clarify': return lfT('需求澄清', 'Clarification');
-      case 'scheduled': return lfT('定时任务', 'Scheduled job');
+      case 'space': return lfT('协作空间', 'Workspace');
+      case 'clarify': return lfT('需求澄清', 'Requirement clarification');
+      case 'scheduled': return lfT('定时任务', 'Scheduled task');
       case 'report': return lfT('分析报告', 'Analysis report');
       default: return lfT('个人对话', 'Personal chat');
     }
@@ -1036,6 +1041,15 @@
       parts.push(part);
     }
     return parts.join(' · ');
+  }
+
+  // Top callers come from the server, which falls back to the Chinese kind name
+  // (or "SOP 运行") when a caller has no title; show the localized name instead.
+  function callerPillLabel(label, kind) {
+    const text = String(label || '').trim();
+    if (!text || text === (CALLER_KIND_ZH[kind] || CALLER_KIND_ZH.chat)) return formatUsageCallerKindLabel(kind);
+    if (kind === 'sop' && text === 'SOP 运行') return lfT('SOP 运行', 'SOP run');
+    return text;
   }
 
   function callerJumpAttrs(target) {
@@ -1115,15 +1129,17 @@
     return `
       <div class="kb-usage-caller-pills">
         ${callers.map(c => {
-          const kindLabel = formatUsageCallerKindLabel(c.kind);
-          const subLabel = callerSubLabel(c.subLabel, String(c.kind || 'chat').toLowerCase());
+          const kind = String(c.kind || 'chat').toLowerCase();
+          const kindLabel = formatUsageCallerKindLabel(kind);
+          const label = callerPillLabel(c.label, kind);
+          const subLabel = callerSubLabel(c.subLabel, kind);
           const countText = Number(c.callCount || 0) > 1 ? ` ×${Number(c.callCount)}` : '';
-          const titleText = subLabel ? `${kindLabel} · ${c.label} (${subLabel})` : `${kindLabel} · ${c.label}`;
+          const titleText = subLabel ? `${kindLabel} · ${label} (${subLabel})` : `${kindLabel} · ${label}`;
           const jumpAttr = callerJumpAttrs(c);
           if (jumpAttr) {
-            return `<button type="button" class="kb-usage-caller-pill is-link" ${jumpAttr} title="${kbEsc(titleText)}" data-i18n-data><span class="kb-usage-caller-tag">${kbEsc(kindLabel)}</span><span class="kb-usage-caller-name">${kbEsc(c.label)}${subLabel ? ` · ${kbEsc(subLabel)}` : ''}</span>${countText ? `<span class="kb-usage-caller-cnt">${kbEsc(countText)}</span>` : ''}</button>`;
+            return `<button type="button" class="kb-usage-caller-pill is-link" ${jumpAttr} title="${kbEsc(titleText)}" data-i18n-data><span class="kb-usage-caller-tag">${kbEsc(kindLabel)}</span><span class="kb-usage-caller-name">${kbEsc(label)}${subLabel ? ` · ${kbEsc(subLabel)}` : ''}</span>${countText ? `<span class="kb-usage-caller-cnt">${kbEsc(countText)}</span>` : ''}</button>`;
           }
-          return `<span class="kb-usage-caller-pill" title="${kbEsc(titleText)}" data-i18n-data><span class="kb-usage-caller-tag">${kbEsc(kindLabel)}</span><span class="kb-usage-caller-name">${kbEsc(c.label)}${subLabel ? ` · ${kbEsc(subLabel)}` : ''}</span>${countText ? `<span class="kb-usage-caller-cnt">${kbEsc(countText)}</span>` : ''}</span>`;
+          return `<span class="kb-usage-caller-pill" title="${kbEsc(titleText)}" data-i18n-data><span class="kb-usage-caller-tag">${kbEsc(kindLabel)}</span><span class="kb-usage-caller-name">${kbEsc(label)}${subLabel ? ` · ${kbEsc(subLabel)}` : ''}</span>${countText ? `<span class="kb-usage-caller-cnt">${kbEsc(countText)}</span>` : ''}</span>`;
         }).join('')}
       </div>
     `;
@@ -1198,7 +1214,7 @@
           <option value="chat"${f.callerKind === 'chat' ? ' selected' : ''}>对话 / 助手</option>
         </select>
         <input type="search" class="kb-input kb-usage-search" data-kb-usage-filter="query" value="${kbEsc(f.query)}" placeholder="搜索文档、调用方或检索词…" aria-label="搜索调用明细">
-        ${f.documentId ? `<span class="kb-usage-doc-chip"><span>文档：<span data-i18n-data>${kbEsc(f.documentLabel || f.documentId)}</span></span><button type="button" class="kb-usage-chip-close" data-kb-clear-doc-filter aria-label="清除文档筛选">×</button></span>` : ''}
+        ${f.documentId ? `<span class="kb-usage-doc-chip"><span>${lfT('文档：', 'Document: ')}<span data-i18n-data>${kbEsc(f.documentLabel || f.documentId)}</span></span><button type="button" class="kb-usage-chip-close" data-kb-clear-doc-filter aria-label="清除文档筛选">×</button></span>` : ''}
         ${hasFilter ? '<button type="button" class="kb-btn xs" data-kb-clear-usage-filters>重置筛选</button>' : ''}
       </div>
     `;
@@ -1286,7 +1302,7 @@
         <div class="kb-usage-head">
           <div>
             <h2>知识库与文档调用统计</h2>
-            <p class="kb-muted">${lfT(`累计调用 ${totalCalls} 次 · 文档命中/读取 ${totalDocCalls} 次 · 已引用 ${totalCited} 次`, `${totalCalls} calls in total · ${totalDocCalls} document hits/reads · cited ${totalCited} times`)}</p>
+            <p class="kb-muted">${lfT(`累计调用 ${totalCalls} 次 · 文档命中/读取 ${totalDocCalls} 次 · 已引用 ${totalCited} 次`, `${kbPlural(totalCalls, 'call', 'calls')} in total · ${kbPlural(totalDocCalls, 'document hit/read', 'document hits/reads')} · cited ${kbPlural(totalCited, 'time', 'times')}`)}</p>
           </div>
           <div class="kb-usage-head-actions">
             <div class="kb-usage-tabs" role="tablist" aria-label="统计视图">
