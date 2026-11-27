@@ -17,7 +17,7 @@ import (
 // that opened with a plan before calling tools must be judged by the text
 // written after the tools, as the other CLIs report it.
 func TestAssistantProgressTextJudgesTextAfterLastToolCall(t *testing.T) {
-	answer := "仓库：登记 1 个 GitHub 仓库，默认分支 main。\n\n成员：只有负责人 roberttwang。"
+	answer := "仓库：登记 1 个 GitHub 仓库，默认分支 main。\n\n成员：只有负责人 alice。"
 	plan := "我先查本项目的代码仓库和成员，再分段总结。"
 	cases := []struct {
 		name     string
@@ -188,6 +188,48 @@ JSON
 	}
 }
 
+// A plan written as a numbered list before the tools, with nothing after
+// them, is still a progress note: the turn continues instead of delivering
+// the plan as the answer.
+func TestAssistantMultiLinePlanBeforeToolsStillContinues(t *testing.T) {
+	h, user := workbenchFixture(t)
+	h.titleSummary = func(context.Context, domain.User, string) (string, error) { return "", nil }
+	dir := t.TempDir()
+	counter := filepath.Join(dir, "calls")
+	bin := filepath.Join(dir, "codebuddy")
+	script := `#!/bin/sh
+n=0
+if [ -f '` + counter + `' ]; then read -r n < '` + counter + `'; fi
+n=$((n + 1))
+echo "$n" > '` + counter + `'
+if [ "$n" -gt 1 ]; then
+cat <<'JSON'
+{"type":"assistant","message":{"content":[{"type":"text","text":"项目里有四个 LOOP，均在正常运行。"}]}}
+{"type":"result","result":"项目里有四个 LOOP，均在正常运行。"}
+JSON
+exit 0
+fi
+cat <<'JSON'
+{"type":"assistant","message":{"content":[{"type":"text","text":"我先查看项目里的 LOOP：\n1. 读取工作流配置\n2. 汇总节点状态"}]}}
+{"type":"assistant","message":{"content":[{"type":"tool_use","id":"list-1","name":"mcp__agentflow__workflows_list","input":{}}]}}
+{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"list-1","content":"[]"}]}}
+{"type":"result","result":"我先查看项目里的 LOOP：\n1. 读取工作流配置\n2. 汇总节点状态"}
+JSON
+`
+	if err := os.WriteFile(bin, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AGENTFLOW_CODEBUDDY_BIN", bin)
+	h.generate = nil
+	body, _ := json.Marshal(assistantRequest{SessionID: "multi-line-plan", ProjectID: "workbench", Messages: []assistantMessage{{Role: "user", Content: "查看已有 LOOP 并给出结果"}}})
+	c, rec := workbenchContext(user, "POST", "/api/assistant/chat", bytes.NewBuffer(body))
+	h.chat(c)
+	calls, _ := os.ReadFile(counter)
+	if rec.Code != 200 || strings.TrimSpace(string(calls)) != "2" || !strings.Contains(rec.Body.String(), "均在正常运行") {
+		t.Fatalf("calls=%s code=%d body=%s", strings.TrimSpace(string(calls)), rec.Code, rec.Body.String())
+	}
+}
+
 // A Bot reply is judged the same way: the joined plan and answer is the
 // reply, and the CLI is not run again in terminal-only mode for it.
 func TestBotJoinedResultAfterToolsIsNotRetriedAsProgress(t *testing.T) {
@@ -220,18 +262,34 @@ JSON
 }
 
 // A reply is a progress note only when every line is a plan. The first case
-// is the text a real Cursor (grok-4.7) turn wrote after its last tool call.
+// is the text a real Cursor (grok-4.7) turn wrote after its last tool call,
+// with the repository and login renamed.
 func TestAssistantProgressOnlyRequiresEveryLineToBeAPlan(t *testing.T) {
 	cases := []struct {
 		text     string
 		progress bool
 	}{
-		{"我先查了本项目的代码仓库和成员，结论如下。\n\n仅 1 个 GitHub 仓：loopforge-sweep-20261127-1200，分支 main。\n\n所有者编号 2，与当前用户 roberttwang 一致。\n\n加入申请 0 条，接口未返回其他成员。", false},
+		{"我先查了本项目的代码仓库和成员，结论如下。\n\n仅 1 个 GitHub 仓：demo-repo，分支 main。\n\n所有者编号 2，与当前用户 alice 一致。\n\n加入申请 0 条，接口未返回其他成员。", false},
 		{"我先查了仓库：\n- 1 个 GitHub 仓库\n- 默认分支 main", false},
+		{"我先查了本项目的代码仓库和成员，仓库只有 demo-repo。", false},
+		{"稍等，我先查了一下：项目有 4 个 LOOP。", false},
+		{"我先查看项目里的 LOOP。\n项目里有 4 个 LOOP，都在运行。", false},
 		{"我先查看项目里的 LOOP。", true},
 		{"稍等，我先检查", true},
 		{"我先看看 store.py。\n接下来我会补测试。", true},
 		{"我先读代码。\n\n接下来我将运行测试。", true},
+		{"我先了解一下需求。", true},
+		{"我先看看为什么测试挂了。", true},
+		{"我先检查了配置，项目用 MariaDB。", false},
+		// Multi-line plans: numbered or bulleted steps and "然后…" lines
+		// continue the plan.
+		{"我先查看项目里的 LOOP：\n1. 读取工作流配置\n2. 汇总节点状态", true},
+		{"我先查看项目里的 LOOP。\n1. 读取工作流配置\n2. 汇总节点", true},
+		{"我先检查一下当前仓库。\n- 读取配置文件\n- 运行测试", true},
+		{"稍等，我先确认环境。\n然后读取 store.py。", true},
+		{"Let me first check the repository:\n1) read the config\n2) run the tests", true},
+		{"我先按下面的步骤处理：\n① 读取 README\n② 汇总结论", true},
+		{"我先查看仓库：\n- 读取配置\n- 查了 README，项目用 Go 写成", false},
 		{"", false},
 		{"   \n\n  ", false},
 	}

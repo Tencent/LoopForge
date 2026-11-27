@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -1135,24 +1136,77 @@ func assistantProgressOnly(message string, messages []assistantMessage) bool {
 			return false
 		}
 	}
-	// Every line must be a plan: an answer that opens with "我先查了…，结论
-	// 如下。" and then lists the results is not a progress note.
+	// A progress note opens with a plan and only continues it: more plan
+	// sentences, "然后…" steps or the list of steps it is about to take. Any
+	// other line is an answer, and an opening that reports work already done
+	// ("我先查了…，结论如下。") is the start of an answer, not a plan.
+	opened := false
 	for line := range strings.SplitSeq(text, "\n") {
-		if strings.TrimSpace(line) != "" && !assistantProgressSentence(line) {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if !opened {
+			if !assistantProgressSentence(line) {
+				return false
+			}
+			opened = true
+			continue
+		}
+		if !assistantProgressSentence(line) && !assistantPlanStep(line) {
 			return false
 		}
 	}
-	return true
+	return opened
 }
 
+// assistantProgressSentence reports whether a line announces what the model
+// is about to do. "我先查了…" reports what it did and is not a plan.
 func assistantProgressSentence(text string) bool {
 	text = strings.TrimSpace(text)
 	for _, prefix := range []string{"稍等", "请稍等", "好的，我先", "我先", "让我先", "接下来我会", "接下来我将", "我会先", "I'll first", "Let me first"} {
-		if strings.HasPrefix(text, prefix) {
-			return true
+		if rest, ok := strings.CutPrefix(text, prefix); ok {
+			return !assistantReportsDoneWork(rest)
 		}
 	}
 	return false
+}
+
+// assistantPlanStep reports whether a line after a plan opening continues
+// it: a "然后…" step or a list item naming a step still to take.
+func assistantPlanStep(line string) bool {
+	if rest, ok := cutAssistantListMarker(line); ok {
+		return rest != "" && !assistantReportsDoneWork(rest)
+	}
+	for _, prefix := range []string{"然后", "接着", "随后", "之后", "再", "Then", "Next"} {
+		if rest, ok := strings.CutPrefix(line, prefix); ok {
+			return !assistantReportsDoneWork(rest)
+		}
+	}
+	return false
+}
+
+var assistantListMarker = regexp.MustCompile(`^(?:[-*•·]|\d{1,2}[.、)）]|[(（]\d{1,2}[)）]|[①-⑳]|[一二三四五六七八九十]{1,3}、)\s*`)
+
+func cutAssistantListMarker(line string) (string, bool) {
+	marker := assistantListMarker.FindString(line)
+	if marker == "" {
+		return "", false
+	}
+	return strings.TrimSpace(line[len(marker):]), true
+}
+
+// assistantDoneWork matches a clause that opens with a short verb carrying the
+// perfective 了, as in "查了本项目的代码仓库", "检查了配置", "看了一下". A
+// sentence-final 了 further on ("看看为什么测试挂了") is not matched.
+var assistantDoneWork = regexp.MustCompile(`^[^，,。.：:；;！!\s]{1,3}了`)
+
+func assistantReportsDoneWork(rest string) bool {
+	rest = strings.TrimLeft(rest, "，,、 ")
+	for _, prefix := range []string{"我先", "我会先", "让我先"} {
+		rest = strings.TrimPrefix(rest, prefix)
+	}
+	return assistantDoneWork.MatchString(strings.ReplaceAll(rest, "了解", "理解"))
 }
 
 func recoverNativeAssistantReply(raw, projectID string) (assistantReply, bool) {
