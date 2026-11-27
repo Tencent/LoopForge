@@ -9,9 +9,9 @@ import { loadApp, settle, WEB_ROOT } from '../lib/load-app.mjs';
 const HAN = /[㐀-鿿]/;
 const ATTRS = ['placeholder', 'title', 'aria-label', 'data-tip', 'data-tooltip'];
 
-async function englishPage() {
+async function englishPage(extra = []) {
   const dom = new JSDOM('<html data-lang="en"><body></body></html>', { runScripts: 'outside-only', url: 'http://127.0.0.1/' });
-  for (const file of ['i18n-en.js', 'i18n.js']) {
+  for (const file of ['i18n-en.js', 'i18n.js', ...extra]) {
     new vm.Script(await readFile(path.join(WEB_ROOT, file), 'utf8'), { filename: file }).runInContext(dom.getInternalVMContext());
   }
   return dom.window;
@@ -44,9 +44,9 @@ const EXECUTIONS = [
   { id: 'sjx-1', jobId: 'job-ok', jobName: NAME, jobKind: 'assistant', projectId: 'project-1', traceId: '0123456789abcdef0123456789abcdef', triggerOrigin: 'manual_run', status: 'success', assistantMessage: REPLY, sessionId: 'ses-gone', sessionGone: true, startedAt: '2026-11-27T05:27:21Z', finishedAt: '2026-11-27T05:28:24Z', durationMs: 63000 },
   { id: 'sjx-2', jobId: 'job-failed', jobName: '巡检-Cursor', jobKind: 'assistant', projectId: 'project-1', traceId: 'fedcba9876543210fedcba9876543210', triggerOrigin: 'manual_run', status: 'failed', error: ERROR, sessionId: 'ses-failed', startedAt: '2026-11-27T05:32:17Z', finishedAt: '2026-11-27T05:32:17Z', durationMs: 400 },
 ];
-const ROUTES = [
+const routes = (items = EXECUTIONS) => [
   { method: 'GET', path: '/api/assistant/models', body: { default: 'glm-test', models: [{ id: 'glm-test', name: 'GLM Test', family: 'glm' }], engines: [{ id: 'codebuddy', name: 'CodeBuddy', configured: true }] } },
-  { method: 'GET', path: /^\/api\/schedule-job-executions\/dashboard\?/, body: { items: EXECUTIONS, total: 2, records: 2, recentFailed: 1, overview: { current: { total: 2, finished: 2, success: 1, failed: 1, running: 0, avgMs: 31700 }, previous: { total: 0 } } } },
+  { method: 'GET', path: /^\/api\/schedule-job-executions\/dashboard\?/, body: { items, total: items.length, records: items.length, recentFailed: 1, overview: { current: { total: 2, finished: 2, success: 1, failed: 1, running: 0, avgMs: 31700 }, previous: { total: 0 } } } },
 ];
 
 async function englishCopy(t, app, selectors) {
@@ -59,8 +59,8 @@ async function englishCopy(t, app, selectors) {
   return root;
 }
 
-async function scheduleApp(t) {
-  const app = await loadApp({ routes: ROUTES });
+async function scheduleApp(t, executions) {
+  const app = await loadApp({ routes: routes(executions) });
   t.after(app.close);
   // The app page runs i18n.js in Chinese; lfT answers in English like a page loaded with data-lang="en".
   app.evaluate("window.lfT = (zh, en) => en; toast = () => {};");
@@ -160,4 +160,72 @@ test('a job name that equals product copy is shown as typed in English', async (
   assert.ok(!row.textContent.includes('Run history'), 'the task name is not translated to product copy');
   assert.equal(root.querySelector('[data-schedule-menu="job-copy"]').getAttribute('aria-label'), 'More actions: 执行记录');
   assert.equal(root.querySelector('[data-toggle-schedule="job-copy"]').getAttribute('aria-label'), 'Enable 执行记录');
+});
+
+test('English run details label every field in English and keep the reply and run titles as written', async (t) => {
+  const usage = { totalTokens: 1530, inputTokens: 1200, outputTokens: 330, cacheReadTokens: 900, cacheWriteTokens: 12 };
+  const app = await scheduleApp(t, [
+    { ...EXECUTIONS[0], model: 'deepseek-v4.1-flash', usage },
+    { id: 'sjx-3', jobId: 'job-loop', jobName: 'LOOP 巡检', jobKind: 'dispatch', projectId: 'project-1', traceId: 'aa'.repeat(16), triggerOrigin: 'schedule', status: 'success', pulled: 3, dispatched: 1, runs: [{ runId: 'run-1', issueTitle: '执行记录' }], startedAt: '2026-11-27T06:00:00Z', finishedAt: '2026-11-27T06:00:05Z', durationMs: 5000 },
+  ]);
+  app.document.querySelector('[data-ai-schedule-tab="executions"]').click();
+  await settle(8);
+  const root = await englishCopy(t, app, ['#scheduleExecList']);
+  const labels = [...root.querySelectorAll('.sched-exec-fields dt, .sched-exec-detail-text > b')].map((el) => el.textContent);
+  assert.deepEqual(labels.filter((text) => HAN.test(text)), []);
+  for (const label of ['Start time', 'End time', 'Total tokens', 'Input tokens', 'Output tokens', 'Cache read tokens', 'Cache write tokens', 'AI reply', 'Candidates / started', 'Dispatched runs']) {
+    assert.ok(labels.includes(label), `${label} is shown`);
+  }
+  assert.equal(root.querySelector('.sched-exec-detail pre')?.textContent, REPLY);
+  assert.equal(root.querySelector('.sched-exec-run [data-i18n-skip]').textContent, '执行记录', 'a dispatched requirement title is kept as typed');
+});
+
+test('the Harness select panel and trigger keep user-data options as written in English', async (t) => {
+  const en = await englishPage(['app/hui-select.js']);
+  t.after(() => en.close());
+  const doc = en.document;
+  const tick = () => new Promise((resolve) => en.setTimeout(resolve, 0));
+  // The run-history job filter: product copy first, then job names marked as
+  // data. "执行记录" equals product copy ("Run history") and must stay as typed.
+  const options = () => [
+    new en.Option('全部任务', ''),
+    ...[[NAME, 'job-ok'], ['执行记录', 'job-copy']].map(([name, id]) => { const o = new en.Option(name, id); o.dataset.i18nSkip = ''; return o; }),
+    new en.Option('任务失败', 'job-data'),
+  ];
+  const inline = doc.createElement('select');
+  inline.append(...options());
+  inline.options[3].setAttribute('data-i18n-data', '');
+  doc.body.append(inline);
+  await tick();
+  inline.dispatchEvent(new en.MouseEvent('mousedown', { bubbles: true, cancelable: true, button: 0 }));
+  await tick();
+  const labels = (root) => [...root.querySelectorAll('.hui-select-option-label')].map((el) => el.textContent);
+  const panel = doc.querySelector('.hui-select-panel');
+  assert.ok(panel, 'the inline panel opens on mousedown');
+  // Product copy is translated; marked user data is not fragment-translated.
+  assert.deepEqual(labels(panel), ['All tasks', NAME, '执行记录', '任务失败']);
+  assert.deepEqual([...panel.querySelectorAll('.hui-select-option-label')].map((el) => [el.hasAttribute('data-i18n-skip'), el.hasAttribute('data-i18n-data')]), [[false, false], [true, false], [true, false], [false, true]]);
+  en.HuiSelect.closeAll?.();
+
+  // Trigger mode shows the chosen option in its own button: the mark follows
+  // the selection, so switching back to product copy translates again.
+  const trigger = doc.createElement('select');
+  trigger.append(...options());
+  doc.body.append(trigger);
+  const api = en.HuiSelect.enhance(trigger);
+  const value = () => api.trigger.querySelector('.hui-select-value');
+  await tick();
+  assert.equal(value().textContent, 'All tasks');
+  const pick = (index) => { trigger.options[index].selected = true; trigger.dispatchEvent(new en.Event('change')); };
+  pick(2);
+  await tick();
+  assert.equal(value().textContent, '执行记录');
+  assert.ok(value().hasAttribute('data-i18n-skip'));
+  pick(0);
+  await tick();
+  assert.equal(value().textContent, 'All tasks');
+  assert.equal(value().hasAttribute('data-i18n-skip'), false);
+  api.trigger.click();
+  await tick();
+  assert.deepEqual(labels(api.panel), ['All tasks', NAME, '执行记录', '任务失败']);
 });
