@@ -39,12 +39,17 @@ func assistantOutboundMCPServers(items []domain.MCPServerDefinition, projectID s
 	return out
 }
 
+// assistantMCPInProject reports whether a conversation in projectID may use
+// item. A personal MCP belongs to its owner (visibleMCPServersForUser has
+// already filtered by owner), so it is usable in every conversation of that
+// owner, including one without a project. Platform and project MCPs need a
+// project to resolve their scope.
 func assistantMCPInProject(item domain.MCPServerDefinition, projectID string) bool {
-	if strings.TrimSpace(projectID) == "" {
-		return false
-	}
 	if item.Scope == "personal" {
 		return true
+	}
+	if strings.TrimSpace(projectID) == "" {
+		return false
 	}
 	if item.ProjectID != "" {
 		return item.ProjectID == projectID
@@ -348,11 +353,11 @@ func (h *assistantHandlers) callAssistantMCPContext(ctx context.Context, user do
 	if h == nil || h.repo == nil {
 		return "", fmt.Errorf("未连接数据源")
 	}
-	if strings.TrimSpace(projectID) == "" {
-		return "", fmt.Errorf("请先在顶栏选择项目后再调用项目 MCP")
-	}
 	server, ok := h.lookupAssistantMCP(projectID, user.ID, call.Server)
 	if !ok {
+		if strings.TrimSpace(projectID) == "" {
+			return "", fmt.Errorf("请先在顶栏选择项目后再调用项目 MCP")
+		}
 		return "", fmt.Errorf("当前项目没有名为 %q 的 MCP，或你无权使用", strings.TrimSpace(call.Server))
 	}
 	transport := strings.ToLower(strings.TrimSpace(server.Transport))
