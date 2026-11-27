@@ -1,5 +1,6 @@
 import React, { useEffect } from "react";
 import HarnessIcon from "./HarnessIcon";
+import visualStudioCodeLogo from "./assets/visual-studio-code.svg";
 import "./workspace-ide.css";
 
 // The same vscode-web workbench the LOOP run record embeds (web/vscode.html),
@@ -64,7 +65,9 @@ export function WorkspaceIDEPicker({ runId, desktopIDE, onOpenOnline }) {
         aria-labelledby="desktop-ide-label"
         aria-describedby="desktop-ide-detail"
       >
-        <span className="workspace-ide-option-icon"><HarnessIcon name="monitor" size={22} /></span>
+        <span className="workspace-ide-option-icon">
+          <img src={visualStudioCodeLogo} alt="" width={22} height={22} />
+        </span>
         <span className="workspace-ide-option-copy">
           <strong id="desktop-ide-label">本地 Visual Studio Code</strong>
           <span id="desktop-ide-detail">{desktopDetail}</span>

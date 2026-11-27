@@ -44,6 +44,7 @@ SOFTWARE.
 
 - `web/monaco/`: Monaco Editor, MIT, Microsoft. The original `LICENSE` and `ThirdPartyNotices.txt` are included.
 - `web/vscode-web/`: Code-OSS web distribution from `vscode-web@1.91.1`, based on Microsoft Visual Studio Code. The Code-OSS MIT license and upstream third-party notices are included in that directory. This is not the proprietary Microsoft-branded Visual Studio Code distribution.
+- The desktop IDE launcher bundles Microsoft's blue Visual Studio Code icon at `chatbot/src/assets/visual-studio-code.svg`. Visual Studio Code and its icon are trademarks of Microsoft Corporation. [Visual Studio Code branding and icon download](https://code.visualstudio.com/brand)
 - `go.mod` / `go.sum`: Go dependencies; complete original module licenses and notices are bundled in `third_party/go/THIRD_PARTY_NOTICES.txt`. Refresh with `python3 scripts/collect-go-notices.py --write` after reviewing dependency changes. Binary distributions must retain this bundle.
 
 ## Executor CLI packages
