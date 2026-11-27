@@ -32,7 +32,10 @@ const context = vm.createContext({
   openIssueDetail: () => {}, openRunFromId: () => {}, switchView: () => {}, openSOPWizard: () => {},
 });
 vm.runInContext('let commandMatches=[],commandSelectedIndex=0;', context);
-for (const name of ['commandCatalog', 'renderCommandResults', 'issueKeyLabel', 'issuePriorityLabel', 'issueStatusLabel']) vm.runInContext(source(name), context);
+const helpers = ['commandCatalog', 'renderCommandResults', 'issueKeyLabel', 'issuePriorityLabel', 'issueStatusLabel'];
+// issueKeyLabel may delegate to the shared key rule issueKeyFor (#1517); load it when the bundle has it.
+if (/^function issueKeyFor\(/m.test(bundle)) helpers.push('issueKeyFor');
+for (const name of helpers) vm.runInContext(source(name), context);
 function search(query) {
   elements['#commandSearch'].value = query;
   context.renderCommandResults();
