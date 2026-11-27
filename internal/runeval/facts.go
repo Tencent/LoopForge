@@ -50,6 +50,7 @@ func BuildFacts(run domain.Run, catalog domain.RunEvalCatalog) domain.RunEvalFac
 	lifecycle := map[string]int{}
 	verification := map[string]int{}
 	toolCounts := map[string]*domain.RunEvalToolRepeat{}
+	toolCalls := map[evalToolCallKey]*evalToolCall{}
 	errorCounts := map[string]*domain.RunEvalErrorFact{}
 	var digest []domain.RunEvalDigestEvent
 	for _, ev := range run.Telemetry {
@@ -61,7 +62,7 @@ func BuildFacts(run domain.Run, catalog domain.RunEvalCatalog) domain.RunEvalFac
 		case "verification":
 			verification[ev.NodeID]++
 		case "tool":
-			bumpToolRepeat(toolCounts, ev)
+			countToolInvocation(toolCounts, toolCalls, ev)
 		case "error":
 			text := ev.Message
 			if ev.Error != nil && ev.Error.Message != "" {
@@ -194,10 +195,54 @@ func bumpError(bag map[string]*domain.RunEvalErrorFact, nodeID, text string) {
 	item.Count++
 }
 
-// bumpToolRepeat accumulates one tool telemetry event into bag, keyed by node
-// and tool name. Count grows on phase-less, start and finish events; Failed
-// grows on any error signal.
-func bumpToolRepeat(bag map[string]*domain.RunEvalToolRepeat, ev domain.TelemetryEvent) {
+type evalToolCallKey struct {
+	node, session, id string
+	attempt           int
+}
+
+type evalToolCall struct {
+	item   *domain.RunEvalToolRepeat
+	failed bool
+}
+
+// An identified call emits several observations. Count the invocation once,
+// and upgrade it to failed once, without conflating retries or sessions.
+func countToolInvocation(bag map[string]*domain.RunEvalToolRepeat, calls map[evalToolCallKey]*evalToolCall, ev domain.TelemetryEvent) {
+	id := ev.ToolCallID
+	if id == "" && ev.Tool != nil {
+		id = ev.Tool.CallID
+	}
+	if id == "" {
+		bumpToolRepeat(bag, ev)
+		return
+	}
+	failed := toolEventFailed(ev)
+	if ev.Phase == "progress" && !failed {
+		return
+	}
+	session := ev.SessionID
+	if session == "" {
+		session = ev.Context.SessionID
+	}
+	key := evalToolCallKey{node: ev.NodeID, session: session, id: id, attempt: ev.Context.Attempt}
+	call := calls[key]
+	if call == nil {
+		item := toolRepeatEntry(bag, ev)
+		item.Count++
+		call = &evalToolCall{item: item}
+		calls[key] = call
+	}
+	if failed && !call.failed {
+		call.item.Failed++
+		call.failed = true
+	}
+}
+
+func toolEventFailed(ev domain.TelemetryEvent) bool {
+	return ev.Error != nil || ev.Phase == "error" || ev.Level == "error" || (ev.Tool != nil && ev.Tool.Success != nil && !*ev.Tool.Success)
+}
+
+func toolRepeatEntry(bag map[string]*domain.RunEvalToolRepeat, ev domain.TelemetryEvent) *domain.RunEvalToolRepeat {
 	name := ev.Name
 	if ev.Tool != nil && ev.Tool.Name != "" {
 		name = ev.Tool.Name
@@ -211,10 +256,18 @@ func bumpToolRepeat(bag map[string]*domain.RunEvalToolRepeat, ev domain.Telemetr
 		item = &domain.RunEvalToolRepeat{NodeID: ev.NodeID, Tool: name}
 		bag[key] = item
 	}
+	return item
+}
+
+// bumpToolRepeat accumulates one tool telemetry event into bag, keyed by node
+// and tool name. Count grows on phase-less, start and finish events; Failed
+// grows on any error signal.
+func bumpToolRepeat(bag map[string]*domain.RunEvalToolRepeat, ev domain.TelemetryEvent) {
+	item := toolRepeatEntry(bag, ev)
 	if ev.Phase == "" || ev.Phase == "start" || ev.Phase == "finish" {
 		item.Count++
 	}
-	if ev.Error != nil || ev.Phase == "error" || ev.Level == "error" {
+	if toolEventFailed(ev) {
 		item.Failed++
 	}
 }
