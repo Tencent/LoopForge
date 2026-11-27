@@ -26,6 +26,7 @@ import (
 	"agentflow/internal/repo"
 	"agentflow/internal/runtime"
 	"agentflow/internal/tracker"
+	"agentflow/internal/workspacessh"
 	"github.com/gin-gonic/gin"
 )
 
@@ -76,6 +77,12 @@ func loadDotEnv() {
 }
 
 func main() {
+	if handled, err := workspacessh.RunCLI(os.Args[1:]); handled {
+		if err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
 	if runtime.RunMCPCallCLI(os.Args[1:]) {
 		return
 	}

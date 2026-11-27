@@ -24,6 +24,7 @@ type runsHandlers struct {
 	runnerControls *runnerControlHub
 	evalJobs       *runEvalHub
 	terminals      runtime.TerminalPool
+	workspaceSSH   *workspaceSSHRelay
 	assistant      *assistantHandlers
 }
 

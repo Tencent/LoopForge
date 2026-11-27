@@ -151,6 +151,7 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 		stream.clarifyRun = testClarifyExec
 	}
 	runnerControls := newRunnerControlHub()
+	workspaceSSH := newWorkspaceSSHRelay()
 	runnerControls.sshHostLookup = s.PlatformSSHKnownHosts
 	runnerControls.successor = relayRunnerWorkspaceToSuccessor(e)
 	if bg != nil {
@@ -182,18 +183,20 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 		skillhub:        &skillhubHandlers{deps: d, client: newSkillhubClientFromEnv()},
 		issues:          &issuesHandlers{deps: d, tasks: tasks, stream: stream},
 		tasks:           tasks,
-		runs:            &runsHandlers{deps: d, runnerControls: runnerControls, evalJobs: newRunEvalHub()},
+		runs:            &runsHandlers{deps: d, runnerControls: runnerControls, evalJobs: newRunEvalHub(), workspaceSSH: workspaceSSH},
 		previews:        &previewsHandlers{deps: d},
 		browser:         &browserHandlers{deps: d, runnerControls: runnerControls},
 		stream:          stream,
-		runners:         &runnersHandlers{deps: d, runnerWaiters: newRunnerWaiterRegistry(), runnerControls: runnerControls, runnerBindCodes: map[string]runnerBindCode{}},
+		runners:         &runnersHandlers{deps: d, runnerWaiters: newRunnerWaiterRegistry(), runnerControls: runnerControls, workspaceSSH: workspaceSSH, runnerBindCodes: map[string]runnerBindCode{}},
 		schedule:        &scheduleHandlers{deps: d},
 		tokens:          &tokenHandlers{deps: d},
 		syncAPI:         &syncHandlers{deps: d},
 		know:            &knowledgeHandlers{deps: d, svc: knowledgeSvc, exec: knowledgeExec, legacy: knowledge.NewLegacyService(s, randomID), activity: &knowledgeActivityLog{}},
 		evolution:       newEvolutionHandlers(d),
 	}
-	e.WorkspaceActive = func(run domain.Run) bool { return api.runs.terminals.HasRunScope(run.ID) }
+	e.WorkspaceActive = func(run domain.Run) bool {
+		return api.runs.terminals.HasRunScope(run.ID) || workspaceSSH.hasRun(run.ID)
+	}
 	api.catalog.notifications = api.notifications
 	api.schedule.notifications = api.notifications
 	if syncSvc != nil {
@@ -622,6 +625,8 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.POST("/api/runs/:id/workspace/use", api.runs.workspaceActivity)
 	g.PUT("/api/runs/:id/workspace/file", api.runs.workspaceWrite)
 	g.POST("/api/runs/:id/workspace/terminal", api.runs.workspaceTerminal)
+	g.GET("/api/runs/:id/workspace/ssh/host-key", api.runs.workspaceSSHHostKey)
+	g.GET("/api/runs/:id/workspace/ssh", api.runs.connectWorkspaceSSH)
 	g.POST("/api/runs/:id/browser", api.browser.browser)
 	g.GET("/api/runs/:id/browser/stream", api.browser.stream)
 	g.GET("/api/runs/:id/workspace", api.runs.runWorkspace)
@@ -721,6 +726,7 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.GET("/runners/agentflow-gate-mcp", serveGateMCPBinary)
 	g.GET("/runners/health", api.health)
 	g.GET("/runners/connect", api.runners.runnerControlConnect)
+	g.GET("/runners/workspace-ssh", api.runners.connectRunnerWorkspaceSSH)
 	g.POST("/runners/register", api.runners.runnerRegister)
 	g.POST("/runners/deregister", api.runners.runnerDeregister)
 	g.POST("/runners/disconnect", api.runners.runnerDisconnect)

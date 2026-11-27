@@ -268,6 +268,8 @@ func (d *Daemon) readRunnerWorkspace(ctx context.Context, request domain.RunnerW
 			return domain.RunnerWorkspaceResponse{Status: 409, Error: err.Error()}
 		}
 		return runnerWorkspacePayload(result)
+	case domain.RunnerWorkspaceOperationDesktopSSH:
+		return d.openRunnerWorkspaceSSH(ctx, root, request)
 
 	case domain.RunnerWorkspaceOperationWrite:
 		// The same human may save files while their terminal holds the fence.

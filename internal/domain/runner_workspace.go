@@ -21,6 +21,7 @@ const (
 	RunnerWorkspaceOperationPreparationStatus = "preparation_status"
 	RunnerWorkspaceOperationPreparationRecord = "preparation_record"
 	RunnerWorkspaceOperationTerminal          = "terminal"
+	RunnerWorkspaceOperationDesktopSSH        = "desktop_ssh"
 	RunnerWorkspaceOperationWrite             = "write"
 	RunnerWorkspaceOperationInfo              = "info"
 	RunnerWorkspaceOperationTree              = "tree"
@@ -89,6 +90,7 @@ type RunnerWorkspaceRequest struct {
 	CheckpointLease       string                    `json:"checkpointLease,omitempty"`
 	Checkpoint            []byte                    `json:"checkpoint,omitempty"`
 	Terminal              *WorkspaceTerminalRequest `json:"terminal,omitempty"`
+	DesktopSSH            *WorkspaceSSHRequest      `json:"desktopSsh,omitempty"`
 	TerminalOwner         int64                     `json:"terminalOwner,omitempty"`
 	TerminalGitSSHKeys    map[string]string         `json:"terminalGitSshKeys,omitempty"`
 	GitSSHKnownHosts      *GitSSHKnownHosts         `json:"gitSshKnownHosts,omitempty"`
@@ -109,6 +111,14 @@ type RunnerWorkspaceRequest struct {
 	Query           string              `json:"query,omitempty"`
 	Ref             string              `json:"ref,omitempty"`
 	Repositories    []RepositoryContext `json:"repositories,omitempty"`
+}
+
+// WorkspaceSSHRequest opens an outbound data connection for an authenticated
+// platform request. The ticket and keys never enter task storage.
+type WorkspaceSSHRequest struct {
+	Ticket    string `json:"ticket"`
+	HostSeed  []byte `json:"hostSeed"`
+	ClientKey []byte `json:"clientKey"`
 }
 
 type RunnerMaintenanceRequest struct {

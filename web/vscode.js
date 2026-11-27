@@ -19,6 +19,12 @@
   const status=document.createElement('span');status.className='vscode-toolbar-status';status.textContent='任务 IDE';status.setAttribute('aria-live','polite');
   const actions=document.createElement('div');actions.className='vscode-toolbar-actions';
   const terminal=toolbarAction('terminal','终端','新建终端');terminal.disabled=true;actions.append(terminal);
+  const desktop = toolbarAction('popout', '在 VS Code 打开', '在桌面 VS Code 打开（首次需要配置桌面 SSH）');
+  desktop.disabled = true;
+  desktop.onclick = () => {
+    const hex = value => Array.from(new TextEncoder().encode(value), byte => byte.toString(16).padStart(2, '0')).join('');
+    location.href = 'vscode://vscode-remote/ssh-remote+loopforge-' + hex(location.origin) + '-' + hex(runId) + '/workspace';
+  };
   // Opening the IDE in its own window used to hide behind the status bar
   // corner; embedded views now offer it right in the toolbar.
   if(embedded){const popout=toolbarAction('popout','新窗口打开','在新窗口打开 VS Code');popout.onclick=()=>postParent('popout');actions.append(popout)}
@@ -48,6 +54,7 @@
     const busy = environmentState?.status === 'busy';
     const preparing = preparingEnvironment || environmentState?.status === 'preparing';
     terminal.disabled = !editing || !window.agentflowIDEWorkbench || busy || preparing;
+    desktop.disabled = !editing || preparing || environmentState?.status !== 'ready';
     const details = [editing ? '任务 IDE · 可编辑' : '任务 IDE · 只读'];
     if (editing && busy) details.push('等待工作区空闲…');
     else if (editing && preparing) details.push('正在准备终端环境…');
@@ -151,6 +158,9 @@
       currentInfo = info;
       workspaceReadOnly = info.readOnly !== false;
       editing = !workspaceReadOnly;
+      if (editing && info.desktopSSH && /^[A-Za-z0-9_.-]{1,128}$/.test(runId) && !['.', '..'].includes(runId)) {
+        terminal.after(desktop);
+      }
       paintToolbar();
       if (editing) {
         refreshEnvironment().then(state => {

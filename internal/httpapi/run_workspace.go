@@ -202,6 +202,9 @@ func (h *runsHandlers) runWorkspace(c *gin.Context) {
 			"repositoryDetails": workspaceRepositoryDetails(run),
 		}
 		h.workspaceLifecycleInfo(c, owner, payload, true)
+		if payload["readOnly"] == false && h.workspaceSSHAvailable(run) {
+			payload["desktopSSH"] = true
+		}
 		c.JSON(http.StatusOK, payload)
 	case "/api/runs/:id/workspace/tree":
 		entries, truncated, err := readWorkspaceTree(root, c.Query("path"))
@@ -410,6 +413,9 @@ func (h *runsHandlers) proxyRunnerWorkspace(c *gin.Context, run, owner domain.Ru
 			payload["pauseRequested"] = run.PauseRequested
 			payload["repositoryDetails"] = workspaceRepositoryDetails(run)
 			h.workspaceLifecycleInfo(c, owner, payload, true)
+			if payload["readOnly"] == false && h.workspaceSSHAvailable(run) {
+				payload["desktopSSH"] = true
+			}
 			c.JSON(200, payload)
 			return
 		}
