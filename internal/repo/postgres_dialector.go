@@ -44,14 +44,17 @@ func (d postgresDialector) DataTypeOf(field *schema.Field) string {
 // Migrator binds gorm's migrator to this dialector so AutoMigrate creates the
 // columns with the translated types.
 func (d postgresDialector) Migrator(db *gorm.DB) gorm.Migrator {
-	return postgresMigrator{
+	m := postgresMigrator{
 		Migrator: postgres.Migrator{Migrator: migrator.Migrator{Config: migrator.Config{
 			DB:                          db,
 			Dialector:                   d,
 			CreateIndexAfterCreateTable: true,
 		}}},
-		stock: *d.Dialector,
 	}
+	if d.Dialector != nil {
+		m.stock = *d.Dialector
+	}
+	return m
 }
 
 // postgresMigrator is the stock Postgres migrator running on the wrapped

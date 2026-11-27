@@ -53,10 +53,10 @@ func TestPostgresConnectOpens(t *testing.T) {
 		t.Fatalf("%d columns kept a MySQL type name; Postgres has no such types", mysqlTyped)
 	}
 
-	wantJSONB := modelJSONColumnCount(t, store.DB)
+	wantJSONB, modelTables := modelJSONColumns(t, store.DB)
 	var jsonb int64
 	if err := store.DB.Raw(`SELECT count(*) FROM information_schema.columns
-		WHERE table_schema = current_schema() AND data_type = 'jsonb'`).Scan(&jsonb).Error; err != nil {
+		WHERE table_schema = current_schema() AND data_type = 'jsonb' AND table_name IN ?`, modelTables).Scan(&jsonb).Error; err != nil {
 		t.Fatalf("count jsonb columns: %v", err)
 	}
 	if jsonb != int64(wantJSONB) {
@@ -64,16 +64,23 @@ func TestPostgresConnectOpens(t *testing.T) {
 	}
 }
 
-// modelJSONColumnCount counts the columns the models declare with
-// `type:json`. Every one of them has to come out of AutoMigrate as jsonb.
-func modelJSONColumnCount(t *testing.T, db *gorm.DB) int {
+// modelJSONColumns counts the columns the models declare with `type:json`
+// and returns the tables the models own. Every counted column has to come out
+// of AutoMigrate as jsonb.
+//
+// The table list keeps the count independent of whatever else lives in the
+// schema: a leftover table from an interrupted test run would otherwise show
+// up as a jsonb column and fail the comparison with a misleading number.
+func modelJSONColumns(t *testing.T, db *gorm.DB) (int, []string) {
 	t.Helper()
 	count := 0
+	tables := make([]string, 0, len(allModels()))
 	for _, model := range allModels() {
 		stmt := &gorm.Statement{DB: db}
 		if err := stmt.Parse(model); err != nil {
 			t.Fatalf("parse schema %T: %v", model, err)
 		}
+		tables = append(tables, stmt.Schema.Table)
 		for _, field := range stmt.Schema.Fields {
 			if field.DBName == "" {
 				continue
@@ -83,7 +90,7 @@ func modelJSONColumnCount(t *testing.T, db *gorm.DB) int {
 			}
 		}
 	}
-	return count
+	return count, tables
 }
 
 // TestPostgresColumnTypesSurvivesSchemaChange is the behavioural guard for
