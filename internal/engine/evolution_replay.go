@@ -44,6 +44,9 @@ func (e *Engine) validateEvolutionReplayDefinition(wf domain.WorkflowDefinition,
 		if !ok {
 			return fmt.Errorf("agent %q not found", node.AgentID)
 		}
+		if agent.ExecutorID == domain.WorkBuddyExecutorID {
+			return fmt.Errorf("进化回放不允许 WorkBuddy 角色「%s」使用外部凭据", agent.ID)
+		}
 		if len(agent.Hooks) > 0 {
 			return fmt.Errorf("进化回放暂不支持角色「%s」的生命周期脚本", agent.ID)
 		}

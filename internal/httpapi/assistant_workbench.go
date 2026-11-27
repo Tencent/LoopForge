@@ -291,6 +291,9 @@ func (h *assistantHandlers) buildWorkbenchContext(c *gin.Context, req *assistant
 		req.skills = append(req.skills, skill)
 	}
 	addRole := func(role domain.AgentDefinition) {
+		if role.ExecutorID == domain.WorkBuddyExecutorID {
+			return
+		}
 		for _, known := range req.roles {
 			if known.Role.ID == role.ID {
 				return
@@ -349,7 +352,7 @@ func (h *assistantHandlers) buildWorkbenchContext(c *gin.Context, req *assistant
 			m.References[j] = canonical
 			context.WriteString("引用（数据）：" + text + "\n")
 			if ref.Type == "agent" {
-				if role, ok := h.repo.Agent(ref.ID); ok {
+				if role, ok := h.repo.Agent(ref.ID); ok && role.ExecutorID != domain.WorkBuddyExecutorID {
 					addRole(role)
 					mentioned = append(mentioned, role)
 				}

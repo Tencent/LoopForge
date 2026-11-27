@@ -12,6 +12,8 @@ require (
 	github.com/klauspost/compress v1.20.3
 	github.com/larksuite/oapi-sdk-go/v3 v3.13.0
 	github.com/open-dingtalk/dingtalk-stream-sdk-go v0.9.1
+	github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/common v1.3.219
+	github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/workbuddyenterprise v1.3.219
 	github.com/zalando/go-keyring v0.2.8
 	golang.org/x/crypto v0.58.0
 	golang.org/x/sys v0.49.0

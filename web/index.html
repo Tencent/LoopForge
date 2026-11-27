@@ -578,6 +578,7 @@
           <div class="fd-pal-body" id="flowPaletteBody">
             <div class="fd-pal-group" data-pal-group="role"><div class="fd-pal-gh">角色<em id="flowPaletteRoleCount"></em></div><div id="flowPaletteRoles"></div></div>
             <div class="fd-pal-group" data-pal-group="control"><div class="fd-pal-gh">控制</div>
+              <div class="fd-pal-item" role="button" tabindex="0" draggable="true" data-add="workbuddy" data-tip="WorkBuddy 托管 Agent"><span class="fd-tile t-sop" data-fd-ic="bot"></span><div class="fd-pal-text"><b>WorkBuddy</b><small>运行腾讯云托管 Agent</small></div><span class="fd-grip" data-fd-ic="grip" data-s="14"></span></div>
               <div class="fd-pal-item" role="button" tabindex="0" draggable="true" data-add="script" data-tip="脚本"><span class="fd-tile t-script" data-fd-ic="terminal"></span><div class="fd-pal-text"><b>脚本</b><small>Shell / Python 命令</small></div><span class="fd-grip" data-fd-ic="grip" data-s="14"></span></div>
               <div class="fd-pal-item" role="button" tabindex="0" draggable="true" data-add="sop" data-tip="子 LOOP"><span class="fd-tile t-sop" data-fd-ic="layers"></span><div class="fd-pal-text"><b>子 LOOP</b><small>跑完另一条流程再继续</small></div><span class="fd-grip" data-fd-ic="grip" data-s="14"></span></div>
               <div class="fd-pal-item" role="button" tabindex="0" draggable="true" data-add="preview" data-tip="预览构建"><span class="fd-tile t-preview" data-fd-ic="eye"></span><div class="fd-pal-text"><b>预览构建</b><small>构建静态站点并归档</small></div><span class="fd-grip" data-fd-ic="grip" data-s="14"></span></div>
@@ -934,7 +935,7 @@
                     <div class="ai-model-menu" hidden role="listbox"></div>
                   </div>
                 </div>
-                <div class="as-field"><span>思考强度</span>
+                <div class="as-field" id="agentEffortField"><span>思考强度</span>
                   <div class="clarify-model-field" id="agentEffortPicker" data-clarify-model>
                     <input type="hidden" name="effort" value="">
                     <button type="button" class="ai-model-toggle" data-model-toggle aria-haspopup="listbox" aria-expanded="false">
@@ -944,8 +945,18 @@
                   </div>
                 </div>
               </div>
-              <label class="as-field" id="agentModelCustomField" hidden><span>自定义模型 ID <small>使用自定义 Base URL 时，填服务商提供的模型名</small></span><input name="model" placeholder="例如：gpt-5.6-terra"></label>
-              <label class="as-switch-row agent-edit-only"><span><b>共享给其他项目</b><small>其他项目可在「共享角色」里选用；绑定的本项目技能会一起共享，并自动装入所有对话</small></span><input name="shared" type="checkbox" role="switch"></label>
+              <label class="as-field" id="agentModelCustomField" hidden><span>自定义模型 ID</span><input name="model" placeholder="填写服务商提供的模型 ID"></label>
+              <div class="as-stack" id="agentWorkBuddyFields" hidden>
+                <div class="as-grid agent-workbuddy-grid">
+                  <label class="as-field"><span>项目 AK/SK</span><select name="workBuddyCredentialId" class="select" aria-label="项目 AK/SK"></select></label>
+                  <label class="as-field"><span>腾讯云地域</span><input name="workBuddyRegion" placeholder="ap-beijing" spellcheck="false"></label>
+                  <label class="as-field"><span>WorkBuddy Agent ID</span><input name="workBuddyAgentId" spellcheck="false"></label>
+                  <label class="as-field"><span>版本 ID <small>选填</small></span><input name="workBuddyVersionId" placeholder="跟随云端发布版本" spellcheck="false"></label>
+                </div>
+                <small id="agentWorkBuddyModelStatus" class="muted" role="status" hidden></small>
+                <small class="muted">技能和 MCP 在 WorkBuddy 版本中配置。所选版本需绑定 LoopForge Gate 连接器。</small>
+              </div>
+              <label class="as-switch-row agent-edit-only" id="agentShareField"><span><b>共享给其他项目</b><small>其他项目可在「共享角色」里选用；绑定的本项目技能会一起共享，并自动装入所有对话</small></span><input name="shared" type="checkbox" role="switch"></label>
             </div>
           </section>
           <section class="as-pane wizard-pane" data-agent-pane="create-review">

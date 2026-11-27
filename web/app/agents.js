@@ -11,7 +11,7 @@ function renderAgents(){
   const empty=state.agentScope==='shared'?'还没有共享给当前项目的角色。':'当前项目还没有角色。可以新建，或从共享角色复制后改。';
   closeAgentRowMenu();
   state.agentUsage=used;
-  const rows=agents.map(a=>{const exec=(state.data.executors||[]).find(x=>x.id===a.executorId);const model=a.model||exec?.model||exec?.name||'';const uses=used.get(a.id)||0;return`<div class="agent-row" role="button" tabindex="0" data-agent-id="${escapeHTML(a.id)}" title="${escapeHTML(`${a.id} · v${a.version||1}`)}"><div class="agent-row-who"><div><b>${escapeHTML(a.name)}</b>${agentRowTag(a)}<small>${escapeHTML(a.description||'未填写职责')}</small></div></div><div class="agent-row-model${model?'':' none'}">${escapeHTML(model||'未选模型')}</div><div class="agent-row-config agent-col-config">${agentConfigSummary(a)}</div><div class="agent-row-uses agent-col-uses${uses?'':' zero'}">${uses?`${uses} 个节点`:'未使用'}</div><div class="agent-row-more"><button type="button" class="agent-more-btn" data-agent-more="${escapeHTML(a.id)}" aria-label="更多操作" aria-haspopup="menu" aria-expanded="false"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg></button></div></div>`}).join('');
+  const rows=agents.map(a=>{const exec=(state.data.executors||[]).find(x=>x.id===a.executorId);const model=a.model||(a.executorId===AGENT_WMA_EXECUTOR?'跟随 WMA 版本':exec?.model||exec?.name||'');const uses=used.get(a.id)||0;return`<div class="agent-row" role="button" tabindex="0" data-agent-id="${escapeHTML(a.id)}" title="${escapeHTML(`${a.id} · v${a.version||1}`)}"><div class="agent-row-who"><div><b>${escapeHTML(a.name)}</b>${agentRowTag(a)}<small>${escapeHTML(a.description||'未填写职责')}</small></div></div><div class="agent-row-model${model?'':' none'}">${escapeHTML(model||'未选模型')}</div><div class="agent-row-config agent-col-config">${agentConfigSummary(a)}</div><div class="agent-row-uses agent-col-uses${uses?'':' zero'}">${uses?`${uses} 个节点`:'未使用'}</div><div class="agent-row-more"><button type="button" class="agent-more-btn" data-agent-more="${escapeHTML(a.id)}" aria-label="更多操作" aria-haspopup="menu" aria-expanded="false"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg></button></div></div>`}).join('');
   const head='<div class="agent-row agent-row-head" aria-hidden="true"><div>角色</div><div>模型</div><div class="agent-col-config">配置</div><div class="agent-col-uses">引用</div><div></div></div>';
   list.innerHTML=rows?head+rows:(query&&scopedAgents().length?'<div class="catalog-empty"><span>AI</span><b>没有匹配的角色。</b><p>调整搜索，或新建一个角色。</p></div>':`<div class="catalog-empty"><span>AI</span><b>${empty}</b><p>调整搜索，或新建一个角色。</p></div>`);
   list.querySelectorAll('[data-agent-more]').forEach(btn=>btn.onclick=e=>{e.stopPropagation();openAgentRowMenu(btn,state.data.agents.find(a=>a.id===btn.dataset.agentMore))});
@@ -45,7 +45,8 @@ function openAgentRowMenu(btn,a){
   const id=escapeHTML(a.id);
   if(catalogOwned(a.projectId)){
     const why=agentDeleteBlockReason(a);
-    menu.innerHTML=`<button type="button" role="menuitem" data-agent-act="edit">编辑</button><button type="button" role="menuitem" data-agent-act="clone">复制</button><button type="button" role="menuitem" data-agent-act="share">${a.shared?'取消共享':'共享给其他项目'}</button><hr><button type="button" role="menuitem" class="danger" data-agent-act="delete" ${why?`disabled title="${why}"`:''}>删除</button>${why?`<small>${why}</small>`:''}`;
+    const share=a.executorId===AGENT_WMA_EXECUTOR?'':`<button type="button" role="menuitem" data-agent-act="share">${a.shared?'取消共享':'共享给其他项目'}</button>`;
+    menu.innerHTML=`<button type="button" role="menuitem" data-agent-act="edit">编辑</button><button type="button" role="menuitem" data-agent-act="clone">复制</button>${share}<hr><button type="button" role="menuitem" class="danger" data-agent-act="delete" ${why?`disabled title="${why}"`:''}>删除</button>${why?`<small>${why}</small>`:''}`;
   }else{
     menu.innerHTML=`<button type="button" role="menuitem" data-agent-act="edit">查看</button><button type="button" role="menuitem" data-agent-act="clone">复制到本项目</button>`;
   }
@@ -107,6 +108,14 @@ function bindAgentTabKeys(container){
 }
 function bindAgentModalInputs(){
   const f=$('#agentForm');if(!f)return;
+  f.elements.executorId?.addEventListener('change',e=>{
+    applyAgentModelUI(e.target.value,'','',true);
+    if(e.target.value===AGENT_WMA_EXECUTOR)loadAgentWorkBuddyCredentials();
+    else workBuddyModelRequest?.abort();
+  });
+  f.elements.workBuddyCredentialId?.addEventListener('change',loadAgentWorkBuddyModels);
+  f.elements.workBuddyRegion?.addEventListener('change',loadAgentWorkBuddyModels);
+  f.elements.shared?.addEventListener('change',syncAgentWorkBuddySharing);
   f.elements.name?.addEventListener('input',()=>{if(f.elements.name.value.trim())$('#agentNameError').hidden=true;syncAgentSlug()});
   f.elements.id?.addEventListener('input',()=>{state.agentIdAuto=false;$('#agentIdError').hidden=true;syncAgentSlug()});
   $('#agentIdEdit')?.addEventListener('click',()=>{showAgentIdField('');f.elements.id.focus()});
@@ -117,9 +126,10 @@ function syncAgentTabIndicators(){$$('#agentsView .agent-tabs, #agentModal .agen
 if(typeof document!=='undefined'&&document.fonts?.ready)document.fonts.ready.then(()=>syncAgentTabIndicators()).catch(()=>{});
 function pickerHTML(items,selected,prefix){return `<input class="input picker-filter" data-picker-filter="${prefix}" placeholder="筛选名称或说明…">${(items||[]).map(x=>`<label class="asset-check"><input type="checkbox" name="${prefix}" value="${x.id}" ${(selected||[]).includes(x.id)?'checked':''}><span>${escapeHTML(x.name)}<small>${escapeHTML(x.description||x.id)}</small></span></label>`).join('')||'<span class="type-label">暂无可用资产，请先到对应的资产管理页面添加</span>'}`}
 function bindPickerFilters(root){(root||document).querySelectorAll('[data-picker-filter]').forEach(input=>input.oninput=()=>{const q=input.value.trim().toLowerCase();input.parentElement.querySelectorAll('.asset-check').forEach(row=>row.hidden=!!q&&!row.textContent.toLowerCase().includes(q))})}
-function executorOptions(selected){
+function executorOptions(selected,includeWorkBuddy=false){
   const executors=state.data.executors||[];
   const items=executors.filter(executor=>executorConfigured(executor.id));
+  if(includeWorkBuddy)items.push({id:AGENT_WMA_EXECUTOR,name:'WorkBuddy Managed Agents'});
   const inheritedLabel=selected||items.length?'跟随责任人默认执行器':
     executorModelCatalogRequest?'检查配置中…':'无可用执行器';
   const inherited=`<option value="" ${selected?'':'selected'}>${inheritedLabel}</option>`;
@@ -130,7 +140,7 @@ function executorOptions(selected){
   return inherited+unavailable+items.map(executor=>`<option value="${escapeHTML(executor.id)}" ${executor.id===selected?'selected':''}>${escapeHTML(executor.name||executor.id)}</option>`).join('');
 }
 function paintExecutorSelect(select,selected,readOnly=false){
-  select.innerHTML=executorOptions(selected);
+  select.innerHTML=executorOptions(selected,!!agentWorkBuddyProject());
   const loading=!!executorModelCatalogRequest;
   const hasConfigured=[...select.options].some(option=>option.value&&!option.disabled);
   select.disabled=loading||readOnly||(!selected&&!hasConfigured);
@@ -144,7 +154,30 @@ function storedAgentExecutorId(agent){
   return agent?.executorId||(agent?.model||agent?.effort?'codebuddy':'');
 }
 const AGENT_CUSTOM_MODEL='__custom__';
+const AGENT_WMA_EXECUTOR='workbuddy';
+// Enabled, tool-capable models from WMA DescribeBuiltinModelList on 2026-11-27.
+const AGENT_WMA_BUILTIN_MODELS=[
+  {id:'auto',name:'Auto'},
+  {id:'hy4std',name:'Hy4'},
+  {id:'hy4flash',name:'Hy4 Flash'},
+  {id:'hy4flash-free',name:'Hy4 Flash'},
+  {id:'step-5-preview',name:'Step-5-Preview'},
+  {id:'space-bunny',name:'Space-Bunny'},
+  {id:'deepseek-v4.1-flash',name:'DeepSeek-V4.1-Flash'},
+  {id:'deepseek-v4-pro',name:'DeepSeek-V4-Pro'},
+  {id:'glm-5.4',name:'GLM-5.4'},
+  {id:'glm-5.3',name:'GLM-5.3'},
+  {id:'glm-5.3-flash',name:'GLM-5.3-Flash'},
+  {id:'glm-5.2',name:'GLM-5.2'},
+  {id:'kimi-k3.1-pro',name:'Kimi-K3.1-Pro'},
+  {id:'kimi-k3-1',name:'Kimi-K3'},
+  {id:'kimi-k2.8-preview',name:'Kimi-K2.8-Preview'},
+  {id:'minimax-m3.1-flash',name:'MiniMax-M3.1-Flash'},
+  {id:'mimo-v2.6-pro',name:'Xiaomi MiMo-V2.6-Pro'},
+  {id:'minimax-m2.7',name:'MiniMax-M2.7'},
+];
 let executorModelCatalogUser, executorModelCatalogRequest, agentModelRevision=0;
+let workBuddyModelRequest, workBuddyRoleModels=null;
 // A project SOP runs on the user's project default machine, so the catalog is
 // scoped to the signed-in user and the current project.
 function executorModelCatalogKey(){
@@ -155,6 +188,7 @@ function executorModelCatalogs(){
   return executorModelCatalogUser===executorModelCatalogKey()?(window.AgentFlowExecutorModels||{}):{};
 }
 function executorConfigured(id){
+  if(id===AGENT_WMA_EXECUTOR)return !!agentWorkBuddyProject();
   return !executorModelCatalogRequest&&executorModelCatalogs()[id]?.configured===true;
 }
 function loadExecutorModelCatalogs(){
@@ -176,6 +210,17 @@ function loadExecutorModelCatalogs(){
 function agentModelAPI(){return window.AgentFlowAssistantModels}
 function currentAgentExecutorId(){return $('#agentForm')?.elements?.executorId?.value||''}
 function agentModelItems(executorId,current){
+  if(executorId===AGENT_WMA_EXECUTOR){
+    const models=workBuddyRoleModels??AGENT_WMA_BUILTIN_MODELS;
+    const nameCounts=new Map();
+    for(const {name} of models)nameCounts.set(name,(nameCounts.get(name)||0)+1);
+    const items=[{id:'default',name:'跟随 WMA 版本',icon:false}];
+    for(const {id,name} of models){
+      items.push({id,name:nameCounts.get(name)>1?`${name}（${id}）`:name,icon:false});
+    }
+    if(current&&current!==AGENT_CUSTOM_MODEL&&!items.some(model=>model.id===current))items.push({id:current,name:current,icon:false});
+    return items.concat({id:AGENT_CUSTOM_MODEL,name:'手动输入模型 ID…',icon:false});
+  }
   const cat=executorModelCatalogs()[executorId]||{},items=(cat.models||[]).filter(item=>item.id!=='default');
   if(current&&current!=='default'&&current!==AGENT_CUSTOM_MODEL&&!items.some(m=>m.id===current))items.push({id:current,name:`${current}（历史模型）`,family:'other'});
   if(cat.customModel)items.push({id:AGENT_CUSTOM_MODEL,name:'手动输入模型 ID…',icon:false});
@@ -206,6 +251,7 @@ function renderAgentModelPicker(){
     syncAgentModelCustomField();
     paintAgentPicker('#agentModelPicker',items.find(x=>x.id===id));
     renderAgentEffortPicker(id!==current);
+    renderAgentSummary();
     menu.hidden=true;picker.querySelector('[data-model-toggle]').setAttribute('aria-expanded','false');
   });
   syncAgentModelCustomField();
@@ -232,25 +278,93 @@ function renderAgentEffortPicker(modelChanged=false){
 }
 function applyAgentModelUI(executorId,model,effort,pickFirst=false){
   const picker=$('#agentModelPicker'),effortPicker=$('#agentEffortPicker');if(!picker||!effortPicker)return;
+  const workBuddy=executorId===AGENT_WMA_EXECUTOR;
+  picker.closest('.agent-runtime-grid')?.toggleAttribute('data-workbuddy',workBuddy);
+  $('#agentEffortField').hidden=workBuddy;
+  $('#agentWorkBuddyFields').hidden=!workBuddy;
+  syncAgentWorkBuddySharing();
   const editable=executorConfigured(executorId);
   for(const control of [picker,effortPicker]){
     const toggle=control.querySelector('[data-model-toggle]');
     if(!toggle)continue;
-    toggle.disabled=!editable;
-    if(!editable){
+    toggle.disabled=!editable||(workBuddy&&control===effortPicker);
+    if(toggle.disabled){
       control.querySelector('.ai-model-menu').hidden=true;
       toggle.setAttribute('aria-expanded','false');
     }
   }
   const cat=executorModelCatalogs()[executorId]||{};
-  let choice=executorId?(model||(pickFirst&&editable?(cat.models||[]).find(item=>item.id!=='default')?.id:'')||''):'';
-  if(editable&&choice&&choice!=='default'&&!(cat.models||[]).some(m=>m.id===choice)&&cat.customModel)choice=AGENT_CUSTOM_MODEL;
+  let choice=workBuddy?(model||'default'):(executorId?(model||(pickFirst&&editable?(cat.models||[]).find(item=>item.id!=='default')?.id:'')||''):'');
+  if(!workBuddy&&editable&&choice&&choice!=='default'&&!(cat.models||[]).some(m=>m.id===choice)&&cat.customModel)choice=AGENT_CUSTOM_MODEL;
   picker.querySelector('[name="modelChoice"]').value=choice;
   const customInput=$('#agentModelCustomField')?.querySelector('input[name="model"]');
   if(customInput&&choice===AGENT_CUSTOM_MODEL)customInput.value=model||'';
   renderAgentModelPicker();
-  effortPicker.querySelector('[name="effort"]').value=executorId?effort||'':'';
+  effortPicker.querySelector('[name="effort"]').value=executorId&&!workBuddy?effort||'':'';
   renderAgentEffortPicker();
+}
+function syncAgentWorkBuddySharing(){
+  const field=$('#agentShareField');
+  if(field)field.hidden=currentAgentExecutorId()===AGENT_WMA_EXECUTOR&&!field.querySelector('input').checked;
+}
+function agentWorkBuddyProject(){
+  if(catalogGeneric(state.workflow))return '';
+  return agentWizardSubject().projectId||state.projectFilter||'';
+}
+function agentWorkBuddyConfig(f){
+  const fields=f.elements;
+  return {agentId:fields.workBuddyAgentId.value.trim(),versionId:fields.workBuddyVersionId.value.trim(),region:fields.workBuddyRegion.value.trim(),credentialId:fields.workBuddyCredentialId.value};
+}
+function setAgentWorkBuddyModelStatus(message=''){
+  const status=$('#agentWorkBuddyModelStatus');
+  status.textContent=message;status.hidden=!message;
+}
+function resetAgentWorkBuddy(f,config){
+  workBuddyModelRequest?.abort();
+  workBuddyRoleModels=null;
+  setAgentWorkBuddyModelStatus();
+  const fields=f.elements,credentialId=config?.credentialId||'';
+  fields.workBuddyAgentId.value=config?.agentId||'';
+  fields.workBuddyVersionId.value=config?.versionId||'';
+  fields.workBuddyRegion.value=config?.region||'';
+  fields.workBuddyCredentialId.replaceChildren(new Option('选择项目 AK/SK',''));
+  if(credentialId)fields.workBuddyCredentialId.add(new Option('已绑定的凭据',credentialId,true,true));
+}
+async function loadAgentWorkBuddyCredentials(){
+  const project=agentWorkBuddyProject(),f=$('#agentForm'),revision=agentModelRevision;
+  if(!project||currentAgentExecutorId()!==AGENT_WMA_EXECUTOR)return;
+  const select=f.elements.workBuddyCredentialId,previous=select.value;
+  try{
+    const {credentials}=await api(projectCredentialsPath(project),{silent:true});
+    if(revision!==agentModelRevision||currentAgentExecutorId()!==AGENT_WMA_EXECUTOR||project!==agentWorkBuddyProject())return;
+    const choices=(credentials||[]).filter(item=>item.kind==='aksk'&&!item.disabled);
+    select.replaceChildren(new Option(choices.length?'选择项目 AK/SK':'请先在项目设置添加 AK/SK',''),...choices.map(item=>new Option(item.name,item.id)));
+    if(previous&&!choices.some(item=>item.id===previous))select.add(new Option('已绑定的凭据不可用',previous));
+    select.value=previous;
+    loadAgentWorkBuddyModels();
+  }catch{
+    if(revision===agentModelRevision&&currentAgentExecutorId()===AGENT_WMA_EXECUTOR)setAgentWorkBuddyModelStatus('读取项目凭据失败');
+  }
+}
+async function loadAgentWorkBuddyModels(){
+  workBuddyModelRequest?.abort();
+  workBuddyRoleModels=null;
+  const {credentialId,region}=agentWorkBuddyConfig($('#agentForm')),project=agentWorkBuddyProject();
+  renderAgentModelPicker();
+  setAgentWorkBuddyModelStatus(credentialId?'正在读取 WorkBuddy 模型…':'');
+  if(!project||!credentialId)return;
+  const request=new AbortController();
+  workBuddyModelRequest=request;
+  const path=`${projectCredentialsPath(project)}/${encodeURIComponent(credentialId)}/workbuddy-models?region=${encodeURIComponent(region)}`;
+  try{
+    const {models}=await api(path,{silent:true,signal:request.signal});
+    if(request.signal.aborted)return;
+    workBuddyRoleModels=(models||[]).filter(model=>model.id!=='default'&&model.id!==AGENT_CUSTOM_MODEL);
+    setAgentWorkBuddyModelStatus(workBuddyRoleModels.length?'':'当前凭据未返回可用模型，可手动填写模型 ID');
+    renderAgentModelPicker();
+  }catch(err){
+    if(!request.signal.aborted)setAgentWorkBuddyModelStatus(`${err.message}。当前显示 WMA 内置模型。`);
+  }
 }
 function bindAgentPicker(pickerId,render){
   const picker=$(pickerId);if(!picker||picker.dataset.bound)return;
@@ -296,7 +410,9 @@ function selectAgent(a,rerender=true){
   const personalModel=!a.id&&preferredId===selectedId&&!a.model?prefs?.model:'';
   const model=a.model||personalModel||'';
   const effort=a.effort||(personalModel?prefs.effort:'');
+  resetAgentWorkBuddy(f,a.workbuddy);
   applyAgentModelUI(selectedId,model,effort);
+  if(selectedId===AGENT_WMA_EXECUTOR)loadAgentWorkBuddyCredentials();
   refreshModels.then(()=>{
     if(modelRevision!==agentModelRevision||modelUser!==state.currentUser?.id)return;
     const id=a.id||executorConfigured(selectedId)?selectedId:'';
@@ -329,6 +445,8 @@ function setAgentModalMode(mode){
   const f=$('#agentForm');if(f)f.dataset.agentMode=state.agentModalMode;
 }
 function closeAgentWizard(){
+  agentModelRevision++;
+  workBuddyModelRequest?.abort();
   $('#agentModal').classList.remove('open');
   if(agentRouteId())history.replaceState(null,'','#/agents');
 }
@@ -442,7 +560,8 @@ function renderAgentCreateReview(){
   const executor=f.elements.executorId;
   const cli=executor?.value?(executor.selectedOptions[0]?.textContent||executor.value):'跟随责任人默认执行器';
   const effort=(f.elements.effort?.value||'').trim();
-  const rows=[['名称',f.elements.name.value.trim()],['标识',f.elements.id.value.trim()],['起点',preset?.name||'空白'],['CLI · 模型',`${cli} · ${agentEffectiveModel(f)||'未选模型'}${effort?` · ${effort}`:''}`],['职责',f.elements.description.value.trim()||'未填写职责']];
+  const model=agentEffectiveModel(f);
+  const rows=[['名称',f.elements.name.value.trim()],['标识',f.elements.id.value.trim()],['起点',preset?.name||'空白'],['CLI · 模型',`${cli} · ${executor?.value===AGENT_WMA_EXECUTOR&&model==='default'?'跟随 WMA 版本':model||'未选模型'}${effort?` · ${effort}`:''}`],['职责',f.elements.description.value.trim()||'未填写职责']];
   host.innerHTML=rows.map(([k,v])=>`<div><dt>${k}</dt><dd>${escapeHTML(v)}</dd></div>`).join('');
 }
 function syncAgentModalChrome(){
@@ -488,11 +607,21 @@ async function persistAgent(f){
     return null;
   }
   const model=agentEffectiveModel(f);
-  if(executorId&&(creating||changedExecutor||f.elements.modelChoice?.value===AGENT_CUSTOM_MODEL)&&(!model||model==='default')){
+  const manualModel=f.elements.modelChoice?.value===AGENT_CUSTOM_MODEL;
+  if(executorId&&(creating||changedExecutor||manualModel)&&(!model||(model==='default'&&(executorId!==AGENT_WMA_EXECUTOR||manualModel)))){
     toast('请选择模型或填写模型 ID','err');
     if(creating)setAgentCreateStep(2);
     else setAgentTab('identity');
     return null;
+  }
+  if(executorId===AGENT_WMA_EXECUTOR){
+    const config=agentWorkBuddyConfig(f);
+    if(!config.agentId||!config.credentialId){
+      toast('请填写 WorkBuddy Agent ID 并选择项目 AK/SK','err');
+      if(creating)setAgentCreateStep(2);
+      else setAgentTab('identity');
+      return null;
+    }
   }
   if(state.agentSaving)return null;
   state.agentSaving=true;
@@ -501,7 +630,7 @@ async function persistAgent(f){
 // MR gates are checked by the platform and carry no commands; every other
 // gate is saved as a command gate and dropped while it has no command.
 function agentGatesForSave(gates){return (gates||[]).map((gate,i)=>{const base={id:gate.id||`gate-${i+1}`,name:gate.name||`门禁 ${i+1}`,stage:'after_execution',required:true,onFailure:['loop','reject','fail','human'].includes(gate.onFailure)?gate.onFailure:'loop'};return gate.mode==='mr'?{...base,mode:'mr'}:{...base,mode:'command',commands:(gate.commands||[]).map(c=>String(c||'').trim()).filter(Boolean),executionScope:gate.executionScope==='repositories'?'repositories':'run'}}).filter(g=>g.mode==='mr'||g.commands.length)}
-async function persistAgentRequest(f,creating){const existing=state.data.agents.find(a=>a.id===f.elements.id.value);if(!catalogGeneric(state.workflow)&&existing&&catalogForeign(existing.projectId))return toast('这是其他项目的共享角色，请先复制到本项目再改');if(!catalogGeneric(state.workflow)&&agentPlatformLocked(existing))return toast('这是平台角色，只有平台管理员可以修改，请先复制到本项目再改');const checked=name=>[...f.querySelectorAll(`input[name="${name}"]:checked`)].map(x=>x.value);const draft=readAgentDraft(f);const artifacts=draft.artifactOutputs.map((x,i)=>({name:x.name||`artifact-${i+1}`,path:x.path||'result.md',mediaType:x.path?.endsWith('.json')?'application/json':(x.mediaType||'text/markdown'),required:!!x.required})),verification=agentGatesForSave(draft.verification),hooks=(draft.hooks||[]).map((h,i)=>({id:String(h.id||`hook-${i+1}`).trim(),name:String(h.name||`Hook ${i+1}`).trim(),event:h.event||'PreToolUse',matcher:String(h.matcher||'').trim(),language:h.language==='python'?'python':'shell',script:String(h.script||'').trim(),timeoutSec:Number(h.timeoutSec)||10,executionScope:h.executionScope==='repositories'?'repositories':'run'})).filter(h=>h.script),interventions=[];if(f.elements.interventionAfter?.checked)interventions.push({id:'human-review',name:'人工结果复核',stage:'after_execution',required:true});if(f.elements.interventionPublish?.checked)interventions.push({id:'publish-approval',name:'产物发布确认',stage:'before_publish',required:true});const a={id:f.elements.id.value.trim(),name:f.elements.name.value.trim(),version:(existing?.version||0)+1,projectId:existing?(existing.projectId||state.projectFilter||''):(state.projectFilter||''),shared:!!f.elements.shared?.checked,description:f.elements.description.value,prompt:draft.prompt,executorId:f.elements.executorId?.value||'',model:agentEffectiveModel(f),effort:f.elements.effort?.value||'',rules:checked('rules'),skills:checked('skills'),mcpServers:checked('mcpServers'),platformMcp:!!f.elements.platformMcp?.checked,knowledgeBase:!!f.elements.knowledgeBase?.checked,hooks,loop:{enabled:!!f.elements.loopEnabled?.checked,maxIterations:Number(f.elements.loopMaxIterations?.value)||1,exitCondition:'all_gates_pass',onExhausted:f.elements.loopOnExhausted?.value||'fail',feedbackPrompt:f.elements.loopFeedbackPrompt?.value||''},interventions,artifactOutputs:artifacts,verification};if(!a.id||!a.name)return toast('标识和名称不能为空');if(catalogGeneric(state.workflow)){if(!isPlatformAdmin())return toast('只有平台管理员可以编辑通用模板角色');const bundled=workflowAgent(a.id);if(!bundled)return toast('该角色不属于当前通用模板');a.projectId='';a.shared=false;a.rules=bundled.rules||[];a.skills=bundled.skills||[];a.mcpServers=f.querySelectorAll('input[name="mcpServers"]').length?checked('mcpServers'):(bundled.mcpServers||[]);a.hooks=Array.isArray(bundled.hooks)?bundled.hooks:a.hooks;a.version=bundled.version||0;try{const saved=await api(`/api/workflows/${encodeURIComponent(state.workflow.id)}/agents`,{method:'PUT',body:JSON.stringify(a)});const list=state.genericTemplateAgents||[];const gi=list.findIndex(x=>x.id===saved.id);if(gi>=0)list[gi]=saved;else list.push(saved);state.genericTemplateAgents=list;state.selectedAgent=saved.id;state.agentDraft=null;$('#agentModal').classList.remove('open');renderCanvas();renderProperties();toast('通用模板角色已保存，所有项目下次运行生效');}catch(err){toast(err.message)}return;}try{await api('/api/agents',{method:'PUT',body:JSON.stringify(a)});const i=state.data.agents.findIndex(x=>x.id===a.id);if(i>=0)state.data.agents[i]=a;else state.data.agents.push(a);if(a.shared){(state.data.rules||[]).forEach(item=>{if(a.rules.includes(item.id)&&item.projectId===a.projectId)item.shared=true});(state.data.skills||[]).forEach(item=>{if(a.skills.includes(item.id)&&item.projectId===a.projectId)item.shared=true})}state.selectedAgent=a.id;state.agentDraft=null;if(creating){state.agentScope='project';renderAgents();renderWorkflowMeta();renderCanvas();toast('Agent 新版本已保存');showCreatedAgent(a);return a}closeAgentWizard();renderAgents();renderCanvas();toast('Agent 新版本已保存');return a}catch(err){toast(err.message)}return null}
+async function persistAgentRequest(f,creating){const existing=state.data.agents.find(a=>a.id===f.elements.id.value);if(!catalogGeneric(state.workflow)&&existing&&catalogForeign(existing.projectId))return toast('这是其他项目的共享角色，请先复制到本项目再改');if(!catalogGeneric(state.workflow)&&agentPlatformLocked(existing))return toast('这是平台角色，只有平台管理员可以修改，请先复制到本项目再改');const checked=name=>[...f.querySelectorAll(`input[name="${name}"]:checked`)].map(x=>x.value);const draft=readAgentDraft(f);const artifacts=draft.artifactOutputs.map((x,i)=>({name:x.name||`artifact-${i+1}`,path:x.path||'result.md',mediaType:x.path?.endsWith('.json')?'application/json':(x.mediaType||'text/markdown'),required:!!x.required})),verification=agentGatesForSave(draft.verification),hooks=(draft.hooks||[]).map((h,i)=>({id:String(h.id||`hook-${i+1}`).trim(),name:String(h.name||`Hook ${i+1}`).trim(),event:h.event||'PreToolUse',matcher:String(h.matcher||'').trim(),language:h.language==='python'?'python':'shell',script:String(h.script||'').trim(),timeoutSec:Number(h.timeoutSec)||10,executionScope:h.executionScope==='repositories'?'repositories':'run'})).filter(h=>h.script),interventions=[];if(f.elements.interventionAfter?.checked)interventions.push({id:'human-review',name:'人工结果复核',stage:'after_execution',required:true});if(f.elements.interventionPublish?.checked)interventions.push({id:'publish-approval',name:'产物发布确认',stage:'before_publish',required:true});const a={id:f.elements.id.value.trim(),name:f.elements.name.value.trim(),version:(existing?.version||0)+1,projectId:existing?(existing.projectId||state.projectFilter||''):(state.projectFilter||''),shared:!!f.elements.shared?.checked,description:f.elements.description.value,prompt:draft.prompt,executorId:f.elements.executorId?.value||'',model:agentEffectiveModel(f),workbuddy:currentAgentExecutorId()===AGENT_WMA_EXECUTOR?agentWorkBuddyConfig(f):undefined,effort:f.elements.effort?.value||'',rules:checked('rules'),skills:checked('skills'),mcpServers:checked('mcpServers'),platformMcp:!!f.elements.platformMcp?.checked,knowledgeBase:!!f.elements.knowledgeBase?.checked,hooks,loop:{enabled:!!f.elements.loopEnabled?.checked,maxIterations:Number(f.elements.loopMaxIterations?.value)||1,exitCondition:'all_gates_pass',onExhausted:f.elements.loopOnExhausted?.value||'fail',feedbackPrompt:f.elements.loopFeedbackPrompt?.value||''},interventions,artifactOutputs:artifacts,verification};if(!a.id||!a.name)return toast('标识和名称不能为空');if(catalogGeneric(state.workflow)){if(!isPlatformAdmin())return toast('只有平台管理员可以编辑通用模板角色');const bundled=workflowAgent(a.id);if(!bundled)return toast('该角色不属于当前通用模板');a.projectId='';a.shared=false;a.rules=bundled.rules||[];a.skills=bundled.skills||[];a.mcpServers=f.querySelectorAll('input[name="mcpServers"]').length?checked('mcpServers'):(bundled.mcpServers||[]);a.hooks=Array.isArray(bundled.hooks)?bundled.hooks:a.hooks;a.version=bundled.version||0;try{const saved=await api(`/api/workflows/${encodeURIComponent(state.workflow.id)}/agents`,{method:'PUT',body:JSON.stringify(a)});const list=state.genericTemplateAgents||[];const gi=list.findIndex(x=>x.id===saved.id);if(gi>=0)list[gi]=saved;else list.push(saved);state.genericTemplateAgents=list;state.selectedAgent=saved.id;state.agentDraft=null;$('#agentModal').classList.remove('open');renderCanvas();renderProperties();toast('通用模板角色已保存，所有项目下次运行生效');}catch(err){toast(err.message)}return;}try{Object.assign(a,await api('/api/agents',{method:'PUT',body:JSON.stringify(a)}));const i=state.data.agents.findIndex(x=>x.id===a.id);if(i>=0)state.data.agents[i]=a;else state.data.agents.push(a);if(a.shared){(state.data.rules||[]).forEach(item=>{if(a.rules.includes(item.id)&&item.projectId===a.projectId)item.shared=true});(state.data.skills||[]).forEach(item=>{if(a.skills.includes(item.id)&&item.projectId===a.projectId)item.shared=true})}state.selectedAgent=a.id;state.agentDraft=null;if(creating){state.agentScope='project';renderAgents();renderWorkflowMeta();renderCanvas();toast('Agent 新版本已保存');showCreatedAgent(a);return a}closeAgentWizard();renderAgents();renderCanvas();toast('Agent 新版本已保存');return a}catch(err){toast(err.message)}return null}
 async function deleteAgent(id){
   const a=(state.data.agents||[]).find(x=>x.id===id);
   if(!a)return toast('角色不存在或已删除');

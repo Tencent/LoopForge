@@ -3,6 +3,7 @@ package gatemcp
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -12,6 +13,7 @@ import (
 )
 
 const Version = "1.0.0"
+const gateSubmitted = "Gate result submitted. Stop now; this node has reached its terminal decision."
 
 type request struct {
 	JSONRPC string          `json:"jsonrpc"`
@@ -78,14 +80,24 @@ func Run(stdin io.Reader, stdout io.Writer, resultPath string) error {
 		if strings.HasPrefix(req.Method, "notifications/") {
 			continue
 		}
-		if err := handleRequest(encoder, req, resultPath); err != nil {
+		if err := handleRequest(encoder, req, inputSchema, func(raw json.RawMessage) (string, error) {
+			result, problem := decodeResult(raw)
+			if problem != "" {
+				return "", errors.New(problem)
+			}
+			err := writeResultExclusive(resultPath, result)
+			if os.IsExist(err) {
+				return "", errors.New("gate result already submitted")
+			}
+			return gateSubmitted, err
+		}); err != nil {
 			return err
 		}
 	}
 	return scanner.Err()
 }
 
-func handleRequest(encoder *json.Encoder, req request, resultPath string) error {
+func handleRequest(encoder *json.Encoder, req request, schema map[string]any, submit func(json.RawMessage) (string, error)) error {
 	switch req.Method {
 	case "initialize":
 		var params struct {
@@ -107,7 +119,7 @@ func handleRequest(encoder *json.Encoder, req request, resultPath string) error 
 		return writeResponse(encoder, req.ID, map[string]any{"tools": []any{map[string]any{
 			"name":        "submit_gate_result",
 			"description": "Submit exactly one terminal node decision. reason explains why. human also requires actionRequired to state exactly what a person must confirm.",
-			"inputSchema": inputSchema,
+			"inputSchema": schema,
 		}}}, "")
 	case "tools/call":
 		var params struct {
@@ -120,18 +132,12 @@ func handleRequest(encoder *json.Encoder, req request, resultPath string) error 
 		if params.Name != "submit_gate_result" {
 			return writeResponse(encoder, req.ID, nil, "unknown tool")
 		}
-		result, problem := decodeResult(params.Arguments)
-		if problem != "" {
-			return writeResponse(encoder, req.ID, nil, problem)
-		}
-		if err := writeResultExclusive(resultPath, result); err != nil {
-			if os.IsExist(err) {
-				return writeResponse(encoder, req.ID, nil, "gate result already submitted")
-			}
+		message, err := submit(params.Arguments)
+		if err != nil {
 			return writeResponse(encoder, req.ID, nil, err.Error())
 		}
 		return writeResponse(encoder, req.ID, map[string]any{
-			"content": []any{map[string]any{"type": "text", "text": "Gate result submitted. Stop now; this node has reached its terminal decision."}},
+			"content": []any{map[string]any{"type": "text", "text": message}},
 			"isError": false,
 		}, "")
 	default:

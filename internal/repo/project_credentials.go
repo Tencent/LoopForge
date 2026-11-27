@@ -283,6 +283,35 @@ func (r *ProjectCredentialsRepo) ResolveProjectCredentialEnv(ctx context.Context
 	return projectCredentialEnvironment(rows)
 }
 
+// ResolveProjectAKSK reads the ordered AK, SK and optional Session Token from
+// one sealed project credential. Variable names may be customized.
+func (r *ProjectCredentialsRepo) ResolveProjectAKSK(ctx context.Context, projectID, id string) (domain.ProjectAKSK, error) {
+	rows, err := r.selectedProjectCredentials(ctx, projectID, []string{id}, true)
+	if err != nil {
+		return domain.ProjectAKSK{}, err
+	}
+	metadata, err := rows[0].metadata()
+	if err != nil {
+		return domain.ProjectAKSK{}, err
+	}
+	fields := metadata.Variables
+	if metadata.Kind != domain.ProjectCredentialAKSK || (len(fields) != 2 && len(fields) != 3) {
+		return domain.ProjectAKSK{}, fmt.Errorf("请选择有效的项目 AK/SK 凭据")
+	}
+	values, err := projectCredentialEnvironment(rows)
+	if err != nil {
+		return domain.ProjectAKSK{}, err
+	}
+	key := domain.ProjectAKSK{SecretID: strings.TrimSpace(values[fields[0]]), SecretKey: strings.TrimSpace(values[fields[1]])}
+	if len(fields) == 3 {
+		key.Token = strings.TrimSpace(values[fields[2]])
+	}
+	if key.SecretID == "" || key.SecretKey == "" {
+		return domain.ProjectAKSK{}, fmt.Errorf("项目 AK/SK 凭据缺少 SecretId 或 SecretKey")
+	}
+	return key, nil
+}
+
 // ResolveAvailableProjectCredentialEnv re-reads the current bindings when a
 // conversation launches a process, including after a change during setup.
 func (r *ProjectCredentialsRepo) ResolveAvailableProjectCredentialEnv(ctx context.Context, projectID string, ids []string) (map[string]string, error) {

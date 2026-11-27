@@ -226,7 +226,7 @@ function addNode(type,opts={}){
     return;
   }
   flowHistory.record();
-  const labels={agent:'新 Agent 节点',script:'脚本节点',approval:'人工门禁',sop:'LOOP 节点'};
+  const labels={agent:'新 Agent 节点',script:'脚本节点',approval:'人工门禁',sop:'LOOP 节点',workbuddy:'WorkBuddy 托管 Agent'};
   const firstSOP=type==='sop'?sopWorkflowChoices(state.workflow.id)[0]:null;
   const agentId=type==='agent'?(opts.agentId||workflowAgents()[0]?.id||''):'';
   const agent=agentId?workflowAgent(agentId):null;
@@ -299,12 +299,12 @@ function spreadCrowdedNodes(wf){
   return true;
 }
 
-const FLOW_NODE_TYPES={agent:{icon:'bot',label:'Agent 步骤'},script:{icon:'terminal',label:'脚本步骤'},sop:{icon:'layers',label:'子 LOOP'},preview:{icon:'eye',label:'预览构建'},approval:{icon:'shield',label:'人工门禁'}};
+const FLOW_NODE_TYPES={agent:{icon:'bot',label:'Agent 步骤'},script:{icon:'terminal',label:'脚本步骤'},sop:{icon:'layers',label:'子 LOOP'},preview:{icon:'eye',label:'预览构建'},approval:{icon:'shield',label:'人工门禁'},workbuddy:{icon:'bot',label:'WorkBuddy 托管 Agent'}};
 function flowNodeKind(n){return isPreviewBuildNode(n.id)?'preview':(FLOW_NODE_TYPES[n.type]?n.type:'approval')}
 function flowNodeTint(n){
   const kind=flowNodeKind(n);
   if(kind==='agent'&&n.agentId)return flowPalette.roleTint(n.agentId);
-  return {agent:'79 107 255',script:'139 92 246',sop:'14 165 233',preview:'217 119 6',approval:'16 163 127'}[kind];
+  return {agent:'79 107 255',script:'139 92 246',sop:'14 165 233',preview:'217 119 6',approval:'16 163 127',workbuddy:'14 165 233'}[kind];
 }
 function flowNodeEl(id){return document.querySelector(`#nodes .flow-node[data-id="${CSS.escape(id)}"]`)}
 function nodeMeta(n){
@@ -320,16 +320,21 @@ function nodeMeta(n){
     if(!n.agentId)tags.push({text:'未绑定角色',warn:true});
     else if(!a)tags.push({text:generic?'通用模板角色':'角色不可用',warn:!generic});
     else{
-      const model=a.model||e?.model||e?.name||'';
+      const workBuddy=a.executorId===AGENT_WMA_EXECUTOR;
+      const model=a.model||(workBuddy?'跟随 WMA 版本':e?.model||e?.name||'');
       tags.push(model?{text:model}:{text:'未选模型',warn:!generic});
       tags.push({text:`${effectiveNodeArtifacts(n,a).length} 产物`});
-      tags.push({text:a.loop?.enabled?`${a.loop.maxIterations||1} 轮 Loop`:'单轮'});
+      tags.push({text:workBuddy?'WorkBuddy':a.loop?.enabled?`${a.loop.maxIterations||1} 轮 Loop`:'单轮'});
     }
     return {kind:'agent',subtitle,tags};
   }
   if(n.type==='script'){
     const line=(n.script||'').trim().split('\n')[0];
     return {kind:'script',subtitle:n.scriptLanguage==='python'?'Python 脚本':'Shell 脚本',tags:[line?{text:line,mono:true}:{text:'未配置脚本',warn:true}]};
+  }
+  if(n.type==='workbuddy'){
+    const config=n.workbuddy||{};
+    return {kind:'workbuddy',subtitle:'腾讯云托管 Agent',tags:config.agentId?[{text:config.agentId,mono:true}]:[{text:'填写 Agent ID',warn:true}]};
   }
   if(n.type==='sop'){
     const wf=sopWorkflowChoices().find(w=>w.id===n.sopWorkflowId)||(state.data.workflows||[]).find(w=>w.id===n.sopWorkflowId);
@@ -417,7 +422,18 @@ function flowDiagnostics(){
   const nodes=state.workflow.nodes||[],edges=state.workflow.edges||[],incoming=new Map(nodes.map(n=>[n.id,0])),items=[];edges.forEach(e=>incoming.has(e.target)&&incoming.set(e.target,incoming.get(e.target)+1));
   const starts=nodes.filter(n=>incoming.get(n.id)===0);items.push({level:!nodes.length?'error':starts.length===1?'ok':'warn',title:'流程入口',detail:!nodes.length?'至少添加一个节点':starts.length===1?`从「${starts[0].name}」开始`:`检测到 ${starts.length} 个入口；这些节点会并行启动`});
   const autoSandbox=state.workflow.autoSelectSandbox,sandboxID=state.workflow.sandboxProfileId;
-  items.push({level:autoSandbox||state.data.sandboxes?.some(s=>s.id===sandboxID)?'ok':'error',title:'运行沙箱',detail:autoSandbox?'运行时按项目和任务选择沙箱':sandboxID?`整条流程使用 ${sandboxID}`:'尚未选择运行沙箱'});
+  const workBuddyNodes=nodes.filter(n=>n.type==='workbuddy');
+  const workBuddyRoleNodes=nodes.filter(n=>n.type==='agent'&&workflowAgent(n.agentId)?.executorId===AGENT_WMA_EXECUTOR);
+  const remoteCount=workBuddyNodes.length+workBuddyRoleNodes.length;
+  if(remoteCount&&nodes.every(n=>workBuddyNodes.includes(n)||workBuddyRoleNodes.includes(n)||n.type==='approval'))items.push({level:'ok',title:'执行环境',detail:'WorkBuddy 云端会话'});
+  else items.push({level:autoSandbox||state.data.sandboxes?.some(s=>s.id===sandboxID)?'ok':'error',title:'运行沙箱',detail:autoSandbox?'运行时按项目和任务选择沙箱':sandboxID?`整条流程使用 ${sandboxID}`:'尚未选择运行沙箱'});
+  for(const n of workBuddyNodes){
+    const config=n.workbuddy||{},missing=[];
+    if(!config.agentId?.trim())missing.push('Agent ID');
+    if(!config.credentialId)missing.push('项目 AK/SK');
+    if(!n.taskPrompt?.trim())missing.push('任务提示词');
+    items.push({level:missing.length?'error':'ok',title:n.name,detail:missing.length?`尚未配置：${missing.join('、')}`:'已配置 WorkBuddy 会话与项目凭据'});
+  }
   nodes.forEach(n=>{if(isPreviewBuildNode(n.id)){const inDeg=edges.filter(e=>e.target===n.id).length;items.push({level:inDeg?'ok':'warn',title:n.name,detail:inDeg?`插在流程中间：${workflowPreviewModel(state.workflow)} 构建静态站点，运行成功后归档预览`:'还没有前序依赖，会作为流程入口直接运行；请从上游节点连线到此'});return}if(n.type==='agent'){const missing=[];const agent=workflowAgent(n.agentId);const generic=catalogGeneric(state.workflow);if(!n.agentId)missing.push('角色');else if(!agent)missing.push(generic?'通用模板角色未加载':'角色不属于当前项目或未共享');else if(!generic&&!(agent.executorId||n.executorId))missing.push('角色未选模型');if(!(n.artifactOutputs||[]).length&&!(agent?.artifactOutputs||[]).length)missing.push('角色产物契约');items.push({level:missing.length?'warn':'ok',title:n.name,detail:missing.length?`尚未配置：${missing.join('、')}`:generic?'已绑定通用模板角色；任务书与门禁在角色定义中':'已绑定角色；任务书与门禁在角色定义中'})}if(n.type==='sop'){const missing=[];const wf=sopWorkflowChoices(state.workflow.id).find(w=>w.id===n.sopWorkflowId)||(state.data.workflows||[]).find(w=>w.id===n.sopWorkflowId);if(!n.sopWorkflowId)missing.push('要跑的 LOOP');else if(!wf)missing.push('引用的 LOOP 不存在');if(n.sopWorkflowId===state.workflow.id)missing.push('不能引用自己');items.push({level:missing.length?'error':'ok',title:n.name,detail:missing.length?`尚未配置：${missing.join('、')}`:`引用「${wf.name}」，产物交给下一步`})}if(n.rejectTo&&!nodes.some(x=>x.id===n.rejectTo))items.push({level:'error',title:n.name,detail:'失败打回目标不存在'})});
   if(nodes.length>1&&edges.length===0)items.push({level:'warn',title:'成功路径',detail:'多个节点之间没有依赖关系，将同时启动'});if(!items.some(x=>x.level==='error'))items.push({level:'ok',title:'结构校验',detail:'未发现阻止保存或试运行的结构错误'});return items;
 }
@@ -903,12 +919,14 @@ function boundRoleLink(agent,validation=false){
 }
 function nodeGatePane(n){
   const agent=workflowAgent(n.agentId);
+  const workBuddy=agent?.executorId===AGENT_WMA_EXECUTOR;
   const artifacts=effectiveNodeArtifacts(n,agent);
   const gates=roleGates(agent);
   const step=(i,title,sub,body)=>`<li class="fd-tl-step"><span class="fd-tl-n">${i}</span><div class="fd-tl-c"><div class="fd-tl-h"><b>${title}</b><small>${sub}</small></div>${body}</div></li>`;
   const artifactRows=artifacts.length?artifacts.map(a=>`<div class="fd-tl-row"><span class="fd-tl-ic">${flowPalette.icon('file',13)}</span><span class="fd-tl-main"><b>${escapeHTML(a.name||a.path||'未命名产物')}</b><code>${escapeHTML(a.path||'未设置路径')}</code></span><span class="fd-tag${a.required?'':' soft'}">${a.required?'必须交':'可选'}</span></div>`).join(''):'<div class="fd-tl-none">这个节点没有声明需要校验的产物。</div>';
   const gateRows=gates.length?gates.map(g=>{const cmds=(g.commands||[]).filter(Boolean);return `<div class="fd-tl-row"><span class="fd-tl-ic">${flowPalette.icon('terminal',13)}</span><span class="fd-tl-main"><b>${escapeHTML(g.name||g.id||'未命名门禁')}</b><code>${escapeHTML(cmds.join(' && ')||'人工确认')}</code><small>${g.executionScope==='repositories'?'每个代码仓库':'Run 工作区'} · 失败后 ${escapeHTML({loop:'本节点自修正',reject:'打回上游',human:'转人工确认',fail:'本节点失败'}[g.onFailure]||'按节点策略')}</small></span></div>`}).join(''):'<div class="fd-tl-none">这个节点没有额外门禁命令。</div>';
-  const terminal=n.type==='agent'?step(1,'先提交结构化终态','平台内建',`<div class="fd-tl-row"><span class="fd-tl-ic">${flowPalette.icon('check',13)}</span><span class="fd-tl-main"><code>pass | rework | fail | human</code><small>Agent 完成任务后必须先调用 submit_gate_result 提交终态；缺失时自动恢复同一会话重试。</small></span></div>`):'';
+  const submitHint=workBuddy?'WorkBuddy 调用云侧 Gate 连接器，LoopForge 验证终态后推进流程。':'Agent 完成任务后必须先调用 submit_gate_result 提交终态；缺失时自动恢复同一会话重试。';
+  const terminal=n.type==='agent'?step(1,'先提交结构化终态','平台内建',`<div class="fd-tl-row"><span class="fd-tl-ic">${flowPalette.icon('check',13)}</span><span class="fd-tl-main"><code>pass | rework | fail | human</code><small>${submitHint}</small></span></div>`):'';
   const base=n.type==='agent'?1:0;
   return `<p class="prop-hint">执行时 Agent 节点先提交结构化终态，随后校验产物，最后执行可选门禁命令。</p><ol class="fd-tl">${terminal}${step(base+1,'再校验产物',`${artifacts.length} 项`,artifactRows)}${step(base+2,'最后触发额外门禁',`${gates.length} 项`,gateRows)}</ol>${boundRoleLink(agent,true)}`;
 }
@@ -968,11 +986,14 @@ function renderAgentHookEditors(d){
 }
 function renderAgentSummary(){
   const f=$('#agentForm'),d=state.agentDraft||{};
-  const exec=(state.data.executors||[]).find(x=>x.id===(f?.elements?.executorId?.value||d.executorId));
-  const chosen=agentEffectiveModel(f),model=chosen||(exec?.model?`${exec.model}（默认）`:'默认模型');
+  const executorId=f?.elements?.executorId?.value||d.executorId;
+  const workBuddy=executorId===AGENT_WMA_EXECUTOR;
+  const exec=(state.data.executors||[]).find(x=>x.id===executorId);
+  const chosen=agentEffectiveModel(f);
+  const model=workBuddy&&(!chosen||chosen==='default')?'跟随 WMA 版本':chosen||(exec?.model?`${exec.model}（默认）`:'默认模型');
   const effort=(f?.elements?.effort?.value||'').trim();
   const meta=$('#agentRuntimeMeta');
-  if(meta)meta.textContent=[exec?.name,effort?`${model} · ${effort}`:model].filter(Boolean).join(' · ');
+  if(meta)meta.textContent=[workBuddy?'WorkBuddy Managed Agents':exec?.name,effort?`${model} · ${effort}`:model].filter(Boolean).join(' · ');
   const arts=(d.artifactOutputs||[]).filter(x=>x.name||x.path).length;
   const gates=(d.verification||[]).filter(x=>x.name||(x.commands||[]).length).length;
   const loopOn=f?.elements?.loopEnabled?.checked??d.loop?.enabled;
@@ -1084,6 +1105,42 @@ function renderPreviewBuildProperties(host,n){
   const spaBox=$('#previewNodeSpa');
   if(spaBox)spaBox.onchange=()=>{flowHistory.record();updatePreviewContract({spaFallback:spaBox.checked});dirty();};
 }
+function workBuddyNodePane(n){
+  const config=n.workbuddy||{};
+  return `<div class="fd-field"><label for="workBuddyCredential">项目 AK/SK 凭据</label><select id="workBuddyCredential" class="select" data-workbuddy-field="credentialId"><option value="${escapeHTML(config.credentialId||'')}">正在加载项目 AK/SK</option></select></div>
+    <div class="fd-field"><label for="workBuddyAgentID">Agent ID</label><input id="workBuddyAgentID" class="input" data-workbuddy-field="agentId" value="${escapeHTML(config.agentId||'')}"></div>
+    <div class="fd-row2"><div class="fd-field"><label for="workBuddyVersion">版本 ID（可选）</label><input id="workBuddyVersion" class="input" data-workbuddy-field="versionId" value="${escapeHTML(config.versionId||'')}" placeholder="按托管 Agent 路由"></div>
+    <div class="fd-field"><label for="workBuddyRegion">腾讯云地域</label><input id="workBuddyRegion" class="input" data-workbuddy-field="region" value="${escapeHTML(config.region||'')}" placeholder="ap-beijing"></div></div>
+    <div class="fd-field"><label for="workBuddyPrompt">任务提示词</label><textarea id="workBuddyPrompt" class="input" data-p="taskPrompt" rows="5">${escapeHTML(n.taskPrompt||'')}</textarea><p class="prop-hint">运行输入会随任务发给 WorkBuddy。所选 Agent 版本需绑定 LoopForge Gate 连接器，并提交节点终态。</p></div>
+    <div class="fd-field"><label>交付物</label><p class="prop-hint">填入 WorkBuddy 沙箱内的相对路径。由 Agent 用 PresentFiles 登记。</p><div id="artifactContractRows">${artifactRowsHTML(n)}</div><button type="button" class="fd-btn ghost sm" id="addWorkBuddyArtifact">${flowPalette.icon('plus',13)}<span>添加产物</span></button></div>`;
+}
+
+function bindWorkBuddyNode(host,n){
+  host.querySelectorAll('[data-workbuddy-field]').forEach(input=>{
+    input.oninput=()=>{
+      const field=input.dataset.workbuddyField;
+      flowHistory.record({merge:`p:${n.id}:workbuddy.${field}`});
+      (n.workbuddy||(n.workbuddy={}))[field]=input.value.trim();
+      dirty();
+      renderCanvas();
+    };
+  });
+  const select=host.querySelector('#workBuddyCredential');
+  const projectID=state.workflow.projectId;
+  const fill=(credentials,label)=>{
+    if(!select.isConnected)return;
+    const selected=n.workbuddy?.credentialId||'';
+    const choices=credentials.filter(item=>item.kind==='aksk'&&!item.disabled);
+    select.replaceChildren(new Option(label,''),...choices.map(item=>new Option(item.name,item.id)));
+    if(selected&&!choices.some(item=>item.id===selected))select.add(new Option('已绑定凭据不可用',selected));
+    select.value=selected;
+  };
+  if(!projectID){fill([],'先选择所属项目');return}
+  api(projectCredentialsPath(projectID),{silent:true}).then(({credentials})=>{
+    fill(credentials||[],'请选择项目 AK/SK');
+  }).catch(()=>fill([],'项目凭据暂不可用'));
+}
+
 function renderProperties(){
   const host=$('#properties');if(!host)return;
   const n=state.workflow?.nodes.find(node=>node.id===state.selectedNode);
@@ -1102,8 +1159,11 @@ function renderProperties(){
     const scriptPreview=scriptLines?`<div class="script-snippet-preview" id="previewScriptNodeEditor" title="点击在代码编辑器中修改"><code>${escapeHTML(n.script.slice(0, 120))}${n.script.length>120?'…':''}</code></div>`:'';
     const scriptPane=n.type==='script'?`<div class="fd-row2"><div class="fd-field"><label>脚本语言</label><select class="select" data-p="scriptLanguage"><option value="shell" ${n.scriptLanguage!=='python'?'selected':''}>Shell</option><option value="python" ${n.scriptLanguage==='python'?'selected':''}>Python</option></select></div><div class="fd-field"><label>执行范围</label><select class="select" data-p="executionScope"><option value="run" ${n.executionScope!=='repositories'?'selected':''}>Run 工作区</option><option value="repositories" ${n.executionScope==='repositories'?'selected':''}>每个代码仓库</option></select></div></div><div class="fd-field"><label>脚本内容</label><button type="button" class="script-editor-launch-btn btn-open-code-editor" id="openScriptNodeEditor"><span>${flowPalette.icon('code',14)} 打开代码编辑器编写脚本</span><span class="script-btn-badge">${scriptCountText}</span></button>${scriptPreview}<p class="prop-hint">逐仓库执行时会自动进入每个仓库根目录，无需手写 cd。</p></div>`:'';
     const approvalPane=n.type==='approval'?`<div class="fd-field"><label>需要确认什么（可选）</label><textarea class="input" rows="4" data-p="taskPrompt" placeholder="例如：检查 MR 的改动范围和测试结果，确认可以上线">${escapeHTML(n.taskPrompt||'')}</textarea><p class="prop-hint">确认步骤会停在「待我确认」，批准后才继续；这段说明会和上下游一起展示给确认人。</p></div>`:'';
-    const knowledgeBtn=n.type==='agent'?`<div class="fd-field"><button type="button" id="nodeKnowledgeRefs" class="fd-btn ghost sm">${flowPalette.icon('layers',13)}<span>关联知识库 · ${(n.knowledgeRefs||[]).length}</span></button><p class="prop-hint">为当前节点指定要检索的个人知识库连接器（若角色开启了「接入我的知识库」则自动取并集，同一连接器以节点指定的子知识库范围为准），引用会标记在产物里。</p></div>`:'';
-    const main=`<section class="fd-sec"><div class="fd-sec-h"><span class="fd-sec-t">主配置</span></div><div class="fd-sec-b">${n.type==='agent'?agentBindCard(n)+knowledgeBtn:''}${sopSelect}${scriptPane}${approvalPane}</div></section>`;
+    const nodeKnowledgeRefs=n.knowledgeRefs||[];
+    const workBuddyRole=n.type==='agent'&&workflowAgent(n.agentId)?.executorId===AGENT_WMA_EXECUTOR;
+    const knowledgeHint=workBuddyRole?'WorkBuddy 从云端版本读取连接器，可在这里清除已有的 LoopForge 知识库绑定。':'为当前节点指定要检索的个人知识库连接器（若角色开启了「接入我的知识库」则自动取并集，同一连接器以节点指定的子知识库范围为准），引用会标记在产物里。';
+    const knowledgeBtn=n.type==='agent'&&(!workBuddyRole||nodeKnowledgeRefs.length)?`<div class="fd-field"><button type="button" id="nodeKnowledgeRefs" class="fd-btn ghost sm">${flowPalette.icon('layers',13)}<span>关联知识库 · ${nodeKnowledgeRefs.length}</span></button><p class="prop-hint">${knowledgeHint}</p></div>`:'';
+    const main=`<section class="fd-sec"><div class="fd-sec-h"><span class="fd-sec-t">主配置</span></div><div class="fd-sec-b">${n.type==='agent'?agentBindCard(n)+knowledgeBtn:''}${sopSelect}${scriptPane}${approvalPane}${n.type==='workbuddy'?workBuddyNodePane(n):''}</div></section>`;
     const gates=n.type==='agent'?flowFold('gates','校验顺序',`${effectiveNodeArtifacts(n,workflowAgent(n.agentId)).length} 产物 · ${roleGates(workflowAgent(n.agentId)).length} 门禁`,nodeGatePane(n),false):'';
     const wantReject=state.flowWantReject??(n.onFailure==='reject');
     const targets=state.workflow.nodes.filter(x=>x.id!==n.id).map(x=>`<option value="${escapeHTML(x.id)}" ${x.id===n.rejectTo?'selected':''}>${escapeHTML(x.name)}</option>`).join('');
@@ -1149,8 +1209,9 @@ function bindNodeProperties(host,n){
     if(wf&&(!n.name||n.name==='LOOP 节点'||n.name==='SOP 节点'||n.name===prev?.name))n.name=wf.name;
     dirty();renderProperties();renderCanvas();
   };
-  host.querySelector('#addSOPHandoff')?.addEventListener('click',()=>{flowHistory.record();n.artifactOutputs=n.artifactOutputs||[];n.artifactOutputs.push({name:'',path:'',mediaType:'text/markdown',required:true});renderProperties();dirty()});
-  if(n.type==='sop')bindArtifactRows(host,n);
+  host.querySelector('#addSOPHandoff,#addWorkBuddyArtifact')?.addEventListener('click',()=>{flowHistory.record();n.artifactOutputs=n.artifactOutputs||[];n.artifactOutputs.push({name:'',path:'',mediaType:'text/markdown',required:true});renderProperties();dirty()});
+  if(n.type==='workbuddy')bindWorkBuddyNode(host,n);
+  if(n.type==='sop'||n.type==='workbuddy')bindArtifactRows(host,n);
   if(catalogGeneric(state.workflow)){
     const agent=workflowAgent(n.agentId);
     host.querySelector('#openBoundAgent')?.addEventListener('click',()=>openAgentWizard(agent));

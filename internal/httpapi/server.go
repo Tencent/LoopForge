@@ -423,6 +423,7 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.POST("/api/projects", api.projects.projects)
 	g.GET("/api/projects/:id", api.projects.project)
 	g.GET("/api/projects/:id/credentials", api.credentials.list)
+	g.GET("/api/projects/:id/credentials/:credentialId/workbuddy-models", api.credentials.workBuddyModels)
 	g.POST("/api/projects/:id/credentials", api.credentials.save)
 	g.PUT("/api/projects/:id/credentials/:credentialId", api.credentials.save)
 	g.DELETE("/api/projects/:id/credentials/:credentialId", api.credentials.delete)

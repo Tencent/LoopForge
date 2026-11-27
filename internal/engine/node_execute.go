@@ -241,12 +241,15 @@ func resolveNodeExecutor(st *repo.Store, node domain.WorkflowNode, agent domain.
 func workflowSandboxRequirements(st *repo.Store, wf domain.WorkflowDefinition) (runtime.SandboxRequirements, error) {
 	var requirements []runtime.SandboxRequirements
 	for _, node := range wf.Nodes {
-		if node.Type == "script" || node.Type == "command" || node.Type == "approval" || node.Type == "sop" {
+		if node.Type == "script" || node.Type == "command" || node.Type == "approval" || node.Type == "sop" || node.Type == domain.WorkflowNodeWorkBuddy {
 			continue
 		}
 		agent, ok := workflowAgent(st, wf, node.AgentID)
 		if !ok {
 			return runtime.SandboxRequirements{}, fmt.Errorf("agent %q not found", node.AgentID)
+		}
+		if agent.ExecutorID == domain.WorkBuddyExecutorID {
+			continue
 		}
 		executor, err := workflowNodeExecutor(st, wf, node, agent)
 		if errors.Is(err, errSOPExecutorUnconfigured) {
@@ -403,6 +406,14 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 			failNode(err, false)
 			return
 		}
+	}
+	if node.Type == domain.WorkflowNodeWorkBuddy {
+		e.executeWorkBuddyNode(ctx, runID, wf, node, nil, executionAttempt, executionGeneration, failNode)
+		return
+	}
+	if role, ok := e.workBuddyRole(wf, node); ok {
+		e.executeWorkBuddyNode(ctx, runID, wf, node, &role, executionAttempt, executionGeneration, failNode)
+		return
 	}
 	if len(prepareWorkspace) > 0 && prepareWorkspace[0] != nil && node.Type != "approval" {
 		if err := prepareWorkspace[0](); err != nil {
@@ -1196,22 +1207,7 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 			return
 		}
 		if failedAction == "human" {
-			e.updateRun(runID, func(r *domain.Run) {
-				nr := r.Nodes[node.ID]
-				if !shouldCommitNodeOutcome(*r, nr, executionGeneration, executionAttempt, false) {
-					return
-				}
-				nr.Output, nr.Error, nr.Status, nr.Activity, nr.FinishedAt = output, err.Error(), "waiting_approval", "等待人工确认", time.Now().UTC()
-				markKnowledgeReadsCited(nr.KnowledgeReads, executionAttempt, output, frozen)
-				message := "Agent 请求人工确认"
-				if nr.GateResult != nil && strings.TrimSpace(nr.GateResult.ActionRequired) != "" {
-					message += "：" + nr.GateResult.ActionRequired
-				} else if detail := strings.TrimSpace(nr.Error); detail != "" {
-					message += "：" + clipHumanGateDetail(detail)
-				}
-				e.event(r, node.ID, "gate.waiting", message)
-			})
-			e.persistCitedKnowledgeReads(runID, node.ID, executionAttempt)
+			e.waitForHumanGate(runID, node.ID, executionGeneration, executionAttempt, output, err, frozen)
 			return
 		}
 		if maxIterations > 1 && loopOnExhausted == "human" {
@@ -1241,8 +1237,12 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 			continue
 		}
 	}
-	current, _ = e.repo.RunProgress(runID)
-	artifacts, err := collectArtifactsMode(outputs, current, effectiveNode, output, false, func(warning string) {
+	e.completeNode(ctx, runID, effectiveNode, outputs, output, manualGateName, executionAttempt, executionGeneration, sink, failNode)
+}
+
+func (e *Engine) completeNode(ctx context.Context, runID string, node domain.WorkflowNode, outputs nodeOutputs, output, manualGateName string, executionAttempt, executionGeneration int, sink runtime.EventSink, failNode func(error, bool)) {
+	current, _ := e.repo.RunProgress(runID)
+	artifacts, err := collectArtifactsMode(outputs, current, node, output, false, func(warning string) {
 		sink(domain.TelemetryEvent{Category: "artifact", Name: "artifact.optional.skipped", Phase: "finish", Level: "warn", Message: warning})
 	})
 	if err != nil {
@@ -1250,15 +1250,21 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 		failNode(fmt.Errorf("artifact contract: %w", err), nodeRejects(node) && !isArtifactHandoffFailure(err))
 		return
 	}
-	if !shouldCommitNodeOutcome(current, current.Nodes[node.ID], executionGeneration, executionAttempt, true) {
+	canCommit := func(r domain.Run) bool {
+		nr := r.Nodes[node.ID]
+		remote := node.Type == domain.WorkflowNodeWorkBuddy
+		return shouldCommitNodeOutcome(r, nr, executionGeneration, executionAttempt, !remote) &&
+			(!remote || (!r.CancelRequested && nr.GateResult != nil && nr.GateResult.Decision == "pass"))
+	}
+	if !canCommit(current) {
 		return
 	}
 	var outcomeNode *domain.NodeRun
 	commit := func(r *domain.Run) {
-		nr := r.Nodes[node.ID]
-		if !shouldCommitNodeOutcome(*r, nr, executionGeneration, executionAttempt, true) {
+		if !canCommit(*r) {
 			return
 		}
+		nr := r.Nodes[node.ID]
 		outcomeNode = nr
 		r.Artifacts = append(r.Artifacts, artifacts...)
 		nr.Output = output
@@ -1276,7 +1282,7 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 	}
 	commitErr := e.updateRunErr(runID, commit)
 	if commitErr != nil && outcomeNode != nil && ctx.Err() == nil && !errors.Is(commitErr, repo.ErrRunLeaseLost) {
-		required := requiredNodeArtifacts(effectiveNode, artifacts)
+		required := requiredNodeArtifacts(node, artifacts)
 		if len(required) < len(artifacts) {
 			cause := commitErr
 			artifacts = required

@@ -248,6 +248,9 @@ func (e *Engine) planSOPExecutors(wf domain.WorkflowDefinition, ec domain.Teleme
 			}
 			return nil, nil, fmt.Errorf("agent %q not found", node.AgentID)
 		}
+		if role.ExecutorID == domain.WorkBuddyExecutorID {
+			continue
+		}
 		legacyTemplate := roleIDs[role.ID] && role.ProjectID == wf.ProjectID
 		baselineResolver := wf.ID == BaselineAlignWorkflowID && role.ID == BaselineAlignAgentID
 		var ex domain.ExecutorDefinition

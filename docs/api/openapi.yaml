@@ -1935,6 +1935,40 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/Conflict"
+  /api/projects/{projectId}/credentials/{credentialId}/workbuddy-models:
+    get:
+      tags: [Projects]
+      operationId: listWorkBuddyModels
+      summary: List enabled WorkBuddy models using a project AK/SK credential
+      parameters:
+        - {name: projectId, in: path, required: true, schema: {type: string}}
+        - {name: credentialId, in: path, required: true, schema: {type: string}}
+        - {name: region, in: query, schema: {type: string, default: ap-beijing}}
+      responses:
+        "200":
+          description: Enabled built-in models eligible for calling tools
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [models]
+                properties:
+                  models:
+                    type: array
+                    items:
+                      type: object
+                      required: [id, name]
+                      properties:
+                        id: {type: string}
+                        name: {type: string}
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "502":
+          description: WorkBuddy model catalog request failed
   /api/projects/{projectId}/restore:
     parameters:
       - name: projectId
@@ -5889,6 +5923,14 @@ components:
           description: Requires workBranch to exist on the remote; never creates a replacement branch
         integrateBranch:
           type: string
+    WorkBuddyConfig:
+      type: object
+      required: [agentId, credentialId]
+      properties:
+        agentId: {type: string}
+        versionId: {type: string}
+        region: {type: string, default: ap-beijing}
+        credentialId: {type: string, description: Reference to an AK/SK credential in the owning project.}
     AgentDefinition:
       type: object
       required: [id, name]
@@ -5923,8 +5965,12 @@ components:
             $ref: "#/components/schemas/AgentHook"
         executorId:
           type: string
+          description: Select `workbuddy` to execute a project role in WorkBuddy Managed Agents.
         model:
           type: string
+          description: For `workbuddy`, an explicit model ID. Omit to use the cloud Agent version's model.
+        workbuddy:
+          $ref: "#/components/schemas/WorkBuddyConfig"
         loop:
           $ref: "#/components/schemas/OpenObject"
         updatedAt:
@@ -6061,7 +6107,12 @@ components:
           type: string
         type:
           type: string
-          enum: [agent, script, command, approval, sop]
+          enum: [agent, script, command, approval, sop, workbuddy]
+        taskPrompt:
+          type: string
+          description: Prompt for a WorkBuddy node or instructions for an approver.
+        workbuddy:
+          $ref: "#/components/schemas/WorkBuddyConfig"
         agentId:
           type: string
         executorId:

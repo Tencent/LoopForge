@@ -38,17 +38,17 @@ type WorkflowRequirement struct {
 
 type WorkflowNode struct {
 	KnowledgeRefs []KnowledgeRef `json:"knowledgeRefs,omitempty"`
-	// TaskPrompt is what an approval node asks its approver to check
-	// (「需要确认什么」). Role nodes take their whole brief from the role's
-	// prompt; the field is not read for them.
-	TaskPrompt   string   `json:"taskPrompt,omitempty"`
-	RequestedBy  string   `json:"requestedBy,omitempty"`
-	RequestID    string   `json:"requestId,omitempty"`
-	ClaimedFiles []string `json:"claimedFiles,omitempty"`
-	PlanItemID   string   `json:"planItemId,omitempty"`
-	ID           string   `json:"id"`
-	Name         string   `json:"name"`
-	Type         string   `json:"type"` // agent, script, approval, sop
+	// TaskPrompt is used by approval and WorkBuddy nodes. Role nodes use
+	// the prompt from the selected role.
+	TaskPrompt   string           `json:"taskPrompt,omitempty"`
+	RequestedBy  string           `json:"requestedBy,omitempty"`
+	RequestID    string           `json:"requestId,omitempty"`
+	ClaimedFiles []string         `json:"claimedFiles,omitempty"`
+	PlanItemID   string           `json:"planItemId,omitempty"`
+	ID           string           `json:"id"`
+	Name         string           `json:"name"`
+	Type         string           `json:"type"` // agent, script, approval, sop, workbuddy
+	WorkBuddy    *WorkBuddyConfig `json:"workbuddy,omitempty"`
 	// MetricStage explicitly assigns this node's execution time to a Loop phase.
 	// Empty means a legacy workflow without a classification; "none" opts out.
 	MetricStage string `json:"metricStage,omitempty"` // clarification, development, testing, none

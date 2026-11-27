@@ -577,6 +577,14 @@ func (e *Engine) validateExecutionReconnect(run domain.Run, nodeID string) error
 		// A pool run is rebound to another pool runner when its node starts.
 		return nil
 	}
+	for _, node := range run.WorkflowSnapshot.Nodes {
+		if node.ID == nodeID {
+			if _, role := e.workBuddyRole(run.WorkflowSnapshot, node); role || node.Type == domain.WorkflowNodeWorkBuddy {
+				return nil
+			}
+			break
+		}
+	}
 	if run.ExecutionContext.ExecutionPool == domain.ExecutionPoolProjectAuto {
 		if err := e.validateAutoAssignBinding(run); err != nil {
 			return err

@@ -11,6 +11,9 @@ import (
 // its owned rules and skills before its definition is saved.
 func (r *CatalogRepo) PutAgentWithSharing(v domain.AgentDefinition) error {
 	if v.Shared {
+		if err := v.ValidateWorkBuddy(); err != nil {
+			return err
+		}
 		if err := r.ShareAgentAssets(v); err != nil {
 			return err
 		}

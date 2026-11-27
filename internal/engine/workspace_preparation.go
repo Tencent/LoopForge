@@ -453,7 +453,7 @@ func workspaceConversationRequirements(st *repo.Store, wf domain.WorkflowDefinit
 			continue
 		}
 		agent, ok := workflowAgent(st, wf, node.AgentID)
-		if !ok {
+		if !ok || agent.ExecutorID == domain.WorkBuddyExecutorID {
 			continue
 		}
 		executor, err := workflowNodeExecutor(st, wf, node, agent)

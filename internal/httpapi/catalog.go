@@ -378,6 +378,9 @@ func (h *catalogHandlers) agents(c *gin.Context) {
 				c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
 				return
 			}
+			if v.ExecutorID == domain.WorkBuddyExecutorID && !h.validateWorkBuddyRoleCredential(c, v) {
+				return
+			}
 			if err := domain.ValidateVerificationGates(v.Verification); err != nil {
 				c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
 				return
@@ -422,6 +425,13 @@ func validateCatalogAgentExecutor(agent *domain.AgentDefinition) error {
 	agent.ExecutorID = strings.TrimSpace(agent.ExecutorID)
 	agent.Model = strings.TrimSpace(agent.Model)
 	agent.Effort = strings.TrimSpace(agent.Effort)
+	if agent.ExecutorID == domain.WorkBuddyExecutorID {
+		if agent.Model == "default" {
+			agent.Model = ""
+		}
+		return agent.ValidateWorkBuddy()
+	}
+	agent.WorkBuddy = nil
 	if agent.ExecutorID == "" {
 		if (agent.Model == "" || agent.Model == "default") && agent.Effort == "" {
 			agent.Model = ""
@@ -507,6 +517,16 @@ func (h *catalogHandlers) agent(c *gin.Context) {
 			c.JSON(http.StatusConflict, map[string]string{"error": "该角色仍被共享任务引用，不能取消共享"})
 			return
 		}
+		if restored.ExecutorID == domain.WorkBuddyExecutorID {
+			restored.ProjectID = current.ProjectID
+			if err := restored.ValidateWorkBuddy(); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+				return
+			}
+			if !h.validateWorkBuddyRoleCredential(c, restored) {
+				return
+			}
+		}
 		stored, err := h.repo.RestoreAgentRevision(c.Param("rev"))
 		if err != nil {
 			respond(c, err)
@@ -540,6 +560,15 @@ func (h *catalogHandlers) agent(c *gin.Context) {
 		}
 		if !h.requireProjectWriter(c, targetProject) {
 			return
+		}
+		if current.ExecutorID == domain.WorkBuddyExecutorID {
+			if targetProject != current.ProjectID {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "WorkBuddy 角色只能在当前项目复制"})
+				return
+			}
+			if !h.validateWorkBuddyRoleCredential(c, current) {
+				return
+			}
 		}
 		if taken, exists := h.repo.Agent(req.ID); exists && !h.requireAgentWriter(c, taken) {
 			return
@@ -1288,6 +1317,7 @@ func (h *catalogHandlers) workflow(c *gin.Context) {
 		if !decode(c, &agent) {
 			return
 		}
+		agent.ProjectID = ""
 		if err := validateCatalogAgentExecutor(&agent); err != nil {
 			c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
@@ -1307,6 +1337,12 @@ func (h *catalogHandlers) workflow(c *gin.Context) {
 		}
 		c.JSON(200, saved)
 	case "/api/workflows/:id/publish":
+		for _, node := range v.Nodes {
+			if err := node.ValidateWorkBuddy(); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+				return
+			}
+		}
 		if !h.validateWorkflowProjectCredentials(c, v) {
 			return
 		}
@@ -1385,6 +1421,13 @@ func (h *catalogHandlers) workflow(c *gin.Context) {
 		v.ProjectID = req.ProjectID
 		v.Shared = false
 		v.ProjectCredentialIDs = nil
+		for i, node := range v.Nodes {
+			if node.WorkBuddy != nil {
+				config := *node.WorkBuddy
+				config.CredentialID = ""
+				v.Nodes[i].WorkBuddy = &config
+			}
+		}
 		v.Status, v.Version, v.Revision = "draft", 1, 0
 		v.CreatedAt, v.UpdatedAt = time.Time{}, time.Time{}
 		if err := h.repo.PutWorkflow(v); err != nil {
@@ -1399,7 +1442,15 @@ func (h *catalogHandlers) workflow(c *gin.Context) {
 }
 
 func (h *catalogHandlers) validateWorkflowProjectCredentials(c *gin.Context, wf domain.WorkflowDefinition) bool {
-	if len(wf.ProjectCredentialIDs) == 0 {
+	workBuddyIDs := make(map[string]struct{})
+	for _, node := range wf.Nodes {
+		if node.Type == domain.WorkflowNodeWorkBuddy && node.WorkBuddy != nil {
+			if id := strings.TrimSpace(node.WorkBuddy.CredentialID); id != "" {
+				workBuddyIDs[id] = struct{}{}
+			}
+		}
+	}
+	if len(wf.ProjectCredentialIDs) == 0 && len(workBuddyIDs) == 0 {
 		return true
 	}
 	if _, generic := h.repo.GenericTemplateByWorkflow(wf.ID); generic || wf.Generic {
@@ -1407,14 +1458,24 @@ func (h *catalogHandlers) validateWorkflowProjectCredentials(c *gin.Context, wf 
 		return false
 	}
 	user, ok := h.requestUser(c.Request, true)
-	use, _ := h.projectCredentialAccess(c.Request, wf.ProjectID, user.ID)
-	if !ok || !use {
+	if !ok {
+		c.JSON(http.StatusForbidden, gin.H{"error": "无权在该 LOOP 中绑定项目凭据"})
+		return false
+	}
+	if use, _ := h.projectCredentialAccess(c.Request, wf.ProjectID, user.ID); !use {
 		c.JSON(http.StatusForbidden, gin.H{"error": "无权在该 LOOP 中绑定项目凭据"})
 		return false
 	}
 	if _, err := h.repo.ProjectCredentialVariableNames(c.Request.Context(), wf.ProjectID, wf.ProjectCredentialIDs); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return false
+	}
+	for id := range workBuddyIDs {
+		items, err := h.repo.AvailableProjectCredentialMetadata(c.Request.Context(), wf.ProjectID, []string{id})
+		if err != nil || len(items) != 1 || items[0].Kind != domain.ProjectCredentialAKSK {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "请选择当前项目下已启用的 AK/SK 凭据"})
+			return false
+		}
 	}
 	return true
 }

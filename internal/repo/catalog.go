@@ -158,8 +158,14 @@ func (r *CatalogRepo) PutAgent(v domain.AgentDefinition) error {
 	v.UpdatedAt = time.Now().UTC()
 	v.Rules = normalizeRefs(v.Rules, "rules/")
 	v.Skills = normalizeRefs(v.Skills, "skills/")
-	if old, ok := r.Agent(v.ID); ok {
+	old, exists := r.Agent(v.ID)
+	if exists {
 		v.ProjectID = domain.KeepCatalogProjectID(v.ProjectID, old.ProjectID)
+	}
+	if err := v.ValidateWorkBuddy(); err != nil {
+		return err
+	}
+	if exists {
 		if err := r.snapshotRevision("agent", old.ID, old.Name, old.Version, 0, old); err != nil {
 			return err
 		}

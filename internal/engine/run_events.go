@@ -227,7 +227,9 @@ func (e *Engine) observationContext(run domain.Run, nodeID string, nr *domain.No
 			ctx.MetricStage = node.MetricStage
 			if agent, ok := workflowAgent(e.repo, run.WorkflowSnapshot, node.AgentID); ok {
 				ctx.AgentVersion = agent.Version
-				if executor, err := workflowNodeExecutor(e.repo, run.WorkflowSnapshot, node, agent); err == nil {
+				if agent.ExecutorID == domain.WorkBuddyExecutorID {
+					ctx.ExecutorID = agent.ExecutorID
+				} else if executor, err := workflowNodeExecutor(e.repo, run.WorkflowSnapshot, node, agent); err == nil {
 					ctx.ExecutorID = executor.ID
 				}
 			}

@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/repo"
 )
 
 func TestReportedOutputsValidateRepositoryScopedContracts(t *testing.T) {
@@ -88,5 +89,33 @@ func TestRunnerArtifactInputsMatchWorkspaceMount(t *testing.T) {
 	}
 	if !strings.Contains(local, files[0].Path) {
 		t.Fatalf("local manifest points elsewhere than the mounted file: %s", local)
+	}
+}
+
+func TestWorkBuddyArtifactReferenceUsesArchivedBytes(t *testing.T) {
+	store, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	wf := domain.WorkflowDefinition{ID: "wma-handoff", Edges: []domain.WorkflowEdge{{Source: "draft", Target: "review"}}}
+	const text = "Handoff-ID: LF-123456\nLiteral {{input}}.\n"
+	run := domain.Run{ID: "wma-handoff-run", WorkflowID: wf.ID, Status: "succeeded", Input: "the run input"}
+	run.Artifacts = []domain.Artifact{newArtifact(run.ID, "draft", 1, "notes", "notes.md", "text/markdown", []byte(text))}
+	if err := store.PutRun(run); err != nil {
+		t.Fatal(err)
+	}
+	archived, ok := store.RunProgress(run.ID)
+	if !ok || len(archived.Artifacts) != 1 || archived.Artifacts[0].Content != "" {
+		t.Fatal("expected a run with artifact metadata only")
+	}
+	node := domain.WorkflowNode{ID: "review", TaskPrompt: "Read these bytes:\n{{artifact.draft.notes}}"}
+	e := &Engine{repo: store}
+	replacements, err := e.workBuddyArtifactInputs(t.Context(), wf, node, archived)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if prompt := renderPromptSpec(wf, node, node.TaskPrompt, archived, replacements); !strings.Contains(prompt, text) || strings.Contains(prompt, "{{artifact.draft.notes}}") {
+		t.Fatalf("prompt did not retain the archived bytes: %s", prompt)
 	}
 }

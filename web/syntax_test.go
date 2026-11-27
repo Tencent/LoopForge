@@ -854,10 +854,47 @@ assert.ok(legacy.includes('历史执行器 legacy-codex'));
 assert.ok(legacy.includes('value="legacy-codex" selected disabled'));
 assert.ok(!legacy.includes('value="codebuddy" selected'));
 assert.ok(executorOptions('codex').includes('value="codex" selected'));
+assert.ok(!executorOptions('codex').includes('value="workbuddy"'));
+assert.ok(executorOptions('workbuddy', true).includes('value="workbuddy" selected>WorkBuddy Managed Agents'));
 `
 	out, err := exec.Command(node, "-e", script).CombinedOutput()
 	if err != nil {
 		t.Fatalf("legacy executor UI check failed: %v\n%s", err, out)
+	}
+}
+
+func TestWorkBuddyRoleModelPicker(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node not installed; skipping WorkBuddy model picker check")
+	}
+	script := `
+const assert = require('node:assert/strict');
+const code = require('node:fs').readFileSync('` + appBundlePath(t) + `', 'utf8');
+const check = () => {
+  const builtin = agentModelItems('workbuddy', '');
+  assert.equal(new Set(builtin.map(model => model.id)).size, builtin.length);
+  assert.equal(builtin[0].id, 'default');
+  assert.equal(builtin.at(-1).id, AGENT_CUSTOM_MODEL);
+  const flash = builtin.filter(model => ['hy4flash', 'hy4flash-free'].includes(model.id));
+  assert.equal(flash.length, 2);
+  assert.ok(flash.every(model => model.name.includes(model.id)));
+  assert.ok(builtin.some(model => model.id === 'glm-5.4'));
+  assert.ok(!builtin.some(model => model.id === 'hunyuan-image-alpha'));
+
+  workBuddyRoleModels = [{id:'account-model',name:'Account model'}];
+  const ids = current => agentModelItems('workbuddy', current).map(model => model.id);
+  assert.deepEqual(ids(''), ['default', 'account-model', AGENT_CUSTOM_MODEL]);
+  assert.deepEqual(ids('saved-model'), ['default', 'account-model', 'saved-model', AGENT_CUSTOM_MODEL]);
+  workBuddyRoleModels = [];
+  assert.deepEqual(ids(''), ['default', AGENT_CUSTOM_MODEL]);
+};
+const picker = code.slice(code.indexOf('const AGENT_CUSTOM_MODEL='), code.indexOf('function agentEffortItems('));
+eval(picker + '\n(' + check.toString() + ')()');
+`
+	out, err := exec.Command(node, "-e", script).CombinedOutput()
+	if err != nil {
+		t.Fatalf("WorkBuddy model picker check failed: %v\n%s", err, out)
 	}
 }
 
