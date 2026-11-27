@@ -179,5 +179,5 @@ func (h *assistantHandlers) sessionMode(c *gin.Context) {
 		return
 	}
 	saved, _ = h.repo.AssistantSession(owner, saved.ID)
-	c.JSON(200, saved)
+	c.JSON(200, sanitizeAssistantSessionForViewer(saved, user.ID))
 }

@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"os"
 	"strings"
 	"time"
 
@@ -16,26 +15,32 @@ import (
 
 const proxyTokenPrefix = "afkb1."
 
-// ProxyTokenTTL bounds how long a run's knowledge token stays valid. It must
-// outlive long agent nodes but is not a durable credential.
+// ProxyTokenTTL bounds how long a run's knowledge proxy token stays valid.
 const ProxyTokenTTL = 48 * time.Hour
 
-// ProxyClaims identify who a proxy token was issued for. Tokens are stateless
-// and signed with a key derived from the upstream token, so rotating the
-// upstream token revokes every outstanding proxy token.
+// ProxyClaims identify the run, node, user owner, and bound KnowledgeRef a
+// stateless proxy token grants read-only access for.
 type ProxyClaims struct {
-	ProjectID string `json:"p,omitempty"`
-	UserID    int64  `json:"u,omitempty"`
-	AgentID   string `json:"a,omitempty"`
-	ExpiresAt int64  `json:"e"`
+	Ref       *domain.KnowledgeRef `json:"ref,omitempty"`
+	Attempt   int                  `json:"attempt,omitempty"`
+	RunID     string               `json:"run,omitempty"`
+	NodeID    string               `json:"node,omitempty"`
+	ProjectID string               `json:"p,omitempty"`
+	UserID    int64                `json:"u,omitempty"`
+	AgentID   string               `json:"a,omitempty"`
+	ExpiresAt int64                `json:"e"`
 }
 
 var errInvalidProxyToken = errors.New("invalid knowledge proxy token")
 
-func SignProxyToken(settings domain.KnowledgeSettings, claims ProxyClaims, now time.Time) (string, error) {
-	key := proxyKey(settings)
-	if key == nil {
-		return "", ErrNotConfigured
+// SignProxyToken mints a stateless HMAC-SHA256 bearer token for /runners/knowledge/mcp.
+func SignProxyToken(claims ProxyClaims, now time.Time) (string, error) {
+	if claims.Ref == nil || strings.TrimSpace(claims.Ref.ConnectorID) == "" {
+		return "", errors.New("missing knowledge connector reference")
+	}
+	key, err := proxySigningKey()
+	if err != nil {
+		return "", err
 	}
 	if claims.ExpiresAt == 0 {
 		claims.ExpiresAt = now.Add(ProxyTokenTTL).Unix()
@@ -45,13 +50,17 @@ func SignProxyToken(settings domain.KnowledgeSettings, claims ProxyClaims, now t
 		return "", err
 	}
 	body := proxyTokenPrefix + base64.RawURLEncoding.EncodeToString(raw)
-	return body + "." + sign(key, body), nil
+	return body + "." + signProxyBody(key, body), nil
 }
 
-func VerifyProxyToken(settings domain.KnowledgeSettings, token string, now time.Time) (ProxyClaims, error) {
-	key := proxyKey(settings)
+// VerifyProxyToken validates signature and expiry on an afkb1. bearer token.
+func VerifyProxyToken(token string, now time.Time) (ProxyClaims, error) {
+	key, err := proxySigningKey()
+	if err != nil {
+		return ProxyClaims{}, err
+	}
 	token = strings.TrimSpace(token)
-	if key == nil || !strings.HasPrefix(token, proxyTokenPrefix) {
+	if !strings.HasPrefix(token, proxyTokenPrefix) {
 		return ProxyClaims{}, errInvalidProxyToken
 	}
 	dot := strings.LastIndexByte(token, '.')
@@ -59,7 +68,7 @@ func VerifyProxyToken(settings domain.KnowledgeSettings, token string, now time.
 		return ProxyClaims{}, errInvalidProxyToken
 	}
 	body, sig := token[:dot], token[dot+1:]
-	if !hmac.Equal([]byte(sig), []byte(sign(key, body))) {
+	if !hmac.Equal([]byte(sig), []byte(signProxyBody(key, body))) {
 		return ProxyClaims{}, errInvalidProxyToken
 	}
 	raw, err := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(body, proxyTokenPrefix))
@@ -73,24 +82,22 @@ func VerifyProxyToken(settings domain.KnowledgeSettings, token string, now time.
 	if claims.ExpiresAt <= now.Unix() {
 		return ProxyClaims{}, errors.New("knowledge proxy token expired")
 	}
+	if claims.Ref == nil || strings.TrimSpace(claims.Ref.ConnectorID) == "" {
+		return ProxyClaims{}, errInvalidProxyToken
+	}
 	return claims, nil
 }
 
-func proxyKey(settings domain.KnowledgeSettings) []byte {
-	upstream := strings.TrimSpace(settings.Token)
-	if upstream == "" {
-		return nil
+func proxySigningKey() ([]byte, error) {
+	material, err := platformSecretMaterial()
+	if err != nil {
+		return nil, err
 	}
-	secret := strings.TrimSpace(os.Getenv("AGENTFLOW_SESSION_SECRET"))
-	if secret == "" {
-		secret = strings.TrimSpace(os.Getenv("SESSION_SECRET"))
-	}
-	mac := hmac.New(sha256.New, []byte(upstream))
-	mac.Write([]byte("agentflow-knowledge-proxy|" + secret))
-	return mac.Sum(nil)
+	sum := sha256.Sum256([]byte("loopforge/knowledge/proxy-token/v1\x00" + material))
+	return sum[:], nil
 }
 
-func sign(key []byte, body string) string {
+func signProxyBody(key []byte, body string) string {
 	mac := hmac.New(sha256.New, key)
 	mac.Write([]byte(body))
 	return hex.EncodeToString(mac.Sum(nil))

@@ -643,7 +643,8 @@ test('save closes its own editor after success, retains input after failure and 
  form.dispatchEvent(new app.window.Event('submit',{bubbles:true,cancelable:true}));await settle(4);
  assert.equal(app.document.querySelector('#scheduleModal').classList.contains('open'),true);
  assert.equal(form.elements.assistantPrompt.value,'keep me');assert.equal(form.querySelector('[type=submit]').disabled,false);
- assert.equal(form.querySelector('[type=submit]').textContent,'保存 AI 定时任务');
+ assert.equal(form.querySelector('[type=submit]').textContent,'仅保存');
+ assert.equal(form.querySelector('#scheduleSaveAndRun').hidden,false);
 });
 
 test('late save responses cannot close a newly opened editor',async t=>{

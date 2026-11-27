@@ -211,10 +211,10 @@ func removeUntrackedHostLeak(host, path string) {
 	}
 }
 
-func (e *Engine) freezeAvailableArtifacts(runID string, node domain.WorkflowNode, workspace string, reported *reportedOutputs, output string) {
+func (e *Engine) freezeAvailableArtifacts(runID string, node domain.WorkflowNode, workspace string, reported *reportedOutputs, output string) []domain.Artifact {
 	current, ok := e.repo.RunProgress(runID)
 	if !ok {
-		return
+		return nil
 	}
 	var outputs nodeOutputs = workspaceOutputs(workspace)
 	recovered := []string(nil)
@@ -229,16 +229,17 @@ func (e *Engine) freezeAvailableArtifacts(runID string, node domain.WorkflowNode
 	}
 	artifacts, err := collectArtifactsMode(outputs, current, node, output, true)
 	if err != nil || len(artifacts) == 0 {
-		return
+		return nil
 	}
 	if !e.updateRunAt(runID, false, func(r *domain.Run) {
 		r.Artifacts = append(r.Artifacts, artifacts...)
 	}) {
-		return
+		return nil
 	}
 	for _, artifact := range artifacts {
 		e.observe(runID, node.ID, domain.TelemetryEvent{Category: "artifact", Name: "artifact.published", Phase: "finish", Message: artifact.Name, Attributes: map[string]any{"artifactId": artifact.ID, "path": artifact.Path, "mediaType": artifact.MediaType, "size": artifact.Size, "sha256": artifact.SHA256}})
 	}
+	return artifacts
 }
 
 // validateArtifactContracts is deliberately run before verification gates.

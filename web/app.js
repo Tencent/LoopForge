@@ -1334,6 +1334,8 @@ function bind(){
   $('#syncNowBtn').onclick=syncNow;
   $('#saveSyncConfig').onclick=saveSyncConfig;
   $('#scheduleJobForm').onsubmit=saveScheduleJob;
+  const scheduleSaveAndRun=$('#scheduleSaveAndRun');
+  if(scheduleSaveAndRun)scheduleSaveAndRun.onclick=()=>saveScheduleJob({preventDefault(){},currentTarget:$('#scheduleJobForm')},{runNow:true});
   $('#scheduleTimingTabs')?.addEventListener('click',e=>{
     const tab=e.target.closest('[data-schedule-tab]');
     if(!tab)return;
@@ -1581,6 +1583,28 @@ function postPendingChatIssueMention(frame){
   frame.contentWindow?.postMessage({type:'agentflow-chat-mention-issue',...pendingChatIssueMention},location.origin);
   pendingChatIssueMention=null;
 }
+function openChatSessionInWorkbench(sessionId,projectId){
+  if(!sessionId)return;
+  if(projectId){
+    state.projectFilter=projectId;
+    localStorage.setItem('agentflow.activeProject',projectId);
+    const select=$('#projectSwitcher');
+    if(select&&[...select.options].some(o=>o.value===projectId))select.value=projectId;
+  }
+  const url=new URL(location.href);
+  if(projectId)url.searchParams.set('projectId',projectId);
+  url.searchParams.set('chatSession',sessionId);
+  url.searchParams.delete('chatIssue');
+  history.replaceState({},'',url.pathname+url.search+'#/collaboration/'+encodeURIComponent(sessionId));
+  const frame=$('#chatNextFrame');
+  if(nativeChatReady&&frame?.dataset.src==='native'&&frame.contentWindow){
+    frame.contentWindow.postMessage({type:'agentflow-chat-open-session',sessionId,projectId:projectId||''},location.origin);
+    switchView('collaboration');
+    return;
+  }
+  if(frame)frame.dataset.src='';
+  switchView('collaboration');
+}
 function openIssueInChat(issue,opts){
   if(!issue?.id||!issue.projectId)return;
   const intent=String(opts?.intent||'').trim();
@@ -1659,7 +1683,7 @@ function mountNativeChat(){
           renderAll();
         }).catch(()=>{});
       }
-      if(message.type==='agentflow-chat-open-view'&&['settings','runners','sops','projects','runs','agents','sandboxes','flow','mcp'].includes(message.view)){
+      if(message.type==='agentflow-chat-open-view'&&['settings','runners','sops','projects','runs','agents','sandboxes','flow','mcp','knowledge','aiSchedules'].includes(message.view)){
         if(message.view==='settings'&&message.credential){
           if(message.credential==='executors'&&message.returnToQuickAccess===true&&activeViewName()==='collaboration'&&location.hash!==QUICK_ACCESS_EXECUTOR_SETTINGS){
             history.pushState({quickAccessExecutorReturn:true},'',QUICK_ACCESS_EXECUTOR_SETTINGS);
@@ -1668,6 +1692,26 @@ function mountNativeChat(){
         }
         else if(message.view==='sandboxes'&&message.action==='create')createConversationSandbox(message.projectId).catch(error=>toast(error.message));
         else if(message.view==='runs'&&/^run-[\w-]+$/.test(message.runId||''))location.hash='#/runs/'+encodeURIComponent(message.runId);
+        else if(message.view==='aiSchedules'){
+          if(message.projectId&&state.projectFilter!==message.projectId&&(state.data.projects||[]).some(p=>p.id===message.projectId)){
+            state.projectFilter=message.projectId;
+            localStorage.setItem('agentflow.activeProject',message.projectId);
+            const select=$('#projectSwitcher');
+            if(select&&[...select.options].some(o=>o.value===message.projectId))select.value=message.projectId;
+          }
+          if(message.action==='executions'&&typeof openScheduleExecutions==='function'){
+            openScheduleExecutions(message.jobId||'');
+          }else{
+            switchView('aiSchedules');
+            if(message.action==='create'&&typeof openScheduleJobModal==='function'){
+              openScheduleJobModal('assistant');
+            }else if(message.action==='edit'&&message.jobId&&typeof openScheduleJobModal==='function'){
+              const job=(state.data.scheduleJobs||[]).find(j=>j.id===message.jobId);
+              if(job)openScheduleJobModal('assistant',job);
+              else refreshAISchedules().then(()=>{const found=(state.data.scheduleJobs||[]).find(j=>j.id===message.jobId);if(found)openScheduleJobModal('assistant',found)}).catch(()=>{});
+            }
+          }
+        }
         else switchView(message.view);
       }
     });
@@ -1701,7 +1745,7 @@ function settingsSidebarExpanded(){
 }
 let settingsSidebarEntryFrame=0;
 let settingsSidebarWasManaged=false;
-const settingsManagementViews=['settings','assistant','projects','bots','projectCredentials','sops','flow','runs','aiSchedules','agents','mcp','rules','skills','runners','sandboxes','evolution','guide','platform'];
+const settingsManagementViews=['settings','assistant','projects','bots','projectCredentials','sops','flow','runs','aiSchedules','agents','mcp','rules','skills','knowledge','runners','sandboxes','evolution','guide','platform'];
 const settingsRouteMotion=matchMedia('(prefers-reduced-motion: reduce)');
 let settingsRouteTransition=null;
 let settingsRouteApplying=false;
@@ -1881,8 +1925,7 @@ function setSettingsSidebarExpanded(expanded,focusToggle=false){
     });
   }
 }
-function viewTitles(){return {management:'设置',collaboration:'AI 工作台',issues:'需求列表',aiSchedules:'定时任务',bots:'通道管理',assistant:'AI 助手',runs:'运行记录',approvals:'待我确认',sops:'流程模板',flow:'流程设计',agents:'角色定义',mcp:'能力资产',rules:'能力资产',skills:'能力资产',sandboxes:'沙箱管理',observability:'统计',projects:'项目配置',projectCredentials:'凭据管理',platform:'平台管理',runners:'执行机器',settings:'个人配置',access:'访问密钥',guide:'访问密钥',evolution:'RSI工作台'}}
-// 设置侧栏只列一级入口；被合并进同一页的子视图（能力资产的类型 Tab，
+function viewTitles(){return {management:'设置',collaboration:'AI 工作台',issues:'需求列表',aiSchedules:'定时任务',bots:'通道管理',assistant:'AI 助手',runs:'运行记录',approvals:'待我确认',sops:'流程模板',flow:'流程设计',agents:'角色定义',mcp:'能力资产',rules:'能力资产',skills:'能力资产',knowledge:'我的知识库',sandboxes:'沙箱管理',observability:'统计',projects:'项目配置',projectCredentials:'凭据管理',platform:'平台管理',runners:'执行机器',settings:'个人配置',access:'访问密钥',guide:'访问密钥',evolution:'RSI工作台'}}
 // 从流程模板打开的流程设计）按 data-nav-match 高亮它们所属的入口。
 function settingsNavMatches(btn,name){return btn.dataset.view===name||String(btn.dataset.navMatch||'').split(/\s+/).includes(name)}
 const assetTypeGroups={capability:['mcp','rules','skills']};
@@ -2139,8 +2182,9 @@ function switchView(name){
     }
   }
   if(name==='mcp')loadMCPMarket();
+  if(name==='knowledge'&&typeof loadKnowledgeView==='function')loadKnowledgeView();
   if(name==='runners')refreshRunners();
   if(name==='guide')renderGuide();
   if(name==='flow'){if(!state.workflow?.nodes?.some(n=>n.id===state.selectedNode))state.selectedNode=null;renderWorkflowMeta();renderCanvas();renderProperties();setFlowView('canvas');refreshGenericWorkflowRoles()}
 }
-function renderAll(){renderUserBadge();renderPlatformNav();renderObsTabs();renderProjectSwitcher();renderIssues();renderSOPCatalog();renderWorkflowMeta();renderCanvas();renderProperties();renderAgents();renderAssets();renderMCPManagement();renderRuns();renderSync();renderProjectAdmin();renderDashboard();renderGuide();updateApprovalBadge();showDirectRunButton($('#flowView').classList.contains('active'))}
+function renderAll(){renderUserBadge();renderPlatformNav();renderObsTabs();renderProjectSwitcher();renderIssues();renderSOPCatalog();renderWorkflowMeta();renderCanvas();renderProperties();renderAgents();renderAssets();renderMCPManagement();renderRuns();renderSync();renderProjectAdmin();renderDashboard();renderGuide();updateApprovalBadge();if($('#knowledgeView')?.classList.contains('active')&&typeof loadKnowledgeView==='function')loadKnowledgeView();showDirectRunButton($('#flowView').classList.contains('active'))}
