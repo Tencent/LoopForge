@@ -333,6 +333,16 @@ class ContextAndPromptTests(unittest.TestCase):
 
 
 class LifecycleTests(unittest.TestCase):
+    def test_invalid_init_does_not_reserve_slug(self):
+        with tempfile.TemporaryDirectory() as directory:
+            for flag, value in [("--coordinator-id", " "), ("--fallback-reason", " ")]:
+                result = run_script("workflow_state.py", "init", "--project-root", directory,
+                                    "--slug", "retry", "--size", "medium", "--mode", "auto",
+                                    "--execution-mode", "single-context", "--fallback-reason", "offline",
+                                    flag, value, check=False)
+                self.assertNotEqual(0, result.returncode)
+                self.assertFalse((Path(directory) / "artifacts/retry").exists())
+
     def test_prepare_can_emit_prompt_in_one_cli_call(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

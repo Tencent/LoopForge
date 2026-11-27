@@ -334,7 +334,9 @@ def command_init(args: argparse.Namespace) -> int:
     stamp = now()
     route = DEFAULTS["routes"][args.size]
     execution_mode = args.execution_mode or ("single-context" if args.size == "small" else "isolated")
-    if args.size in {"medium", "large"} and execution_mode == "single-context" and not args.fallback_reason:
+    if not args.coordinator_id.strip():
+        raise SystemExit("coordinator_id must be non-empty")
+    if args.size in {"medium", "large"} and execution_mode == "single-context" and not (args.fallback_reason or "").strip():
         raise SystemExit("medium/large single-context mode requires --fallback-reason")
     if execution_mode == "isolated" and not args.host_adapter:
         raise SystemExit(
