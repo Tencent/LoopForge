@@ -2455,6 +2455,9 @@ html[data-theme="dark"] .credential-logo.monochrome img{filter:invert(1)}
 .git-ssh-dialog::backdrop{background:var(--hui-scrim)}
 .git-ssh-dialog[open]{animation:gitSSHDialogIn .18s ease-out}
 @keyframes gitSSHDialogIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+/* The Forgejo instance menu is fixed to the viewport, including as the dialog opens. */
+.git-ssh-dialog:where(#forgeTokenDialog)[open]{animation-name:gitForgeDialogIn}
+@keyframes gitForgeDialogIn{from{opacity:0}to{opacity:1}}
 @media(prefers-reduced-motion:reduce){.git-ssh-dialog[open]{animation:none}}
 .git-ssh-dialog [hidden]{display:none}
 .git-ssh-dialog-head{display:flex;align-items:center;justify-content:space-between;gap:12px}
