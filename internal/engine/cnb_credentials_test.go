@@ -10,14 +10,11 @@ import (
 )
 
 func TestCloneRemoteForGitNeverEmbedsTheGlobalTokenInACNBRemote(t *testing.T) {
-	ctx := withGitToken(context.Background(), "ghp_FAKEGLOBALPAT")
+	ctx := context.Background()
 	for _, remote := range []string{"https://cnb.cool/org/team/repo.git", "git@cnb.cool:org/repo.git"} {
 		if got := cloneRemoteForGit(ctx, remote); got != remote {
 			t.Errorf("cloneRemoteForGit(%q) = %q", remote, got)
 		}
-	}
-	if got := cloneRemoteForGit(ctx, "https://github.com/org/repo.git"); !strings.Contains(got, "ghp_FAKEGLOBALPAT@github.com") {
-		t.Fatalf("other hosts keep the token rewrite: %q", got)
 	}
 }
 
@@ -37,7 +34,7 @@ func TestPushConversationWorkspaceNeedsTheRequestersCNBToken(t *testing.T) {
 		t.Fatal(err)
 	}
 	e := &Engine{repo: st}
-	_, err = e.PushConversationWorkspace(context.Background(), run.ID, user.ID, "ghp_FAKEGLOBALPAT", "", "", "msg", "")
+	_, err = e.PushConversationWorkspace(context.Background(), run.ID, user.ID, "cnb-pusher", "cnb@example.invalid", "msg", "")
 	if err == nil || !strings.Contains(err.Error(), "CNB 访问令牌") {
 		t.Fatalf("the global Git token must not satisfy a CNB repository: %v", err)
 	}

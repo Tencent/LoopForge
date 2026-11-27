@@ -1,12 +1,12 @@
 package repo
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
 
 	"agentflow/internal/domain"
-	"agentflow/internal/gitwork"
 )
 
 func TestCNBTokenStoreRoundTrip(t *testing.T) {
@@ -15,16 +15,21 @@ func TestCNBTokenStoreRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(s.Close)
+	ctx := context.Background()
 	const token = "cnb-fake-token-0000"
-	if got := s.GitHTTPSCredentials(1); len(got) != 0 {
+	if got := s.GitHTTPCredentialSecrets(ctx, 1); len(got) != 0 {
 		t.Fatalf("a user without a token has credentials: %+v", got)
 	}
-	if _, err := s.UpdateUserCredentials(1, UserCredentialUpdate{CNBToken: " " + token + " "}); err != nil {
+	if err := s.SetCNBToken(1, " "+token+" "); err != nil {
 		t.Fatal(err)
 	}
-	got := s.GitHTTPSCredentials(1)
-	if len(got) != 1 || got[0] != gitwork.CNBCredential(token) {
+	got := s.GitHTTPCredentialSecrets(ctx, 1)
+	if cnb, ok := got["cnb.cool"]; !ok || cnb.Token != token || cnb.Username != "cnb" {
 		t.Fatalf("credentials = %+v", got)
+	}
+	hosts := s.GitHTTPWorkspaceHosts(1)
+	if hosts["cnb.cool"] != domain.RepositoryProviderCNB {
+		t.Fatalf("workspace hosts = %+v", hosts)
 	}
 	user, _ := s.User(1)
 	public, _ := json.Marshal(domain.PublicUser(user))
@@ -42,13 +47,13 @@ func TestCNBTokenStoreRoundTrip(t *testing.T) {
 	if err := s.PutUser(domain.User{ID: 1, LoginName: user.LoginName}); err != nil {
 		t.Fatal(err)
 	}
-	if got := s.GitHTTPSCredentials(1); len(got) != 1 {
+	if got := s.GitHTTPCredentialSecrets(ctx, 1); got["cnb.cool"].Token != token {
 		t.Fatalf("token lost after unrelated writes: %+v", got)
 	}
-	if _, err := s.UpdateUserCredentials(1, UserCredentialUpdate{CNBTokenClear: true}); err != nil {
+	if err := s.SetCNBToken(1, ""); err != nil {
 		t.Fatal(err)
 	}
-	if got := s.GitHTTPSCredentials(1); len(got) != 0 {
+	if got := s.GitHTTPCredentialSecrets(ctx, 1); len(got) != 0 {
 		t.Fatalf("cleared token still returned: %+v", got)
 	}
 }

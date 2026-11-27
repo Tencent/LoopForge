@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	"agentflow/internal/domain"
-	"agentflow/internal/gitwork"
 )
 
 // MCPTarget describes where an invocation's MCP servers will be called from.
@@ -54,12 +53,12 @@ func (t MCPTarget) canSkipGitHubToken() (skip, sshOnly bool) {
 	case len(t.Repositories) > 0:
 		return allRepositoriesSkipGitHub(t.Repositories, func(r domain.RepositoryContext) (bool, bool) {
 			ssh := r.Provider == domain.RepositoryProviderSSH
-			cnb := r.Provider == domain.RepositoryProviderCNB || (r.Provider == "" && gitwork.IsManagedRemote(r.CloneURL))
+			cnb := r.Provider == domain.RepositoryProviderCNB || (r.Provider == "" && strings.HasPrefix(strings.ToLower(strings.TrimSpace(r.CloneURL)), "https://cnb.cool/"))
 			return ssh, cnb
 		})
 	case len(t.RunnerRepositories) > 0:
 		return allRepositoriesSkipGitHub(t.RunnerRepositories, func(r domain.RunnerRepository) (bool, bool) {
-			return r.UseSSH, r.ScopedHTTPS || gitwork.IsManagedRemote(r.CloneURL)
+			return r.UseSSH, strings.HasPrefix(strings.ToLower(strings.TrimSpace(r.CloneURL)), "https://cnb.cool/")
 		})
 	case t.SSHRepositoriesOnly:
 		return true, true

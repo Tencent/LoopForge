@@ -196,6 +196,16 @@ func (r *UsersRepo) GitHTTPCredentialForHost(ctx context.Context, userID int64, 
 		}
 		return secret, true
 	}
+	if host == "cnb.cool" {
+		if user, ok := r.User(userID); ok && strings.TrimSpace(user.CNBToken) != "" {
+			return domain.GitHTTPCredentialSecret{
+				GitHTTPCredential: domain.GitHTTPCredential{
+					ID: "cnb-token", Name: "CNB", Platform: domain.RepositoryProviderCNB, Host: "cnb.cool", Username: "cnb",
+				},
+				Token: strings.TrimSpace(user.CNBToken),
+			}, true
+		}
+	}
 	if host != managedGitHost() {
 		return domain.GitHTTPCredentialSecret{}, false
 	}
@@ -213,6 +223,13 @@ func (r *UsersRepo) GitHTTPCredentialSecrets(ctx context.Context, userID int64) 
 	for _, credential := range credentials {
 		if secret, ok := r.GitHTTPCredentialForHost(ctx, userID, credential.Host); ok {
 			out[credential.Host] = domain.GitHTTPExecutionCredential{
+				GitHTTPCredential: secret.GitHTTPCredential, Token: secret.Token, ExpiresAt: secret.ExpiresAt,
+			}
+		}
+	}
+	if _, exists := out["cnb.cool"]; !exists {
+		if secret, ok := r.GitHTTPCredentialForHost(ctx, userID, "cnb.cool"); ok {
+			out["cnb.cool"] = domain.GitHTTPExecutionCredential{
 				GitHTTPCredential: secret.GitHTTPCredential, Token: secret.Token, ExpiresAt: secret.ExpiresAt,
 			}
 		}
@@ -263,6 +280,11 @@ func (r *UsersRepo) GitHTTPWorkspaceHosts(userID int64) map[string]string {
 			}
 		}
 		hosts[cred.Host] = cred.Platform
+	}
+	if _, exists := hosts["cnb.cool"]; !exists {
+		if user, ok := r.User(userID); ok && strings.TrimSpace(user.CNBToken) != "" {
+			hosts["cnb.cool"] = domain.RepositoryProviderCNB
+		}
 	}
 	return hosts
 }

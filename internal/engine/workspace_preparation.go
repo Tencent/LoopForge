@@ -185,6 +185,7 @@ func (e *Engine) preparedWorkspaceRequest(run domain.Run, request domain.RunnerW
 		request.TerminalGitHTTPCredentials = runner.FilterGitHTTPCredentials(terminalCredentials.HTTPS)
 		request.TerminalGitSSHKeys = terminalCredentials.SSHKeys
 	}
+	request.PreparationInvocation = invocation
 	request.RunStatus = run.Status
 	request.WorkspaceLayout = run.ExecutionContext.RunnerWorkspaceLayout
 	return request, nil

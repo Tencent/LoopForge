@@ -164,8 +164,8 @@ func (h *catalogHandlers) repositories(c *gin.Context) {
 	reference = strings.ToLower(strings.TrimSpace(reference))
 	plainHTTP := strings.HasPrefix(reference, "http://")
 	_, knownHost := domain.ParseRepositoryURL(sshReference)
-	if v.Provider == domain.RepositoryProviderHTTPS || v.Provider == domain.RepositoryProviderHTTP ||
-		plainHTTP && cloneCommand || !knownHost && (plainHTTP || strings.HasPrefix(reference, "https://")) {
+	if !strings.HasPrefix(v.GongfengProjectID, "cnb:") && (v.Provider == domain.RepositoryProviderHTTPS || v.Provider == domain.RepositoryProviderHTTP ||
+		plainHTTP && cloneCommand || !knownHost && (plainHTTP || strings.HasPrefix(reference, "https://"))) {
 		remote, name, err := gitwork.GitHTTPRepositoryURL(sshReference)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})

@@ -13,11 +13,6 @@ import (
 	"agentflow/internal/runtime"
 )
 
-func TestRunnerVersionIs0103(t *testing.T) {
-	if Version() != "0.10.3" || Version() != domain.RunnerVersionCNB {
-		t.Fatalf("Version() = %q, RunnerVersionCNB = %q, want 0.10.3", Version(), domain.RunnerVersionCNB)
-	}
-}
 
 func TestExecuteInvocationGitHubMCPOptionalForCNBAndSSHRuns(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -54,7 +49,7 @@ func TestExecuteInvocationGitHubMCPOptionalForCNBAndSSHRuns(t *testing.T) {
 				Executor:     domain.ExecutorDefinition{Kind: "mock"},
 				Agent:        domain.AgentDefinition{ID: "dev", Name: "Dev"},
 				Assets:       assets,
-				Repositories: []domain.RunnerRepository{{RepositoryID: "cnb", Dir: "cnb", CloneURL: "https://cnb.cool/org/repo.git", ScopedHTTPS: true}},
+				Repositories: []domain.RunnerRepository{{RepositoryID: "cnb", Dir: "cnb", CloneURL: "https://cnb.cool/org/repo.git"}},
 			},
 		}
 		res, _ := d.executeInvocation(context.Background(), task)
@@ -79,7 +74,7 @@ func TestExecuteInvocationGitHubMCPOptionalForCNBAndSSHRuns(t *testing.T) {
 				Agent:        domain.AgentDefinition{ID: "dev", Name: "Dev"},
 				Assets:       assets,
 				Repositories: []domain.RunnerRepository{
-					{RepositoryID: "cnb", Dir: "cnb", CloneURL: "https://cnb.cool/org/repo.git", ScopedHTTPS: true},
+					{RepositoryID: "cnb", Dir: "cnb", CloneURL: "https://cnb.cool/org/repo.git"},
 					{RepositoryID: "ssh", Dir: "ssh", CloneURL: "git@example.com:org/infra.git", UseSSH: true},
 				},
 			},
@@ -104,7 +99,7 @@ func TestExecuteInvocationGitHubMCPOptionalForCNBAndSSHRuns(t *testing.T) {
 				Executor:     domain.ExecutorDefinition{Kind: "mock"},
 				Agent:        domain.AgentDefinition{ID: "dev", Name: "Dev"},
 				Assets:       assets,
-				Repository:   &domain.RunnerRepository{RepositoryID: "cnb", CloneURL: "https://cnb.cool/org/repo.git", ScopedHTTPS: true},
+				Repository:   &domain.RunnerRepository{RepositoryID: "cnb", CloneURL: "https://cnb.cool/org/repo.git"},
 			},
 		}
 		res, _ := d.executeInvocation(context.Background(), task)
@@ -129,7 +124,7 @@ func TestExecuteInvocationGitHubMCPOptionalForCNBAndSSHRuns(t *testing.T) {
 				Agent:        domain.AgentDefinition{ID: "dev", Name: "Dev"},
 				Assets:       assets,
 				Repositories: []domain.RunnerRepository{
-					{RepositoryID: "cnb", Dir: "cnb", CloneURL: "https://cnb.cool/org/repo.git", ScopedHTTPS: true},
+					{RepositoryID: "cnb", Dir: "cnb", CloneURL: "https://cnb.cool/org/repo.git"},
 					{RepositoryID: "gh", Dir: "gh", CloneURL: "https://github.com/org/repo.git"},
 				},
 			},

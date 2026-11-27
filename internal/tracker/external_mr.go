@@ -69,7 +69,10 @@ func (s *Service) refreshExternalDelivery(store MRDeliveryStore, row domain.MRDe
 			return false, err
 		}
 		d := p.delivery(row.MRProject)
-		state, target, mergedAt = d.GongfengState, d.TargetBranch, p.mergedAt()
+		state, target = d.GongfengState, d.TargetBranch
+		if p.MergedAt != nil && state == "merged" {
+			mergedAt = p.MergedAt.UTC()
+		}
 	}
 	if state == "" {
 		return false, fmt.Errorf("%s returned no state for %s!%d", host, row.MRProject, row.MRIID)

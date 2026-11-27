@@ -338,7 +338,7 @@ assert.equal(ctx.projectDraftDirty({...draft,tapdClear:true},base),true);
 
   // A CNB repository added with the branch field untouched leaves the default branch to the server.
   vm.runInContext('Object.assign(repoDrawerState,{projectId:"web-console",repoId:""})',ctx);
-  const cnbPayload=ctx.repoDrawerPayload({elements:{repoUrl:el({value:"https://cnb.cool/org/team/repo"}),name:el({value:""}),defaultBranch:el({value:""}),integrateBranch:el({value:""}),localPath:el({value:""}),webUrl:el({value:""})}},ctx.parseGongfengRepoURL("https://cnb.cool/org/team/repo"));
+  const cnbPayload=ctx.repoDrawerPayload({elements:{repoUrl:el({value:"https://cnb.cool/org/team/repo"}),name:el({value:""}),defaultBranch:el({value:""}),integrateBranch:el({value:""}),localPath:el({value:""}),webUrl:el({value:""}),workBranchNamingMode:el({value:"prefix"}),workBranchPrefix:el({value:""}),workBranchCustomPrefix:el({value:""})}},ctx.parseGongfengRepoURL("https://cnb.cool/org/team/repo"));
   assert.equal(cnbPayload.provider,"cnb");assert.equal(cnbPayload.defaultBranch,"");
 
   // Focus returns into the detail form after the drawer closes; the repo cards must still be rebuilt.

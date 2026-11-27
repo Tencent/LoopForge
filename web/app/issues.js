@@ -551,6 +551,7 @@ function parseGongfengRepoURL(raw){
   const sshInfo=globalThis.LoopForgeGitSSH?.(raw);if(sshInfo)return sshInfo;
   if(globalThis.LoopForgeExplicitHTTPClone(raw))return globalThis.LoopForgeGitHTTPRepository(raw);
   const cnbInfo=parseCNBRepoURL(raw);if(cnbInfo)return cnbInfo;
+  if(/(?:^|\/\/|@)cnb\.cool(?:[:/]|$)/i.test(String(raw||'')))return null;
   const managed=globalThis.LoopForgeGongfengRepository?.(raw,state.data?.gongfengHost);if(managed)return managed;
   let publicURL=String(raw||'').trim().replace(/^git clone /,'').replace(/^github:/,'https://github.com/').replace(/^(?:git@github\.com:|ssh:\/\/git@github\.com(?::22)?\/)/,'https://github.com/');
   if(publicURL.startsWith('github.com/'))publicURL='https://'+publicURL;

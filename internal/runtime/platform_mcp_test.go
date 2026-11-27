@@ -106,9 +106,9 @@ func TestPrepareMCPServersOptionalGitHubTokenForSSHAndCNBRuns(t *testing.T) {
 
 	t.Run("skips github-token for CNB-only and CNB plus SSH RunnerRepository", func(t *testing.T) {
 		for name, repos := range map[string][]domain.RunnerRepository{
-			"cnb-only": {{RepositoryID: "cnb", CloneURL: "https://cnb.cool/org/repo.git", ScopedHTTPS: true}},
+			"cnb-only": {{RepositoryID: "cnb", CloneURL: "https://cnb.cool/org/repo.git"}},
 			"cnb+ssh": {
-				{RepositoryID: "cnb", CloneURL: "https://cnb.cool/org/repo.git", ScopedHTTPS: true},
+				{RepositoryID: "cnb", CloneURL: "https://cnb.cool/org/repo.git"},
 				{RepositoryID: "ssh", CloneURL: "git@example.com:org/infra.git", UseSSH: true},
 			},
 		} {
@@ -129,7 +129,7 @@ func TestPrepareMCPServersOptionalGitHubTokenForSSHAndCNBRuns(t *testing.T) {
 
 	t.Run("binds github-token when GitToken is provided even on CNB-only", func(t *testing.T) {
 		got, warnings, err := PrepareMCPServers(assets, MCPTarget{
-			GitToken:           "ghp_test",
+			GitHTTPCredentials: map[string]domain.GitHTTPExecutionCredential{"github.com": {Token: "ghp_test"}},
 			RequireCredentials: true,
 			Repositories: []domain.RepositoryContext{
 				{RepositoryID: "cnb", Provider: domain.RepositoryProviderCNB, CloneURL: "https://cnb.cool/org/repo.git"},
@@ -164,7 +164,7 @@ func TestPrepareMCPServersOptionalGitHubTokenForSSHAndCNBRuns(t *testing.T) {
 				target: MCPTarget{
 					RequireCredentials: true,
 					RunnerRepositories: []domain.RunnerRepository{
-						{RepositoryID: "cnb-ssh", CloneURL: "git@cnb.cool:org/repo.git", UseSSH: true, ScopedHTTPS: true},
+						{RepositoryID: "cnb-ssh", CloneURL: "git@cnb.cool:org/repo.git", UseSSH: true},
 						{RepositoryID: "gh", CloneURL: "https://github.com/org/repo.git"},
 					},
 				},

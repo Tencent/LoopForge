@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -13,6 +14,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 )
+
+const testCNBToken = "cnb-fake-token-0000"
 
 func setCNBToken(s *repo.Store, userID int64, token string) error {
 	_, err := s.UpdateUserCredentials(userID, repo.UserCredentialUpdate{CNBToken: token})
@@ -28,19 +31,19 @@ func TestCNBTokenSaveClearThroughCredentialsAndPublicUserNeverLeaks(t *testing.T
 	if resp.Code != http.StatusOK || json.Unmarshal(resp.Body.Bytes(), &saved) != nil || !saved.CNBTokenConfigured || strings.Contains(resp.Body.String(), testCNBToken) {
 		t.Fatalf("save response must report configured and hide the token (HTTP %d): %s", resp.Code, resp.Body.String())
 	}
-	if got := f.s.GitHTTPSCredentials(f.user.ID); len(got) != 1 || got[0].Token != testCNBToken {
+	if got := f.s.GitHTTPCredentialSecrets(context.Background(), f.user.ID); len(got) != 1 || got["cnb.cool"].Token != testCNBToken {
 		t.Fatalf("stored credentials = %+v", got)
 	}
 	if list := cvBRequest(t, f, http.MethodGet, "/api/users", nil, true); strings.Contains(list.Body.String(), testCNBToken) {
 		t.Fatal("user directory leaks the CNB token")
 	}
 	// Another credential write must keep the token.
-	if resp := cvBRequest(t, f, http.MethodPut, url, map[string]string{"codexBaseUrl": "https://example.org"}, true); resp.Code != http.StatusOK || len(f.s.GitHTTPSCredentials(f.user.ID)) != 1 {
+	if resp := cvBRequest(t, f, http.MethodPut, url, map[string]string{"codexBaseUrl": "https://example.org"}, true); resp.Code != http.StatusOK || len(f.s.GitHTTPCredentialSecrets(context.Background(), f.user.ID)) != 1 {
 		t.Fatalf("unrelated credential update dropped the CNB token (HTTP %d)", resp.Code)
 	}
 
 	resp = cvBRequest(t, f, http.MethodPut, url, map[string]bool{"cnbTokenClear": true}, true)
-	if resp.Code != http.StatusOK || strings.Contains(resp.Body.String(), `"cnbTokenConfigured":true`) || len(f.s.GitHTTPSCredentials(f.user.ID)) != 0 {
+	if resp.Code != http.StatusOK || strings.Contains(resp.Body.String(), `"cnbTokenConfigured":true`) || len(f.s.GitHTTPCredentialSecrets(context.Background(), f.user.ID)) != 0 {
 		t.Fatalf("clear failed (HTTP %d): %s", resp.Code, resp.Body.String())
 	}
 }
