@@ -1,6 +1,7 @@
 package web
 
 import (
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -109,6 +110,22 @@ func TestToastStackStaysOffPageHeaderActions(t *testing.T) {
 	lift := "body:has(#settingsView.active, #kbConnDrawer.open, #kbDrawer.open, #repoDrawer.open) #toastContainer{bottom:84px}"
 	if !strings.Contains(platform, lift) {
 		t.Errorf("platform.css must lift the toast stack above sticky footers: %s", lift)
+	}
+	// The workbench composer (with its 发送 button) is about 125px tall at the
+	// bottom of the chat iframe; a toast at bottom:24px sat on the send button.
+	chat := "body:has(#collaborationView.active) #toastContainer{bottom:"
+	i := strings.Index(platform, chat)
+	if i < 0 {
+		t.Fatalf("platform.css must lift the toast stack above the workbench composer: %s…", chat)
+	}
+	var px int
+	if _, err := fmt.Sscanf(platform[i+len(chat):], "%dpx}", &px); err != nil || px < 130 {
+		t.Errorf("workbench toast lift must clear the ~125px composer, got %q (err %v)", platform[i:i+len(chat)+8], err)
+	}
+	// Settings and the drawers can open over the workbench; their
+	// footer lift must win, so it is declared after the workbench rule.
+	if j := strings.Index(platform, lift); j >= 0 && j < i {
+		t.Error("the footer lift must come after the workbench composer lift so it wins when both match")
 	}
 	// Each drawer in the lift must be opened with the class the selector names.
 	for drawer, script := range map[string]string{"kbDrawer": "knowledge.js", "kbConnDrawer": "app/knowledge.js", "repoDrawer": "app/repo_drawer.js"} {

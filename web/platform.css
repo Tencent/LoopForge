@@ -2314,9 +2314,18 @@ html[data-theme="light"] body{color-scheme:light}html[data-theme="light"] .platf
 #settingsView .personal-settings-return{justify-self:start;margin:0 0 12px -8px}
 #settingsView .personal-settings-return[hidden]{display:none}
 #settingsView .personal-settings-heading{align-items:center;gap:12px 20px;margin-bottom:28px}
+/* The workbench chat keeps its composer and 发送 button at the bottom (about 125px
+   tall with the toolbar), and the hover pause would park a toast on the button.
+   Its top-right corner holds the artifact panel's tabs and close button, so the
+   stack stays at the bottom and clears the composer instead. Declared before the
+   footer lift so settings and the drawers (which can open over the workbench)
+   keep their own offset. */
+body:has(#collaborationView.active) #toastContainer{bottom:136px}
 /* Lift the toast stack above sticky footers that sit in the bottom-right corner:
    the settings save bar and the Save/Cancel row of the right-hand drawers. The
-   SkillHub drawer keeps its actions in the header, so it has nothing to lift over. */
+   SkillHub drawer keeps its actions in the header, so it has nothing to lift over.
+   The project wizard is a centred dialog whose footer moves with the viewport, so
+   no fixed offset clears it; it is left alone. */
 body:has(#settingsView.active, #kbConnDrawer.open, #kbDrawer.open, #repoDrawer.open) #toastContainer{bottom:84px}
 .credential-account{display:flex;align-items:center;gap:8px;min-width:0;max-width:45%;color:var(--hui-secondary)}
 .credential-account[hidden]{display:none}
