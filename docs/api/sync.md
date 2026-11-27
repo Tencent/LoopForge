@@ -131,6 +131,6 @@ curl -u "$AGENTFLOW_USER:$AGENTFLOW_PASS" -X POST \
 
 ## 与定时任务的关系
 
-自动同步配置控制周期性 pull；`/api/schedule-jobs` 则用于按工蜂/TAPD 来源拉取候选项并派发指定 SOP，两者不是同一任务模型。定时任务接口见 [编排与运行 API](orchestration.md)。
+自动同步配置控制周期性 pull；`/api/schedule-jobs` 则用于按工蜂/TAPD 来源拉取候选项并派发指定 LOOP，两者不是同一任务模型。定时任务接口见 [编排与运行 API](orchestration.md)。
 
 同步接口没有 SSE、文件下载或分页端点。外部 MCP 认证、内部 Worker signals、OTLP、实例 lease 和沙箱回收均不属于本页公共 API。

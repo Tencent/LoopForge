@@ -25,7 +25,7 @@ test("real image attachment appears as an authenticated artifact independently o
   assert(!visibleText(message).includes("/private"));
   assert(!visibleText(message).includes("![hero])"));
 });
-test("image, chart, code and SOP drafts share one artifact list and remain stable after reload", () => {
+test("image, chart, code and LOOP drafts share one artifact list and remain stable after reload", () => {
   const session = {
     id: "chat-2",
     messages: [
@@ -33,7 +33,7 @@ test("image, chart, code and SOP drafts share one artifact list and remain stabl
         role: "assistant",
         content: JSON.stringify({
           message: "```mermaid\ngraph LR\nA-->B\n```\n```svg\n<svg/>\n```",
-          drafts: [{ tool: "workflows_save", body: { name: "评审 SOP" } }],
+          drafts: [{ tool: "workflows_save", body: { name: "评审 LOOP" } }],
         }),
       },
     ],

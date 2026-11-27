@@ -81,10 +81,10 @@ func approvalNodeLabel(wf WorkflowDefinition, id string) string {
 	return "「" + id + "」"
 }
 
-// approvalSOPLabel names the workflow in the reason, or "该 SOP" when unnamed.
+// approvalSOPLabel names the workflow in the reason, or "该 LOOP" when unnamed.
 func approvalSOPLabel(name string) string {
 	if name = strings.TrimSpace(name); name != "" {
-		return "SOP「" + name + "」"
+		return "LOOP「" + name + "」"
 	}
-	return "该 SOP"
+	return "该 LOOP"
 }

@@ -18,16 +18,17 @@ const { project, user, apiMock, writeMock, mockState } = vi.hoisted(() => {
       id: 1, loginName: "tester", chineseName: "测试",
       gitHubCredentialConfigured: false, codeBuddyApiKeyConfigured: false,
       ...mockState.savedCredentials,
-    } : user];
+    } : { ...user, gitHttpCredentialsConfigured: Boolean(mockState.httpCredentials.length) }];
   if (path === "/api/projects") return [project];
   if (path === "/api/repositories") return [];
   if (path === "/api/users/1/git-ssh-keys") return mockState.sshKeys || [];
-  if (path === "/api/users/1/git-http-credentials") return mockState.codeupCredentials || [];
+  if (path === "/api/users/1/git-http-credentials") return mockState.httpCredentials;
+  if (path === "/api/git-http-hosts") return mockState.httpAuthorizations;
   if (path === "/api/workflows")
     return [
       {
         id: "generic-backend-delivery",
-        name: "通用后端交付 SOP",
+        name: "通用后端交付 LOOP",
         generic: true,
         nodes: [{ id: "build", name: "实现", type: "agent" }],
       },
@@ -36,7 +37,7 @@ const { project, user, apiMock, writeMock, mockState } = vi.hoisted(() => {
   if (path.includes("/agents")) return [];
   return [];
   });
-  const mockState = { failClone: false, unconfigured: false, sshKeys: null, savedCredentials: {}, gitVerification: null, codeupCredentials: null };
+  const mockState = { failClone: false, unconfigured: false, sshKeys: null, httpCredentials: [], httpAuthorizations: [], savedCredentials: {}, gitVerification: null };
   const writeMock = vi.fn(async (path, body) => {
     if (path === "/api/users/1/git-token/verify") return mockState.gitVerification;
     if (path === "/api/auth/codeup/verify") return { valid: true, login: "clone-account" };
@@ -44,10 +45,10 @@ const { project, user, apiMock, writeMock, mockState } = vi.hoisted(() => {
     if (path === "/api/projects") return { ...project, ...body };
     if (path.includes("/clone")) {
       if (mockState.failClone) throw new Error("clone unavailable");
-      return { id: "generic-backend-delivery-p1", name: "后端交付 SOP" };
+      return { id: "generic-backend-delivery-p1", name: "后端交付 LOOP" };
     }
     if (path.includes("/publish"))
-      return { id: "generic-backend-delivery-p1", name: "后端交付 SOP", status: "published" };
+      return { id: "generic-backend-delivery-p1", name: "后端交付 LOOP", status: "published" };
     return { id: body?.id || "saved", ...body };
   });
   return { project, user, apiMock, writeMock, mockState };
@@ -77,6 +78,12 @@ describe("QuickAccessWizard", () => {
     expect(parseGongfengRepo("acme/widgets")).toBeNull();
     expect(parseGongfengRepo("https://git.review.test:8443/acme/widgets", "git.review.test:8443")).toMatchObject({
       provider: "gongfeng", project: "acme/widgets", cloneUrl: "https://git.review.test:8443/acme/widgets.git",
+    });
+    expect(parseGongfengRepo("http://git.review.test:8443/acme/widgets.git", "git.review.test:8443")).toMatchObject({
+      provider: "gongfeng", project: "acme/widgets", cloneUrl: "https://git.review.test:8443/acme/widgets.git",
+    });
+    expect(parseGongfengRepo("git clone http://git.review.test:8443/acme/widgets.git", "git.review.test:8443")).toMatchObject({
+      provider: "http", host: "http://git.review.test:8443", cloneUrl: "http://git.review.test:8443/acme/widgets.git",
     });
     expect(parseGongfengRepo("https://github.com/acme/widgets")).toEqual({
       project: "github:acme/widgets",
@@ -159,7 +166,7 @@ describe("QuickAccessWizard", () => {
     await userAction.click(screen.getByRole("button", { name: "下一步" }));
     await screen.findByText("项目与仓库", { selector: "h3" });
     await userAction.click(screen.getByRole("button", { name: "下一步" }));
-    await screen.findByText("默认角色与 SOP", { selector: "h3" });
+    await screen.findByText("默认角色与 LOOP", { selector: "h3" });
     await userAction.click(screen.getByRole("button", { name: "完成接入" }));
 
     expect(await screen.findByText("快速接入已完成")).toBeInTheDocument();
@@ -200,12 +207,41 @@ describe("QuickAccessWizard", () => {
       await userAction.type(address, "git@gitea.example.org:team/repo.git");
       expect(screen.getByRole("alert")).toHaveTextContent("可稍后");
       await userAction.click(screen.getByRole("button", { name: "下一步" }));
-      await screen.findByText("默认角色与 SOP", { selector: "h3" });
+      await screen.findByText("默认角色与 LOOP", { selector: "h3" });
       await userAction.click(screen.getByRole("button", { name: "完成接入" }));
       expect(await screen.findByText("快速接入已完成")).toBeInTheDocument();
       expect(writeMock).toHaveBeenCalledWith("/api/repositories", expect.objectContaining({ provider: "ssh", cloneUrl: "git@gitea.example.org:team/repo.git" }));
     } finally {
       mockState.sshKeys = null;
+    }
+  });
+
+  test("shows the HTTP token as unavailable when the instance authorization is revoked", async () => {
+    const host = "http://git.review.test:8080";
+    mockState.httpCredentials = [{ id: "token", host }];
+    mockState.httpAuthorizations = [{ host, platform: "other" }];
+    const userAction = userEvent.setup();
+    try {
+      render(<QuickAccessWizard open user={user} projects={[project]} projectId="p1" sponsoredModel="m1" />);
+      await waitFor(() => expect(apiMock).toHaveBeenCalledWith("/api/git-http-hosts"));
+      await userAction.click(screen.getByRole("button", { name: "下一步" }));
+      const address = await screen.findByPlaceholderText(/https:\/\/github.com\/owner\/repo/);
+      await userAction.type(address, `${host}/team/repo.git`);
+      await userAction.click(screen.getByRole("button", { name: "下一步" }));
+      expect(await screen.findByText(/Git HTTP 已配置/)).toBeVisible();
+
+      mockState.httpAuthorizations = [];
+      await act(async () => {
+        window.dispatchEvent(new MessageEvent("message", {
+          origin: location.origin,
+          source: window.parent,
+          data: { type: "agentflow-credentials-changed" },
+        }));
+      });
+      expect(await screen.findByText(/Git HTTP 未配置/)).toBeVisible();
+    } finally {
+      mockState.httpCredentials = [];
+      mockState.httpAuthorizations = [];
     }
   });
 
@@ -373,7 +409,7 @@ describe("QuickAccessWizard", () => {
     );
     expect(screen.getByText(/已识别仓库/)).toBeInTheDocument();
     await userAction.click(screen.getByRole("button", { name: "下一步" }));
-    await screen.findByText("默认角色与 SOP", { selector: "h3" });
+    await screen.findByText("默认角色与 LOOP", { selector: "h3" });
     await userAction.click(screen.getByRole("tab", { name: /默认角色/ }));
     expect(screen.getByText("需求定型")).toBeInTheDocument();
     await userAction.click(screen.getByRole("button", { name: "完成接入" }));
@@ -425,7 +461,7 @@ describe("QuickAccessWizard repository permission (#122)", () => {
     apiMock.mockImplementation(async (path) => {
       if (path === "/api/projects") return [welcome];
       if (path === "/api/users") return [member];
-      if (path === "/api/workflows") return [{ id: "generic-backend-delivery", name: "通用后端交付 SOP", generic: true, nodes: [] }];
+      if (path === "/api/workflows") return [{ id: "generic-backend-delivery", name: "通用后端交付 LOOP", generic: true, nodes: [] }];
       return [];
     });
     writeMock.mockClear();
@@ -438,7 +474,7 @@ describe("QuickAccessWizard repository permission (#122)", () => {
     await userAction.click(screen.getByRole("button", { name: "下一步" }));
     // Blocked here, not on the last step, and nothing was written.
     expect(await screen.findByText(/不能为它绑定仓库/)).toBeInTheDocument();
-    expect(screen.queryByText("默认角色与 SOP", { selector: "h3" })).toBeNull();
+    expect(screen.queryByText("默认角色与 LOOP", { selector: "h3" })).toBeNull();
     expect(writeMock).not.toHaveBeenCalledWith("/api/repositories", expect.anything());
     expect(writeMock).not.toHaveBeenCalledWith("/api/repositories", expect.anything(), expect.anything());
 
@@ -454,7 +490,7 @@ describe("QuickAccessWizard repository permission (#122)", () => {
     apiMock.mockImplementation(async (path) => {
       if (path === "/api/projects") return [welcome];
       if (path === "/api/users") return [member];
-      if (path === "/api/workflows") return [{ id: "generic-backend-delivery", name: "通用后端交付 SOP", generic: true, nodes: [] }];
+      if (path === "/api/workflows") return [{ id: "generic-backend-delivery", name: "通用后端交付 LOOP", generic: true, nodes: [] }];
       return [];
     });
     writeMock.mockClear();
@@ -464,7 +500,7 @@ describe("QuickAccessWizard repository permission (#122)", () => {
     await userAction.type(screen.getByPlaceholderText("https://github.com/owner/repo"), "https://github.com/team/repo");
     await userAction.click(screen.getByRole("button", { name: "跳过绑定，继续体验" }));
     await userAction.click(screen.getByRole("button", { name: "下一步" }));
-    await screen.findByText("默认角色与 SOP", { selector: "h3" });
+    await screen.findByText("默认角色与 LOOP", { selector: "h3" });
     expect(screen.getByText(/使用已有项目「LoopForge 体验项目」/)).toBeInTheDocument();
     expect(screen.queryByText(/绑定 repo/)).toBeNull();
     await userAction.click(screen.getByRole("button", { name: "完成接入" }));

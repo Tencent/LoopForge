@@ -242,11 +242,12 @@ func TestKeyedLocksSerializeOnlySameKey(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("different key blocked")
 	}
-	acquiredA := make(chan struct{})
+	acquiredA, releasedA := make(chan struct{}), make(chan struct{})
 	go func() {
 		release := locks.lock("a")
 		close(acquiredA)
 		release()
+		close(releasedA)
 	}()
 	select {
 	case <-acquiredA:
@@ -259,6 +260,9 @@ func TestKeyedLocksSerializeOnlySameKey(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("same key never released")
 	}
+	// The second holder releases after signalling; wait for it before
+	// checking that no entry is left.
+	<-releasedA
 	locks.mu.Lock()
 	defer locks.mu.Unlock()
 	if len(locks.locks) != 0 {
@@ -274,11 +278,11 @@ func TestNodeControlKeyIsolatesChildSOP(t *testing.T) {
 		t.Fatal("owner keys must stay unchanged")
 	}
 	if gateResultPath(nodeControlKey(parent, "dev"), 1) == gateResultPath(nodeControlKey(child, "dev"), 1) {
-		t.Fatal("child SOP gate result path collides with the parent's")
+		t.Fatal("child LOOP gate result path collides with the parent's")
 	}
 	artifact := domain.Artifact{NodeID: "dev", Name: "spec", MediaType: "text/markdown"}
 	if artifactInputRelPath(parent, artifact) == artifactInputRelPath(child, artifact) {
-		t.Fatal("child SOP input path collides with the parent's")
+		t.Fatal("child LOOP input path collides with the parent's")
 	}
 }
 

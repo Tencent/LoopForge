@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -70,7 +71,7 @@ func TestRunViewProjectionPreservesHTTPClipping(t *testing.T) {
 		}
 		want := publicRun(run, false).Nodes["n"]
 		got := publicRun(view, false).Nodes["n"]
-		if *got != *want {
+		if !reflect.DeepEqual(got, want) {
 			t.Fatalf("detail clipping changed for %d bytes", len(text))
 		}
 		if len(view.Nodes["n"].Output) > 2501*4 {

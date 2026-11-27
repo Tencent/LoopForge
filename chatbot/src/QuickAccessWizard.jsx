@@ -41,7 +41,7 @@ const STEPS = [
   },
   {
     id: "workflow",
-    title: "默认角色与 SOP",
+    title: "默认角色与 LOOP",
     desc: "使用平台默认角色与通用交付流程",
   },
   {
@@ -564,12 +564,21 @@ function parseGitHubRepo(raw) {
 
 // Explicit SSH keeps its transport. Managed HTTPS links use the configured host.
 // Codeup is checked first so its HTTPS/SSH remotes keep the codeup identity.
+// Clone commands can explicitly choose plaintext transport.
 export function parseGongfengRepo(raw, host = "") {
-  return globalThis.LoopForgeCodeupRepo?.(raw) ||
-    globalThis.LoopForgeGitSSH(raw) ||
+  const codeup = globalThis.LoopForgeCodeupRepo?.(raw);
+  if (codeup) return codeup;
+  if (globalThis.LoopForgeExplicitHTTPClone(raw)) {
+    return globalThis.LoopForgeGitHTTPRepository(raw);
+  }
+  return globalThis.LoopForgeGitSSH(raw) ||
     globalThis.LoopForgeGongfengRepository(raw, host) ||
-    globalThis.LoopForgeGitHTTPS(raw) ||
-    parseGitHubRepo(raw);
+    parseGitHubRepo(raw) ||
+    globalThis.LoopForgeGitHTTPRepository(raw);
+}
+
+function parseSavedRepo(repo, host) {
+  return parseGongfengRepo(repo?.provider === "http" ? globalThis.LoopForgeGitRepositoryReference(repo) : repo?.cloneUrl, host);
 }
 
 function slugifyProjectId(value) {
@@ -660,7 +669,7 @@ async function provisionFallbackProjectSOP(projectId, workflowId, owner) {
     "/api/workflows",
     {
       id: workflowId,
-      name: "后端交付 SOP",
+      name: "后端交付 LOOP",
       projectId,
       owner,
       status: "draft",
@@ -766,7 +775,7 @@ export default function QuickAccessWizard({
       : [
           {
             id: DEFAULT_SOP_ID,
-            name: "通用后端交付 SOP",
+            name: "通用后端交付 LOOP",
             description:
               "从需求定型、方案设计、代码实现、独立评审、测试验证到发起 MR 的标准交付链路。",
             generic: true,
@@ -838,8 +847,8 @@ export default function QuickAccessWizard({
           ? "平台默认模板"
           : projectMode === "existing" &&
               workflow.projectId === currentProject?.id
-            ? "本项目已有 SOP（直接复用）"
-            : "共享 SOP";
+            ? "本项目已有 LOOP（直接复用）"
+            : "共享 LOOP";
         return {
           value: workflow.id,
           label: workflow.name,
@@ -984,10 +993,14 @@ export default function QuickAccessWizard({
           const http = fresh.gitHttpCredentialsConfigured
             ? await api(`/api/users/${encodeURIComponent(userId)}/git-http-credentials`).catch(() => [])
             : [];
+          const savedHosts = Array.isArray(http) ? http.map(item => item.host) : [];
+          const authorized = savedHosts.some(host => host.startsWith("http://"))
+            ? await api("/api/git-http-hosts").catch(() => [])
+            : [];
           if (current()) {
-            const hosts = Array.isArray(http) ? http : [];
-            setGitHttpHosts(hosts.map(item => item.host));
-            const codeupRecord = hosts.find(item => item.host === "codeup.aliyun.com") || null;
+            const authorizedHosts = new Set(Array.isArray(authorized) ? authorized.map(item => item.host) : []);
+            setGitHttpHosts(savedHosts.filter(host => !host.startsWith("http://") || authorizedHosts.has(host)));
+            const codeupRecord = (Array.isArray(http) ? http : []).find(item => item.host === "codeup.aliyun.com") || null;
             setCodeupCredential({
               configured: !!codeupRecord,
               username: codeupRecord?.username || "",
@@ -1029,7 +1042,7 @@ export default function QuickAccessWizard({
 
   useEffect(() => {
     if (!open || !selectedWorkflowId) return undefined;
-    // Only platform templates have template roles; a project SOP would 404.
+    // Only platform templates have template roles; a project LOOP would 404.
     const known = (workflows || []).find((w) => w.id === selectedWorkflowId);
     if (known && !known.generic) {
       setTemplateAgents([]);
@@ -1086,7 +1099,7 @@ export default function QuickAccessWizard({
     else setSelectedWorkflowId(DEFAULT_SOP_ID);
   }, [open, projectMode, currentProject?.id]);
 
-  // A new project starts from the platform template; the SOP picked for the
+  // A new project starts from the platform template; the LOOP picked for the
   // previously selected project belongs to that project and is not offered.
   useEffect(() => {
     if (open && projectMode === "create") setSelectedWorkflowId(DEFAULT_SOP_ID);
@@ -1115,7 +1128,7 @@ export default function QuickAccessWizard({
   const wizardStepCount = STEPS.length - 1;
   const gitHubReady = Boolean(storedUser?.gitHubCredentialConfigured);
   const gongfengReady = Boolean(storedUser?.gitTokenOAuth);
-  const hasGit = gitHubReady || gongfengReady || Boolean(storedUser?.gitSshKeyConfigured || storedUser?.gitHttpCredentialsConfigured);
+  const hasGit = gitHubReady || gongfengReady || Boolean(storedUser?.gitSshKeyConfigured) || gitHttpHosts.length > 0;
   const codeupReady = Boolean(codeupCredential.configured || codeupToken.trim());
   const sshKeysLoaded = sshCredentials.userId === user?.id && sshCredentials.keys !== null;
   const hasSSHKey = (remote) => sshKeysLoaded && !sshCredentials.error && sshCredentials.keys.some(
@@ -1123,13 +1136,13 @@ export default function QuickAccessWizard({
   );
   const gitAccess = (repo) => {
     if (repo?.provider === "ssh") return { label: "Git SSH", ready: hasSSHKey(repo) };
-    if (repo?.provider === "https") return { label: "Git HTTPS", ready: gitHttpHosts.includes(repo.host) };
+    if (["http", "https"].includes(repo?.provider)) return { label: `Git ${repo.provider.toUpperCase()}`, ready: gitHttpHosts.includes(repo.host) };
     if (repo?.provider === "codeup") return { label: "云效 Codeup", ready: codeupReady };
     if (repo?.provider === "github") return { label: "GitHub", ready: gitHubReady };
     if (repo?.provider === "gongfeng") return { label: "工蜂", ready: gongfengReady };
     return { label: "Git", ready: hasGit };
   };
-  const selectedRepo = (bindRepoNow && parsedRepo) || parseGongfengRepo(defaultRepo?.cloneUrl, gongfengHost);
+  const selectedRepo = (bindRepoNow && parsedRepo) || parseSavedRepo(defaultRepo, gongfengHost);
   const repoAccess = gitAccess(selectedRepo);
   const readyCLIs = EXECUTORS.filter(cli => personalEngineConfigured(storedUser, cli.id));
   const cliReady = readyCLIs.length > 0 || Boolean(sponsoredModel);
@@ -1304,7 +1317,7 @@ export default function QuickAccessWizard({
       }
       if (bindRepoNow && repoUrl.trim() && !parsedRepo) {
         setError(
-          "请输入 Git HTTPS 仓库链接或 Git SSH 克隆地址。",
+          "请输入 Git HTTP(S) 仓库链接或 Git SSH 克隆地址。",
         );
         return;
       }
@@ -1321,7 +1334,7 @@ export default function QuickAccessWizard({
     setError("");
     try {
       let targetProject = currentProject;
-      // Save the SOP the page shows; a stale id hidden by the current
+      // Save the LOOP the page shows; a stale id hidden by the current
       // filter must never be bound to the project.
       const sopId = activeWorkflow?.id || DEFAULT_SOP_ID;
       if (projectMode === "create") {
@@ -1362,7 +1375,7 @@ export default function QuickAccessWizard({
         const existingRepo = (repositories || []).find(
           (repo) =>
             repo.projectId === targetProject.id &&
-            (["ssh", "https"].includes(parsedRepo.provider)
+            (["ssh", "http", "https"].includes(parsedRepo.provider)
               ? repo.cloneUrl === parsedRepo.cloneUrl
               : repo.gongfengProjectId === parsedRepo.project ||
                 repo.webUrl === parsedRepo.webUrl),
@@ -1409,7 +1422,7 @@ export default function QuickAccessWizard({
               item.projectId === targetProject.id &&
               ((item.tags || []).includes(`generic-source:${sopId}`) ||
                 item.id === `${sopId}-${targetProject.id}` ||
-                item.name === (activeWorkflow?.name || "通用后端交付 SOP")),
+                item.name === (activeWorkflow?.name || "通用后端交付 LOOP")),
           );
         if (existingProjectSop) {
           provisionedWorkflow = existingProjectSop;
@@ -1426,7 +1439,7 @@ export default function QuickAccessWizard({
                 `/api/workflows/${encodeURIComponent(sopId)}/clone`,
                 {
                   id: cloneId,
-                  name: (activeWorkflow?.name || "通用后端交付 SOP").replace(
+                  name: (activeWorkflow?.name || "通用后端交付 LOOP").replace(
                     /^通用/,
                     "",
                   ),
@@ -1492,7 +1505,7 @@ export default function QuickAccessWizard({
         repository: boundRepo,
         workflow: provisionedWorkflow || activeWorkflow,
         roles: roles.map(({ id, name }) => ({ id, name })),
-        gitAccess: gitAccess(parseGongfengRepo(boundRepo?.cloneUrl, gongfengHost)),
+        gitAccess: gitAccess(parseSavedRepo(boundRepo, gongfengHost)),
         cliNames: EXECUTORS.filter(cli => personalEngineConfigured(storedUser, cli.id)).map(cli => cli.label),
       });
       setPhase("success");
@@ -1528,7 +1541,7 @@ export default function QuickAccessWizard({
               <HarnessIcon name="sparkles" size={20} />
             </div>
             <h2 id="qa-wizard-title">快速接入</h2>
-            <p>提供最低限度的鉴权与仓库，直接使用默认角色和 SOP。</p>
+            <p>提供最低限度的鉴权与仓库，直接使用默认角色和 LOOP。</p>
           </div>
           <ol className="qa-steps">
             {STEPS.map((item, index) => {
@@ -1614,7 +1627,7 @@ export default function QuickAccessWizard({
                     </h3>
                     <p className="qa-lede qa-success-item" style={{ "--i": 1 }}>
                       已关联默认角色与「
-                      {completedSummary?.workflow?.name || "通用后端交付 SOP"}
+                      {completedSummary?.workflow?.name || "通用后端交付 LOOP"}
                       」，现在可以直接在工作台对话或派发需求。
                     </p>
                   </div>
@@ -1641,7 +1654,7 @@ export default function QuickAccessWizard({
                           </span>
                           <span>
                             {completedSummary?.workflow?.name ||
-                              "通用后端交付 SOP"}
+                              "通用后端交付 LOOP"}
                           </span>
                           <small>已绑定</small>
                         </li>
@@ -1727,9 +1740,9 @@ export default function QuickAccessWizard({
                         <HarnessIcon name="workflow" size={16} />
                       </span>
                       <span className="qa-action-copy">
-                        <strong>查看或修改 SOP</strong>
+                        <strong>查看或修改 LOOP</strong>
                         <small>
-                          在流程模板里查看默认 SOP，或复制到项目自由调整
+                          在流程模板里查看默认 LOOP，或复制到项目自由调整
                         </small>
                       </span>
                       <HarnessIcon
@@ -2081,7 +2094,7 @@ export default function QuickAccessWizard({
                                   ? "旧项目可直接追加新仓库，复用已有流程与角色；留空则沿用现有仓库"
                                   : "沿用项目现有仓库与流程"
                                 : bindRepoNow
-                                  ? "粘贴 Git HTTPS 链接或 Git SSH 地址，自动设为项目默认仓库"
+                                  ? "粘贴 Git HTTP(S) 链接或 Git SSH 地址，自动设为项目默认仓库"
                                   : "已跳过，可在派发需求或项目配置中再绑定"}
                             </span>
                           </div>
@@ -2138,7 +2151,7 @@ export default function QuickAccessWizard({
                                     {projectMode === "existing" &&
                                     projectRepos.length
                                       ? "新增仓库地址（可选）"
-                                      : "Git HTTPS 链接或 Git SSH 地址"}
+                                      : "Git HTTP(S) 链接或 Git SSH 地址"}
                                   </span>
                                   <input
                                     className="qa-input qa-mono"
@@ -2185,7 +2198,7 @@ export default function QuickAccessWizard({
                                 </p>
                               ) : (
                                 <p key="help" className="qa-hint">
-                                  支持 Git HTTPS 链接或 Git SSH 地址，例如 <code>git@gitlab.com:group/repo.git</code>；云效仓库粘贴 <code>https://codeup.aliyun.com/组织ID/分组/仓库.git</code>。
+                                  支持 Git HTTP(S) 链接或 Git SSH 地址，例如 <code>git@gitlab.com:group/repo.git</code>；云效仓库粘贴 <code>https://codeup.aliyun.com/组织ID/分组/仓库.git</code>。
                                 </p>
                               )}
                               {selectedRepo?.provider === "ssh" && sshKeysLoaded && !repoAccess.ready ? (
@@ -2203,12 +2216,12 @@ export default function QuickAccessWizard({
                   {activeStep.id === "workflow" ? (
                     <div className="qa-pane">
                       <div className="qa-field">
-                        <span className="qa-label">默认交付 SOP</span>
+                        <span className="qa-label">默认交付 LOOP</span>
                         <HarnessSelect
                           value={activeWorkflow?.id || DEFAULT_SOP_ID}
                           options={sopSelectOptions}
                           onChange={setSelectedWorkflowId}
-                          ariaLabel="默认交付 SOP"
+                          ariaLabel="默认交付 LOOP"
                         />
                       </div>
 
@@ -2249,7 +2262,7 @@ export default function QuickAccessWizard({
                           <div
                             key="stages"
                             className="qa-flow-track qa-stagger"
-                            aria-label="SOP 阶段预览"
+                            aria-label="LOOP 阶段预览"
                           >
                             <div
                               className="qa-flow-node is-edge"
@@ -2342,11 +2355,11 @@ export default function QuickAccessWizard({
                             </dd>
                           </div>
                           <div>
-                            <dt>默认 SOP</dt>
+                            <dt>默认 LOOP</dt>
                             <dd>
                               <span className="qa-dot is-ok" />
                               <span>
-                                {activeWorkflow?.name || "通用后端交付 SOP"}（
+                                {activeWorkflow?.name || "通用后端交付 LOOP"}（
                                 {roles.length} 个默认角色）
                               </span>
                             </dd>

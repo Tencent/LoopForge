@@ -7,7 +7,7 @@ import (
 )
 
 // DeliveryMR is one merge request delivered for a work item. A multi-repository
-// SOP delivers at most one MR per run repository.
+// LOOP delivers at most one MR per run repository.
 type DeliveryMR struct {
 	RepositoryID string `json:"repositoryId,omitempty"`
 	Repository   string `json:"repository,omitempty"`

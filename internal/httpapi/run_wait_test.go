@@ -86,7 +86,7 @@ func TestWaitRunUsesFrozenWorkflowProjectWhenStartOmitsProject(t *testing.T) {
 	api := New(h.repo, en, nil, "", "")
 
 	wf := domain.WorkflowDefinition{
-		ID: "wait-manual-start", Name: "Wait for manual SOP", ProjectID: "workbench",
+		ID: "wait-manual-start", Name: "Wait for manual LOOP", ProjectID: "workbench",
 		SandboxProfileID: repo.TestNativeSandboxID,
 		Nodes:            []domain.WorkflowNode{{ID: "review", Name: "Review", Type: "approval", MaxAttempts: 1}},
 	}
@@ -98,7 +98,7 @@ func TestWaitRunUsesFrozenWorkflowProjectWhenStartOmitsProject(t *testing.T) {
 	api.ServeHTTP(rec, c.Request)
 	var run domain.Run
 	if err := json.Unmarshal(rec.Body.Bytes(), &run); rec.Code != http.StatusCreated || err != nil {
-		t.Fatalf("start SOP without an explicit project: %d %s", rec.Code, rec.Body)
+		t.Fatalf("start LOOP without an explicit project: %d %s", rec.Code, rec.Body)
 	}
 	if run.ExecutionContext.ProjectID != "" || run.WorkflowSnapshot.ProjectID != wf.ProjectID {
 		t.Fatalf("unexpected run scope: context=%q snapshot=%q", run.ExecutionContext.ProjectID, run.WorkflowSnapshot.ProjectID)

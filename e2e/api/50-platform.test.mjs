@@ -98,6 +98,9 @@ test('schedule job: a manual trigger dispatches todo requirements of the project
   const saved = await put('/api/schedule-jobs', { ...job, name: 'E2E 定时任务（改）' });
   assert.equal(saved.name, 'E2E 定时任务（改）');
   assert.ok(list(await get('/api/schedule-jobs')).some(j => j.id === id));
+  // The enable switch keeps the e2e job disabled.
+  assert.equal((await post(`/api/schedule-jobs/${id}/enabled`, { enabled: false })).enabled, false);
+  await api('POST', `/api/schedule-jobs/${id}/enabled`, {}, { expect: 400 });
 
   await post(`/api/schedule-jobs/${id}/run`, {});
   const runs = await waitFor('scheduled dispatch', async () => {
@@ -106,6 +109,7 @@ test('schedule job: a manual trigger dispatches todo requirements of the project
   }, { timeoutMs: 120_000 });
   trackRun(runs[0].id);
   await waitRun(runs[0].id, r => r.status === 'succeeded', { label: 'scheduled run succeeded' });
+  assert.ok(Array.isArray(list(await get(`/api/schedule-job-executions?projectId=${P}&jobId=${id}`))));
   const after = list(await get('/api/schedule-jobs')).find(j => j.id === id);
   assert.ok(['success', 'waiting', 'running'].includes(after.lastStatus), `job status ${after.lastStatus}: ${after.lastError || ''}`);
 });
@@ -201,6 +205,35 @@ test('users: per-host Git access tokens are write-only and scoped to their owner
       assert.equal(after.length, before.length);
     }
   }
+});
+
+test('platform: saves and clears the external access address', async t => {
+  const path = '/api/platform/public-url';
+  const initial = await get(path, { expect: 200 });
+  const address = 'https://loopforge-e2e.example.com:8443';
+  t.after(async () => {
+    const { stored } = await get(path, { expect: 200 });
+    if (stored === initial.stored) return;
+    if (initial.stored) await put(path, { value: initial.stored }, { expect: 200 });
+    else await del(path, { expect: 200 });
+  });
+
+  const saved = await put(path, { value: `${address}/` }, { expect: 200 });
+  assert.equal(saved.source, 'settings');
+  assert.equal(saved.value, address);
+  assert.equal(saved.stored, address);
+  assert.equal(saved.envValue, initial.envValue);
+  assert.ok(saved.updatedBy);
+
+  await put(path, { value: 'https://loopforge-e2e.example.com:65536' }, { expect: 400 });
+  assert.deepEqual(await get(path, { expect: 200 }), saved);
+
+  const cleared = await del(path, { expect: 200 });
+  assert.equal(cleared.source, initial.envValue ? 'env' : 'none');
+  assert.equal(cleared.value, initial.envValue);
+  assert.equal(cleared.stored, '');
+  assert.equal(cleared.updatedBy, saved.updatedBy);
+  assert.deepEqual(await get(path, { expect: 200 }), cleared);
 });
 
 function newSSHHostKey() {

@@ -43,19 +43,21 @@ test('platform admin panel loads metrics, searches, filters, grants, revokes, an
   assert.equal(app.evaluate(`state.currentView`), 'agents');
 });
 
-test('platform admin page separates accounts, admins, shared keys and Git host trust', async (t) => {
+test('platform admin tabs separate all five settings sections and support keyboard navigation', async (t) => {
   const app = await loadApp();
   t.after(app.close);
   app.evaluate(`state.currentUser={...state.data.users[0],isGuest:false,isPlatformAdmin:true}`);
   app.router.get('/api/platform/admins', [{ userId: 1, loginName: 'owner', chineseName: '', source: 'granted', revocable: true }]);
   app.router.get('/api/platform/accounts', { signupEnabled: true, accounts: [1, 2, 3].map((id) => ({ userId: id, loginName: `user${id}`, admin: id === 1, password: true, codeBuddyApiKeyConfigured: false })) });
   app.router.get(/^\/api\/platform\/codebuddy-key/, { configured: true, internetEnvironment: '', models: ['glm-5.1'], updatedBy: 'owner', catalog: [{ id: 'glm-5.1', name: 'GLM-5.1' }, { id: 'kimi-k2.6', name: 'Kimi-K2.6' }] });
+  app.router.get('/api/platform/public-url', { source: 'env', value: 'https://loopforge.example.com', envValue: 'https://loopforge.example.com' });
   app.evaluate(`renderPlatformAdminPanel()`);
   await settle(8);
   const host = app.document.querySelector('#platformAdminPanel');
   const panel = (id) => host.querySelector(`[data-platform-panel="${id}"]`);
   const tab = (id) => host.querySelector(`[data-platform-tab="${id}"]`);
-  const shown = () => ['accounts', 'admins', 'sharedKey', 'gitHostTrust'].filter((id) => !panel(id).hidden);
+  const shown = () => [...host.querySelectorAll('[data-platform-panel]:not([hidden])')].map(el => el.dataset.platformPanel);
+  const arrow = (key) => host.querySelector('#platformTabs').dispatchEvent(new app.window.KeyboardEvent('keydown', { key, bubbles: true }));
 
   assert.deepEqual(shown(), ['accounts'], 'accounts open first');
   assert.equal(tab('accounts').getAttribute('aria-selected'), 'true');
@@ -68,18 +70,66 @@ test('platform admin page separates accounts, admins, shared keys and Git host t
   tab('sharedKey').click();
   assert.deepEqual(shown(), ['sharedKey']);
   assert.equal(tab('accounts').getAttribute('aria-selected'), 'false');
-  host.querySelector('#platformTabs').dispatchEvent(new app.window.KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+  arrow('ArrowRight');
   assert.deepEqual(shown(), ['gitHostTrust']);
   assert.ok(panel('gitHostTrust').querySelector('#platformSSHHostTrustCard'));
-  host.querySelector('#platformTabs').dispatchEvent(new app.window.KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+  arrow('ArrowRight');
+  assert.deepEqual(shown(), ['publicUrl']);
+  assert.match(panel('publicUrl').textContent, /https:\/\/loopforge\.example\.com/);
+  assert.equal(tab('publicUrl').getAttribute('aria-selected'), 'true');
+  assert.equal(app.document.activeElement, tab('publicUrl'));
+  arrow('ArrowRight');
   assert.deepEqual(shown(), ['accounts'], 'arrow keys wrap around');
-  host.querySelector('#platformTabs').dispatchEvent(new app.window.KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+  arrow('ArrowLeft');
+  assert.deepEqual(shown(), ['publicUrl'], 'arrow keys wrap back to the final tab');
+  arrow('ArrowRight');
+  arrow('ArrowRight');
   assert.deepEqual(shown(), ['admins']);
   assert.ok(panel('admins').querySelector('.platform-metric-grid'), 'admin metrics live in the admins tab');
 
   app.evaluate(`renderPlatformAdminPanel()`);
   await settle(6);
   assert.deepEqual(shown(), ['admins'], 'the open tab survives a re-render');
+});
+
+test('clearing the public address requires confirmation and reports the resulting source', async (t) => {
+  for (const env of ['', 'https://deployment.example.com']) {
+    await t.test(env ? 'with an environment address' : 'without an environment address', async (t) => {
+      const app = await loadApp();
+      t.after(app.close);
+      app.evaluate(`state.currentUser={...state.data.users[0],isGuest:false,isPlatformAdmin:true}`);
+      const endpoint = '/api/platform/public-url';
+      const stored = 'https://loopforge.example.com';
+      app.router.get(endpoint, { source: 'settings', value: stored, stored, envValue: env });
+      app.router.delete(endpoint, { source: env ? 'env' : 'none', value: env, stored: '', envValue: env, updatedBy: 'owner' });
+      app.evaluate(`renderPlatformAdminPanel()`);
+      app.document.querySelector('[data-platform-tab="publicUrl"]').click();
+      await settle(6);
+      const card = app.document.querySelector('#platformPublicURLCard');
+      const clear = card.querySelector('[data-public-url-clear]');
+      const deletes = () => app.router.calls.filter(call => call.path === endpoint && call.method === 'DELETE');
+      assert.equal(clear.hidden, false);
+
+      clear.focus();
+      clear.click();
+      await settle();
+      app.document.querySelector('#confirmCancelBtn').click();
+      await settle();
+      assert.equal(deletes().length, 0);
+      assert.equal(card.querySelector('input').value, stored);
+      assert.equal(app.document.activeElement, clear);
+
+      clear.click();
+      await settle();
+      app.document.querySelector('#confirmOkBtn').click();
+      await settle();
+      assert.equal(deletes().length, 1);
+      assert.equal(clear.hidden, true);
+      assert.equal(card.querySelector('input').value, '');
+      assert.match(card.querySelector('[data-public-url-current]').textContent, env ? /deployment\.example\.com/ : /未配置/);
+      assert.match(app.document.querySelector('#toastContainer').textContent, env ? /改回使用环境变量/ : /外部访问地址未配置/);
+    });
+  }
 });
 
 test('platform admins can read a host key and save it only after confirming its fingerprint', async (t) => {
@@ -300,7 +350,7 @@ test('platform admins share a CodeBuddy key limited to the models they pick', as
   assert.equal(app.evaluate(`state.data.sponsoredModel`), 'deepseek-v4.1-flash');
 });
 
-test('platform admins authorize HTTPS addresses in the Git host trust tab', async (t) => {
+test('platform admins authorize HTTPS and HTTP separately in the Git host trust tab', async (t) => {
   const app = await loadApp();
   t.after(app.close);
   const endpoint = '/api/platform/git-https-hosts';
@@ -312,6 +362,12 @@ test('platform admins authorize HTTPS addresses in the Git host trust tab', asyn
   const path = `${endpoint}/${encodeURIComponent(proposed.host)}`;
   app.router.put(path, { ...updated, revision: 'second' });
   app.router.delete(path, null, 204);
+  const plainEndpoint = '/api/platform/git-http-hosts';
+  const plain = { host: 'git.internal.example:8080', revision: 'plain' };
+  app.router.get(plainEndpoint, []);
+  app.router.post(plainEndpoint, plain, 201);
+  const plainPath = `${plainEndpoint}/${encodeURIComponent(plain.host)}`;
+  app.router.delete(plainPath, null, 204);
   app.evaluate(`state.currentUser={...state.data.users[0],isGuest:false,isPlatformAdmin:true}; renderPlatformAdminPanel()`);
   const trustTab = app.document.querySelector('[data-platform-tab="gitHostTrust"]');
   trustTab.click();
@@ -367,4 +423,22 @@ test('platform admins authorize HTTPS addresses in the Git host trust tab', asyn
   const revoke = app.router.calls.find(call => call.method === 'DELETE' && call.path === path);
   assert.equal(new Headers(revoke.options.headers).get('If-Match'), '"second"');
   assert.equal(card.querySelector('[data-https-host-remove]'), null);
+
+  const plainCard = panel.querySelector('#platformHTTPHostTrustCard');
+  plainCard.querySelector('[data-http-host-add]').click();
+  const plainForm = plainCard.querySelector('form');
+  assert.deepEqual([...plainForm.querySelectorAll('[name]')].map(field => field.name), ['host']);
+  plainForm.elements.host.value = `http://${plain.host}`;
+  plainForm.querySelector('button[type="submit"]').click();
+  await settle();
+  assert.deepEqual(app.router.calls.find(call => call.method === 'POST' && call.path === plainEndpoint).body, {host:`http://${plain.host}`});
+  assert.match(plainCard.querySelector('[data-http-host-list]').textContent, /http:\/\/git\.internal\.example:8080/);
+  assert.equal(card.querySelector('[data-https-host-remove]'), null);
+
+  plainCard.querySelector('[data-http-host-revoke]').click();
+  app.document.querySelector('#confirmOkBtn').click();
+  await settle();
+  const plainRevoke = app.router.calls.find(call => call.method === 'DELETE' && call.path === plainPath);
+  assert.equal(new Headers(plainRevoke.options.headers).get('If-Match'), '"plain"');
+  assert.equal(plainCard.querySelector('[data-http-host-revoke]'), null);
 });

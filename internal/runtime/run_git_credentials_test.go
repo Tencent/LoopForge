@@ -40,7 +40,7 @@ print('GATEWAY='+os.environ['AGENTFLOW_SESSION_GATEWAY'])
 	command := CommandSpec{Argv: []string{"python3", "-c", script}, Provider: "script", CredentialBindings: []CredentialBinding{BindGit}}
 	out, err := ExecuteLocalCommand(context.Background(), workspace, command, credentials, nil)
 	if err != nil || !strings.Contains(out, "BOUND_OK") || !strings.Contains(out, "[redacted]") || strings.Contains(out, "fake-cnb-sop-secret") {
-		t.Fatalf("SOP binding: %v %s", err, out)
+		t.Fatalf("LOOP binding: %v %s", err, out)
 	}
 	var gateway string
 	for _, line := range strings.Split(out, "\n") {

@@ -524,6 +524,11 @@ html[data-theme="dark"] .issue-title-tag.tone-cyan{color:#67e8f9}
 .detail-fact span{font-size:9px;color:var(--muted-2);text-transform:uppercase;letter-spacing:.05em}
 .detail-fact b{margin-top:3px;font-size:12px;word-break:break-all}
 .detail-desc{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:13px 15px;font-size:12.5px;line-height:1.7;white-space:pre-wrap;color:var(--muted)}
+.issue-description{margin-top:12px;white-space:normal;overflow:auto}
+.issue-description-images{display:flex;flex-wrap:wrap;gap:10px;list-style:none;margin:0;padding:0}
+.issue-description .markdown-body+.issue-description-images{margin-top:12px}
+.issue-description-images li{max-width:100%}
+.issue-description-images img{display:block;width:auto;height:auto;max-width:100%;max-height:240px;border:1px solid var(--line);border-radius:8px}
 .clarify-dim{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin-bottom:9px}
 .clarify-dim-head{display:flex;align-items:center;gap:8px;font-size:12px}
 .clarify-dim-head b{font-size:12.5px}
@@ -891,6 +896,15 @@ textarea.pa-input{height:auto;min-height:76px;padding:9px 11px;resize:vertical;l
 .pa-sw-custom input{position:absolute;inset:0;width:100%;height:100%;padding:0;border:0;opacity:0;cursor:pointer}
 .pa-sw-hex{margin-left:4px;color:var(--muted);font-size:12px}
 .pa-member-row{padding:12px 0}
+.pa-rows>.pa-member-row{grid-template-columns:30px 84px minmax(220px,1fr) 28px}
+.pa-join-row{display:grid;grid-template-columns:30px 84px minmax(0,1fr) auto;gap:8px;align-items:center;padding:12px 0}
+.pa-rows>.pa-join-row+.pa-join-row{border-top:1px solid var(--line)}
+.pa-join-m{display:flex;flex-direction:column;gap:2px;min-width:0}
+.pa-join-m b{font-size:13px;font-weight:600;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pa-join-m small{font-size:12px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pa-join-acts{display:flex;gap:6px}
+.pa-join-state{display:inline-flex;align-items:center;gap:6px}
+.pa-join-btn,.pa-join-state{flex:none}
 .pa-rows>.member-row+.member-row{border-top:1px solid var(--line)}
 .pa-rows>.member-row.owner-row{margin:12px 0;padding:10px 8px}
 .pa-rows-empty{padding:20px 0;color:var(--muted-2);font-size:13px;text-align:center}
@@ -939,6 +953,7 @@ textarea.pa-input{height:auto;min-height:76px;padding:9px 11px;resize:vertical;l
 .pa-fs h5{margin:0 0 10px;color:var(--muted-2);font-size:11px;font-weight:600;letter-spacing:.04em}
 .pa-field{display:block}
 .pa-field+.pa-field,.pa-detect+.pa-field{margin-top:12px}
+.pa-repo-branch-naming{margin-top:12px}
 .pa-field-l{display:block;margin-bottom:6px;color:var(--muted);font-size:12px;font-weight:500}
 .pa-field-l i{color:var(--muted-2);font-style:normal;font-weight:400}
 .pa-field-h,.pa-fs-hint{display:block;margin:6px 0 0;color:var(--muted-2);font-size:12px;line-height:1.5}
@@ -1753,7 +1768,7 @@ textarea.pa-input{height:auto;min-height:76px;padding:9px 11px;resize:vertical;l
 .clarification-feedback b{color:var(--amber)}
 .requirement-modal-card .modal-actions{padding:14px 26px 20px}
 
-/* ================= Agent / SOP 向导 ================= */
+/* ================= Agent / LOOP 向导 ================= */
 .definition-wizard-card{width:min(900px,94vw);max-height:90vh;overflow:auto;padding:0;border-radius:17px}
 .wizard-head{min-height:96px;padding:20px 26px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--line);background:linear-gradient(135deg,var(--panel),var(--panel-2))}
 .wizard-head h2{margin:3px 0 4px;font-size:20px}
@@ -2058,6 +2073,8 @@ html[data-theme="dark"] .edge-delete-btn:hover path{stroke:#ffffff !important}
 .issue-modal-card label.toggle-row{display:flex;align-items:center;gap:7px}
 .issue-modal-card .toggle-row input[type="checkbox"]{width:auto;flex:0 0 auto;margin:0;padding:0}
 .issue-modal-card textarea{resize:vertical}
+/* 长表单滚动时，取消/启动 SOP/保存始终固定在弹窗底部可见 */
+.issue-modal-card>.modal-actions{position:sticky;bottom:calc(-1 * var(--sp-6));z-index:4;margin:var(--sp-4) calc(-1 * var(--sp-6)) calc(-1 * var(--sp-6));padding:12px var(--sp-6) var(--sp-6);background:var(--v3-surface,var(--panel));border-top:1px solid var(--line-strong)}
 
 /* ================= 响应式 ================= */
 @media (max-width:1100px){
@@ -2075,7 +2092,7 @@ html[data-theme="dark"] .edge-delete-btn:hover path{stroke:#ffffff !important}
   .ap-card{flex-direction:column}
   .ap-actions{width:100%}
   .runs-layout{grid-template-columns:1fr}
-  .member-row,.dimension-row{grid-template-columns:30px 1fr}
+  .member-row,.dimension-row,.pa-rows>.pa-member-row,.pa-join-row{grid-template-columns:30px 1fr}
   .project-context-bar{flex-wrap:wrap;gap:12px}
   .project-context-metrics{order:3;width:100%;height:auto}
   .project-context-metrics>div,.project-context-metrics>button{flex:1}

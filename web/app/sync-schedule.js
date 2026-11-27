@@ -36,7 +36,12 @@ function renderSync(){
   const diagText=diag.join('；');
   $('#syncPanelSummary').innerHTML=`<span class="sync-stat"><b>${githubCount}</b>GitHub</span>${gfCount?`<span class="sync-stat"><b>${gfCount}</b>工蜂</span>`:''}${tapdCount?`<span class="sync-stat"><b>${tapdCount}</b>TAPD</span>`:''}<span class="sync-stat">最近：${lastSync}</span>${latestBySource.map(l=>`<span class="sync-stat ${l.status==='failed'?'danger':'success'}"><b>${l.status==='failed'?'!':'✓'}</b>${l.source==='github'?'GitHub':l.source==='gongfeng'?'工蜂':'TAPD'} ${l.status==='failed'?'异常':'正常'}</span>`).join('')}${diagText?`<span class="sync-stat danger sync-error-detail" title="${escapeHTML(diagText)}"><b>诊断</b>${escapeHTML(diagText)}</span>`:''}`;
   const project=currentProject();
-  const githubButton=document.querySelector("#importGitHubIssues");if(githubButton)githubButton.disabled=!!syncing;
+  // POST /api/sync/now and PUT /api/sync/config are platform-wide (every
+  // project's repositories), so only platform admins may use them once login
+  // is required; without login the server lets everyone through.
+  const canSync=!state.authRequired||isPlatformAdmin(),adminOnly=canSync?'':'只有平台管理员可以同步外部工作项或修改同步配置';
+  const githubButton=document.querySelector("#importGitHubIssues");if(githubButton){githubButton.disabled=!!syncing||!canSync;githubButton.title=adminOnly}
+  for(const id of ['#syncAutoEnabledInline','#syncAutoEnabled','#syncInterval','#saveSyncConfig']){const el=$(id);if(el){el.disabled=!canSync;el.title=adminOnly}}
   const repos=(state.data.repositories||[]).filter(r=>r.projectId===state.projectFilter&&r.provider==='github');
   const repoHost=$('#syncGongfengRepos');
   if(repoHost){
@@ -56,7 +61,8 @@ function renderSync(){
   $('#syncAutoEnabledInline').checked=cfg.autoSyncEnabled||false;
   const repoNameOf=id=>{const r=(state.data.repositories||[]).find(x=>x.id===id);return r?r.name:''};
   $('#syncPushIssue').innerHTML=projectIssues.filter(i=>!i.externalRef||i.source==='local').map(i=>{const rn=repoNameOf(i.repositoryId||(i.repositoryIds||[])[0]);return `<option value="${i.id}">${rn?escapeHTML(rn)+' · ':''}${escapeHTML((i.title||'').slice(0,40))}</option>`}).join('')||'<option value="">当前项目暂无可推送项</option>';
-  if(syncing){$('#syncNowBtn').textContent='⟳ 同步中…';$('#syncNowBtn').disabled=true}else{$('#syncNowBtn').textContent='⟳ 立即同步';$('#syncNowBtn').disabled=false}
+  if(syncing){$('#syncNowBtn').textContent='⟳ 同步中…';$('#syncNowBtn').disabled=true}else{$('#syncNowBtn').textContent='⟳ 立即同步';$('#syncNowBtn').disabled=!canSync}
+  $('#syncNowBtn').title=adminOnly;
   $('#syncLogList').innerHTML=scopedLogs.length?scopedLogs.slice(0,20).map(l=>`<div class="sync-log-item"><span class="sync-log-direction ${l.direction}">${l.direction==='pull'?'拉取':'推送'}</span><span class="sync-log-source">${l.source}</span><span class="sync-log-message">${escapeHTML(l.message||l.action)}</span><span class="sync-log-status ${l.status}">${l.status==='success'?'成功':'失败'}</span><span class="sync-log-time">${new Date(l.startedAt).toLocaleTimeString()}</span></div>`).join(''):'<div class="sync-empty">暂无同步记录</div>';
   renderScheduleJobs();
 }
@@ -159,7 +165,7 @@ function bindClarifyModelPicker(host, issue){
 // modal's scroll area cannot clip it, and opens toward the side with room.
 let scheduleCatalog=null;
 function scheduleModelCatalog(){
-  return scheduleCatalog||scheduleModelAPI()?.catalog?.()||{};
+  return scheduleCatalog||{};
 }
 function scheduleEngineModels(engine){
   return (scheduleModelCatalog().models||[]).filter(m=>(m.engine||'codebuddy')===engine);
@@ -179,21 +185,20 @@ function paintScheduleEngines(selected){
   if(!select)return;
   const current=scheduleModelEngine(selected);
   const engines=scheduleModelCatalog().engines||[];
-  const list=engines.filter(engine=>engine.configured||scheduleEngineModels(engine.id).length);
-  if(!list.some(e=>e.id===current)&&(scheduleModelAPI()?.concreteModelId(selected)||$('#scheduleJobForm')?.elements.id.value)){
+  const list=engines.filter(engine=>engine.configured);
+  if(!list.some(e=>e.id===current)&&$('#scheduleJobForm')?.elements.id.value){
     list.push(engines.find(e=>e.id===current)||{id:current,name:current});
   }
-  // CodeBuddy can run on its native default with no concrete model in the
-  // list. A saved task keeps its CLI selectable during edits.
   select.replaceChildren(...list.map(e=>{
-    const usable=e.id===current||(e.id==='codebuddy'&&e.configured)||scheduleEngineModels(e.id).length>0;
-    const option=new Option(usable?e.name:`${e.name}（缺少凭据）`,e.id);
-    option.disabled=!usable;
+    const hasModel=e.id==='codebuddy'||scheduleEngineModels(e.id).length>0;
+    const label=!e.configured?`${e.name}（缺少凭据）`:hasModel?e.name:`${e.name}（暂无可选模型）`;
+    const option=new Option(label,e.id);
+    option.disabled=!e.configured||!hasModel;
     return option;
   }));
   if(!list.length)select.add(new Option('暂无可用执行器',''));
   select.value=list.some(item=>item.id===current)?current:list[0]?.id||'';
-  select.disabled=!list.length;
+  select.disabled=![...select.options].some(option=>option.value&&!option.disabled);
 }
 function closeScheduleModelMenu(){
   const host=$('#scheduleModelPicker');
@@ -255,14 +260,15 @@ function bindScheduleModelPicker(){
 async function loadScheduleModels(){
   const picker=scheduleModelAPI();
   if(!picker)return;
-  const version=scheduleModalVersion;
+  const version=scheduleModalVersion,projectId=state.projectFilter;
+  const projectQuery=projectId?`&projectId=${encodeURIComponent(projectId)}`:'';
   let catalog;
   try{
-    catalog=await api('/api/assistant/models?schedule=1',{silent:true});
+    catalog=await api('/api/assistant/models?schedule=1'+projectQuery,{silent:true});
   }catch{
-    catalog=await picker.load();
+    catalog={};
   }
-  if(version!==scheduleModalVersion)return;
+  if(version!==scheduleModalVersion||projectId!==state.projectFilter)return;
   scheduleCatalog=catalog;
   const form=$('#scheduleJobForm');
   const selected=form.elements.assistantModel.value;
@@ -285,6 +291,9 @@ function paintScheduleModel(selected){
   const item=catalog.models?.find(model=>model.id===keep);
   if(item)api.paintItem(toggle,item);
   else api.paint(toggle,keep);
+  const engine=scheduleModelEngine(keep);
+  toggle.disabled=!catalog.engines?.some(item=>item.id===engine&&item.configured)||!scheduleEngineModels(engine).length;
+  if(toggle.disabled)closeScheduleModelMenu();
   paintScheduleEngines(keep);
 }
 function syncScheduleJobTiming(){
@@ -313,7 +322,7 @@ function syncScheduleJobKind(){
   const assistant=kind==='assistant';
   f.elements.timeoutMinutes.disabled=!assistant;
   $('#scheduleModalTitle').textContent=assistant?'AI 定时任务':'触发配置';
-  $('#scheduleModalHint').textContent=assistant?'按计划以保存人的身份和完全权限执行提示词，可调用 SOP、平台工具、工作区及浏览器。':'按计划扫描本项目选定状态、尚未跑过 SOP 的需求，通过基线门禁后派发 SOP。基线冲突会先由对齐 Agent 解决并合入，期间暂停派发。';
+  $('#scheduleModalHint').textContent=assistant?'按计划以保存人的身份和完全权限执行提示词，可调用 LOOP、平台工具、工作区及浏览器。':'按计划扫描本项目选定状态、尚未跑过 LOOP 的需求，通过基线门禁后派发 LOOP。基线冲突会先由对齐 Agent 解决并合入，期间暂停派发。';
   $('#scheduleModal').querySelector('.schedule-head').hidden=assistant;
   $('#scheduleJobList').hidden=assistant||!projectTriggerJob();
   f.querySelector('[type="submit"]').textContent=assistant?'保存 AI 定时任务':'保存触发配置';
@@ -373,7 +382,7 @@ function fillScheduleJobForm(job={}){
   const sops=runnableWorkflowOptions();
   const preferred=job.workflowId||defaultSOPForIssue({source:'tapd',projectId:state.projectFilter})||'';
   const chosen=sops.some(w=>w.id===preferred)?preferred:(sops[0]&&sops[0].id)||'';
-  f.elements.workflowId.innerHTML=(sops.length?'':`<option value="">请选择默认 SOP</option>`)+sops.map(w=>`<option value="${escapeHTML(w.id)}"${w.id===chosen?' selected':''}>${escapeHTML(w.name)}</option>`).join('');
+  f.elements.workflowId.innerHTML=(sops.length?'':`<option value="">请选择默认 LOOP</option>`)+sops.map(w=>`<option value="${escapeHTML(w.id)}"${w.id===chosen?' selected':''}>${escapeHTML(w.name)}</option>`).join('');
   f.elements.workflowId.value=chosen;
   syncScheduleJobTiming();
   syncScheduleJobKind();
@@ -405,6 +414,7 @@ async function openScheduleJobModal(kind='dispatch',job){
   if(scheduleModalOpener?.closest('#issueHeadingMenu'))scheduleModalOpener=$('#issueHeadingMore');
   const f=$('#scheduleJobForm');
   f.modelPickerReady=null;
+  scheduleCatalog=null;
   f.inert=false;
   f.querySelector('[type="submit"]').disabled=false;
   if(scheduleEditorKind==='assistant')fillScheduleJobForm(job||{});
@@ -500,7 +510,7 @@ function renderScheduleJobs(){
   if(count){count.textContent=!dispatch.length?'未配置':scheduleJobRunning(dispatch[0])?'运行中':dispatch[0].enabled?'已启用':'未启用';count.classList.toggle('is-running',dispatch.some(scheduleJobRunning))}
   const disabled='本实例不执行定时任务；任务可在主实例自动运行。';
   $('#scheduleRuntimeHint').textContent=canRun?'每个项目使用一份触发配置，修改后保存即可生效。立即运行在服务端执行，关闭页面不会中断。':disabled;
-  const triggerHint=$('#aiScheduleTriggerHint');if(triggerHint)triggerHint.textContent=canRun?'按计划扫描本项目选定状态、尚未跑过 SOP 的需求，通过基线门禁后派发 SOP。每个项目使用一份触发配置。':disabled;
+  const triggerHint=$('#aiScheduleTriggerHint');if(triggerHint)triggerHint.textContent=canRun?'按计划扫描本项目选定状态、尚未跑过 LOOP 的需求，通过基线门禁后派发 LOOP。每个项目使用一份触发配置。':disabled;
   $('#aiScheduleRuntimeHint').textContent=!state.projectFilter?'请先在顶栏选择项目，再管理 AI 定时任务。':canRun?'任务以最后保存人的身份和完全权限执行。关闭页面后，任务会继续运行。':disabled;
   $('#aiScheduleProjectName').textContent=currentProject()?.name||'当前项目';
   $('#aiScheduleCount').textContent=`${assistant.length} 个任务`;
@@ -510,7 +520,7 @@ function renderScheduleJobs(){
   $('#scheduleJobList').hidden=$('#scheduleJobForm').elements.jobKind.value==='assistant'||!dispatch.length;
   renderScheduleJobList($('#scheduleJobList'),dispatch,'dispatch',canRun);
   renderScheduleJobList(triggerList,dispatch,'dispatch',canRun);
-  if(triggerList&&!dispatch.length)triggerList.innerHTML=`<div class="sync-empty">${state.projectFilter?'当前项目还没有触发配置，点击「配置触发」设置自动派发。':'请先在顶栏选择项目，再配置 SOP 触发。'}</div>`;
+  if(triggerList&&!dispatch.length)triggerList.innerHTML=`<div class="sync-empty">${state.projectFilter?'当前项目还没有触发配置，点击「配置触发」设置自动派发。':'请先在顶栏选择项目，再配置 LOOP 触发。'}</div>`;
   renderScheduleJobList($('#aiScheduleJobList'),assistant,'assistant',canRun);
   renderAISchedulePanels();
   startScheduleJobPoll();
@@ -695,7 +705,7 @@ async function saveScheduleJob(e){
   if(assistant&&payload.references.length>12)return toast('AI 定时任务最多引用 12 个项目资产');
   if(assistant&&!payload.assistantPrompt&&!payload.sharedTaskId)return toast('请填写 AI 定时任务的提示词');
   if(assistant&&!f.elements.timeoutMinutes.validity.valid)return toast('执行超时必须为 1–240 分钟');
-  if(!assistant&&!payload.workflowId)return toast('请选择默认 SOP');
+  if(!assistant&&!payload.workflowId)return toast('请选择默认 LOOP');
   if(!assistant&&!payload.issueStatuses.length)return toast('请至少选择一个触发状态');
   if(!assistant&&payload.maxDispatch!==undefined&&(!Number.isInteger(payload.maxDispatch)||payload.maxDispatch<1||payload.maxDispatch>10))return toast('单次最多触发需求数必须为 1–10，或留空使用默认值 10');
   if(cron&&!payload.cron)return toast('请填写 Cron 表达式');

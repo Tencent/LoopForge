@@ -61,7 +61,7 @@ func TestAgentCLICommandChatRestrictions(t *testing.T) {
 		t.Errorf("resumed kimi argv: %q", argv)
 	}
 	if argv := AgentCLICommand(AgentCLIDeepSeek, AgentCLICommandOptions{Prompt: "x"}).Argv; !slices.Contains(argv, "danger-full-access") {
-		t.Errorf("SOP dsh argv: %q", argv)
+		t.Errorf("LOOP dsh argv: %q", argv)
 	}
 	for _, resume := range []string{"", "native-session"} {
 		command := chat(AgentCLIPi, AgentCLICommandOptions{Workspace: true, Resume: resume})
@@ -184,7 +184,7 @@ func TestApplyAgentCLICredential(t *testing.T) {
 		t.Fatalf("agy inline settings: %s (%v)", argv[i+1], err)
 	}
 	if argv, _, _ := ApplyAgentCLICredential(AgentCLIAntigravity, ProviderCredential{APIKey: "g"}, AgentCLIOptions{}, HostAgentCLIHome(home), home, []string{"agy", "-p", "hi"}); slices.Contains(argv, "--settings") {
-		t.Fatalf("SOP agy argv carries chat settings: %q", argv)
+		t.Fatalf("LOOP agy argv carries chat settings: %q", argv)
 	}
 
 	argv, _, err = ApplyAgentCLICredential(AgentCLIDeepSeek, ProviderCredential{APIKey: "d"}, AgentCLIOptions{Model: "deepseek-v4-flash"}, HostAgentCLIHome(home), "/h", []string{"dsh", "--profile", "headless", "--json", "x"})
@@ -220,12 +220,12 @@ func TestWriteAgentCLIMCPConfigChat(t *testing.T) {
 	if server := read(home, ".cursor/mcp.json")["mcpServers"].(map[string]any)["gw"].(map[string]any); server["url"] != "http://127.0.0.1:1/mcp" {
 		t.Fatalf("cursor mcp: %v", server)
 	}
-	// An SOP invocation in the same home lifts the chat rules again.
+	// A LOOP invocation in the same home lifts the chat rules again.
 	if err := WriteAgentCLIMCPConfig(AgentCLICursor, HostAgentCLIHome(home), entries, AgentCLIMCPOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	if deny := read(home, ".cursor/cli-config.json")["permissions"].(map[string]any)["deny"].([]any); len(deny) != 0 {
-		t.Fatalf("cursor SOP deny: %v", deny)
+		t.Fatalf("cursor LOOP deny: %v", deny)
 	}
 	if err := WriteAgentCLIMCPConfig(AgentCLIOpenCode, HostAgentCLIHome(home), entries, AgentCLIMCPOptions{ReadOnly: true}); err != nil {
 		t.Fatal(err)

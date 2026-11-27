@@ -79,7 +79,7 @@ func (e *Engine) cancelRunnerTasksForRun(runID string) error {
 // continues from the directory where it originally failed.
 func runnerWorkspaceRel(run domain.Run, nodeID string) string {
 	if run.ExecutionContext.RunnerWorkspaceLayout == domain.RunnerWorkspaceLayoutShared {
-		// A child SOP shares the checkout of the run owning its workspace.
+		// A child LOOP shares the checkout of the run owning its workspace.
 		return filepath.ToSlash(filepath.Join("runs", safeRunnerPath(workspaceRunID(run)), "workspace"))
 	}
 	return filepath.ToSlash(filepath.Join("runs", safeRunnerPath(run.ID), safeRunnerPath(nodeID)))
@@ -115,23 +115,26 @@ func safeRunnerPath(v string) string {
 	return b.String()
 }
 
-// requireWorkBranchCapabilities refuses a run whose branch semantics the
-// selected runner cannot honour: an old daemon would ignore the flags and
-// silently check out an existing same-named branch.
-func (e *Engine) requireWorkBranchCapabilities(runnerID string, repositories []domain.RepositoryContext) error {
-	if runnerID == "" {
+// requireRunnerRepositoryCapabilities checks repository transport and branch
+// requirements before work is sent to the selected runner.
+func (e *Engine) requireRunnerRepositoryCapabilities(runnerID string, repositories []domain.RepositoryContext) error {
+	if runnerID == "" || len(repositories) == 0 {
 		return nil
 	}
+	runner, _ := e.repo.Runner(runnerID)
+	return runnerRepositoryCapabilityError(runner, repositories)
+}
+
+func runnerRepositoryCapabilityError(runner domain.Runner, repositories []domain.RepositoryContext) error {
 	for _, repository := range repositories {
-		if repository.Provider == domain.RepositoryProviderSSH {
-			runner, ok := e.repo.Runner(runnerID)
-			if !ok || !runner.SupportsGitSSH() {
-				return fmt.Errorf("Git SSH 仓库需要执行机器升级至 %s 或更新版本，请先更新 Runner", domain.RunnerVersionGitSSH)
-			}
+		if repository.Provider == domain.RepositoryProviderSSH && !runner.SupportsGitSSH() {
+			return fmt.Errorf("Git SSH 仓库需要执行机器升级至 %s 或更新版本，请先更新 Runner", domain.RunnerVersionGitSSH)
+		}
+		if repository.Provider == domain.RepositoryProviderHTTP && !runner.SupportsGitPlainHTTP() {
+			return errors.New(domain.RunnerGitPlainHTTPUpgradeMessage)
 		}
 		if repository.CreateNewWorkBranch {
-			runner, ok := e.repo.Runner(runnerID)
-			if !ok || !runner.SupportsCreateNewWorkBranch() {
+			if !runner.SupportsCreateNewWorkBranch() {
 				return fmt.Errorf("按指定名字新建分支需要执行机器升级至 %s 或更新版本，请先更新 Runner", domain.RunnerVersionCreateNewWorkBranch)
 			}
 			continue
@@ -139,28 +142,47 @@ func (e *Engine) requireWorkBranchCapabilities(runnerID string, repositories []d
 		if !repository.RequireExistingWorkBranch {
 			continue
 		}
-		runner, ok := e.repo.Runner(runnerID)
-		if !ok || !runner.SupportsExistingWorkBranch() {
+		if !runner.SupportsExistingWorkBranch() {
 			return fmt.Errorf("继续已有分支需要执行机器升级至 %s 或更新版本，请先更新 Runner", domain.RunnerVersionExistingWorkBranch)
 		}
 	}
 	return nil
 }
 
+func (e *Engine) requireRunnerSandboxVersion(runnerID string, profile domain.SandboxProfile) error {
+	if runnerID == "" || !profile.Privileged && !profile.HasResourceLimits() {
+		return nil
+	}
+	runner, _ := e.repo.Runner(runnerID)
+	if profile.HasResourceLimits() && !runner.SupportsDockerSandboxLimits() {
+		return errors.New(domain.RunnerDockerSandboxLimitsUpgradeMessage)
+	}
+	return runner.ValidatePrivilegedSandboxVersion(profile)
+}
+
 func (e *Engine) runnerSandboxSpec(run domain.Run) (*domain.RunnerSandboxSpec, error) {
 	runnerID := e.defaultExecutionRunner(run)
-	if err := e.requireWorkBranchCapabilities(runnerID, run.RepositoryContexts()); err != nil {
+	if runnerID != "" && run.UsesConversationWorkspace() && len(run.RepositoryContexts()) > 0 {
+		runner, ok := e.repo.Runner(runnerID)
+		if !ok || !runner.SupportsConversationSOPWorkspace() {
+			return nil, fmt.Errorf("复用对话中的仓库检出需要执行机器升级至 %s", domain.RunnerVersionConversationSOPWorkspace)
+		}
+	}
+	if err := e.requireRunnerRepositoryCapabilities(runnerID, run.RepositoryContexts()); err != nil {
 		return nil, err
 	}
 	profile, resources, err := e.workspaceSandboxProfile(run)
 	if err != nil {
 		return nil, err
 	}
+	if err := e.requireRunnerSandboxVersion(runnerID, profile); err != nil {
+		return nil, err
+	}
 	spec := resolvedSandboxSnapshot(profile, resources)
 	var codexLoginRelay bool
 	if profile.Driver == domain.SandboxDriverDocker && runnerID != "" {
 		runner, ok := e.repo.Runner(runnerID)
-		codexLoginRelay = ok && runner.RuntimeAuthMode("codex") == domain.RuntimeAuthLocal
+		codexLoginRelay = ok && sopRunnerAuthMode(run.ExecutionContext, runner, "codex") == domain.RuntimeAuthLocal
 	}
 	requirements, err := workspaceConversationRequirements(e.repo, run.WorkflowSnapshot, codexLoginRelay)
 	if err != nil {
@@ -184,17 +206,23 @@ func (e *Engine) runnerSandboxSpec(run domain.Run) (*domain.RunnerSandboxSpec, e
 // task-scoped invocation. The run's repository travels with the task so the
 // sandbox/workspace is created on that machine.
 func (e *Engine) dispatchRunnerTask(ctx context.Context, runnerID string, run domain.Run, node domain.WorkflowNode, sb *runEnvironment, workspace string, ex domain.ExecutorDefinition, agent domain.AgentDefinition, assets domain.AgentAssetBundle, prompt, invocationID string, options runtime.InvocationOptions, sink runtime.EventSink) (string, error) {
-	if err := e.requireWorkBranchCapabilities(runnerID, run.RepositoryContexts()); err != nil {
+	if err := e.requireRunnerRepositoryCapabilities(runnerID, run.RepositoryContexts()); err != nil {
 		return "", err
 	}
 	if err := e.requireRunnerProvider(runnerID, ex.Kind); err != nil {
 		return "", err
 	}
 	runner, _ := e.repo.Runner(runnerID)
-	authMode := runner.RuntimeAuthMode(ex.Kind)
+	authMode := sopRunnerAuthMode(run.ExecutionContext, runner, ex.Kind)
+	projectShare := runner.OwnerUserID > 0 && runner.OwnerUserID != run.ExecutionContext.ResponsibleUserID
+	if run.ExecutionContext.IsEvolutionReplay() && authMode != domain.RuntimeAuthPersonal {
+		return "", errors.New("进化回放只允许个人模型 Key，不能使用执行机器的本机登录凭据")
+	}
+	if run.ExecutionContext.IsEvolutionReplay() && !runner.SupportsEvolutionReplayDisableBrowser() {
+		return "", fmt.Errorf("进化回放需要执行机器升级至 %s 或更新版本以禁用浏览器 MCP", domain.RunnerVersionEvolutionReplay)
+	}
 	resumeSessionID := resolveRunnerResumeSessionID(run, node.ID, options)
 	invocation := &domain.RunnerInvocation{
-		ArchivedFiles:                 e.legacyArchivedWorkspaceFiles(run, node.ID),
 		RunID:                         run.ID,
 		NodeID:                        node.ID,
 		InvocationID:                  invocationID,
@@ -206,6 +234,7 @@ func (e *Engine) dispatchRunnerTask(ctx context.Context, runnerID string, run do
 		HumanContext:                  run.HumanContext,
 		CredentialSource:              authMode,
 		GateResultPath:                options.GateResultPath,
+		DisableBrowser:                run.ExecutionContext.IsEvolutionReplay(),
 		RepositoryPreparationFallback: firstRepositoryAgent(run.WorkflowSnapshot, node),
 	}
 	if strings.TrimSpace(options.GateResultPath) != "" {
@@ -215,12 +244,18 @@ func (e *Engine) dispatchRunnerTask(ctx context.Context, runnerID string, run do
 		switch ex.Kind {
 		case "codex":
 			if strings.TrimSpace(sb.credentialSnapshot().Codex.APIKey) == "" {
+				if projectShare {
+					return "", errors.New("项目共享执行机器需要当前责任人的 Codex API Key，请在个人配置中填写")
+				}
 				return "", errors.New("当前责任人未配置 Codex API Key：请先在个人配置中配置，或将执行机器认证方式切回本机登录")
 			}
 			invocation.CodexAPIKey = sb.credentialSnapshot().Codex.APIKey
 			invocation.CodexBaseURL = sb.credentialSnapshot().Codex.BaseURL
 		case "claude-code":
 			if strings.TrimSpace(sb.credentialSnapshot().ClaudeCode.APIKey) == "" {
+				if projectShare {
+					return "", errors.New("项目共享执行机器需要当前责任人的 Claude Code API Key，请在个人配置中填写")
+				}
 				return "", errors.New("当前责任人未配置 Claude Code API Key：请先在个人配置中配置，或将执行机器认证方式切回本机登录")
 			}
 			invocation.ClaudeCodeAPIKey = sb.credentialSnapshot().ClaudeCode.APIKey
@@ -251,17 +286,17 @@ func (e *Engine) dispatchRunnerTask(ctx context.Context, runnerID string, run do
 	}
 	bindRunnerRepositories(invocation, run, sb.credentialSnapshot().GitUserName, sb.credentialSnapshot().GitUserEmail)
 	reported := sb.reportedOutputs(node.ID)
+	e.setRunnerArtifactInputs(run, node.ID, invocation, reported)
 	if reported != nil {
 		invocation.Artifacts = nil
 		invocation.ReportOutputs = true
-		invocation.Inputs = reported.inputs
 		invocation.OutputFiles = artifactOutputFiles(run, node)
 		if path := strings.TrimSpace(options.GateResultPath); path != "" {
 			invocation.OutputFiles = append(invocation.OutputFiles, path)
 		}
 		invocation.RecoverOutputs = normalizeExecutionScope(node.ExecutionScope) != domain.ExecutionScopeRepositories
 	}
-	invocation.MCPCallServers = e.resolveScriptMCPAssets(run.ExecutionContext.ProjectID, run.ExecutionContext.ResponsibleUserID).MCPServers
+	invocation.MCPCallServers = e.resolveRunScriptMCPAssets(run).MCPServers
 	task := domain.RunnerTask{
 		ID:          fmt.Sprintf("rt-%d-%s", time.Now().UnixNano(), safeRunnerPath(node.ID)),
 		RunnerID:    runnerID,
@@ -278,8 +313,9 @@ func (e *Engine) dispatchRunnerTask(ctx context.Context, runnerID string, run do
 	if err != nil {
 		return "", err
 	}
+	task.ProjectCredentialIDs = run.WorkflowSnapshot.ProjectCredentialIDs
 	task.Sandbox = sandboxSpec
-	if err := validateSOPHandoffRunnerPayload(run, task); err != nil {
+	if err := validateRunnerArtifactPayload(run, task); err != nil {
 		return "", err
 	}
 	if err := e.repo.PutRunnerTask(task); err != nil {
@@ -318,6 +354,9 @@ func (e *Engine) dispatchRunnerTask(ctx context.Context, runnerID string, run do
 		return final.Result, nil
 	case domain.RunnerTaskFailed:
 		msg := strings.TrimSpace(final.Error)
+		if strings.HasPrefix(msg, domain.RunnerResultReportError+"：") {
+			return final.Result, fmt.Errorf("%w：%s", errArtifactTransfer, msg)
+		}
 		if msg == "" {
 			msg = "runner task failed"
 		}
@@ -349,6 +388,9 @@ func resolveRunnerResumeSessionID(run domain.Run, nodeID string, options runtime
 }
 
 func bindRunnerRepositories(invocation *domain.RunnerInvocation, run domain.Run, gitUserName, gitUserEmail string) {
+	if run.ExecutionContext.IsEvolutionReplay() {
+		return
+	}
 	if invocation == nil {
 		return
 	}
@@ -364,6 +406,7 @@ func bindRunnerRepositories(invocation *domain.RunnerInvocation, run domain.Run,
 			WorkBranch:                run.Repository.WorkBranch,
 			RequireExistingWorkBranch: run.Repository.RequireExistingWorkBranch,
 			CreateNewWorkBranch:       run.Repository.CreateNewWorkBranch,
+			PreserveCheckout:          run.UsesConversationWorkspace(),
 			UseSSH:                    run.Repository.Provider == domain.RepositoryProviderSSH || gitwork.IsSSHReference(run.Repository.CloneURL),
 		}
 	}
@@ -379,6 +422,7 @@ func bindRunnerRepositories(invocation *domain.RunnerInvocation, run domain.Run,
 			WorkBranch:                rc.WorkBranch,
 			RequireExistingWorkBranch: rc.RequireExistingWorkBranch,
 			CreateNewWorkBranch:       rc.CreateNewWorkBranch,
+			PreserveCheckout:          run.UsesConversationWorkspace(),
 			UseSSH:                    rc.Provider == domain.RepositoryProviderSSH || gitwork.IsSSHReference(rc.CloneURL),
 			Dir:                       rc.WorkspaceDir,
 		})
@@ -405,7 +449,7 @@ func shellSingleQuote(value string) string {
 // the first node; subsequent shared-layout nodes reuse the same checkout and
 // its workspace-local Git index flags.
 func (e *Engine) dispatchRunnerScript(ctx context.Context, runnerID string, run domain.Run, nodeID, workspace, language, script, artifactDirectory string, artifacts []domain.ArtifactContract, sb *runEnvironment, gitToken, gitUserName, gitUserEmail string, assets domain.AgentAssetBundle, sink runtime.EventSink) (string, error) {
-	if err := e.requireWorkBranchCapabilities(runnerID, run.RepositoryContexts()); err != nil {
+	if err := e.requireRunnerRepositoryCapabilities(runnerID, run.RepositoryContexts()); err != nil {
 		return "", err
 	}
 	if err := e.requireRunnerProvider(runnerID, "terminal"); err != nil {
@@ -416,15 +460,14 @@ func (e *Engine) dispatchRunnerScript(ctx context.Context, runnerID string, run 
 		command = "python3 -c " + shellSingleQuote(script)
 	}
 	invocation := &domain.RunnerInvocation{
-		ArchivedFiles: e.legacyArchivedWorkspaceFiles(run, nodeID),
-		RunID:         run.ID, NodeID: nodeID, Artifacts: artifacts, ArtifactDirectory: artifactDirectory, Assets: assets, MCPCallServers: assets.MCPServers, HumanContext: run.HumanContext}
+		RunID: run.ID, NodeID: nodeID, Artifacts: artifacts, ArtifactDirectory: artifactDirectory, Assets: assets, MCPCallServers: assets.MCPServers, HumanContext: run.HumanContext}
 	bindRunnerRepositories(invocation, run, gitUserName, gitUserEmail)
 	reported := sb.reportedOutputs(nodeID)
+	e.setRunnerArtifactInputs(run, nodeID, invocation, reported)
 	if reported != nil {
 		invocation.Artifacts = nil
 		invocation.ArtifactDirectory = ""
 		invocation.ReportOutputs = true
-		invocation.Inputs = reported.inputs
 		for _, contract := range artifacts {
 			if rel, ok := artifactRelPath(artifactDirectory, contract.Path); ok {
 				invocation.OutputFiles = append(invocation.OutputFiles, rel)
@@ -449,7 +492,8 @@ func (e *Engine) dispatchRunnerScript(ctx context.Context, runnerID string, run 
 	if err != nil {
 		return "", err
 	}
-	if err := validateSOPHandoffRunnerPayload(run, task); err != nil {
+	task.ProjectCredentialIDs = run.WorkflowSnapshot.ProjectCredentialIDs
+	if err := validateRunnerArtifactPayload(run, task); err != nil {
 		return "", err
 	}
 	if err := e.repo.PutRunnerTask(task); err != nil {
@@ -483,6 +527,9 @@ func (e *Engine) dispatchRunnerScript(ctx context.Context, runnerID string, run 
 		return final.Result, errors.New("runner script canceled")
 	default:
 		message := strings.TrimSpace(final.Error)
+		if strings.HasPrefix(message, domain.RunnerResultReportError+"：") {
+			return final.Result, fmt.Errorf("%w：%s", errArtifactTransfer, message)
+		}
 		if message == "" {
 			message = strings.TrimSpace(final.Result)
 		}
@@ -490,6 +537,18 @@ func (e *Engine) dispatchRunnerScript(ctx context.Context, runnerID string, run 
 			message = "script failed on runner"
 		}
 		return final.Result, errors.New(message)
+	}
+}
+
+func (e *Engine) setRunnerArtifactInputs(run domain.Run, nodeID string, inv *domain.RunnerInvocation, reported *reportedOutputs) {
+	if reported != nil {
+		inv.ArtifactTransfer = reported.transfer
+		inv.Inputs = reported.inputs
+	}
+	if inv.ArtifactTransfer {
+		inv.Inputs = append(e.runnerArchivedInputs(run, nodeID), inv.Inputs...)
+	} else {
+		inv.ArchivedFiles = e.legacyArchivedWorkspaceFiles(run, nodeID)
 	}
 }
 
@@ -501,6 +560,9 @@ func (e *Engine) defaultExecutionRunner(run domain.Run) string {
 		return ""
 	case domain.ExecutionModeRunner:
 		return strings.TrimSpace(run.ExecutionContext.ExecutionRunnerID)
+	}
+	if run.ExecutionContext.ExecutionPool == domain.ExecutionPoolProjectAuto {
+		return ""
 	}
 	// Legacy runs predate target snapshots; retain their historical behavior.
 	return e.repo.DefaultRunner(run.ExecutionContext.ResponsibleUserID)
@@ -514,6 +576,11 @@ func (e *Engine) validateExecutionReconnect(run domain.Run, nodeID string) error
 	if runnerID == "" || isPoolRun(run) {
 		// A pool run is rebound to another pool runner when its node starts.
 		return nil
+	}
+	if run.ExecutionContext.ExecutionPool == domain.ExecutionPoolProjectAuto {
+		if err := e.validateAutoAssignBinding(run); err != nil {
+			return err
+		}
 	}
 	runner, ok := e.repo.Runner(runnerID)
 	if !ok {
@@ -647,6 +714,7 @@ func (e *Engine) dispatchRunnerCommand(ctx context.Context, runnerID, runID, nod
 			return "", err
 		}
 		task.Invocation = e.gateCommandInvocation(run, nodeID)
+		task.ProjectCredentialIDs = run.WorkflowSnapshot.ProjectCredentialIDs
 	}
 	if err := e.repo.PutRunnerTask(task); err != nil {
 		return "", err
@@ -684,7 +752,7 @@ func (e *Engine) dispatchRunnerCommand(ctx context.Context, runnerID, runID, nod
 // existing checkout is left in place, and the runner only uses the token to
 // authenticate that command.
 func (e *Engine) gateCommandInvocation(run domain.Run, nodeID string) *domain.RunnerInvocation {
-	assets := e.resolveScriptMCPAssets(run.ExecutionContext.ProjectID, run.ExecutionContext.ResponsibleUserID)
+	assets := e.resolveRunScriptMCPAssets(run)
 	invocation := &domain.RunnerInvocation{
 		RunID: run.ID, NodeID: nodeID, Assets: assets, MCPCallServers: assets.MCPServers}
 	identity := resolveGitIdentity(e.repo, run.ExecutionContext.ResponsibleUserID)

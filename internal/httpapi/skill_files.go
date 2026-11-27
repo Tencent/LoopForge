@@ -89,7 +89,7 @@ func (h *catalogHandlers) skillFiles(c *gin.Context) {
 			name = logicalPaths[i]
 		}
 		if strings.EqualFold(path.Ext(name), ".zip") {
-			extracted, err := readSkillZip(header, seen)
+			extracted, err := readSkillZip(header, seen, domain.SkillFileMaxBytes)
 			if err != nil {
 				reject(err)
 				return
@@ -125,7 +125,7 @@ func (h *catalogHandlers) skillFiles(c *gin.Context) {
 			c.JSON(http.StatusConflict, map[string]string{"error": err.Error()})
 			return
 		}
-		content, err := readBoundedPart(part.header)
+		content, err := readBoundedPart(part.header, domain.SkillFileMaxBytes)
 		if err != nil {
 			reject(err)
 			return
@@ -217,24 +217,24 @@ func cleanUploadPath(name string) (string, error) {
 }
 
 // readBoundedPart reads one multipart file part enforcing the per-file cap.
-func readBoundedPart(header *multipart.FileHeader) ([]byte, error) {
+func readBoundedPart(header *multipart.FileHeader, maxFileBytes int64) ([]byte, error) {
 	file, err := header.Open()
 	if err != nil {
 		return nil, fmt.Errorf("无法读取上传文件 %s", header.Filename)
 	}
 	defer file.Close()
-	content, err := io.ReadAll(io.LimitReader(file, domain.SkillFileMaxBytes+1))
+	content, err := io.ReadAll(io.LimitReader(file, maxFileBytes+1))
 	if err != nil {
 		return nil, fmt.Errorf("无法读取上传文件 %s", header.Filename)
 	}
-	if int64(len(content)) > domain.SkillFileMaxBytes {
-		return nil, fmt.Errorf("文件 %s 超过 1MB 限制", header.Filename)
+	if int64(len(content)) > maxFileBytes {
+		return nil, fmt.Errorf("文件 %s 超过 %dMB 限制", header.Filename, maxFileBytes>>20)
 	}
 	return content, nil
 }
 
 // readSkillZip unpacks one uploaded .zip part into skill file inputs.
-func readSkillZip(header *multipart.FileHeader, seen map[string]bool) ([]repo.SkillFileInput, error) {
+func readSkillZip(header *multipart.FileHeader, seen map[string]bool, maxFileBytes int64) ([]repo.SkillFileInput, error) {
 	file, err := header.Open()
 	if err != nil {
 		return nil, fmt.Errorf("无法读取 zip %s", header.Filename)
@@ -244,14 +244,14 @@ func readSkillZip(header *multipart.FileHeader, seen map[string]bool) ([]repo.Sk
 	if err != nil || len(raw) == 0 {
 		return nil, fmt.Errorf("无法读取 zip %s", header.Filename)
 	}
-	return readSkillZipBytes(raw, header.Filename, seen)
+	return readSkillZipBytes(raw, header.Filename, seen, maxFileBytes)
 }
 
 // readSkillZipBytes unpacks a zip archive into skill file inputs. It rejects
 // path traversal and non-regular entries (symlinks), strips a shared
 // top-level directory and macOS metadata noise, and enforces the size caps
 // while decompressing. label names the archive in error messages.
-func readSkillZipBytes(raw []byte, label string, seen map[string]bool) ([]repo.SkillFileInput, error) {
+func readSkillZipBytes(raw []byte, label string, seen map[string]bool, maxFileBytes int64) ([]repo.SkillFileInput, error) {
 	if seen == nil {
 		seen = map[string]bool{}
 	}
@@ -275,13 +275,13 @@ func readSkillZipBytes(raw []byte, label string, seen map[string]bool) ([]repo.S
 		if err != nil {
 			return nil, fmt.Errorf("无法解压 %s", name)
 		}
-		content, err := io.ReadAll(io.LimitReader(rc, domain.SkillFileMaxBytes+1))
+		content, err := io.ReadAll(io.LimitReader(rc, maxFileBytes+1))
 		rc.Close()
 		if err != nil {
 			return nil, fmt.Errorf("无法解压 %s", name)
 		}
-		if int64(len(content)) > domain.SkillFileMaxBytes {
-			return nil, fmt.Errorf("zip 内文件 %s 超过 1MB 限制", name)
+		if int64(len(content)) > maxFileBytes {
+			return nil, fmt.Errorf("zip 内文件 %s 超过 %dMB 限制", name, maxFileBytes>>20)
 		}
 		total += int64(len(content))
 		if total > domain.SkillTotalMaxBytes {

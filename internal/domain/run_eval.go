@@ -220,20 +220,29 @@ type RunEvalResult struct {
 	Recommendations []RunEvalRecommendation `json:"recommendations,omitempty"`
 }
 
+// SOPDetectionConfig enables trace analysis for new project SOP runs.
+type SOPDetectionConfig struct {
+	Enabled      bool      `json:"enabled"`
+	Model        string    `json:"model,omitempty"`
+	EnabledAt    time.Time `json:"enabledAt,omitempty"`
+	ConfiguredBy int64     `json:"configuredBy,omitempty"`
+}
+
 type RunEvalRecord struct {
-	ID         string        `json:"id"`
-	RunID      string        `json:"runId"`
-	Status     string        `json:"status"`
-	Score      int           `json:"score"`
-	Passed     bool          `json:"passed"`
-	Model      string        `json:"model,omitempty"`
-	Policy     RunEvalPolicy `json:"policy"`
-	Facts      RunEvalFacts  `json:"facts,omitempty"`
-	Result     RunEvalResult `json:"result,omitempty"`
-	Error      string        `json:"error,omitempty"`
-	CreatedBy  int64         `json:"createdBy,omitempty"`
-	CreatedAt  time.Time     `json:"createdAt"`
-	FinishedAt time.Time     `json:"finishedAt,omitempty"`
+	SOPDetection bool          `json:"sopDetection,omitempty"`
+	ID           string        `json:"id"`
+	RunID        string        `json:"runId"`
+	Status       string        `json:"status"`
+	Score        int           `json:"score"`
+	Passed       bool          `json:"passed"`
+	Model        string        `json:"model,omitempty"`
+	Policy       RunEvalPolicy `json:"policy"`
+	Facts        RunEvalFacts  `json:"facts,omitempty"`
+	Result       RunEvalResult `json:"result,omitempty"`
+	Error        string        `json:"error,omitempty"`
+	CreatedBy    int64         `json:"createdBy,omitempty"`
+	CreatedAt    time.Time     `json:"createdAt"`
+	FinishedAt   time.Time     `json:"finishedAt,omitempty"`
 }
 
 func ScoreRunEvalDimensions(policy RunEvalPolicy, ratings map[string]int) (int, map[string]int, error) {

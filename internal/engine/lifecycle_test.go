@@ -425,7 +425,7 @@ func TestRefreshWorkflowForStoppedRunStatuses(t *testing.T) {
 			got, _ := s.Run(run.ID)
 			if tc.wantError {
 				if got.WorkflowSnapshot.Version != 1 {
-					t.Fatalf("active run changed SOP: v%d", got.WorkflowSnapshot.Version)
+					t.Fatalf("active run changed LOOP: v%d", got.WorkflowSnapshot.Version)
 				}
 				return
 			}
@@ -526,7 +526,7 @@ func TestFailedRunCanRefreshSOPThenReplayWithContext(t *testing.T) {
 	}
 	run := domain.Run{ID: "run-repair-failed-sop", WorkflowID: old.ID, WorkflowSnapshot: old, Status: "failed", Nodes: map[string]*domain.NodeRun{
 		"done":   {NodeID: "done", Status: "succeeded"},
-		"broken": {NodeID: "broken", Status: "failed", Error: "SOP script is wrong"},
+		"broken": {NodeID: "broken", Status: "failed", Error: "LOOP script is wrong"},
 	}}
 	if err := s.PutRun(run); err != nil {
 		t.Fatal(err)
@@ -534,7 +534,7 @@ func TestFailedRunCanRefreshSOPThenReplayWithContext(t *testing.T) {
 	if err := e.RefreshRunSOP(run.ID); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.Retry(run.ID, "broken", "SOP 修正后重跑", "按新检查步骤执行"); err != nil {
+	if err := e.Retry(run.ID, "broken", "LOOP 修正后重跑", "按新检查步骤执行"); err != nil {
 		t.Fatal(err)
 	}
 	got, _ := s.Run(run.ID)
@@ -559,7 +559,7 @@ func TestResumePausedAfterLastStepWithoutInterruptedNode(t *testing.T) {
 	}
 	got, _ := s.Run(finished.ID)
 	if got.PauseRequested || got.Status != "running" || got.Nodes["close"].Status != "succeeded" {
-		t.Fatalf("finished SOP was not handed back: status=%s pause=%v", got.Status, got.PauseRequested)
+		t.Fatalf("finished LOOP was not handed back: status=%s pause=%v", got.Status, got.PauseRequested)
 	}
 
 	gated := finished

@@ -46,7 +46,13 @@ test('project identity, filtering, payload validation, and project form behavior
       const valid=validateProjectPayload(payload,{creating:true,projects:[],workflows:state.data.workflows});
       const duplicate=validateProjectPayload({...payload,members:[{userId:2},{userId:2}]},
         {creating:true,projects:[],workflows:state.data.workflows});
-      return {payload,valid,duplicate};
+      // The id is a path segment of /api/projects/:id: a slash or an over-long
+      // id would create a project nobody can open or delete.
+      const slash=validateProjectPayload({...payload,id:'wa bad/id?x'},{creating:true,projects:[],workflows:state.data.workflows});
+      const long=validateProjectPayload({...payload,id:'p'.repeat(65)},{creating:true,projects:[],workflows:state.data.workflows});
+      const legacy=validateProjectPayload({...payload,id:'old id'},{creating:false,saved:true,projects:[],workflows:state.data.workflows});
+      const longName=generateProjectIdentity('Alpha '.repeat(20),[],'seed').id;
+      return {payload,valid,duplicate,slash,long,legacy,longName};
     })()
   `);
   assert.equal(payloadResult.payload.name, 'Payments');
@@ -54,6 +60,11 @@ test('project identity, filtering, payload validation, and project form behavior
   assert.equal(payloadResult.payload.members.length, 1);
   assert.equal(payloadResult.valid, null);
   assert.match(payloadResult.duplicate.message, /不能重复/);
+  assert.equal(payloadResult.slash.field, 'id');
+  assert.match(payloadResult.slash.message, /不能包含空格/);
+  assert.match(payloadResult.long.message, /64/);
+  assert.equal(payloadResult.legacy, null);
+  assert.ok(payloadResult.longName.length <= 56 && !payloadResult.longName.endsWith('-'), payloadResult.longName);
 
   app.evaluate(`
     resetProjectAdminDetail();
@@ -118,6 +129,87 @@ test('repository drawer detects Git SSH URLs and persists a default repository',
   await app.evaluate(`window.__deleteRepo`);
   assert.equal(app.evaluate(`state.data.repositories.length`), 0);
   assert.ok(app.router.calls.some(c => c.method === 'DELETE' && c.path === '/api/repositories'));
+});
+
+test('repository drawer saves AI and prefix naming settings', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  app.router.put('/api/repositories', (call) => call.body);
+  app.router.get('/api/executor-models', {
+    codebuddy: { models: [{ id: 'hy4std', name: 'Hy4' }] },
+    codex: { models: [{ id: 'gpt-5.6-sol', name: 'GPT-5.6 Sol' }] },
+    claude: { models: [] },
+  });
+  app.evaluate(`
+    state.projectAdminDetailId='project-1';
+    state.projectDraftFor='project-1';
+    state.data.executors=[{id:'codebuddy',kind:'codebuddy',name:'CodeBuddy'},{id:'codex',kind:'codex',name:'Codex'}];
+    state.data.repositories=[{
+      id:'branch-repo', projectId:'project-1', provider:'github',
+      name:'payments', cloneUrl:'https://github.com/acme/payments.git', defaultBranch:'main',
+      workBranchNaming:{mode:'ai',executorId:'codebuddy',model:'hy4std',prompt:'Use the team namespace'}
+    }];
+    state.data.projects[0].defaultRepositoryId='branch-repo';
+    state.projectDraft=projectDraftFrom(state.data.projects[0]);
+    state.projectDraftBase=clone(state.projectDraft);
+    openRepoDrawer('branch-repo');
+  `);
+  const form = app.document.querySelector('#repoDrawerForm');
+  const fields = form.elements;
+  await settle(6);
+  assert.equal(fields.workBranchNamingMode.value, 'ai');
+  assert.equal(fields.workBranchExecutorId.value, 'codebuddy');
+  assert.equal(fields.workBranchModelChoice.value, 'hy4std');
+  assert.equal(fields.workBranchPrompt.value, 'Use the team namespace');
+  assert.equal(form.querySelector('[data-work-branch-prefix]').hidden, true);
+  assert.equal(form.querySelector('[data-work-branch-prompt]').hidden, false);
+  fields.workBranchExecutorId.value = 'codex';
+  fields.workBranchExecutorId.dispatchEvent(new app.window.Event('change', { bubbles: true }));
+  assert.equal(fields.workBranchModelChoice.value, '', 'changing CLI requires a fresh model selection');
+  assert.ok(Array.from(fields.workBranchModelChoice.options).some(option => option.value === 'gpt-5.6-sol'));
+  fields.workBranchModelChoice.value = '__custom__';
+  fields.workBranchModelChoice.dispatchEvent(new app.window.Event('change', { bubbles: true }));
+  fields.workBranchCustomModel.value = '  team/payment-model  ';
+  fields.workBranchPrompt.value = '  Use TASK- followed by the issue number  ';
+  form.dispatchEvent(new app.window.Event('submit', { bubbles: true, cancelable: true }));
+  await settle(8);
+  const updates = () => app.router.calls.filter(c => c.method === 'PUT' && c.path === '/api/repositories');
+  assert.deepEqual(updates().at(-1).body.workBranchNaming, {
+    mode: 'ai', executorId: 'codex', model: 'team/payment-model', prompt: 'Use TASK- followed by the issue number',
+  });
+
+  app.evaluate(`openRepoDrawer('branch-repo')`);
+  assert.equal(fields.workBranchExecutorId.value, 'codex');
+  assert.equal(fields.workBranchCustomModel.value, 'team/payment-model');
+  fields.workBranchNamingMode.value = 'prefix';
+  fields.workBranchNamingMode.dispatchEvent(new app.window.Event('change', { bubbles: true }));
+  assert.equal(form.querySelector('[data-work-branch-prefix]').hidden, false);
+  assert.equal(form.querySelector('[data-work-branch-prompt]').hidden, true);
+  assert.deepEqual(Array.from(fields.workBranchPrefix.options, option => [option.value, option.text]), [
+    ['feature/', 'feature/'], ['custom', '自定义'], ['', '无前缀'],
+  ]);
+  assert.equal(fields.workBranchPrefix.value, 'feature/');
+  fields.workBranchPrefix.value = '';
+  form.dispatchEvent(new app.window.Event('submit', { bubbles: true, cancelable: true }));
+  await settle(8);
+  assert.deepEqual(updates().at(-1).body.workBranchNaming, { mode: 'prefix', prefix: '' });
+
+  app.evaluate(`openRepoDrawer('branch-repo')`);
+  assert.equal(fields.workBranchNamingMode.value, 'prefix');
+  assert.equal(fields.workBranchPrefix.value, '');
+
+  for (const prefix of ['feat/', 'fix/', 'bugfix/']) {
+    app.evaluate(`
+      state.data.repositories[0].workBranchNaming={mode:'prefix',prefix:${JSON.stringify(prefix)}};
+      openRepoDrawer('branch-repo');
+    `);
+    assert.equal(fields.workBranchPrefix.value, 'custom');
+    assert.equal(fields.workBranchCustomPrefix.value, prefix);
+    assert.equal(form.querySelector('[data-work-branch-custom-prefix]').hidden, false);
+  }
+  form.dispatchEvent(new app.window.Event('submit', { bubbles: true, cancelable: true }));
+  await settle(8);
+  assert.deepEqual(updates().at(-1).body.workBranchNaming, { mode: 'prefix', prefix: 'bugfix/' });
 });
 
 test('project owner deletes a project from its danger zone and the list moves on', async (t) => {

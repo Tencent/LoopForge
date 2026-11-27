@@ -24,7 +24,7 @@ jobs:
         run: bash scripts/build-chatbot.sh
       - name: Let Chromium use its sandbox as an unprivileged user
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-      # Engine and API tests run SOP nodes in the shared test-native sandbox,
+      # Engine and API tests run LOOP nodes in the shared test-native sandbox,
       # which is bwrap on Linux.
       - name: Install bubblewrap for the native sandbox
         run: sudo apt-get update && sudo apt-get install -y bubblewrap
@@ -91,19 +91,24 @@ jobs:
         working-directory: e2e
       - run: bash ../scripts/install-playwright-deps.sh npx playwright
         working-directory: e2e
-      # The e2e SOPs and the runner the suite starts use the native e2e sandbox,
+      # The e2e LOOPs and the runner the suite starts use the native e2e sandbox,
       # which is bwrap on Linux.
       - name: Let bubblewrap create user namespaces
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - name: Install bubblewrap for the native sandbox
         run: sudo apt-get update && sudo apt-get install -y bubblewrap
-      # The welcome SOP runs in generic-docker. As in a Compose installation, it
-      # uses the pinned platform image instead of building one during the tests.
-      - name: Pull the pinned platform image for the generic-docker sandbox
+      # The release checks run before the new platform image is published.
+      - name: Prepare the platform image for the generic-docker sandbox
         run: |
           pinned=$(sed -n 's/^ *image: \${LOOPFORGE_IMAGE:-\(.*\)}$/\1/p' compose.yaml)
-          docker pull --quiet "$pinned"
-          echo "AGENTFLOW_ISOLATED_IMAGE=$pinned" >> "$GITHUB_ENV"
+          if docker manifest inspect "$pinned" > /dev/null 2>&1; then
+            docker pull --quiet "$pinned"
+            sandbox_image="$pinned"
+          else
+            sandbox_image="loopforge-browser-ci:$GITHUB_SHA"
+            docker build --build-arg LOOPFORGE_COMMIT="$GITHUB_SHA" -t "$sandbox_image" .
+          fi
+          echo "AGENTFLOW_ISOLATED_IMAGE=$sandbox_image" >> "$GITHUB_ENV"
       - name: Start clean local installation
         run: |
           bash scripts/dev.sh > /tmp/loopforge.log 2>&1 &

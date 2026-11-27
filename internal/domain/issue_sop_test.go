@@ -50,7 +50,7 @@ func TestResolveSOPBindingsFollowsBoundWorkflow(t *testing.T) {
 	issue := Issue{ID: "iss", ProjectID: "p", Kind: "requirement", WorkflowID: "wf-old", AssigneeUserID: 9}
 	got := ResolveSOPBindings(issue, project)
 	if len(got) != 1 || got[0].WorkflowID != "wf-old" || got[0].AssigneeUserID != 9 {
-		t.Fatalf("bound SOP=%#v", got)
+		t.Fatalf("bound LOOP=%#v", got)
 	}
 	issue.SOPBindings = []IssueSOPBinding{{WorkflowID: "wf-design"}}
 	got = ResolveSOPBindings(issue, project)
@@ -60,7 +60,7 @@ func TestResolveSOPBindingsFollowsBoundWorkflow(t *testing.T) {
 	bug := Issue{ID: "bug", Kind: "issue", Source: "gongfeng", WorkflowID: "wf-fix"}
 	got = ResolveSOPBindings(bug, project)
 	if len(got) != 1 || got[0].WorkflowID != "wf-fix" {
-		t.Fatalf("gongfeng must stay on its own SOP: %#v", got)
+		t.Fatalf("gongfeng must stay on its own LOOP: %#v", got)
 	}
 }
 
@@ -80,7 +80,7 @@ func TestPlaybooksWrapsLegacyBindingsAndPicksNamed(t *testing.T) {
 	issue := Issue{ID: "iss", ProjectID: "p", Kind: "requirement", WorkflowID: "wf-backend", PlaybookID: "be"}
 	got := ResolveSOPBindings(issue, project)
 	if len(got) != 1 || got[0].WorkflowID != "wf-backend" {
-		t.Fatalf("bound SOP=%#v", got)
+		t.Fatalf("bound LOOP=%#v", got)
 	}
 	issue.PlaybookID = ""
 	issue.WorkflowID = "wf-frontend"

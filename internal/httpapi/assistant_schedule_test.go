@@ -91,7 +91,7 @@ func TestScheduledAssistantRecoveredDraftDoesNotDispatchRun(t *testing.T) {
 	h.generate = func(context.Context, string, domain.User) (string, error) {
 		return `{"message":"启动并等待","drafts":[{"tool":"runs_start","body":{"workflowId":"wf"}}]}`, nil
 	}
-	task := assistantTask{ProjectID: "workbench", Name: "Wait for SOP", Prompt: "启动 SOP 并等待终态"}
+	task := assistantTask{ProjectID: "workbench", Name: "Wait for LOOP", Prompt: "启动 LOOP 并等待终态"}
 	err := h.executeAssistantTask(context.Background(), user, &task)
 	if err == nil || !strings.Contains(err.Error(), "agentflow__runs_start") || task.LastStatus != "error" {
 		t.Fatalf("scheduled draft fallback: status=%q err=%v", task.LastStatus, err)
@@ -139,7 +139,7 @@ func TestScheduledAssistantAutoWritesWithoutConfirmation(t *testing.T) {
 					t.Fatalf("unexpected scheduled gateway mode: %+v", mode)
 				}
 				if strings.Contains(prompt, "不要调用 issues_dispatch") || strings.Contains(prompt, "不要写进 AI 定时任务") {
-					t.Fatal("scheduled prompts must allow SOP execution")
+					t.Fatal("scheduled prompts must allow LOOP execution")
 				}
 				if _, err := h.callAssistantPlatform(ctx, u, "platform", assistantMCPCall{
 					Tool: "issues_save", Body: map[string]any{"id": "scheduled-issue", "automationState": "ignored"},
@@ -177,6 +177,7 @@ func TestScheduledAssistantAutoWritesWithoutConfirmation(t *testing.T) {
 func TestScheduledUsageStaysPerExecution(t *testing.T) {
 	h, user := workbenchFixture(t)
 	bin := filepath.Join(t.TempDir(), "codebuddy")
+	counter := filepath.Join(t.TempDir(), "calls")
 	t.Setenv("AGENTFLOW_CODEBUDDY_BIN", bin)
 	job := domain.ScheduleJob{ID: "usage-job", ProjectID: "workbench", OwnerUserID: user.ID, RunAsUserID: user.ID, Name: "巡检", SkipDispatch: true, AssistantPrompt: "检查文件", Enabled: true, SessionMode: domain.ScheduleSessionFixed}
 	if err := h.repo.PutScheduleJob(job); err != nil {
@@ -197,11 +198,19 @@ func TestScheduledUsageStaysPerExecution(t *testing.T) {
 		{name: "unreported", message: "检查结果正常，没有问题。", unreported: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			usage := `,"usage":{"input_tokens":10,"output_tokens":5,"cache_read_input_tokens":100,"cache_creation_input_tokens":3}`
+			// Legacy CodeBuddy reports session totals, even when a new
+			// scheduled execution or protocol retry resumes that session.
+			script := `#!/bin/sh
+if [ "$1" = "--version" ]; then echo 2.185.0; exit 0; fi
+n=0
+if [ -f '` + counter + `' ]; then read -r n < '` + counter + `'; fi
+n=$((n + 1))
+echo "$n" > '` + counter + `'
+printf '{"type":"result","result":"%s","usage":{"input_tokens":%s,"output_tokens":%s,"cache_read_input_tokens":%s,"cache_creation_input_tokens":%s}}\n' '` + tc.message + `' "$((n * 10))" "$((n * 5))" "$((n * 100))" "$((n * 3))"
+`
 			if tc.unreported {
-				usage = ""
+				script = "#!/bin/sh\necho '{\"type\":\"result\",\"result\":\"" + tc.message + "\"}'\n"
 			}
-			script := "#!/bin/sh\necho '{\"type\":\"result\",\"result\":\"" + tc.message + "\"" + usage + "}'\n"
 			if err := os.WriteFile(bin, []byte(script), 0o700); err != nil {
 				t.Fatal(err)
 			}

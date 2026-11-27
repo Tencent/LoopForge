@@ -1,8 +1,8 @@
 # LoopForge Local
 
-> **旧版（Legacy）。** 已发布的 `loopforge-cli` 版本仍可安装。平台项目和 SOP 可通过 [LoopForge MCP](https://github.com/Tencent/LoopForge/blob/main/docs/local/usage.zh-CN.md#通过-mcp-连接-loopforge) 接入。
+> **旧版（Legacy）。** 已发布的 `loopforge-cli` 版本仍可安装。平台项目和 LOOP 可通过 [LoopForge MCP](https://github.com/Tencent/LoopForge/blob/main/docs/local/usage.zh-CN.md#通过-mcp-连接-loopforge) 接入。
 >
-> **Legacy.** Previously published versions of `loopforge-cli` remain available. To work with platform projects and SOPs, [connect to LoopForge over MCP](https://github.com/Tencent/LoopForge/blob/main/docs/local/usage.md#connect-to-loopforge-with-mcp).
+> **Legacy.** Previously published versions of `loopforge-cli` remain available. To work with platform projects and LOOPs, [connect to LoopForge over MCP](https://github.com/Tencent/LoopForge/blob/main/docs/local/usage.md#connect-to-loopforge-with-mcp).
 
 LoopForge 的本地工作流组件，在 CodeBuddy、Codex、Cursor、Claude Code、Pi、DeepSeek Harness 或 Hermes Agent 中使用，无需启动平台。
 

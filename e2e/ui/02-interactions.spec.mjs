@@ -1,5 +1,5 @@
 // Key user journeys driven through the real UI: create and dispatch a requirement,
-// approve waiting runs from the queue and detail page, and edit a SOP in the
+// approve waiting runs from the queue and detail page, and edit a LOOP in the
 // designer. Fixtures are created through the API and cleaned up.
 import { test, expect, watchErrors, openView } from './fixtures.mjs';
 import { get, post, put, del, list, cleanup, track, waitFor, waitRun } from '../lib/api.mjs';
@@ -12,7 +12,7 @@ test('requirement composer: create, find and dispatch a requirement from its dra
   const errors = watchErrors(page);
   const title = `E2E UI 需求 ${cfg.runTag}-${Date.now() % 100000}`;
   const description = '自动化 UI 测试创建，会被关闭。'.repeat(10);
-  // A requirement needs a runnable SOP; a fresh database has none in the e2e project.
+  // A requirement needs a runnable LOOP; a fresh database has none in the e2e project.
   const wf = await createWorkflow('ui-requirement', [script('only', 'echo UI_REQUIREMENT')]);
   await page.goto('/#/issues');
   await expect(page.locator('#issuesView')).toBeVisible();
@@ -20,8 +20,8 @@ test('requirement composer: create, find and dispatch a requirement from its dra
   await expect(page.locator('#requirementModal')).toHaveClass(/open/);
   await page.locator('#chatInput').fill(`${title}\n\n${description}`);
   await expect(page.locator('#reqCreate')).toBeEnabled();
-  await page.getByRole('button', { name: 'SOP 流程', exact: true }).click();
-  await page.getByRole('listbox', { name: 'SOP 流程', exact: true })
+  await page.getByRole('button', { name: 'LOOP 流程', exact: true }).click();
+  await page.getByRole('listbox', { name: 'LOOP 流程', exact: true })
     .getByRole('option', { name: /E2E ui-requirement/ }).click();
   await expect(page.locator('#reqWorkflow')).toHaveValue(wf);
   const [created] = await Promise.all([
@@ -63,7 +63,7 @@ test('requirement composer: create, find and dispatch a requirement from its dra
     return runs[0]?.id || runs[0]?.runId;
   }, { timeoutMs: 30_000 });
   trackRun(runId);
-  const run = await waitRun(runId, r => r.status === 'succeeded', { label: 'requirement SOP succeeds' });
+  const run = await waitRun(runId, r => r.status === 'succeeded', { label: 'requirement LOOP succeeds' });
   expect(run.workflowId).toBe(wf);
   expect(run.nodes.only.status).toBe('succeeded');
   await page.goto(`/?projectId=${encodeURIComponent(cfg.projectId)}#/runs/${encodeURIComponent(runId)}`);
@@ -221,7 +221,7 @@ test('approvals queue: approve a waiting run with context from the sidebar', asy
   expect(errors).toEqual([]);
 });
 
-test('SOP designer: rename a node and save a new revision', async ({ page }) => {
+test('LOOP designer: rename a node and save a new revision', async ({ page }) => {
   const wf = await createWorkflow('ui-designer', [script('first', 'echo 1'), script('second', 'echo 2')]);
   const before = await get(`/api/workflows/${wf}`);
   const errors = watchErrors(page);
@@ -240,7 +240,7 @@ test('SOP designer: rename a node and save a new revision', async ({ page }) => 
   expect(errors).toEqual([]);
 });
 
-test('SOP designer: all nodes stay in view when the AI assistant closes', async ({ page }) => {
+test('LOOP designer: all nodes stay in view when the AI assistant closes', async ({ page }) => {
   const wf = await createWorkflow('ui-designer-fit', [90, 425, 780].map((x, i) =>
     script(`step-${i+1}`, 'echo E2E', { position: { x, y: 200 } })));
   await page.setViewportSize({ width: 1440, height: 900 });
@@ -275,7 +275,7 @@ test('SOP designer: all nodes stay in view when the AI assistant closes', async 
   }
 });
 
-test('SOP designer: drag the failure outlet onto an upstream step to route rework', async ({ page }) => {
+test('LOOP designer: drag the failure outlet onto an upstream step to route rework', async ({ page }) => {
   const wf = await createWorkflow('ui-reject', [script('first', 'echo 1'), script('second', 'echo 2')]);
   const before = await get(`/api/workflows/${wf}`);
   const errors = watchErrors(page);
@@ -297,7 +297,7 @@ test('SOP designer: drag the failure outlet onto an upstream step to route rewor
   expect(errors).toEqual([]);
 });
 
-test('SOP designer: header controls keep one 32px row at narrow widths', async ({ page }) => {
+test('LOOP designer: header controls keep one 32px row at narrow widths', async ({ page }) => {
   const wf = await createWorkflow('ui-header', [script('first', 'echo 1')]);
   const errors = watchErrors(page);
   await page.goto(`/#/flow/${encodeURIComponent(wf)}`);
@@ -318,7 +318,7 @@ test('SOP designer: header controls keep one 32px row at narrow widths', async (
   expect(errors).toEqual([]);
 });
 
-test('SOP designer: the agent drawer shows name, role and on-failure in the first screen', async ({ page }) => {
+test('LOOP designer: the agent drawer shows name, role and on-failure in the first screen', async ({ page }) => {
   const agent = await createAgent('ui-drawer', '只用于界面测试');
   const wf = await createWorkflow('ui-drawer', [agentNode('worker', agent), script('after', 'echo 1')]);
   const errors = watchErrors(page);
@@ -335,6 +335,26 @@ test('SOP designer: the agent drawer shows name, role and on-failure in the firs
     expect(box.y + box.height, `${sel} in the first screen`).toBeLessThanOrEqual(body.y + body.height + 1);
   }
   expect(errors).toEqual([]);
+});
+
+test('LOOP designer: Auto layout stays clickable beside the step drawer', async ({ page }) => {
+  const wf = await createWorkflow('ui-arrange-drawer', [script('first', 'echo 1'), script('second', 'echo 2')]);
+  await page.setViewportSize({ width: 1060, height: 800 });
+  await page.goto(`/#/flow/${encodeURIComponent(wf)}`);
+  await page.locator('#nodes .flow-node[data-id="first"]').click();
+  await expect(page.locator('#properties')).toHaveClass(/\bopen\b/);
+  const arrange = page.locator('#canvasArrange');
+  const toolbar = page.locator('#canvasToolbar');
+  for (const width of [1060, 1080]) {
+    await page.setViewportSize({ width, height: 800 });
+    await expect.poll(() => toolbar.evaluate(el => {
+      const canvas = el.parentElement.getBoundingClientRect();
+      const drawer = document.getElementById('properties').getBoundingClientRect();
+      return Math.abs(drawer.right - canvas.right) < 1 && el.getBoundingClientRect().right <= drawer.left;
+    })).toBe(true);
+    await arrange.click();
+    await expect(page.locator('#flowToastMsg')).toContainText('已按依赖层级整理画布');
+  }
 });
 
 // The reply to "让 AI 分析" must stay between the question and the alert while
@@ -354,7 +374,7 @@ test('chat: asking AI about a failed run keeps the reply above the run alert', a
   await put(`/api/assistant/sessions/${sid}`, {
     id: sid, title: `E2E 运行提醒 ${cfg.runTag}`, projectId: cfg.projectId,
     messages: [
-      { role: 'user', content: '帮我跑一下这个 SOP' },
+      { role: 'user', content: '帮我跑一下这个 LOOP' },
       { role: 'assistant', content: JSON.stringify({ drafts: [], message: `已启动运行 ${run.id}` }) },
     ],
   });

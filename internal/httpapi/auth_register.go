@@ -31,9 +31,31 @@ func signupEnabled() bool {
 	return true
 }
 
+// Local browser enrollment belongs to password installations. An external
+// identity deployment may never create a password account through this path.
+// SSO counts only when both the app token and login URL are set, the same
+// condition under which auth.Client.LoginURL leaves the password login page.
+func (h *authHandlers) localSignupOptions() (needsSetup, allowed bool, err error) {
+	cfg := h.getAuthClient().Config()
+	sso := strings.TrimSpace(cfg.AppToken) != "" && strings.TrimSpace(cfg.LoginURL) != ""
+	if trustGatewayIdentityHeaders() || sso {
+		return false, false, nil
+	}
+	count, err := h.repo.LocalAccountCount()
+	if err != nil {
+		return false, false, err
+	}
+	needsSetup = count == 0 && len(repo.EnvPlatformAdmins()) == 0 && len(repo.BuiltinPlatformAdmins) == 0
+	return needsSetup, needsSetup || signupEnabled(), nil
+}
+
 func (h *authHandlers) authSetup(c *gin.Context) {
-	needsSetup := h.repo != nil && h.repo.LocalAccountCount() == 0
-	c.JSON(http.StatusOK, gin.H{"needsSetup": needsSetup, "signupEnabled": needsSetup || signupEnabled()})
+	needsSetup, allowed, err := h.localSignupOptions()
+	if err != nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "无法读取注册状态"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"needsSetup": needsSetup, "signupEnabled": allowed})
 }
 
 const welcomeProjectID = "welcome"
@@ -89,10 +111,20 @@ func (h *authHandlers) authRegister(c *gin.Context) {
 		return
 	}
 	registerMu.Lock()
-	first := h.repo.LocalAccountCount() == 0
-	if !first && !signupEnabled() {
+	first, allowed, err := h.localSignupOptions()
+	if err != nil {
+		registerMu.Unlock()
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "无法读取注册状态"})
+		return
+	}
+	if !allowed {
 		registerMu.Unlock()
 		c.JSON(http.StatusForbidden, gin.H{"error": "自助注册已关闭，请联系管理员创建账号"})
+		return
+	}
+	if repo.IsAllowlistedPlatformAdmin(input.Login) {
+		registerMu.Unlock()
+		c.JSON(http.StatusForbidden, gin.H{"error": "该用户名是已配置的平台管理员，请由运维用账号命令创建，不能在浏览器中注册"})
 		return
 	}
 	u, err := h.repo.CreateLocalAccount(input.Login, input.Password, first)
