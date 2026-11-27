@@ -1360,40 +1360,53 @@ func assistantPlanProse(line string) bool {
 	if assistantReportsDoneWork(strings.TrimSpace(line)) || assistantPlanHasPerfective(line) || assistantPlanStatesVerdict(line) {
 		return false
 	}
-	// A step opens with a plan lead-in ("先确认服务是否正常") even though the
-	// line also names a state or a count.
+	// A plan lead-in opens a step even when the line goes on to name a state
+	// or a count ("先确认服务是否正常", "先查看最近的 3 次提交"), as long as an
+	// action comes before it. "检查结果：共 3 处问题" and "最后结论：可以合并。"
+	// open with a lead-in but report what was found.
 	for _, lead := range assistantPlanLeadIn {
-		if strings.HasPrefix(line, lead) {
-			return true
+		if rest, ok := strings.CutPrefix(line, lead); ok {
+			limit := assistantPlanResultStart(rest, true)
+			return limit == len(rest) || assistantPlanNamesAction(rest[:limit])
 		}
 	}
-	// A count makes a line a report unless it opened with a plan lead-in
-	// ("先查看最近的 3 次提交"), as in "项目里有 4 个 LOOP，都在运行。".
+	// A count makes a line a report, as in "项目里有 4 个 LOOP，都在运行。".
 	if assistantPlanCJKNumber.MatchString(line) || assistantPlanDigitsOrDate.MatchString(line) {
 		return false
 	}
 	// An action word names a step only before any result it might be
 	// reporting ("接口看着正常" reports the state 正常).
+	return assistantPlanNamesAction(line[:assistantPlanResultStart(line, false)])
+}
+
+// assistantPlanResultStart returns where the first result word of line
+// starts, or len(line) if it has none. With counts set, a count or date
+// ("3 次", "两个") also starts a result.
+func assistantPlanResultStart(line string, counts bool) int {
 	limit := len(line)
 	for _, mark := range assistantPlanResultMark {
 		if i := strings.Index(line, mark); i >= 0 && i < limit {
 			limit = i
 		}
 	}
+	if counts {
+		for _, re := range []*regexp.Regexp{assistantPlanCJKNumber, assistantPlanDigitsOrDate} {
+			if loc := re.FindStringIndex(line); loc != nil && loc[0] < limit {
+				limit = loc[0]
+			}
+		}
+	}
+	return limit
+}
+
+// assistantPlanNamesAction reports whether text names a step to take.
+func assistantPlanNamesAction(text string) bool {
 	for _, verb := range assistantPlanVerb {
-		if strings.Contains(line[:limit], verb) {
+		if strings.Contains(text, verb) {
 			return true
 		}
 	}
-	if assistantPlanVerbEN.MatchString(line[:limit]) {
-		return true
-	}
-	for _, mark := range assistantPlanResultMark {
-		if strings.Contains(line, mark) {
-			return false
-		}
-	}
-	return false
+	return assistantPlanVerbEN.MatchString(text)
 }
 
 func cutAssistantListMarker(line string) (string, bool) {

@@ -352,6 +352,14 @@ func TestAssistantProgressOnlyRequiresPlanLines(t *testing.T) {
 		{"我先看一下环境。\n先确认服务是否正常，再读取日志。", true},
 		{"我先看一下仓库：\n先查看最近的 3 次提交，再汇总变更。", true},
 		{"我先看一下仓库。\n重点关注 store.py 和 handler 的调用关系。", true},
+		// A lead-in followed by a result before any action reports findings.
+		{"我先看下 PR 的改动。\n检查结果：共 3 处问题，都在 store.py。", false},
+		{"我先看一下。\n目标分支是 main，共 3 个提交，最近一次是修复登录。", false},
+		{"我先汇总一下。\n最后结论：可以合并。", false},
+		{"我先说下范围。\n范围只有 internal/httpapi 一个包。", false},
+		{"我先看下日志。\n计划任务每天 9 点跑，最近一次成功。", false},
+		{"我先看一下仓库。\n最后汇总结果。", true},
+		{"我先看一下仓库。\n目标：把登录修好。", true},
 		{"我先跑测试。\n测试都通过，可以合并。", false},
 		{"我先跑测试。\n单测都通过。", false},
 		// The verdict's subject is not a check intent of its own.
