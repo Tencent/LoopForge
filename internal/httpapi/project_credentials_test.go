@@ -4,12 +4,16 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"maps"
 	"net/http"
+	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/runtime"
 	"github.com/gin-gonic/gin"
 )
 
@@ -152,6 +156,207 @@ func TestSessionOwnerCanClearProjectCredentialsAfterLosingAccess(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestConversationContinuesWhenProjectCredentialsChange(t *testing.T) {
+	t.Setenv("AGENTFLOW_PROJECT_CREDENTIAL_KEY", base64.StdEncoding.EncodeToString(make([]byte, 32)))
+	h, user, target, workspaceID := workspaceStartupFixture(t, domain.RunnerVersionProjectCredentials)
+	session := domain.AssistantSession{ID: "credential-change", ProjectID: "workbench", WorkspaceRunID: workspaceID, ExecutionTarget: &target}
+	if err := h.repo.PutUser(domain.User{LoginName: "credential-project-owner"}); err != nil {
+		t.Fatal(err)
+	}
+	owner, _ := h.repo.UserByLoginName("credential-project-owner")
+	setRole := func(t *testing.T, role string) {
+		t.Helper()
+		project, _ := h.repo.Project(session.ProjectID)
+		project.OwnerID = owner.ID
+		project.Members = []domain.ProjectMember{{UserID: user.ID, Role: role}}
+		if err := h.repo.PutProject(project); err != nil {
+			t.Fatal(err)
+		}
+	}
+	setRole(t, "member")
+	// A platform Runner stays available after the member loses the credential grant.
+	runner, _ := h.repo.Runner(target.RunnerID)
+	runner.OwnerUserID = 0
+	if err := h.repo.PutRunner(runner); err != nil {
+		t.Fatal(err)
+	}
+	save := func(id, name, value string, create, disabled bool) {
+		t.Helper()
+		if _, err := h.repo.SaveProjectCredential(t.Context(), session.ProjectID, id, create, domain.ProjectCredentialInput{
+			Name: id, Kind: domain.ProjectCredentialToken, Disabled: disabled,
+			Fields: []domain.ProjectCredentialVariableInput{{Name: name, Value: &value}},
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	save("rotated", "ROTATED_TOKEN", "fixture-original", true, false)
+	save("deleted", "DELETED_TOKEN", "fixture-deleted", true, false)
+	save("disabled", "DISABLED_TOKEN", "fixture-disabled", true, false)
+	// This binding was removed before the deployment ever observed its name.
+	session.ProjectCredentialIDs = []string{"rotated", "deleted", "disabled", "legacy-missing"}
+	if err := h.repo.PutAssistantSession(user.ID, session); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.repo.SetAssistantRuntimeMode(user.ID, session.ID, session.ProjectID, domain.AssistantModeWorkspace); err != nil {
+		t.Fatal(err)
+	}
+	starts := make(chan runtime.ConversationCommand, 4)
+	prompts := make(chan string, 4)
+	var input strings.Builder
+	var inputComplete bool
+	var rejectNextResume atomic.Bool
+	var rejectedResume bool
+	fakeRunnerConnection(t, h.runnerControls, target.RunnerID, func(envelope domain.RunnerWorkspaceRequest) domain.RunnerWorkspaceResponse {
+		var req runtime.ConversationProcessRequest
+		if err := json.Unmarshal(envelope.Conversation, &req); err != nil {
+			return domain.RunnerWorkspaceResponse{Status: http.StatusBadRequest, Error: err.Error()}
+		}
+		result := runtime.ConversationProcessResult{ID: req.ID, Root: req.SourceRoot, PromptInputFiles: true}
+		switch req.Operation {
+		case "start":
+			if envelope.RunID != workspaceID || req.Command == nil {
+				return domain.RunnerWorkspaceResponse{Status: http.StatusBadRequest, Error: "unexpected workspace or command"}
+			}
+			input.Reset()
+			inputComplete = false
+			rejectedResume = slices.Contains(req.Command.Argv, "--resume") && rejectNextResume.CompareAndSwap(true, false)
+			if !rejectedResume {
+				starts <- *req.Command
+			}
+		case "write":
+			input.WriteString(req.Data)
+			if req.EOF {
+				if !rejectedResume {
+					prompts <- input.String()
+				}
+				inputComplete = true
+			}
+		case "poll":
+			if inputComplete {
+				result.Done = true
+				result.Sequence = 1
+				if !rejectedResume {
+					result.Events = []domain.TelemetryEvent{{Name: "process.stdout", Message: `{"type":"result","result":"你好。"}`}}
+				}
+			}
+		}
+		payload, _ := json.Marshal(result)
+		return domain.RunnerWorkspaceResponse{Status: http.StatusOK, Payload: payload}
+	})
+	turn := func(t *testing.T, wantEnv map[string]string, wantNote ...string) string {
+		t.Helper()
+		old, _ := h.repo.AssistantSession(user.ID, session.ID)
+		messages := old.Messages
+		if len(messages) == 0 || messages[len(messages)-1].Role != "user" {
+			messages = append(messages, assistantMessage{Role: "user", Content: "你好"})
+		}
+		body, err := json.Marshal(assistantRequest{
+			ProjectID: session.ProjectID, SessionID: session.ID,
+			Messages: messages,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		c, rec := workbenchContext(user, http.MethodPost, "/api/assistant/generations", bytes.NewBuffer(body))
+		h.startGeneration(c)
+		if rec.Code != http.StatusAccepted {
+			t.Fatalf("start: %d %s", rec.Code, rec.Body.String())
+		}
+		g := waitGeneration(t, h, user.ID, session.ID, func(g domain.AssistantGeneration) bool { return g.Status != "running" }, 10*time.Second)
+		if g.Status != "completed" || !strings.Contains(string(g.Reply), "你好。") {
+			t.Fatalf("credential change prevented a reply: %s (%s)", g.Status, g.Error)
+		}
+		var command runtime.ConversationCommand
+		select {
+		case command = <-starts:
+		default:
+			t.Fatal("no workspace CLI invocation")
+		}
+		if !maps.Equal(command.ProjectCredentialEnv, wantEnv) {
+			t.Fatal("workspace CLI received the wrong credential environment")
+		}
+		var prompt string
+		select {
+		case prompt = <-prompts:
+		default:
+			t.Fatal("workspace CLI did not receive turn input")
+		}
+		for _, note := range wantNote {
+			if !strings.Contains(prompt, note) {
+				t.Errorf("missing internal prompt note %q", note)
+			}
+		}
+		saved, _ := h.repo.AssistantSession(user.ID, session.ID)
+		public, _ := json.Marshal(saved)
+		if len(saved.Messages) != len(messages)+1 || bytes.Contains(public, []byte("projectCredentialObservations")) ||
+			bytes.Contains(public, []byte("本轮不可用")) || bytes.Contains(public, []byte("fixture-")) {
+			t.Fatal("credential context or values leaked into the transcript or public session")
+		}
+		return prompt
+	}
+	quietTurn := func(t *testing.T, wantEnv map[string]string) {
+		t.Helper()
+		if prompt := turn(t, wantEnv); strings.Contains(prompt, "项目凭据") {
+			t.Error("unchanged credentials were announced again")
+		}
+	}
+	editLastTurn := func(t *testing.T) {
+		t.Helper()
+		old, _ := h.repo.AssistantSession(user.ID, session.ID)
+		if err := h.repo.ReplaceAssistantTurn(old, len(old.Messages)-2, assistantMessage{Role: "user", Content: "你好，编辑后重发"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	initialEnv := map[string]string{"ROTATED_TOKEN": "fixture-original", "DELETED_TOKEN": "fixture-deleted", "DISABLED_TOKEN": "fixture-disabled"}
+	const initialVars = "DELETED_TOKEN、DISABLED_TOKEN、ROTATED_TOKEN"
+	turn(t, initialEnv, initialVars, "有已绑定的项目凭据本轮不可用", "继续处理用户请求")
+	quietTurn(t, initialEnv)
+	t.Run("fresh CLI after editing a turn", func(t *testing.T) {
+		editLastTurn(t)
+		turn(t, initialEnv, initialVars)
+		quietTurn(t, initialEnv)
+	})
+	t.Run("fresh CLI after a failed resume", func(t *testing.T) {
+		rejectNextResume.Store(true)
+		turn(t, initialEnv, initialVars)
+		if rejectNextResume.Load() {
+			t.Fatal("fixture did not attempt to resume the native session")
+		}
+		quietTurn(t, initialEnv)
+	})
+	save("rotated", "ROTATED_TOKEN", "fixture-replacement", false, false)
+	save("disabled", "DISABLED_TOKEN", "fixture-disabled", false, true)
+	if err := h.repo.DeleteProjectCredential(t.Context(), session.ProjectID, "deleted"); err != nil {
+		t.Fatal(err)
+	}
+	rotatedEnv := map[string]string{"ROTATED_TOKEN": "fixture-replacement"}
+	turn(t, rotatedEnv, "ROTATED_TOKEN 的配置已更新", "DELETED_TOKEN、DISABLED_TOKEN 本轮已不可用")
+	quietTurn(t, rotatedEnv)
+	save("disabled", "DISABLED_TOKEN", "fixture-disabled", false, false)
+	availableEnv := map[string]string{"ROTATED_TOKEN": "fixture-replacement", "DISABLED_TOKEN": "fixture-disabled"}
+	turn(t, availableEnv, "DISABLED_TOKEN、ROTATED_TOKEN")
+	quietTurn(t, availableEnv)
+	t.Run("viewer downgrade", func(t *testing.T) {
+		setRole(t, "viewer")
+		prompt := turn(t, nil, "本轮无权使用已绑定的项目凭据", "继续处理用户请求")
+		for _, name := range []string{"ROTATED_TOKEN", "DELETED_TOKEN", "DISABLED_TOKEN"} {
+			if strings.Contains(prompt, name) {
+				t.Errorf("viewer CLI received a credential variable name %q", name)
+			}
+		}
+		quietTurn(t, nil)
+		editLastTurn(t)
+		quietTurn(t, nil)
+		saved, _ := h.repo.AssistantSession(user.ID, session.ID)
+		if !slices.Equal(saved.ProjectCredentialIDs, session.ProjectCredentialIDs) {
+			t.Fatal("viewer turn changed the stored bindings")
+		}
+		setRole(t, "member")
+		turn(t, availableEnv, "DISABLED_TOKEN、ROTATED_TOKEN")
+		quietTurn(t, availableEnv)
+	})
 }
 
 func TestProjectCredentialsRunnerClaimScope(t *testing.T) {

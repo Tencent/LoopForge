@@ -555,6 +555,8 @@ type runnerRow struct {
 	LastSeenAt             *time.Time `gorm:"column:last_seen_at"`
 	Created                *time.Time `gorm:"column:created_at"`
 	Updated                *time.Time `gorm:"column:updated_at"`
+
+	AllowPrivilegedSandbox bool `gorm:"column:allow_privileged_sandbox;default:false"`
 }
 
 func (runnerRow) TableName() string { return "runners" }
@@ -608,6 +610,8 @@ type platformRunnerSettingsRow struct {
 	RunLimit  int        `gorm:"column:run_limit;not null"`
 	UpdatedBy int64      `gorm:"column:updated_by;not null;default:0"`
 	Updated   *time.Time `gorm:"column:updated_at"`
+
+	AllowPrivilegedSandbox bool `gorm:"column:allow_privileged_sandbox;default:false"`
 }
 
 func (platformRunnerSettingsRow) TableName() string { return "platform_runner_settings" }
@@ -757,16 +761,22 @@ type spaceThreadRow struct {
 
 func (spaceThreadRow) TableName() string { return "space_threads" }
 
-// knowledgeSettingsRow keeps the upstream token in its own column so the JSON
-// payload can be logged or diffed without leaking the credential.
-type knowledgeSettingsRow struct {
-	ID      string     `gorm:"column:id;primaryKey;size:64"`
-	Payload []byte     `gorm:"column:payload;type:json"`
-	Token   *string    `gorm:"column:token;type:text"`
-	Updated *time.Time `gorm:"column:updated_at"`
+// knowledgeConnectorRow stores one user-owned read-only knowledge connector.
+// Sealed upstream credentials stay in SecretEnc and never leak in API responses.
+type knowledgeConnectorRow struct {
+	ID          string     `gorm:"column:id;primaryKey;size:64"`
+	OwnerUserID int64      `gorm:"column:owner_user_id;index:idx_knowledge_connectors_owner;not null;default:0"`
+	Name        string     `gorm:"column:name;size:128;not null"`
+	Type        string     `gorm:"column:type;size:32;not null"`
+	Endpoint    string     `gorm:"column:endpoint;type:text;not null"`
+	ConfigJSON  []byte     `gorm:"column:config_json;type:json"`
+	SecretEnc   *string    `gorm:"column:secret_enc;type:text"`
+	Enabled     bool       `gorm:"column:enabled;not null"`
+	CreatedAt   *time.Time `gorm:"column:created_at"`
+	UpdatedAt   *time.Time `gorm:"column:updated_at"`
 }
 
-func (knowledgeSettingsRow) TableName() string { return "knowledge_settings" }
+func (knowledgeConnectorRow) TableName() string { return "knowledge_connectors" }
 
 // platformSettingsRow is the single row of platform-wide settings a platform
 // administrator maintains on the management page (see domain.PlatformSettings).
@@ -777,6 +787,88 @@ type platformSettingsRow struct {
 }
 
 func (platformSettingsRow) TableName() string { return "platform_settings" }
+
+type knowledgeConnectorUsageRow struct {
+	OwnerUserID      int64      `gorm:"column:owner_user_id;primaryKey;not null;default:0"`
+	ConnectorID      string     `gorm:"column:connector_id;primaryKey;size:64"`
+	CallCount        int64      `gorm:"column:call_count;not null;default:0"`
+	SearchCount      int64      `gorm:"column:search_count;not null;default:0"`
+	ReadCount        int64      `gorm:"column:read_count;not null;default:0"`
+	DocumentHitCount int64      `gorm:"column:document_hit_count;not null;default:0"`
+	ErrorCount       int64      `gorm:"column:error_count;not null;default:0"`
+	LastCalledAt     *time.Time `gorm:"column:last_called_at"`
+	CreatedAt        *time.Time `gorm:"column:created_at"`
+	UpdatedAt        *time.Time `gorm:"column:updated_at"`
+}
+
+func (knowledgeConnectorUsageRow) TableName() string { return "knowledge_connector_usage_counts" }
+
+type knowledgeDocumentUsageRow struct {
+	OwnerUserID    int64      `gorm:"column:owner_user_id;primaryKey;not null;default:0;index:idx_knowledge_doc_usage_owner_calls,priority:1"`
+	ConnectorID    string     `gorm:"column:connector_id;primaryKey;size:64"`
+	DocumentKey    string     `gorm:"column:document_key;primaryKey;size:255"`
+	SourceID       string     `gorm:"column:source_id;size:191;not null;default:''"`
+	SourceName     string     `gorm:"column:source_name;size:255;not null;default:''"`
+	DocumentID     string     `gorm:"column:document_id;size:512;not null;default:''"`
+	Title          string     `gorm:"column:title;size:255;not null;default:''"`
+	FileName       string     `gorm:"column:file_name;size:255;not null;default:''"`
+	CallCount      int64      `gorm:"column:call_count;index:idx_knowledge_doc_usage_owner_calls,priority:2;not null;default:0"`
+	SearchHitCount int64      `gorm:"column:search_hit_count;not null;default:0"`
+	ReadCount      int64      `gorm:"column:read_count;not null;default:0"`
+	CitedCount     int64      `gorm:"column:cited_count;not null;default:0"`
+	LastCalledAt   *time.Time `gorm:"column:last_called_at"`
+	CreatedAt      *time.Time `gorm:"column:created_at"`
+	UpdatedAt      *time.Time `gorm:"column:updated_at"`
+}
+
+func (knowledgeDocumentUsageRow) TableName() string { return "knowledge_document_usage_counts" }
+
+type knowledgeUsageEventRow struct {
+	ID           int64      `gorm:"column:id;primaryKey;autoIncrement"`
+	OwnerUserID  int64      `gorm:"column:owner_user_id;not null;default:0;index:idx_kb_usage_events_owner_time,priority:1;index:idx_kb_usage_events_owner_doc,priority:1;index:idx_kb_usage_events_owner_read,priority:1;index:idx_kb_usage_events_owner_caller,priority:1"`
+	ReadID       string     `gorm:"column:read_id;size:64;not null;default:'';index:idx_kb_usage_events_owner_read,priority:2"`
+	ConnectorID  string     `gorm:"column:connector_id;size:64;not null;index:idx_kb_usage_events_owner_doc,priority:2"`
+	DocumentKey  string     `gorm:"column:document_key;size:255;not null;index:idx_kb_usage_events_owner_doc,priority:3"`
+	SourceID     string     `gorm:"column:source_id;size:191;not null;default:''"`
+	SourceName   string     `gorm:"column:source_name;size:255;not null;default:''"`
+	DocumentID   string     `gorm:"column:document_id;size:512;not null;default:''"`
+	Title        string     `gorm:"column:title;size:255;not null;default:''"`
+	FileName     string     `gorm:"column:file_name;size:255;not null;default:''"`
+	Action       string     `gorm:"column:action;size:32;not null;default:'search_hit'"`
+	Tool         string     `gorm:"column:tool;size:128;not null;default:''"`
+	Query        string     `gorm:"column:query;size:255;not null;default:''"`
+	Cited        bool       `gorm:"column:cited;not null;default:false"`
+	CallerKind   string     `gorm:"column:caller_kind;size:32;not null;default:'';index:idx_kb_usage_events_owner_caller,priority:2"`
+	WorkflowID   string     `gorm:"column:workflow_id;size:64;not null;default:''"`
+	WorkflowName string     `gorm:"column:workflow_name;size:255;not null;default:''"`
+	RunID        string     `gorm:"column:run_id;size:64;not null;default:''"`
+	NodeID       string     `gorm:"column:node_id;size:64;not null;default:''"`
+	NodeName     string     `gorm:"column:node_name;size:255;not null;default:''"`
+	AgentID      string     `gorm:"column:agent_id;size:64;not null;default:''"`
+	AgentName    string     `gorm:"column:agent_name;size:255;not null;default:''"`
+	SessionID    string     `gorm:"column:session_id;size:64;not null;default:''"`
+	SessionTitle string     `gorm:"column:session_title;size:255;not null;default:''"`
+	SpaceID      string     `gorm:"column:space_id;size:64;not null;default:''"`
+	SpaceTitle   string     `gorm:"column:space_title;size:255;not null;default:''"`
+	IssueID      string     `gorm:"column:issue_id;size:64;not null;default:''"`
+	IssueTitle   string     `gorm:"column:issue_title;size:255;not null;default:''"`
+	ProjectID    string     `gorm:"column:project_id;size:64;not null;default:''"`
+	CalledAt     time.Time  `gorm:"column:called_at;not null;index:idx_kb_usage_events_owner_time,priority:2;index:idx_kb_usage_events_owner_doc,priority:4;index:idx_kb_usage_events_owner_caller,priority:3"`
+	CreatedAt    *time.Time `gorm:"column:created_at"`
+}
+
+func (knowledgeUsageEventRow) TableName() string { return "knowledge_usage_events" }
+
+// TODO(knowledge-legacy-compat): 保留历史表 knowledge_settings / knowledge_submissions
+// 的 ORM 映射，供旧版平台知识库与沉淀审核队列兼容路由使用；下线旧路由后一并移除。
+type knowledgeSettingsRow struct {
+	ID      string     `gorm:"column:id;primaryKey;size:64"`
+	Payload []byte     `gorm:"column:payload;type:json"`
+	Token   *string    `gorm:"column:token;type:text"`
+	Updated *time.Time `gorm:"column:updated_at"`
+}
+
+func (knowledgeSettingsRow) TableName() string { return "knowledge_settings" }
 
 type knowledgeSubmissionRow struct {
 	ID         string     `gorm:"column:id;primaryKey;size:64"`
@@ -809,7 +901,13 @@ func allModels() []any {
 		chatRoomRow{}, chatMessageRow{},
 		requirementSpaceRow{}, spaceMemberRow{}, spaceArtifactRow{}, spaceArtifactRevisionRow{}, spaceThreadRow{},
 		engineInstanceRow{},
-		knowledgeSettingsRow{}, knowledgeSubmissionRow{},
+		knowledgeSettingsRow{},
+		knowledgeSubmissionRow{},
+		knowledgeConnectorRow{},
+		knowledgeConnectorUsageRow{},
+		knowledgeDocumentUsageRow{},
+		knowledgeUsageEventRow{},
+		evoPolicyRow{}, evoFindingRow{}, evoProposalRow{}, evoAssetGateRow{}, evoQueueRow{}, evoReplayRow{}, assetVersionRow{}, runAssetPinRow{}, evoSignalRow{}, evoSampleRow{}, evoSOPPolicyRow{},
 		platformSettingsRow{},
 		PlatformGitSSHHost{}, PlatformGitHTTPSHost{}, PlatformGitHTTPHost{},
 	}

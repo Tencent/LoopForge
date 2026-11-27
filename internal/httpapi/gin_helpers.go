@@ -113,7 +113,7 @@ func cors() gin.HandlerFunc {
 			c.Header("Vary", "Origin")
 			c.Header("Access-Control-Allow-Origin", origin)
 			c.Header("Access-Control-Allow-Headers", "Content-Type")
-			c.Header("Access-Control-Allow-Methods", "GET,PUT,POST,DELETE,OPTIONS")
+			c.Header("Access-Control-Allow-Methods", "GET,PUT,POST,PATCH,DELETE,OPTIONS")
 		}
 		if c.Request.Method == http.MethodOptions {
 			c.Writer.WriteHeader(204)
@@ -207,6 +207,16 @@ func (w *gzipWriter) Flush() {
 	}
 }
 
+// knowledgeStreamPath reports whether path streams a stored document from the
+// KB upstream. Those responses are proxied verbatim: gzip buffering would drop
+// the exact Content-Length and delay the first byte of large files.
+func knowledgeStreamPath(path string) bool {
+	if !strings.HasPrefix(path, "/api/knowledge/documents/") {
+		return false
+	}
+	return strings.HasSuffix(path, "/preview") || strings.HasSuffix(path, "/download")
+}
+
 // close ends a compressed body. A response that wrote nothing still gets an
 // empty gzip stream to match its Content-Encoding header.
 func (w *gzipWriter) close() {
@@ -222,7 +232,7 @@ func gzipMaybe() gin.HandlerFunc {
 			c.Next()
 			return
 		}
-		if strings.Contains(c.Request.URL.Path, "/stream") || strings.HasPrefix(c.Request.URL.Path, "/api/otel/") || strings.Contains(c.GetHeader("Accept"), "text/event-stream") {
+		if strings.Contains(c.Request.URL.Path, "/stream") || strings.HasPrefix(c.Request.URL.Path, "/api/otel/") || strings.Contains(c.GetHeader("Accept"), "text/event-stream") || knowledgeStreamPath(c.Request.URL.Path) {
 			c.Next()
 			return
 		}

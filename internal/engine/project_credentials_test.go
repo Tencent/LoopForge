@@ -3,6 +3,7 @@ package engine
 import (
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 
@@ -61,5 +62,12 @@ func TestSOPScriptUsesProjectCredentials(t *testing.T) {
 	scope.ProjectID = "different-project"
 	if _, err := eng.StartWithExecutionContext(wf.ID, "", domain.RepositoryContext{}, scope); err == nil {
 		t.Fatal("a LOOP resolved credentials outside its project")
+	}
+	scope.ProjectID = project.ID
+	if err := st.DeleteProjectCredential(t.Context(), project.ID, credentialID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := eng.StartWithExecutionContext(wf.ID, "", domain.RepositoryContext{}, scope); !errors.Is(err, repo.ErrProjectCredentialUnavailable) {
+		t.Fatalf("SOP admitted with a deleted binding: %v", err)
 	}
 }

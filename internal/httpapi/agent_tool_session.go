@@ -55,6 +55,8 @@ type AgentToolSession struct {
 	toolsMu           sync.RWMutex
 	pendingMode       string
 	modeAction        func(context.Context) error
+	knowledgeReads    []domain.KnowledgeRead
+	KnowledgeRefs     []domain.KnowledgeRef
 	SelectedMCPIDs    map[string]bool
 	ExecutionRunnerID string
 	runnerLogin       bool
@@ -73,6 +75,7 @@ type AgentToolSession struct {
 	ChatSessionID string
 	ChatOwnerID   int64
 
+	requireRunnerShare      bool
 	projectCredentialIDs    []string
 	projectCredentialValues []string // protected by mu
 
