@@ -273,7 +273,7 @@ test('English sentences that embed the new AI schedule terms are translated whol
   assert.equal(node.textContent, 'An AI scheduled task can reference up to 12 project assets');
 });
 
-test('English publish toast names the Shared task market without mixing languages and keeps the task name', async (t) => {
+test('English publish toast names the Shared task market without mixing languages or rewriting the task name', async (t) => {
   const app = await loadApp();
   t.after(app.close);
   app.evaluate("window.lfT = (zh, en) => en; window.__toasts = []; toast = (m) => window.__toasts.push(m);");
@@ -288,5 +288,19 @@ test('English publish toast names the Shared task market without mixing language
   form.dispatchEvent(new app.window.Event('submit', { bubbles: true, cancelable: true }));
   await settle(5);
   const toasts = [...app.evaluate('window.__toasts')];
-  assert.deepEqual(toasts, ['Published 巡检-README摘要 v1. Other projects can subscribe to it from the Shared task market']);
+  assert.deepEqual(toasts, ['Published version 1 to the Shared task market. Other projects can subscribe to it now']);
+});
+
+test('English Shared task market keeps shared task names, source projects and descriptions as written', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  const shared = { id: 'shared-1', version: 2, sourceProjectId: 'p2', sourceProjectName: '基础团队', sourceJobId: 's', name: NAME, description: '跨项目复用巡检规则', changeNote: '新增业务名称', prompt: '检查需求', intervalSec: 86400, parameters: [] };
+  app.evaluate(`state.projectFilter='project-1';sharedScheduleCatalog=${JSON.stringify([shared])};renderSharedScheduleMarket()`);
+  await settle(2);
+  const root = await englishCopy(t, app, ['#sharedScheduleMarketList, #aiScheduleMarketPanel .mcp-market-grid, #aiScheduleMarketPanel']);
+  const card = root.querySelector('.mcp-market-card');
+  assert.ok(card, 'the market card renders');
+  assert.equal(card.querySelector('h3').textContent, NAME);
+  assert.equal(card.querySelector('.shared-schedule-market-source').textContent, '基础团队');
+  assert.ok(card.textContent.includes('跨项目复用巡检规则'), 'the description is not fragment-translated');
 });
