@@ -19,13 +19,11 @@ func (h issuesHandlers) issueDetail(c *gin.Context, issue domain.Issue) {
 		respond(c, err)
 		return
 	}
-	var attachments []repo.IssueAttachment
-	if h.issueAttachmentReaderAllowed(c, issue) {
-		attachments, err = h.repo.IssueAttachments(issue.ID)
-		if err != nil {
-			respond(c, err)
-			return
-		}
+	// Attachments are part of the requirement: whoever can read it can read them.
+	attachments, err := h.repo.IssueAttachments(issue.ID)
+	if err != nil {
+		respond(c, err)
+		return
 	}
 	var images []gin.H
 	for _, attachment := range attachments {

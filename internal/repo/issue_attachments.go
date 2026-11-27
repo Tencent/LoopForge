@@ -23,7 +23,10 @@ type IssueAttachment struct {
 const IssueAttachmentInputPrefix = "issue-attachment:"
 
 func (a IssueAttachment) InputPath() string {
-	return path.Join(".agentflow/inputs/requirement-attachments", a.ID, IssueAttachmentName(a.Name))
+	// Codex splits --image values on commas, so the staged copy never has one.
+	// The original name is still used for display and downloads.
+	name := strings.ReplaceAll(IssueAttachmentName(a.Name), ",", "_")
+	return path.Join(".agentflow/inputs/requirement-attachments", a.ID, name)
 }
 
 func (a IssueAttachment) IsImage() bool {

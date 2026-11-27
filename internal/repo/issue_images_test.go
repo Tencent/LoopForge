@@ -24,3 +24,15 @@ func TestCreateIssueWithImagesRollsBackOnImageWriteFailure(t *testing.T) {
 		t.Fatalf("image persisted after rollback: %v %v", images, err)
 	}
 }
+
+func TestIssueAttachmentInputPathHasNoComma(t *testing.T) {
+	// Codex splits --image values on commas; the staged copy must stay one path
+	// while the original name is kept for display and downloads.
+	file := IssueAttachment{ID: "a1", Name: "截图,第2版.png"}
+	if got, want := file.InputPath(), ".agentflow/inputs/requirement-attachments/a1/截图_第2版.png"; got != want {
+		t.Fatalf("InputPath() = %q, want %q", got, want)
+	}
+	if got := IssueAttachmentName(file.Name); got != "截图,第2版.png" {
+		t.Fatalf("display name changed: %q", got)
+	}
+}

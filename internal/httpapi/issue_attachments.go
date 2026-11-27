@@ -110,20 +110,8 @@ func (h issuesHandlers) issueAttachment(c *gin.Context, issue domain.Issue) {
 	h.serveIssueAttachment(c, issue, c.Param("attachmentId"), false)
 }
 
-func (h issuesHandlers) issueAttachmentReaderAllowed(c *gin.Context, issue domain.Issue) bool {
-	if !authRequired() || h.isPlatformAdmin(c.Request) {
-		return true
-	}
-	user, signedIn := h.requestUser(c.Request, true)
-	project, found := h.repo.Project(issue.ProjectID)
-	return signedIn && found && workbenchProjectAllowsUser(project, user.ID, false)
-}
-
 func (h issuesHandlers) serveIssueAttachment(c *gin.Context, issue domain.Issue, id string, inlineImage bool) {
-	if !h.issueAttachmentReaderAllowed(c, issue) {
-		c.JSON(http.StatusForbidden, gin.H{"error": "无权访问需求附件"})
-		return
-	}
+	// Same visibility as GET /api/issues/:id; writes stay limited to members.
 	file, err := h.repo.IssueAttachment(issue.ID, id)
 	if errors.Is(err, gorm.ErrRecordNotFound) || (err == nil && inlineImage && !file.IsImage()) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "未找到需求附件"})

@@ -156,10 +156,26 @@ func TestIssueAttachmentsDownloadAndConversationInputs(t *testing.T) {
 	if err := f.s.PutUser(other); err != nil {
 		t.Fatal(err)
 	}
+	// A signed-in non-member can read the requirement, so it can read the
+	// files that belong to it as well; only writes are limited to members.
 	foreign := httptest.NewRecorder()
-	f.h.ServeHTTP(foreign, authedRequest(t, httptest.NewRequest(http.MethodGet, path+"/attachments/"+docID, nil), other))
-	if foreign.Code != http.StatusForbidden {
-		t.Fatalf("download outside project: %d", foreign.Code)
+	f.h.ServeHTTP(foreign, authedRequest(t, httptest.NewRequest(http.MethodGet, path, nil), other))
+	var foreignDetail struct{ Attachments, Images []repo.IssueAttachment }
+	if foreign.Code != http.StatusOK || json.Unmarshal(foreign.Body.Bytes(), &foreignDetail) != nil ||
+		len(foreignDetail.Attachments) != 2 || len(foreignDetail.Images) != 1 {
+		t.Fatalf("detail outside project: %d %s", foreign.Code, foreign.Body)
+	}
+	for _, id := range []string{"/attachments/" + docID, "/images/" + foreignDetail.Images[0].ID} {
+		foreign = httptest.NewRecorder()
+		f.h.ServeHTTP(foreign, authedRequest(t, httptest.NewRequest(http.MethodGet, path+id, nil), other))
+		if foreign.Code != http.StatusOK || len(foreign.Body.Bytes()) == 0 {
+			t.Fatalf("read %s outside project: %d", id, foreign.Code)
+		}
+	}
+	anonymous := httptest.NewRecorder()
+	f.h.ServeHTTP(anonymous, httptest.NewRequest(http.MethodGet, path+"/attachments/"+docID, nil))
+	if anonymous.Code != http.StatusUnauthorized {
+		t.Fatalf("anonymous download: %d", anonymous.Code)
 	}
 
 	files, err := readConversationIssueAttachments(f.s.IssuesRepo, []domain.Issue{issue})
