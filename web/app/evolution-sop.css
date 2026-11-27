@@ -894,6 +894,9 @@
   color: var(--hui-text);
   box-shadow: var(--hui-popover-shadow);
   width: min(500px, calc(100vw - 32px));
+  max-width: calc(100vw - 32px);
+  box-sizing: border-box;
+  overflow-x: hidden;
 }
 
 .evo-sop-dialog::backdrop {
@@ -904,6 +907,9 @@
   display: grid;
   gap: 14px;
   padding: 18px 20px;
+  width: 100%;
+  box-sizing: border-box;
+  min-width: 0;
 }
 
 .evo-sop-dialog-head {
@@ -1319,11 +1325,11 @@
 }
 
 .evo-sop-trace-chip.is-neg {
-  border-color: color-mix(in srgb, var(--hui-warning) 45%, var(--hui-border));
+  border-color: color-mix(in srgb, var(--hui-warn) 45%, var(--hui-border));
 }
 
 .evo-sop-trace-chip.is-neg b {
-  color: var(--hui-warning);
+  color: var(--hui-warn);
 }
 
 .evo-sop-trace-empty {
@@ -1349,23 +1355,34 @@
   color: var(--hui-muted);
 }
 
-.evo-sop-assert-dialog .evo-sop-dialog-card {
+.evo-sop-dialog.evo-sop-assert-dialog {
   width: min(560px, calc(100vw - 32px));
 }
 
 .evo-sop-assert-gen {
   display: grid;
   gap: 8px;
+  min-width: 0;
 }
 
 .evo-sop-assert-gen-row {
   display: flex;
+  align-items: center;
   gap: 8px;
+  min-width: 0;
 }
 
-.evo-sop-assert-gen-row input {
-  flex: 1 1 auto;
+#evolutionView .evo-sop-assert-gen-row .kb-input {
+  flex: 1 1 0;
+  width: auto;
   min-width: 0;
+}
+
+.evo-sop-assert-gen-row .kb-btn {
+  flex: none;
+  height: 36px;
+  padding: 0 14px;
+  white-space: nowrap;
 }
 
 .evo-sop-assert-chips {
@@ -1391,15 +1408,16 @@
 
 .evo-sop-assert-error {
   padding: 7px 10px;
-  border: 1px solid var(--hui-danger);
+  border: 1px solid var(--hui-error);
   border-radius: 8px;
-  color: var(--hui-danger);
+  color: var(--hui-error);
   font-size: 12px;
 }
 
 .evo-sop-assert-candidates {
   display: grid;
   gap: 8px;
+  min-width: 0;
 }
 
 .evo-sop-assert-cand {
@@ -1409,10 +1427,11 @@
   border: 1px solid var(--hui-accent);
   border-radius: 10px;
   background: var(--hui-canvas);
+  min-width: 0;
 }
 
 .evo-sop-assert-cand.is-warn {
-  border-color: var(--hui-warning);
+  border-color: var(--hui-warn);
 }
 
 .evo-sop-assert-cand-top,
@@ -1422,6 +1441,7 @@
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+  min-width: 0;
 }
 
 .evo-sop-assert-cand-title,
@@ -1433,6 +1453,11 @@
   font-size: 12px;
 }
 
+.evo-sop-assert-cand-title b,
+.evo-sop-assert-item-title b {
+  overflow-wrap: anywhere;
+}
+
 .evo-sop-assert-expr {
   display: block;
   padding: 5px 8px;
@@ -1442,12 +1467,14 @@
   color: var(--hui-secondary);
   font-size: 11px;
   overflow-x: auto;
+  max-width: 100%;
+  box-sizing: border-box;
 }
 
 .evo-sop-assert-warn-note {
   margin: 0;
   font-size: 12px;
-  color: var(--hui-warning);
+  color: var(--hui-warn);
 }
 
 .evo-sop-assert-cand-actions {
@@ -1459,6 +1486,7 @@
 .evo-sop-assert-list-wrap {
   display: grid;
   gap: 8px;
+  min-width: 0;
 }
 
 .evo-sop-assert-list-head {
@@ -1471,6 +1499,7 @@
   gap: 6px;
   max-height: 220px;
   overflow-y: auto;
+  min-width: 0;
 }
 
 .evo-sop-assert-item {
@@ -1496,21 +1525,23 @@
   background: none;
   color: var(--hui-muted);
   cursor: pointer;
+  flex: none;
 }
 
 .evo-sop-assert-del:hover {
   background: var(--hui-soft);
-  color: var(--hui-danger);
+  color: var(--hui-error);
 }
 
 .evo-sop-assert-foot {
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
 }
 
 .evo-sop-assert-status {
   font-size: 12px;
-  color: var(--hui-warning);
+  color: var(--hui-warn);
   font-weight: 500;
 }
 
@@ -1520,7 +1551,9 @@
 
 .evo-sop-assert-foot-actions {
   display: flex;
+  align-items: center;
   gap: 8px;
+  margin-left: auto;
 }
 
 @container (max-width: 860px) {
