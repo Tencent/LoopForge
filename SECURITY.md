@@ -4,7 +4,9 @@ English | [简体中文](SECURITY.zh-CN.md)
 
 ## Reporting a vulnerability
 
-Please use GitHub Security Advisory's private reporting feature to contact maintainers. Do not submit the following in public issues, discussions, or pull requests:
+Please use GitHub Security Advisory's private reporting feature to contact maintainers.
+
+If private vulnerability reporting is unavailable when you read this, or GitHub is not an option for your report, contact the maintainers via LoopForge's public inbox on GitHub (`https://github.com/Tencent/LoopForge/security/advisories/new`) or reach the repository owner through the contact channels listed in the repository profile. Do not submit the following in public issues, discussions, or pull requests:
 
 - SecretId, SecretKey, Token, Cookie, or passwords;
 - Internal domain names, servers, clusters, buckets, topics, or pipeline IDs;

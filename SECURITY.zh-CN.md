@@ -4,7 +4,9 @@
 
 ## Reporting a vulnerability
 
-请使用 GitHub Security Advisory 的私密报告功能联系维护者。不要在公开 Issue、Discussion 或 Pull Request 中提交：
+请使用 GitHub Security Advisory 的私密报告功能联系维护者。
+
+如果你看到本文件时私密漏洞报告通道暂不可用，或不便通过 GitHub 提交，请通过 LoopForge 在 GitHub 的公开安全收件（`https://github.com/Tencent/LoopForge/security/advisories/new`）或仓库主页资料中维护者的公开联系方式联系。不要在公开 Issue、Discussion 或 Pull Request 中提交：
 
 - SecretId、SecretKey、Token、Cookie 或密码；
 - 内部域名、服务器、集群、Bucket、Topic 或流水线 ID；

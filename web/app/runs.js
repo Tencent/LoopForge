@@ -315,16 +315,39 @@ function renderRunFilterCounts(base){
   });
 }
 function renderRuns(){
+
   renderRunOverview();const workflows=catalogWorkflows();$('#runWorkflowFilter').innerHTML='<option value="">全部 LOOP</option>'+workflows.map(w=>`<option value="${escapeHTML(w.id)}" ${state.runWorkflowFilter===w.id?'selected':''}>${escapeHTML(w.name)}</option>`).join('');
-  let base=sortRunsDescending(scopedRuns(sopRuns(state.data.runs)));
-  if(state.runWorkflowFilter)base=base.filter(r=>r.workflowId===state.runWorkflowFilter);
+  const allProjectRuns=sortRunsDescending(scopedRuns(sopRuns(state.data.runs)));
+  let base=allProjectRuns;  if(state.runWorkflowFilter)base=base.filter(r=>r.workflowId===state.runWorkflowFilter);
   if(state.runQuery)base=base.filter(r=>{const ctx=runContext(r);return `${r.id} ${r.input} ${r.workflowSnapshot?.name||''} ${ctx.issue?.title||''}`.toLowerCase().includes(state.runQuery)});
   renderRunFilterCounts(base);
   const runs=base.filter(r=>runMatchesFilter(r,state.runFilter||'all'));
   $('#runListCount')&&($('#runListCount').textContent=`${runs.length} 条`);const list=$('#runList');
   const focusedRow=document.activeElement?.closest?.('#runList .run-card'),focusedPart=focusedRow&&['.run-view-btn','.run-del-btn'].find(s=>document.activeElement.matches(s));
   const pagedRuns=paginateList('runs', runs);
-  list.innerHTML=pagedRuns.items.map(r=>runRowHTML(r,workflows)).join('')||`<div class="run-list-empty">${runIconSlot('search',17,'run-glyph')}<b>没有匹配的运行</b><p>换个关键词，或到需求列表查看对应需求的执行结果。</p></div>`;
+  // 空结果区分「搜索/筛选无匹配」与「当前项目尚无运行」：真空项目给出
+  // 指向 SOP 与需求列表的开始入口，否则引导清除搜索或筛选。
+  const runsLoaded=Array.isArray(state.data?.runs);
+  const scopedEmpty=runsLoaded&&allProjectRuns.length===0;
+  let emptyTitle,emptyHint,emptyActions='';
+  if(state.runQuery){
+    emptyTitle='未找到与当前关键词匹配的运行';
+    emptyHint=state.runFilter&&state.runFilter!=='all'||state.runWorkflowFilter?'可修改关键词、清除搜索，或调整状态与 SOP 筛选后重试。':'可修改关键词，或点击搜索框右侧 × 清除搜索。';
+  }else if(state.runFilter&&state.runFilter!=='all'||state.runWorkflowFilter){
+    emptyTitle='当前筛选下没有匹配的运行';
+    emptyHint='可切换状态标签或清除 SOP 筛选后查看全部。';
+  }else if(!runsLoaded){
+    emptyTitle='正在加载运行记录';
+    emptyHint='读取完成后会显示当前项目的运行。';
+  }else if(scopedEmpty){
+    emptyTitle='当前项目还没有运行';
+    emptyHint='选择一条 SOP、把需求交给它执行后，运行会记录在这里。';
+    emptyActions=`<div class="run-empty-actions"><a class="button primary small" href="#/sops" data-goto-view="sops">去选择流程</a><button type="button" class="button small" data-goto-view="issues">去需求列表</button></div>`;
+  }else{
+    emptyTitle='没有匹配的运行';
+    emptyHint='换个关键词，或到需求列表查看对应需求的执行结果。';
+  }
+  list.innerHTML=pagedRuns.items.map(r=>runRowHTML(r,workflows)).join('')||`<div class="run-list-empty">${runIconSlot('search',17,'run-glyph')}<b>${emptyTitle}</b><p>${emptyHint}</p>${emptyActions}</div>`;
   const pager=$('#runPager');
   pager.innerHTML=`<span class="run-total">共 ${runs.length} 条</span>${pagerHTML('runs', pagedRuns)}`;
   hydrateRunIcons($('#runsView'));
@@ -334,6 +357,11 @@ function renderRuns(){
   });
   list.querySelectorAll('.run-view-btn').forEach(btn=>btn.onclick=(e)=>{e.stopPropagation();showRunDetail(btn.dataset.viewRun)});
   list.querySelectorAll('.run-del-btn').forEach(btn=>btn.onclick=(e)=>{e.stopPropagation();deleteRun(btn.dataset.deleteRun)});
+  list.querySelectorAll('[data-goto-view]').forEach(el=>el.onclick=e=>{
+    if(el.tagName==='A')return;
+    e.preventDefault();
+    switchView(el.dataset.gotoView);
+  });
   bindPager(pager);
   if(focusedRow){const row=list.querySelector(`[data-id="${CSS.escape(focusedRow.dataset.id)}"]`);(focusedPart?row?.querySelector(focusedPart):row)?.focus({preventScroll:true})}
   syncQueuedRunRefresh();

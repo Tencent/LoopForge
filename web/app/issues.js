@@ -154,8 +154,32 @@ function renderIssues(){
     bindIssueSelection(visibleIssues);
     return;
   }
-  const emptyTitle=state.issueRunFilter==='attention'?'没有需要介入的工作项':state.issueRunFilter==='mr'?'没有待处理 MR 的需求':'当前项目没有匹配的工作项';
-  const emptyHint=state.issueRunFilter==='attention'?'待确认澄清结论、门禁失败、运行失败或已中断的工作项会显示在这里。':state.issueRunFilter==='mr'?'已提 MR 但还没合入的需求会显示在这里。':'从 GitHub 同步，或在本平台新建需求。';
+  // 空结果区分「搜索/筛选无匹配」与「项目确实没有需求」：只有成功加载且
+  // 真空项目才引导同步或新建，否则引导改关键词、清除搜索或调整筛选。
+  const hasQuery=Boolean(state.issueQuery);
+  const hasNarrowFilter=Boolean(state.sourceFilter||state.issueStatusFilter||state.issueAssigneeFilter||state.issueRunFilter);
+  const issuesLoaded=Array.isArray(state.data?.issues);
+  const projectEmpty=issuesLoaded&&projectIssues.length===0;
+  let emptyTitle,emptyHint;
+  if(hasQuery){
+    emptyTitle='未找到与当前关键词匹配的需求';
+    emptyHint=hasNarrowFilter?'可修改关键词、点击搜索框右侧 × 清除搜索，或调整筛选条件。':'可修改关键词，或点击搜索框右侧 × 清除搜索。';
+  }else if(state.issueRunFilter==='attention'){
+    emptyTitle='没有需要介入的工作项';
+    emptyHint='待确认澄清结论、门禁失败、运行失败或已中断的工作项会显示在这里。';
+  }else if(state.issueRunFilter==='mr'){
+    emptyTitle='没有待处理 MR 的需求';
+    emptyHint='已提 MR 但还没合入的需求会显示在这里。';
+  }else if(hasNarrowFilter){
+    emptyTitle='当前筛选下没有匹配的需求';
+    emptyHint='可调整或清除筛选条件后重试。';
+  }else if(!issuesLoaded){
+    emptyTitle='正在加载需求';
+    emptyHint='读取完成后会显示当前项目的需求。';
+  }else{
+    emptyTitle=projectEmpty?'当前项目还没有需求':'当前项目没有匹配的工作项';
+    emptyHint=projectEmpty?'从 GitHub 同步，或在本平台新建需求。':'调整筛选条件，或清除搜索后查看全部需求。';
+  }
   const keyWidth=issueKeyColumnWidth(paged.items);
   const pager=pagerHTML('issues',paged)||(paged.total?`<nav class="pager pager-summary" aria-label="分页"><span class="pager-meta">共 ${paged.total} 条</span></nav>`:'');
   board.innerHTML=`<div class="issue-table-card"><div class="issue-table-scroll"><div class="issue-table${state.issueSelectionMode?' issue-table-selectable':''}" data-page-anchor="issues" style="--issue-col-key:${keyWidth}"><div class="issue-table-row issue-table-head" role="row">${state.issueSelectionMode?`<div class="issue-select-cell">${issueSelectAllCheckbox('全选本页可删除的需求')}</div>`:''}<span>编号</span><span>标题</span><span>来源</span><span>责任人</span><span>仓库</span><span>优先级</span><span>关联 LOOP</span><span>当前环节</span><span>进度</span><span>操作</span></div><div class="issue-table-body">${paged.items.map(issueRow).join('')||`<div class="issue-table-empty">${huiIcon('search')}<b>${emptyTitle}</b><p>${emptyHint}</p></div>`}</div></div></div>${pager}</div>`;
