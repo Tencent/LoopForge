@@ -328,3 +328,45 @@ func TestFailedSharedGenerationSnapshotKeepsCauseAndRetryHistory(t *testing.T) {
 		})
 	}
 }
+
+func TestAssistantClaudeReportsStructuredProviderAuthFailure(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		lines []string
+	}{
+		{
+			name: "rejected key with nonempty failure result",
+			lines: []string{
+				`{"type":"assistant","error":"authentication_failed","is_api_error_message":true,"api_error_status":401,"message":{"content":[{"type":"text","text":"Failed to authenticate. API Error: 401 Credentials missing. (MISSING_CREDENTIALS)"}]}}`,
+				`{"type":"result","is_error":true,"api_error_status":401,"result":"Failed to authenticate. API Error: 401 Credentials missing. (MISSING_CREDENTIALS)"}`,
+			},
+		},
+		{
+			name:  "rejected credential reported only in failure result",
+			lines: []string{`{"type":"result","is_error":true,"api_error_status":403,"result":"Access denied"}`},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := assistantCLIRequest{
+				Executor:     "claude-code",
+				Model:        "gateway-test-model",
+				Prompt:       "test",
+				SessionRoot:  t.TempDir(),
+				Native:       true,
+				RemoteBinary: true,
+				Execute: func(_ context.Context, _ string, _ runtime.CommandSpec, _ runtime.RunCredentials, sink runtime.EventSink) (string, error) {
+					sink(domain.TelemetryEvent{Name: "process.stderr", Message: "[claude-code:unrecognized_model]"})
+					for _, line := range tc.lines {
+						sink(domain.TelemetryEvent{Name: "process.stdout", Message: line})
+					}
+					return "", errors.New("exit status 1")
+				},
+			}
+			reply, _, err := runAssistantCLI(context.Background(), req, domain.User{}, nil)
+			failure := classifyAssistantFailure(context.Background(), err)
+			if reply != "" || !errors.Is(err, errAssistantCredentialRejected) || failure.Code != "AUTHENTICATION_FAILED" {
+				t.Fatalf("reply=%q err=%v failure=%+v, want authentication failure", reply, err, failure)
+			}
+		})
+	}
+}

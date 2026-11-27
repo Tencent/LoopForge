@@ -1880,7 +1880,7 @@ func runAssistantCLI(ctx context.Context, req assistantCLIRequest, user domain.U
 	if req.Resume && missingSession && !modelStarted && final == "" && ctx.Err() == nil {
 		return "", sessionID, errAssistantSessionMissing
 	}
-	if engine != assistantEngineCodeBuddy && ctx.Err() == nil && strings.TrimSpace(final) == "" &&
+	if engine != assistantEngineCodeBuddy && ctx.Err() == nil && (strings.TrimSpace(final) == "" || resultError) &&
 		(credentialRejected || (streamError != nil && assistantAuthFailureText(streamError.Error()))) {
 		if req.RunnerLogin {
 			return "", sessionID, assistantRunnerLoginError(engine)
