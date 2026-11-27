@@ -1,5 +1,5 @@
 import React from "react";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 const chat = {
@@ -131,6 +131,49 @@ describe("App 2-tab sidebar actions (personal / scheduled & scheduled rerun)", (
     } finally {
       chat.user = user;
       chat.ready = ready;
+    }
+  });
+
+  test("crossing the desktop breakpoint hides the sidebar and widening restores the desktop choice", async () => {
+    const original = Object.getOwnPropertyDescriptor(window, "matchMedia");
+    const listeners = new Set();
+    const desktop = { matches: true };
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      value: (query) => ({
+        get matches() {
+          return query.includes("1001px") ? desktop.matches : false;
+        },
+        media: query,
+        addEventListener: (_, fn) => query.includes("1001px") && listeners.add(fn),
+        removeEventListener: (_, fn) => listeners.delete(fn),
+        addListener() {},
+        removeListener() {},
+      }),
+    });
+    const resize = (matches) =>
+      act(() => {
+        desktop.matches = matches;
+        listeners.forEach((fn) => fn({ matches }));
+      });
+    globalThis.fetch = vi.fn(async () => ({ ok: true, status: 200, json: async () => [] }));
+    try {
+      const { container } = render(<App />);
+      const shell = () => container.querySelector(".chat-shell");
+      expect(shell()).not.toHaveClass("sidebar-hidden");
+
+      resize(false);
+      expect(shell()).toHaveClass("sidebar-hidden");
+      resize(true);
+      expect(shell()).not.toHaveClass("sidebar-hidden");
+
+      fireEvent.click(screen.getByRole("button", { name: "隐藏会话侧边栏" }));
+      expect(shell()).toHaveClass("sidebar-hidden");
+      resize(false);
+      resize(true);
+      expect(shell()).toHaveClass("sidebar-hidden");
+    } finally {
+      Object.defineProperty(window, "matchMedia", original);
     }
   });
 

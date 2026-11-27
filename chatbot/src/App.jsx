@@ -456,6 +456,8 @@ export default function App() {
   const [sidebar, setSidebar] = useState(
       () => sidebarViewport().matchMedia("(min-width:1001px)").matches,
     );
+  const sidebarOpenRef = useRef(sidebar);
+  sidebarOpenRef.current = sidebar;
   const [panel, setPanel] = useState(false),
     [panelView, setPanelView] = useState("artifacts"),
     [artifactUnread, setArtifactUnread] = useState(0),
@@ -718,9 +720,18 @@ export default function App() {
   useEffect(() => {
     const wide = sidebarViewport().matchMedia("(min-width:1001px)");
     const apply = () => setSidebarWidth(readSidebarWidth());
+    // Narrowing below the desktop breakpoint hides the sidebar; widening again
+    // restores what the desktop layout showed before (open after a narrow load).
+    let desktopOpen = null;
     const onBreakpoint = () => {
       apply();
-      if (!wide.matches) setSidebar(false);
+      if (!wide.matches) {
+        desktopOpen = sidebarOpenRef.current;
+        setSidebar(false);
+      } else {
+        setSidebar(desktopOpen ?? true);
+        desktopOpen = null;
+      }
     };
     const onStorage = (event) => {
       if (

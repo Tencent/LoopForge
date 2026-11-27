@@ -138,7 +138,8 @@
   border-radius: 10px;
   background: color-mix(in srgb, var(--hui-accent, #7b61ff) 9%, var(--surface));
   box-shadow: none;
-  color: var(--hui-accent, #7b61ff);
+  /* Mixed toward the text colour so the label stays at or above 4.5:1 on the tint. */
+  color: color-mix(in srgb, var(--hui-accent, #7b61ff) 70%, var(--text));
   font-size: 13px;
   font-weight: 600;
   transition: background-color 150ms ease, border-color 150ms ease;

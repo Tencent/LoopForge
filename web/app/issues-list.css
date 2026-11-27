@@ -309,15 +309,16 @@ html[data-theme="dark"] #issuesView .issue-title-cell .issue-title-tag.tone-dang
   border-radius: 99px;
   background: var(--hui-soft);
   color: var(--hui-secondary);
-  font: 500 11.5px/1 var(--hui-sans);
+  font: 500 12px/1 var(--hui-sans);
   opacity: 1;
   white-space: nowrap;
 }
 #issuesView .issue-priority .harness-icon { width: 13px; height: 13px; }
-#issuesView .issue-priority.urgent { border-color: color-mix(in srgb, var(--hui-error) 28%, transparent); background: color-mix(in srgb, var(--hui-error) 10%, var(--hui-surface)); color: var(--hui-error); }
-#issuesView .issue-priority.high { border-color: color-mix(in srgb, var(--hui-warn) 28%, transparent); background: color-mix(in srgb, var(--hui-warn) 10%, var(--hui-surface)); color: var(--hui-warn); }
-#issuesView .issue-priority.medium { border-color: color-mix(in srgb, var(--hui-accent) 24%, transparent); background: color-mix(in srgb, var(--hui-accent) 8%, var(--hui-surface)); color: var(--hui-accent); }
-#issuesView .issue-priority.low { border-color: var(--hui-border); background: transparent; color: var(--hui-tertiary); }
+/* Tinted pills keep their hue, but the text is mixed toward --hui-text so it stays at or above 4.5:1 in both themes. */
+#issuesView .issue-priority.urgent { border-color: color-mix(in srgb, var(--hui-error) 28%, transparent); background: color-mix(in srgb, var(--hui-error) 10%, var(--hui-surface)); color: color-mix(in srgb, var(--hui-error) 70%, var(--hui-text)); }
+#issuesView .issue-priority.high { border-color: color-mix(in srgb, var(--hui-warn) 28%, transparent); background: color-mix(in srgb, var(--hui-warn) 10%, var(--hui-surface)); color: color-mix(in srgb, var(--hui-warn) 70%, var(--hui-text)); }
+#issuesView .issue-priority.medium { border-color: color-mix(in srgb, var(--hui-accent) 24%, transparent); background: color-mix(in srgb, var(--hui-accent) 8%, var(--hui-surface)); color: color-mix(in srgb, var(--hui-accent) 70%, var(--hui-text)); }
+#issuesView .issue-priority.low { border-color: var(--hui-border); background: transparent; color: var(--hui-secondary); }
 
 #issuesView .issue-stage-cell { overflow: hidden; }
 
