@@ -75,7 +75,7 @@ func PrepareMCPServers(assets domain.AgentAssetBundle, target MCPTarget) (domain
 // deployment itself rather than a third party. Its URL is only meaningful
 // relative to the address the execution side uses to reach the platform.
 func IsPlatformMCP(id string) bool {
-	return id == domain.PlatformMCPServerID || id == domain.KnowledgeMCPServerID
+	return id == domain.PlatformMCPServerID || id == domain.KnowledgeMCPServerID || strings.HasPrefix(id, domain.KnowledgeMCPServerID+"-")
 }
 
 func rebasePlatformMCP(servers []domain.MCPServerDefinition, base string) []domain.MCPServerDefinition {

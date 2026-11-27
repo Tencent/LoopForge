@@ -245,12 +245,27 @@ func TestResolveAssetsBindsKnowledgeMCP(t *testing.T) {
 	e := &Engine{repo: st}
 	e.ConfigurePlatformMCP("http://agentflow.local/", "")
 	agent := domain.AgentDefinition{ID: "dev", KnowledgeBase: true}
-	// 未接入知识库时开关退化为无操作，不影响运行。
+	// 未接入个人连接器时开关退化为无操作，不影响运行。
 	if assets := e.resolveAssets(agent, "p1", "", 3); len(assets.MCPServers) != 0 || len(assets.Rules) != 0 {
-		t.Fatalf("knowledge bound before the knowledge base is connected: %#v", assets)
+		t.Fatalf("knowledge bound before user has an enabled connector: %#v", assets)
 	}
-	settings := domain.KnowledgeSettings{Enabled: true, URL: "http://kb.local/mcp", Token: "upstream-secret"}
-	if err := st.PutKnowledgeSettings(settings); err != nil {
+	svc := knowledge.NewService(st, nil)
+	conn, err := svc.CreateConnector(context.Background(), 3, knowledge.ConnectorInput{
+		Name:     "我的知识库",
+		Type:     domain.ConnectorTypeMCP,
+		Endpoint: "http://kb.local/mcp",
+		Secret:   domain.KnowledgeConnectorSecret{Token: "upstream-secret"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Other user's connector must never bind for user 3.
+	if _, err := svc.CreateConnector(context.Background(), 99, knowledge.ConnectorInput{
+		Name:     "别人的知识库",
+		Type:     domain.ConnectorTypeMCP,
+		Endpoint: "http://other.local/mcp",
+		Secret:   domain.KnowledgeConnectorSecret{Token: "other-secret"},
+	}); err != nil {
 		t.Fatal(err)
 	}
 	assets := e.resolveAssets(agent, "p1", "", 3)
@@ -258,15 +273,15 @@ func TestResolveAssetsBindsKnowledgeMCP(t *testing.T) {
 		t.Fatalf("knowledge MCP/rule not bound: %#v", assets)
 	}
 	server := assets.MCPServers[0]
-	if server.ID != domain.KnowledgeMCPServerID || server.Transport != "http" || server.URL != "http://agentflow.local"+knowledge.ProxyPath {
+	if server.ID != domain.KnowledgeMCPServerID+"-"+conn.ID || server.Transport != "http" || server.URL != "http://agentflow.local"+knowledge.ProxyPath {
 		t.Fatalf("unexpected knowledge MCP definition: %#v", server)
 	}
 	auth := server.Headers["Authorization"]
 	if strings.Contains(auth, "upstream-secret") {
 		t.Fatal("upstream token leaked into the run asset bundle")
 	}
-	claims, err := knowledge.VerifyProxyToken(settings, strings.TrimPrefix(auth, "Bearer "), time.Now())
-	if err != nil || claims.ProjectID != "p1" || claims.UserID != 3 || claims.AgentID != "dev" {
+	claims, err := knowledge.VerifyProxyToken(strings.TrimPrefix(auth, "Bearer "), time.Now())
+	if err != nil || claims.ProjectID != "p1" || claims.UserID != 3 || claims.AgentID != "dev" || claims.Ref == nil || claims.Ref.ConnectorID != conn.ID {
 		t.Fatalf("proxy token claims = %#v, %v", claims, err)
 	}
 	if assets := e.resolveAssets(domain.AgentDefinition{ID: "other"}, "p1", "", 3); len(assets.MCPServers) != 0 {
@@ -289,10 +304,16 @@ func TestKnowledgeMCPWithoutPlatformBase(t *testing.T) {
 	t.Cleanup(func() { st.Close() })
 	e := &Engine{repo: st}
 	agent := domain.AgentDefinition{ID: "dev", KnowledgeBase: true}
-	if warning := knowledgeSkippedWarning(agent, e.resolveAssets(agent, "p1", "", 3)); !strings.Contains(warning, "知识中心未启用") {
+	if warning := knowledgeSkippedWarning(agent, e.resolveAssets(agent, "p1", "", 3)); !strings.Contains(warning, "未配置已启用的个人知识库连接器") {
 		t.Fatalf("knowledge not connected should explain itself, got %q", warning)
 	}
-	if err := st.PutKnowledgeSettings(domain.KnowledgeSettings{Enabled: true, URL: "http://kb.local/mcp", Token: "upstream-secret"}); err != nil {
+	svc := knowledge.NewService(st, nil)
+	if _, err := svc.CreateConnector(context.Background(), 3, knowledge.ConnectorInput{
+		Name:     "我的知识库",
+		Type:     domain.ConnectorTypeMCP,
+		Endpoint: "http://kb.local/mcp",
+		Secret:   domain.KnowledgeConnectorSecret{Token: "upstream-secret"},
+	}); err != nil {
 		t.Fatal(err)
 	}
 	// 独立 worker 未配置平台地址：执行机器仍能改写使用，云端执行丢弃并说明原因。

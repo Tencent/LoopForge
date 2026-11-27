@@ -82,6 +82,9 @@ func (r *CatalogRepo) UpdateGenericWorkflow(workflow domain.WorkflowDefinition) 
 	if err := domain.ValidateWorkflowPreparation(workflow); err != nil {
 		return domain.WorkflowDefinition{}, err
 	}
+	if err := domain.ValidateWorkflowKnowledge(workflow); err != nil {
+		return domain.WorkflowDefinition{}, err
+	}
 	if err := domain.ValidateWorkflowMetricStages(workflow); err != nil {
 		return domain.WorkflowDefinition{}, err
 	}
