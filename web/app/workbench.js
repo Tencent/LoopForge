@@ -2095,7 +2095,7 @@ async function loadPlatformSharedKey(host){
     envField.hidden=!codeBuddy;baseURLField.hidden=codeBuddy;probe.hidden=codeBuddy;link.hidden=!codeBuddy;
     if(codeBuddy){renderLink();env.value=status?.internetEnvironment||''}
     else{baseURL.value=status?.baseUrl||'';baseURL.placeholder=info.baseURLPlaceholder||'留空用官方地址'}
-    key.placeholder=on?lfT('已配置，留空保持不变','Configured; leave blank to keep'):info.keyPlaceholder;
+    key.placeholder=on?(codeBuddy?lfT('已配置，留空保持不变','Configured; leave blank to keep'):lfT('已配置，留空保持不变；改 Base URL 时需重新填写','Configured; leave blank to keep. Re-enter it when changing the Base URL')):info.keyPlaceholder;
     clear.hidden=!on;
   };
   const syncBootstrap=()=>{

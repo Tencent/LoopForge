@@ -120,3 +120,33 @@ func TestLegacyCodeBuddyKeyMovesToThePerCLITable(t *testing.T) {
 		t.Fatal("clearing must remove the legacy row too")
 	}
 }
+
+// A stored key only follows the gateway it was entered for: moving it to
+// another Base URL needs the key typed again.
+func TestSharedModelKeyBaseURLChangeNeedsTheKey(t *testing.T) {
+	s, err := OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	save := func(key, baseURL string) error {
+		return s.SetPlatformModelKey(PlatformModelKeyUpdate{Provider: domain.SharedModelProviderClaude, APIKey: key, BaseURL: baseURL, Models: []string{"m"}}, 0)
+	}
+	if err := save("sk_one", "https://gateway.example.com"); err != nil {
+		t.Fatal(err)
+	}
+	if err := save("", "https://gateway.example.com/"); err != nil {
+		t.Fatalf("same gateway, models only: %v", err)
+	}
+	for _, baseURL := range []string{"https://collector.example.net", ""} {
+		if err := save("", baseURL); !errors.Is(err, ErrSharedModelKeyBaseURLChanged) {
+			t.Fatalf("move to %q without key: %v", baseURL, err)
+		}
+	}
+	if key, _ := s.SharedModelKey(domain.SharedModelProviderClaude); key.APIKey != "sk_one" || key.BaseURL != "https://gateway.example.com/" {
+		t.Fatalf("stored key = %+v", key)
+	}
+	if err := save("sk_two", ""); err != nil {
+		t.Fatalf("move with key: %v", err)
+	}
+}

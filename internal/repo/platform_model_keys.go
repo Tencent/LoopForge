@@ -135,6 +135,10 @@ var (
 	ErrSharedModelKeyRequired = errors.New("shared model API Key is required")
 	ErrSharedModelsRequired   = errors.New("at least one shared model is required")
 	ErrSharedModelKeyProvider = errors.New("unsupported shared model provider")
+	// ErrSharedModelKeyBaseURLChanged rejects moving a stored key to another
+	// gateway without typing it again: the key is write-only, so whoever can
+	// edit the Base URL must not be able to redirect it somewhere they read.
+	ErrSharedModelKeyBaseURLChanged = errors.New("shared model API Key must be re-entered when the Base URL changes")
 	// ErrSharedCodeBuddyKeyRequired is the older name of
 	// ErrSharedModelKeyRequired.
 	ErrSharedCodeBuddyKeyRequired    = ErrSharedModelKeyRequired
@@ -308,6 +312,8 @@ func (r *UsersRepo) SetPlatformModelKey(update PlatformModelKeyUpdate, actorID i
 	row, _ := r.platformModelKey(provider)
 	if key := strings.TrimSpace(update.APIKey); key != "" {
 		row.APIKey = key
+	} else if strings.TrimSpace(row.APIKey) != "" && !SameSharedModelBaseURL(row.BaseURL, update.BaseURL) {
+		return ErrSharedModelKeyBaseURLChanged
 	}
 	if strings.TrimSpace(row.APIKey) == "" && provider == domain.SharedModelProviderCodeBuddy {
 		// Editing only the models of a key saved before the per-engine table
@@ -334,6 +340,12 @@ func (r *UsersRepo) SetPlatformModelKey(update PlatformModelKeyUpdate, actorID i
 		Columns:   []clause.Column{{Name: "provider"}},
 		DoUpdates: clause.AssignmentColumns([]string{"api_key", "base_url", "internet_environment", "models", "updated_by", "updated_at"}),
 	}).Create(&row).Error
+}
+
+// SameSharedModelBaseURL reports whether two Base URLs name the same gateway,
+// ignoring surrounding space and a trailing slash.
+func SameSharedModelBaseURL(a, b string) bool {
+	return strings.TrimRight(strings.TrimSpace(a), "/") == strings.TrimRight(strings.TrimSpace(b), "/")
 }
 
 // SetPlatformCodeBuddyKey saves the shared CodeBuddy key settings.

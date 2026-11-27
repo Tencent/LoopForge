@@ -174,7 +174,7 @@ func TestSharedCodexKeyServesChatWithoutPersonalKey(t *testing.T) {
 // The shared-key form can list the models a gateway publishes before saving,
 // using the typed key and Base URL without storing them.
 func TestPlatformSharedKeyProbeListsGatewayModels(t *testing.T) {
-	_, client, owner, _ := platformSettingsFixture(t)
+	st, client, owner, _ := platformSettingsFixture(t)
 	stubCLIModelDiscovery(t)
 	previous := assistantEngineDiscover
 	t.Cleanup(func() { assistantEngineDiscover = previous })
@@ -194,6 +194,47 @@ func TestPlatformSharedKeyProbeListsGatewayModels(t *testing.T) {
 	if len(asked) != 1 || asked[0] != "sk_probe@https://gateway.example.com/v1" {
 		t.Fatalf("probe used %v", asked)
 	}
+
+	// The stored key is write-only: probing or saving it against another
+	// Base URL needs it typed again, or the new URL's owner would receive it.
+	save := `{"apiKey":"sk_stored","baseUrl":"https://gateway.example.com/v1","models":["gpt-6.1-terra"]}`
+	if w := client.call(owner, "PUT", "/api/platform/model-keys/codex", origin, save); w.Code != 200 {
+		t.Fatalf("save: %d %s", w.Code, w.Body.String())
+	}
+	asked = nil
+	for _, body := range []string{`{"baseUrl":"https://gateway.example.com/v1"}`, `{"baseUrl":"https://gateway.example.com/v1/"}`, `{}`} {
+		if w := client.call(owner, "POST", "/api/platform/model-keys/codex/probe", origin, body); w.Code != 200 || !strings.Contains(w.Body.String(), "gpt-6.1-terra") {
+			t.Fatalf("probe stored key %s: %d %s", body, w.Code, w.Body.String())
+		}
+	}
+	if len(asked) != 3 || asked[0] != "sk_stored@https://gateway.example.com/v1" || asked[2] != "sk_stored@https://gateway.example.com/v1" {
+		t.Fatalf("stored-key probes used %v", asked)
+	}
+	asked = nil
+	if w := client.call(owner, "POST", "/api/platform/model-keys/codex/probe", origin, `{"baseUrl":"https://collector.example.net/v1"}`); w.Code != 200 || !strings.Contains(w.Body.String(), "重新填写") {
+		t.Fatalf("stored key to another Base URL: %d %s", w.Code, w.Body.String())
+	}
+	if len(asked) != 0 {
+		t.Fatalf("the stored key must not reach another Base URL: %v", asked)
+	}
+	if w := client.call(owner, "POST", "/api/platform/model-keys/codex/probe", origin, `{"apiKey":"sk_new","baseUrl":"https://collector.example.net/v1"}`); w.Code != 200 || len(asked) != 1 || asked[0] != "sk_new@https://collector.example.net/v1" {
+		t.Fatalf("a typed key may probe any Base URL: %d %s %v", w.Code, w.Body.String(), asked)
+	}
+	for _, body := range []string{
+		`{"baseUrl":"https://collector.example.net/v1","models":["gpt-6.1-terra"]}`,
+		`{"models":["gpt-6.1-terra"]}`,
+	} {
+		if w := client.call(owner, "PUT", "/api/platform/model-keys/codex", origin, body); w.Code != 400 || !strings.Contains(w.Body.String(), "重新填写") {
+			t.Fatalf("move stored key %s: %d %s", body, w.Code, w.Body.String())
+		}
+	}
+	if key, _ := st.SharedModelKey(domain.SharedModelProviderCodex); key.APIKey != "sk_stored" || key.BaseURL != "https://gateway.example.com/v1" {
+		t.Fatalf("rejected moves must keep the stored key: %+v", key)
+	}
+	if w := client.call(owner, "PUT", "/api/platform/model-keys/codex", origin, `{"apiKey":"sk_moved","baseUrl":"https://collector.example.net/v1","models":["gpt-6.1-terra"]}`); w.Code != 200 {
+		t.Fatalf("move with a typed key: %d %s", w.Code, w.Body.String())
+	}
+
 	if w := client.call(owner, "POST", "/api/platform/model-keys/codex/probe", origin, `{"baseUrl":"not-a-url"}`); w.Code != 200 || !strings.Contains(w.Body.String(), "Base URL") {
 		t.Fatalf("invalid base URL: %d %s", w.Code, w.Body.String())
 	}

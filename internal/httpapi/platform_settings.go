@@ -352,6 +352,10 @@ func (h *usersHandlers) savePlatformModelKey(c *gin.Context, provider string) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "请填写 " + sharedProviderLabel(provider) + " API Key"})
 		return
 	}
+	if errors.Is(err, repo.ErrSharedModelKeyBaseURLChanged) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "修改 Base URL 时请重新填写 " + sharedProviderLabel(provider) + " API Key"})
+		return
+	}
 	if errors.Is(err, repo.ErrSharedModelKeyProvider) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "共享 Key 只支持 CodeBuddy、Codex 和 Claude Code"})
 		return
@@ -394,10 +398,16 @@ func (h *usersHandlers) probePlatformModelKey(c *gin.Context) {
 	apiKey, baseURL := strings.TrimSpace(input.APIKey), strings.TrimSpace(input.BaseURL)
 	if apiKey == "" {
 		if stored, found := h.repo.SharedModelKey(provider); found && stored.SponsorID == 0 {
-			apiKey = stored.APIKey
 			if baseURL == "" {
 				baseURL = stored.BaseURL
 			}
+			// The stored key is write-only: probing it against a Base URL
+			// other than its own would hand it to whoever runs that URL.
+			if !repo.SameSharedModelBaseURL(baseURL, stored.BaseURL) {
+				c.JSON(http.StatusOK, cliModelProbeResult{Error: "修改了 Base URL，请重新填写 " + sharedProviderLabel(provider) + " API Key 再获取模型"})
+				return
+			}
+			apiKey = stored.APIKey
 		}
 	}
 	if !validCLIBaseURL(baseURL) {
