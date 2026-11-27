@@ -75,6 +75,8 @@ html[data-theme="dark"] #flowView{
 #flowView .fd-pill .dot{width:6px;height:6px;border-radius:50%;background:currentColor}
 #flowView .fd-pill.ok{background:rgb(var(--fd-ok) / .12);color:rgb(var(--fd-ok))}
 #flowView .fd-pill.draft{background:rgb(var(--fd-warn) / .12);color:rgb(var(--fd-warn))}
+#flowView .fd-pill.is-unsaved{background:rgb(var(--fd-warn) / .12);color:rgb(var(--fd-warn))}
+#flowView .fd-draft-flag{color:rgb(var(--fd-warn));font-weight:600}
 #flowView .fd-sbx{display:inline-flex;align-items:center;gap:4px;min-width:0;max-width:220px;height:20px;padding:0 6px;margin-left:-2px;border:0;border-radius:5px;background:none;color:var(--fd-ink-3);font:inherit;cursor:pointer}
 #flowView .fd-sbx:hover{background:var(--fd-hover);color:var(--fd-ink)}
 #flowView .fd-sbx .lbl{overflow:hidden;text-overflow:ellipsis}
