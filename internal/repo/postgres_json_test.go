@@ -137,9 +137,9 @@ func TestPostgresJSONStatements(t *testing.T) {
 	if objectNode == nil {
 		t.Fatalf("run view dropped the node with an object output: %+v", view.Nodes)
 	}
-	// jsonb orders the keys of an object by length and then bytewise, so the
-	// stored text reads {"a": 2, "b": 1} where MySQL keeps the insertion
-	// order {"b": 1, "a": 2}. Both are JSON strings, so the node survives.
+	// Both dialects order an object's keys by length and then bytewise, so
+	// the stringified text reads {"a": 2, "b": 1} on MySQL and on Postgres
+	// alike. It is a JSON string, so the node survives either way.
 	if objectNode.Output != `{"a": 2, "b": 1}` {
 		t.Fatalf("object output = %q, want the jsonb text", objectNode.Output)
 	}
