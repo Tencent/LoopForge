@@ -1333,6 +1333,8 @@ function bind(){
   $('#syncNowBtn').onclick=syncNow;
   $('#saveSyncConfig').onclick=saveSyncConfig;
   $('#scheduleJobForm').onsubmit=saveScheduleJob;
+  const scheduleSaveAndRun=$('#scheduleSaveAndRun');
+  if(scheduleSaveAndRun)scheduleSaveAndRun.onclick=()=>saveScheduleJob({preventDefault(){},currentTarget:$('#scheduleJobForm')},{runNow:true});
   $('#scheduleTimingTabs')?.addEventListener('click',e=>{
     const tab=e.target.closest('[data-schedule-tab]');
     if(!tab)return;
@@ -1580,6 +1582,28 @@ function postPendingChatIssueMention(frame){
   frame.contentWindow?.postMessage({type:'agentflow-chat-mention-issue',...pendingChatIssueMention},location.origin);
   pendingChatIssueMention=null;
 }
+function openChatSessionInWorkbench(sessionId,projectId){
+  if(!sessionId)return;
+  if(projectId){
+    state.projectFilter=projectId;
+    localStorage.setItem('agentflow.activeProject',projectId);
+    const select=$('#projectSwitcher');
+    if(select&&[...select.options].some(o=>o.value===projectId))select.value=projectId;
+  }
+  const url=new URL(location.href);
+  if(projectId)url.searchParams.set('projectId',projectId);
+  url.searchParams.set('chatSession',sessionId);
+  url.searchParams.delete('chatIssue');
+  history.replaceState({},'',url.pathname+url.search+'#/collaboration/'+encodeURIComponent(sessionId));
+  const frame=$('#chatNextFrame');
+  if(nativeChatReady&&frame?.dataset.src==='native'&&frame.contentWindow){
+    frame.contentWindow.postMessage({type:'agentflow-chat-open-session',sessionId,projectId:projectId||''},location.origin);
+    switchView('collaboration');
+    return;
+  }
+  if(frame)frame.dataset.src='';
+  switchView('collaboration');
+}
 function openIssueInChat(issue,opts){
   if(!issue?.id||!issue.projectId)return;
   const intent=String(opts?.intent||'').trim();
@@ -1658,7 +1682,7 @@ function mountNativeChat(){
           renderAll();
         }).catch(()=>{});
       }
-      if(message.type==='agentflow-chat-open-view'&&['settings','runners','sops','projects','runs','agents','sandboxes','flow','mcp','knowledge'].includes(message.view)){
+      if(message.type==='agentflow-chat-open-view'&&['settings','runners','sops','projects','runs','agents','sandboxes','flow','mcp','knowledge','aiSchedules'].includes(message.view)){
         if(message.view==='settings'&&message.credential){
           if(message.credential==='executors'&&message.returnToQuickAccess===true&&activeViewName()==='collaboration'&&location.hash!==QUICK_ACCESS_EXECUTOR_SETTINGS){
             history.pushState({quickAccessExecutorReturn:true},'',QUICK_ACCESS_EXECUTOR_SETTINGS);
@@ -1667,6 +1691,26 @@ function mountNativeChat(){
         }
         else if(message.view==='sandboxes'&&message.action==='create')createConversationSandbox(message.projectId).catch(error=>toast(error.message));
         else if(message.view==='runs'&&/^run-[\w-]+$/.test(message.runId||''))location.hash='#/runs/'+encodeURIComponent(message.runId);
+        else if(message.view==='aiSchedules'){
+          if(message.projectId&&state.projectFilter!==message.projectId&&(state.data.projects||[]).some(p=>p.id===message.projectId)){
+            state.projectFilter=message.projectId;
+            localStorage.setItem('agentflow.activeProject',message.projectId);
+            const select=$('#projectSwitcher');
+            if(select&&[...select.options].some(o=>o.value===message.projectId))select.value=message.projectId;
+          }
+          if(message.action==='executions'&&typeof openScheduleExecutions==='function'){
+            openScheduleExecutions(message.jobId||'');
+          }else{
+            switchView('aiSchedules');
+            if(message.action==='create'&&typeof openScheduleJobModal==='function'){
+              openScheduleJobModal('assistant');
+            }else if(message.action==='edit'&&message.jobId&&typeof openScheduleJobModal==='function'){
+              const job=(state.data.scheduleJobs||[]).find(j=>j.id===message.jobId);
+              if(job)openScheduleJobModal('assistant',job);
+              else refreshAISchedules().then(()=>{const found=(state.data.scheduleJobs||[]).find(j=>j.id===message.jobId);if(found)openScheduleJobModal('assistant',found)}).catch(()=>{});
+            }
+          }
+        }
         else switchView(message.view);
       }
     });

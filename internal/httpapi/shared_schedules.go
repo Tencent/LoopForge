@@ -65,6 +65,7 @@ func (h *scheduleHandlers) requireScheduleJob(c *gin.Context, job domain.Schedul
 }
 func (h *scheduleHandlers) visibleScheduleJobs(r *http.Request, jobs []domain.ScheduleJob) []domain.ScheduleJob {
 	out := make([]domain.ScheduleJob, 0, len(jobs))
+	var sessionIDs []string
 	for _, job := range jobs {
 		if h.scheduleJobAllowed(r, job, false) {
 			if job.SharedTaskID != "" {
@@ -76,7 +77,21 @@ func (h *scheduleHandlers) visibleScheduleJobs(r *http.Request, jobs []domain.Sc
 					job.References = refs
 				}
 			}
+			job.LastSessionGone = false
+			if job.LastSessionID != "" && job.LastStatus != "running" {
+				sessionIDs = append(sessionIDs, job.LastSessionID)
+			}
 			out = append(out, job)
+		}
+	}
+	if len(sessionIDs) > 0 {
+		exists := h.repo.ExistingAssistantSessionIDs(sessionIDs)
+		for i := range out {
+			if out[i].LastSessionID != "" && out[i].LastStatus != "running" {
+				if alive, checked := exists[out[i].LastSessionID]; checked && !alive {
+					out[i].LastSessionGone = true
+				}
+			}
 		}
 	}
 	return out
