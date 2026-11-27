@@ -75,6 +75,8 @@ import { EXECUTORS, conversationEngine, engineBrand } from "./engines.js";
 import { effortOptions } from "./effort.js";
 import QuickAccessWizard from "./QuickAccessWizard";
 import HarnessSelect from "./HarnessSelect";
+import "../../web/app/knowledge-refs.js";
+import "../../web/app/knowledge-refs.css";
 import SandboxPicker from "./SandboxPicker";
 import ExecutionMachinePicker from "./ExecutionMachinePicker";
 import { shouldRevealTitle, titleRevealTiming } from "./title-reveal.js";
@@ -1368,6 +1370,7 @@ export default function App() {
                   />
                 </div>
               ) : null}
+              {!chat.local && !chat.readOnly && chat.projectId && !chat.sandboxLocked ? <button className="context-pill knowledge-picker" type="button" title="关联我的知识库：会话回答时只读检索所选个人知识库连接器" aria-label="关联我的知识库" onClick={()=>window.editKnowledgeRefs(chat.projectId,chat.knowledgeRefs,chat.saveKnowledgeRefs)}><HarnessIcon name="layers" size={13} interactive={false} /><span>知识库{chat.knowledgeRefs?.length ? " · "+chat.knowledgeRefs.length : ""}</span><HarnessIcon name="chevron-down" size={12} interactive={false} /></button> : null}
               {showEnvironmentPicker ? <SandboxPicker chat={chat} onCreate={() => navigate("sandboxes", { action: "create", projectId: chat.projectId })} /> : null}
               <Participants session={chat.session} users={chat.users} />
             </>
@@ -1757,7 +1760,7 @@ export default function App() {
               {/* The live reply belongs right under its question. Alerts stay
                   last, so a finished reply does not jump above them. */}
               {chat.busy ? (
-                <LiveMessage live={chat.live} generation={chat.generation} local={chat.local} readOnly={chat.readOnly} approvals={approvals.items} />
+                <LiveMessage live={chat.live} generation={chat.generation} local={chat.local} readOnly={chat.readOnly} hasKnowledgeRefs={Boolean(chat.knowledgeRefs?.length || chat.session?.knowledgeRestricted)} approvals={approvals.items} />
               ) : chat.generation &&
                 !generationStored(messages, chat.generation) &&
                 !["completed", "running"].includes(chat.generation.status) &&
@@ -1769,6 +1772,7 @@ export default function App() {
                   finished
                   local={chat.local}
                   readOnly={chat.readOnly}
+                  hasKnowledgeRefs={Boolean(chat.knowledgeRefs?.length || chat.session?.knowledgeRestricted)}
                 />
               ) : null}
               <NativeApprovalPanel approvals={approvals} onChange={() => {
@@ -1893,7 +1897,8 @@ export default function App() {
                     />
                   </div>
                   {showEnvironmentPicker && chat.projectId ? <ChevronRightSmall /> : null}
-                  {showEnvironmentPicker ? <SandboxPicker chat={chat} onCreate={() => navigate("sandboxes", { action: "create", projectId: chat.projectId })} /> : null}
+                  {!chat.local && !chat.readOnly && chat.projectId && !chat.sandboxLocked ? <button className="context-pill knowledge-picker" type="button" title="关联我的知识库：会话回答时只读检索所选个人知识库连接器" aria-label="关联我的知识库" onClick={()=>window.editKnowledgeRefs(chat.projectId,chat.knowledgeRefs,chat.saveKnowledgeRefs)}><HarnessIcon name="layers" size={13} interactive={false} /><span>知识库{chat.knowledgeRefs?.length ? " · "+chat.knowledgeRefs.length : ""}</span><HarnessIcon name="chevron-down" size={12} interactive={false} /></button> : null}
+              {showEnvironmentPicker ? <SandboxPicker chat={chat} onCreate={() => navigate("sandboxes", { action: "create", projectId: chat.projectId })} /> : null}
                 </div>
                 ) : null}
                 <QueuedMessages

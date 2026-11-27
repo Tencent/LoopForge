@@ -26,21 +26,22 @@ const (
 )
 
 type protocolAdapter struct {
-	ex              domain.ExecutorDefinition
-	sink            EventSink
-	parser          protocolParser
-	adapterID       string
-	mu              sync.Mutex
-	result          string
-	lastOutput      string
-	failed          bool
-	reasoningBuf    strings.Builder
-	done            chan struct{}
-	once            sync.Once
-	tools           map[string]*toolUseBuf
-	currentToolID   string
-	translate       func(string) []string
-	codeBuddyStream *codeBuddyBackgroundStream
+	ex                 domain.ExecutorDefinition
+	sink               EventSink
+	parser             protocolParser
+	adapterID          string
+	mu                 sync.Mutex
+	result             string
+	lastOutput         string
+	preGateCitedOutput string
+	failed             bool
+	reasoningBuf       strings.Builder
+	done               chan struct{}
+	once               sync.Once
+	tools              map[string]*toolUseBuf
+	currentToolID      string
+	translate          func(string) []string
+	codeBuddyStream    *codeBuddyBackgroundStream
 }
 
 // ProtocolObserver normalizes process output from a remotely executed Agent
@@ -171,13 +172,28 @@ func (a *protocolAdapter) Result() string {
 // VisibleOutput is the text that belongs in a node inspector. A terminal
 // result frame wins. Otherwise the latest assistant message is used, so a
 // missing result frame does not surface the raw stream-json envelope.
+// When a succeeded node emitted a cited report right before submit_gate_result
+// and followed up with a brief uncited confirmation, keep the pre-gate report
+// so knowledge citations are not lost.
 func (a *protocolAdapter) VisibleOutput() string {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	out := a.lastOutput
 	if strings.TrimSpace(a.result) != "" {
-		return a.result
+		out = a.result
 	}
-	return a.lastOutput
+	if !a.failed && a.preGateCitedOutput != "" && !domain.HasKnowledgeCitationMarkers(out) && isBriefPostGateClosing(out, a.preGateCitedOutput) {
+		return a.preGateCitedOutput
+	}
+	return out
+}
+
+func isBriefPostGateClosing(out, preGate string) bool {
+	trimmed := strings.TrimSpace(out)
+	if trimmed == "" || trimmed == strings.TrimSpace(preGate) {
+		return true
+	}
+	return len([]rune(trimmed)) <= 120 && !strings.Contains(trimmed, "\n#")
 }
 
 func (a *protocolAdapter) noteOutput(text string) {
@@ -187,7 +203,25 @@ func (a *protocolAdapter) noteOutput(text string) {
 	}
 	a.mu.Lock()
 	a.lastOutput = text
+	if a.preGateCitedOutput != "" && text != a.preGateCitedOutput && !domain.HasKnowledgeCitationMarkers(text) && !isBriefPostGateClosing(text, a.preGateCitedOutput) {
+		a.preGateCitedOutput = ""
+	}
 	a.mu.Unlock()
+}
+
+func (a *protocolAdapter) snapshotPreGateCitedOutput() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if domain.HasKnowledgeCitationMarkers(a.lastOutput) {
+		a.preGateCitedOutput = a.lastOutput
+	} else {
+		a.preGateCitedOutput = ""
+	}
+}
+
+func isSubmitGateToolName(name string) bool {
+	name = strings.TrimSpace(name)
+	return name == "submit_gate_result" || strings.HasSuffix(name, "__submit_gate_result")
 }
 
 func (a *protocolAdapter) emit(event domain.TelemetryEvent) {
@@ -279,6 +313,7 @@ func (a *protocolAdapter) handleClaudeStream(raw map[string]any) {
 	case "assistant":
 		message, _ := raw["message"].(map[string]any)
 		var parts []string
+		calledSubmitGate := false
 		for _, block := range sliceValue(message["content"]) {
 			content, _ := block.(map[string]any)
 			switch stringValue(content["type"]) {
@@ -288,11 +323,18 @@ func (a *protocolAdapter) handleClaudeStream(raw map[string]any) {
 					a.emit(domain.TelemetryEvent{Category: "output", Name: "agent.output", Phase: "progress", Message: text, Model: stringValue(message["model"]), SessionID: sessionID})
 				}
 			case "tool_use":
-				a.emitToolStart(stringValue(content["id"]), stringValue(content["name"]), sessionID, "", content["input"])
+				name := stringValue(content["name"])
+				if isSubmitGateToolName(name) {
+					calledSubmitGate = true
+				}
+				a.emitToolStart(stringValue(content["id"]), name, sessionID, "", content["input"])
 			}
 		}
 		if len(parts) > 0 {
 			a.noteOutput(strings.Join(parts, "\n"))
+		}
+		if calledSubmitGate {
+			a.snapshotPreGateCitedOutput()
 		}
 	case "user":
 		message, _ := raw["message"].(map[string]any)
@@ -429,6 +471,9 @@ func (a *protocolAdapter) handleCodexJSON(raw map[string]any) {
 			name := stringValue(item["command"])
 			if name == "" {
 				name = stringValue(item["name"])
+			}
+			if isSubmitGateToolName(name) {
+				a.snapshotPreGateCitedOutput()
 			}
 			msg := summarizeToolCall(name, item)
 			success := int64Value(item["exit_code"]) == 0 && stringValue(item["status"]) != "failed"

@@ -1,13 +1,18 @@
-import React from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ActivityTrace, { ReplyTimeline } from "./ActivityTrace";
 import GenerationDiagnostics from "./GenerationDiagnostics";
 import HarnessIcon from "./HarnessIcon";
+import KnowledgeSources from "./KnowledgeSources";
 import { Avatar, authorFor } from "./Participants";
 import { RichContent } from "./RichContent";
 import { finalReply, hasTextSegments, streamingAnswerOpen } from "./activity";
-import { parseReply } from "./api";
+import { parseReply, visibleText } from "./api";
 import { elementTitle } from "./element-context.js";
 import { fullTime, messageSentAt, messageTimeLabel } from "./message-info.js";
+import {
+  buildKnowledgeSummary,
+  formatTextForCopy,
+} from "./knowledge-citations.js";
 
 export function MessageTime({ messages, index }) {
   const date = messageSentAt(messages, index);
@@ -62,9 +67,20 @@ export function UserTurn({
   );
 }
 
+function narrationTexts(steps) {
+  return steps.filter((s) => s.kind === "text" && s.text).map((s) => s.text);
+}
+
 export function replyText(message, steps) {
   const text = parseReply(message).message;
-  return hasTextSegments(steps) ? finalReply(text, steps) : text;
+  const reply = hasTextSegments(steps) ? finalReply(text, steps) : text;
+  if (message?.knowledgeReads?.length > 0) {
+    return formatTextForCopy(reply, message.knowledgeReads, [
+      ...narrationTexts(steps),
+      reply,
+    ]);
+  }
+  return reply;
 }
 
 function ReplyHeading({ message, steps }) {
@@ -93,6 +109,28 @@ export function AssistantTurn({
   const answer = hasTextSegments(steps)
     ? finalReply(reply.message, steps)
     : message;
+  const answerText = typeof answer === "string" ? answer : visibleText(answer);
+  const hasReads =
+    Array.isArray(message.knowledgeReads) && message.knowledgeReads.length > 0;
+  const knowledgeSummary = useMemo(() => {
+    if (!hasReads) return null;
+    return buildKnowledgeSummary(message.knowledgeReads, [
+      ...narrationTexts(steps),
+      answerText,
+    ]);
+  }, [hasReads, message.knowledgeReads, steps, answerText]);
+  const [highlightedCite, setHighlightedCite] = useState(null);
+  const sourcesRef = useRef(null);
+  const highlightTimer = useRef(null);
+  useEffect(() => () => window.clearTimeout(highlightTimer.current), []);
+  const handleCitationClick = useCallback((citeIndex) => {
+    setHighlightedCite(citeIndex);
+    window.clearTimeout(highlightTimer.current);
+    highlightTimer.current = window.setTimeout(
+      () => setHighlightedCite(null),
+      2000,
+    );
+  }, []);
   return (
     <>
       {hasTextSegments(steps) ? (
@@ -100,13 +138,30 @@ export function AssistantTurn({
           steps={steps}
           startedAt={message.startedAt}
           finishedAt={message.createdAt}
+          knowledgeReads={message.knowledgeReads}
+          knowledgeSummary={knowledgeSummary}
+          onCitationClick={handleCitationClick}
         />
       ) : (
         <ReplyHeading message={message} steps={steps} />
       )}
       <div className="message-body">
-        <RichContent message={answer} assets={assets} projectId={projectId} />
+        <RichContent
+          message={answer}
+          assets={assets}
+          projectId={projectId}
+          knowledgeReads={message.knowledgeReads}
+          knowledgeSummary={knowledgeSummary}
+          onCitationClick={handleCitationClick}
+        />
       </div>
+      <KnowledgeSources
+        knowledgeReads={message.knowledgeReads}
+        text={answerText}
+        summary={knowledgeSummary}
+        highlightedIndex={highlightedCite}
+        containerRef={sourcesRef}
+      />
       {message.failure && message.generationId && !local ? (
         <GenerationDiagnostics
           sessionId={sessionId}
@@ -129,6 +184,7 @@ export function LiveMessage({
   finished = false,
   local = false,
   readOnly = false,
+  hasKnowledgeRefs = false,
   approvals = [],
 }) {
   const steps = live.activity || [];
@@ -154,6 +210,8 @@ export function LiveMessage({
           finishedAt={generation?.updatedAt}
           live={!finished}
           interrupted={finished}
+          citationsEnabled={hasKnowledgeRefs}
+          streaming={!finished}
           approvals={approvals}
         />
       ) : (
@@ -164,11 +222,21 @@ export function LiveMessage({
             finishedAt={generation?.updatedAt}
             live={!finished}
             interrupted={finished}
+            citationProps={{
+              citationsEnabled: hasKnowledgeRefs,
+              streaming: !finished,
+            }}
             approvals={approvals}
           />
         </div>
       )}
-      {answer ? <RichContent message={answer} /> : null}
+      {answer ? (
+        <RichContent
+          message={answer}
+          citationsEnabled={hasKnowledgeRefs}
+          streaming={!finished}
+        />
+      ) : null}
       {!finished && !local && !readOnly && generation?.id ? (
         <GenerationDiagnostics
           sessionId={generation.sessionId}

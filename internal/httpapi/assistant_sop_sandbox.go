@@ -57,7 +57,7 @@ func (h *assistantHandlers) runSOPHelper(ctx context.Context, execution domain.T
 	if runnerID := execution.ExecutionRunnerID; runnerID != "" && h.runnerControls != nil {
 		runner, ok := h.repo.Runner(runnerID)
 		if ok && runner.Status == domain.RunnerStatusOnline && runner.SupportsConversationCLI() && runner.SupportsCLISettings() &&
-			runner.SupportsProvider(executor) && h.canUseBoundRunner(runner, execution.ProjectID, user.ID) {
+			runner.SupportsProvider(executor) && h.canUseBoundRunner(runner, execution.ProjectID, user.ID, true) {
 			login := runner.OwnerUserID == user.ID && runnerUsesLocalLogin(runner, executor)
 			if key != "" || login {
 				root, err := os.MkdirTemp("", "loopforge-sop-helper-")
@@ -68,7 +68,7 @@ func (h *assistantHandlers) runSOPHelper(ctx context.Context, execution domain.T
 				session := &AgentToolSession{
 					UserID: user.ID, ChatOwnerID: user.ID, ChatSessionID: newAssistantSessionID(),
 					ProjectID: execution.ProjectID, ExecutionRunnerID: runnerID,
-					RuntimeMode: domain.AssistantModePlatform, runnerLogin: login, transient: true,
+					RuntimeMode: domain.AssistantModePlatform, runnerLogin: login, transient: true, requireRunnerShare: true,
 				}
 				req.SessionRoot, req.RemoteBinary, req.RunnerLogin = root, true, login
 				req.Execute = h.conversationExecutor(session, root)

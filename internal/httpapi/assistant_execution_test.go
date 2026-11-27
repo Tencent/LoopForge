@@ -23,9 +23,6 @@ func TestConversationDraftMachineSelectionAndFirstTurnBinding(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := h.repo.SetRunnerSharedProjects("mine", user.ID, []string{"workbench"}); err != nil {
-		t.Fatal(err)
-	}
 	put := func(target *domain.AssistantExecutionTarget, want int) {
 		draft, ok := h.repo.AssistantSession(user.ID, "machine-draft")
 		if !ok {
@@ -95,7 +92,7 @@ func TestDraftCloudAllocationIsServerOwned(t *testing.T) {
 	}
 }
 
-func TestOwnerResumesLegacyProjectConversationAfterSharingRunner(t *testing.T) {
+func TestOwnerResumesLegacyProjectConversationWithUnsharedRunner(t *testing.T) {
 	h, owner := workbenchFixture(t)
 	h.generate = func(context.Context, string, domain.User) (string, error) {
 		return `{"message":"fixture reply","drafts":[]}`, nil
@@ -125,16 +122,8 @@ func TestOwnerResumesLegacyProjectConversationAfterSharingRunner(t *testing.T) {
 	const path = "/api/assistant/chat"
 	c, rec := workbenchContext(owner, http.MethodPost, path, bytes.NewBuffer(body))
 	h.chat(c)
-	if rec.Code != http.StatusForbidden {
-		t.Fatalf("unshared machine: %d %s", rec.Code, rec.Body)
-	}
-	if err := h.repo.SetRunnerSharedProjects(runner.ID, owner.ID, []string{saved.ProjectID}); err != nil {
-		t.Fatal(err)
-	}
-	c, rec = workbenchContext(owner, http.MethodPost, path, bytes.NewBuffer(body))
-	h.chat(c)
 	if rec.Code != http.StatusOK {
-		t.Fatalf("resume after sharing: %d %s", rec.Code, rec.Body)
+		t.Fatalf("resume on own unshared machine: %d %s", rec.Code, rec.Body)
 	}
 	resumed, ok := h.repo.AssistantSession(owner.ID, saved.ID)
 	if !ok || resumed.Execution() != target || len(resumed.Messages) != 4 {

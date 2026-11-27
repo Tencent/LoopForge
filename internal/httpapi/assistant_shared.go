@@ -59,7 +59,7 @@ func (h *assistantHandlers) conversationReadScope(c *gin.Context, id string, use
 	if err == nil {
 		return owner, shared, false, nil
 	}
-	if s, ok := h.repo.ProjectAssistantSession(id); ok {
+	if s, ok := h.repo.ProjectAssistantSession(id); ok && len(s.KnowledgeRefs) == 0 && !s.KnowledgeRestricted {
 		return s.UserID, true, true, nil
 	}
 	return 0, false, false, err
@@ -90,7 +90,7 @@ func (h *assistantHandlers) runConversation(c *gin.Context) {
 		return
 	}
 	c.Header("Cache-Control", "no-store")
-	c.JSON(200, session)
+	c.JSON(200, sanitizeAssistantSessionForViewer(session, user.ID))
 }
 
 func (h *assistantHandlers) ensureRunConversation(r domain.Run, userID int64) (domain.AssistantSession, error) {

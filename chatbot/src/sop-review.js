@@ -117,6 +117,8 @@ export function runArtifact(run, artifact) {
     url: `${runPath(run.id)}/artifacts/${encodeURIComponent(artifact.id)}`,
     mimeType: artifact.mediaType,
     source: `节点产物 · 第 ${artifact.attempt || 1} 次执行`,
+    // Markdown deliverables cite the knowledge the producing node read.
+    knowledgeReads: run.nodes?.[artifact.nodeId]?.knowledgeReads || [],
   };
 }
 

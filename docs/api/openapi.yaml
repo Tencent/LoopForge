@@ -2972,6 +2972,17 @@ paths:
           $ref: "#/components/responses/SkillhubUnavailable"
         "502":
           $ref: "#/components/responses/SkillhubUnavailable"
+  /api/knowledge/connectors:
+    get:
+      tags: [Assets]
+      operationId: listKnowledgeConnectors
+      summary: List the current user's personal knowledge connectors
+      description: Returns user-owned personal knowledge connectors (Obsidian, Notion, SiYuan, Feishu, WeKnora, MCP) with secrets redacted.
+      responses:
+        "200":
+          $ref: "#/components/responses/AssetList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
   /api/mcp-servers:
     get:
       tags: [Assets]

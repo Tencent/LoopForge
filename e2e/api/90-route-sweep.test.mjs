@@ -69,6 +69,22 @@ test('knowledge: check reports its state, search and document validate input, th
   await status('GET', '/runners/knowledge/mcp', undefined, [200, 400, 401, 405, 406, 503]);
 });
 
+test('knowledge connectors: check, reference check, oauth edges and session binding validate input', async () => {
+  const check = await post('/api/knowledge/connectors/check', {});
+  assert.equal(check.ok, false);
+  await status('GET', `/api/knowledge/connectors/${MISSING}/sources`, undefined, [404]);
+  await status('POST', '/api/knowledge/reference-check', { knowledgeRefs: [] }, [204]);
+  await status('POST', '/api/knowledge/reference-check', { knowledgeRefs: [{ connectorId: MISSING }] }, [400]);
+  await status('POST', '/api/knowledge/oauth/mcp/authorize', {}, [400]);
+  await status('POST', '/api/knowledge/oauth/mcp/authorize', { connectorId: MISSING }, [404]);
+  for (const path of ['/api/knowledge/oauth/callback', '/api/knowledge/oauth/mcp/callback']) {
+    const res = await fetch(cfg.base + path, { redirect: 'manual' });
+    await res.body?.cancel();
+    assert.equal(res.status, 303, `${path} -> ${res.status}`);
+  }
+  await status('PUT', `/api/assistant/sessions/${MISSING}/knowledge`, { knowledgeRefs: [] }, [400, 403, 404]);
+});
+
 test('MCP market install and import validate their payloads', async () => {
   await status('POST', '/api/mcp-market/install', {}, [400]);
   await status('POST', '/api/mcp-servers/import', {}, [400]);

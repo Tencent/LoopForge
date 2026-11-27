@@ -1,9 +1,20 @@
-import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
+import React, {
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import HarnessIcon from "./HarnessIcon";
 import SlidingTabs from "./SlidingTabs";
 import HarnessSelect from "./HarnessSelect";
 import { api } from "./api";
 import { RichContent, ArtifactPreview } from "./RichContent";
+import KnowledgeSources from "./KnowledgeSources";
+import {
+  buildKnowledgeSummary,
+  filterKnowledgeReadsForAttempt,
+} from "./knowledge-citations.js";
 import { IconButton, CredentialAction } from "./ui";
 import ActivityTrace from "./ActivityTrace";
 import ArtifactFileRow from "./ArtifactFileRow";
@@ -313,7 +324,11 @@ export function SopNodeDetail({ run, nodeId, renderArtifacts, onChanged }) {
           </button>
         </div>
         <div className="artifact-panel-preview">
-          <ArtifactPreview artifact={preview} />
+          <ArtifactPreview
+            artifact={preview}
+            attempt={preview.attempt}
+            knowledgeReads={preview.knowledgeReads}
+          />
         </div>
       </>
     );
@@ -588,7 +603,53 @@ function NodeConversation({ run, node, definition, attempt, historical }) {
     .filter(
       (source) => sourceIDs.has(source.id) && run.nodes?.[source.id]?.output,
     )
-    .map((source) => ({ ...source, output: run.nodes[source.id].output }));
+    .map((source) => ({
+      ...source,
+      output: run.nodes[source.id].output,
+      knowledgeReads: filterKnowledgeReadsForAttempt(
+        run.nodes?.[source.id]?.knowledgeReads,
+        run.nodes?.[source.id]?.attempt,
+      ),
+    }));
+  const [highlightedCite, setHighlightedCite] = useState(null);
+  const sourcesRef = useRef(null);
+  const highlightTimer = useRef(null);
+  useEffect(() => () => window.clearTimeout(highlightTimer.current), []);
+  const handleCitationClick = (citeIndex) => {
+    setHighlightedCite(citeIndex);
+    window.clearTimeout(highlightTimer.current);
+    highlightTimer.current = window.setTimeout(() => setHighlightedCite(null), 2000);
+    const row = sourcesRef.current?.querySelector?.(`[data-cite-index="${citeIndex}"]`);
+    row?.scrollIntoView?.({ behavior: "smooth", block: "nearest" });
+  };
+  // A historical attempt only cites the reads recorded for that attempt.
+  const readsAttempt = historical ? attempt : node.attempt;
+  const nodeReads = useMemo(
+    () => filterKnowledgeReadsForAttempt(node.knowledgeReads, readsAttempt),
+    [node.knowledgeReads, readsAttempt],
+  );
+  const nodeLive = !historical && ["running", "queued"].includes(node.status);
+  const nodeOutput = historical ? "" : node.output || "";
+  const nodeTexts = useMemo(() => {
+    const narrationTexts = items.flatMap((item) =>
+      Array.isArray(item.steps)
+        ? item.steps.filter((s) => s.kind === "text" && s.text).map((s) => s.text)
+        : [],
+    );
+    return [
+      nodeOutput,
+      ...narrationTexts,
+      ...items.filter((i) => i.type === "reply").map((i) => i.message || ""),
+    ];
+  }, [nodeOutput, items]);
+  const nodeSummary = useMemo(
+    () =>
+      nodeReads.length
+        ? buildKnowledgeSummary(nodeReads, nodeTexts, { live: nodeLive })
+        : null,
+    [nodeReads, nodeTexts, nodeLive],
+  );
+  const nodeKnowledgeText = nodeTexts.join("\n");
   const opening = { content: run.input, createdAt: run.createdAt };
   const findings = historical ? [] : node.gateResult?.findings || [];
   return (
@@ -614,7 +675,10 @@ function NodeConversation({ run, node, definition, attempt, historical }) {
                     <span className="node-message-sender">
                       {source.name || source.id}
                     </span>
-                    <RichContent message={source.output} />
+                    <RichContent
+                      message={source.output}
+                      knowledgeReads={source.knowledgeReads}
+                    />
                   </div>
                 ))}
               </>
@@ -642,7 +706,13 @@ function NodeConversation({ run, node, definition, attempt, historical }) {
             key={item.key}
           >
             <div className="message-body">
-              <RichContent message={item.message} />
+              <RichContent
+                message={item.message}
+                knowledgeReads={nodeReads}
+                knowledgeSummary={nodeSummary}
+                streaming={nodeLive}
+                onCitationClick={handleCitationClick}
+              />
             </div>
           </article>
         ) : (
@@ -652,6 +722,16 @@ function NodeConversation({ run, node, definition, attempt, historical }) {
             startedAt={item.startedAt}
             finishedAt={item.finishedAt}
             live={item.live}
+            citationProps={
+              nodeReads.length
+                ? {
+                    knowledgeReads: nodeReads,
+                    knowledgeSummary: nodeSummary,
+                    streaming: nodeLive,
+                    onCitationClick: handleCitationClick,
+                  }
+                : null
+            }
           />
         ),
       )}
@@ -698,6 +778,15 @@ function NodeConversation({ run, node, definition, attempt, historical }) {
             ))}
           </ul>
         </details>
+      ) : null}
+      {nodeReads.length > 0 ? (
+        <KnowledgeSources
+          knowledgeReads={nodeReads}
+          text={nodeKnowledgeText}
+          summary={nodeSummary}
+          highlightedIndex={highlightedCite}
+          containerRef={sourcesRef}
+        />
       ) : null}
       {!historical && node.error ? (
         <p className="error">
