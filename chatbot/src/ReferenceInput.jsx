@@ -30,6 +30,9 @@ export default forwardRef(function ReferenceInput(
   },
   ref,
 ) {
+  const referenceChips = showReferenceChips
+    ? references
+    : references.filter((asset) => asset.unavailable);
   const picker = useRef(null);
   const returnFocus = useRef(null),
     selection = useRef(null),
@@ -112,9 +115,9 @@ export default forwardRef(function ReferenceInput(
         canManageIssue={canManageIssue}
         onManageIssue={onManageIssue}
       />
-      {showReferenceChips && references.length ? (
+      {referenceChips.length ? (
         <div className="composer-attachments">
-          {references.map((asset) => (
+          {referenceChips.map((asset) => (
             <span
               key={asset.type + asset.id}
               className={`composer-attachment-file${asset.type === "element" ? " is-element" : ""}`}
@@ -125,14 +128,15 @@ export default forwardRef(function ReferenceInput(
               ) : (
                 "@"
               )}
+              {asset.unavailable ? "已失效 · " : ""}
               {asset.name || asset.id}
               {!referencesReadOnly ? (
                 <button
                   type="button"
-                  aria-label={`移除引用 ${asset.name || asset.id}`}
+                  aria-label={`移除${asset.unavailable ? "失效" : ""}引用 ${asset.name || asset.id}`}
                   onClick={() => {
                     onChange({
-                      text: textareaProps.readOnly
+                      text: textareaProps.readOnly || asset.unavailable
                         ? text
                         : text.replace(`@${asset.name || asset.id} `, ""),
                       references: references.filter(

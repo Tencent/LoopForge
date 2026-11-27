@@ -682,3 +682,44 @@ func TestScheduleUIDemoServer(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestAIScheduleListKeepsValidReferencesWhenOneIsDeleted(t *testing.T) {
+	st, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(st.Close)
+	removed := domain.Issue{ID: "scheduled-removed-ref", ProjectID: "platform", Title: "Removed issue"}
+	remaining := domain.Issue{ID: "scheduled-current-ref", ProjectID: "platform", Title: "Current issue"}
+	for _, issue := range []domain.Issue{removed, remaining} {
+		if err := st.PutIssue(issue); err != nil {
+			t.Fatal(err)
+		}
+	}
+	h := New(st, engine.New(st, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
+	saved := requestJSON[domain.ScheduleJob](t, h, http.MethodPost, "/api/schedule-jobs", map[string]any{
+		"name": "Inspect issues", "projectId": "platform", "skipDispatch": true,
+		"intervalSec": 3600, "assistantPrompt": "Review both issues",
+		"references": []map[string]any{{"type": "issue", "id": removed.ID}, {"type": "issue", "id": remaining.ID}},
+	}, http.StatusOK)
+	if err := st.DeleteIssue(removed.ID); err != nil {
+		t.Fatal(err)
+	}
+	remaining.Title = "Renamed issue"
+	if err := st.PutIssue(remaining); err != nil {
+		t.Fatal(err)
+	}
+	jobs := requestJSON[[]domain.ScheduleJob](t, h, http.MethodGet, "/api/schedule-jobs", nil, http.StatusOK)
+	for _, job := range jobs {
+		if job.ID != saved.ID {
+			continue
+		}
+		if len(job.References) != 2 || job.References[0].ID != removed.ID ||
+			!job.References[0].Unavailable || job.References[0].Name != "" ||
+			job.References[1].ID != remaining.ID || job.References[1].Unavailable || job.References[1].Name != remaining.Title {
+			t.Fatalf("schedule list lost current reference information: %+v", job.References)
+		}
+		return
+	}
+	t.Fatalf("scheduled job %s missing from list", saved.ID)
+}

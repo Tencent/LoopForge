@@ -6521,6 +6521,18 @@ components:
         assistantPrompt:
           type: string
           description: User-written prompt executed at schedule time. Required for independent AI jobs. Subscriptions resolve their pinned shared version. Cleared on trigger jobs.
+        references:
+          type: array
+          items:
+            type: object
+            required: [type, id]
+            properties:
+              type: {type: string}
+              id: {type: string}
+              name: {type: string, readOnly: true}
+              projectId: {type: string, readOnly: true}
+              projectName: {type: string, readOnly: true}
+              unavailable: {type: boolean, readOnly: true, description: The reference could not be resolved when listing an independent AI schedule.}
         assistantModel:
           type: string
           description: Model id from GET /api/assistant/models?schedule=1.

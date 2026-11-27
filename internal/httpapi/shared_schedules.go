@@ -72,9 +72,15 @@ func (h *scheduleHandlers) visibleScheduleJobs(r *http.Request, jobs []domain.Sc
 					job.References = domain.CloneAssistantReferences(version.References)
 				}
 			} else if h.assistant != nil && len(job.References) > 0 {
-				if refs, err := h.assistant.scheduledMessageReferences(job.ProjectID, job.References); err == nil {
-					job.References = refs
+				refs := make([]domain.AssistantReference, 0, len(job.References))
+				for _, ref := range job.References {
+					resolved, err := h.assistant.scheduledMessageReference(job.ProjectID, ref)
+					if err != nil {
+						resolved = domain.AssistantReference{Type: ref.Type, ID: ref.ID, Unavailable: true}
+					}
+					refs = append(refs, resolved)
 				}
+				job.References = refs
 			}
 			out = append(out, job)
 		}
