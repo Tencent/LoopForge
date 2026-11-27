@@ -106,8 +106,14 @@ func TestToastStackStaysOffPageHeaderActions(t *testing.T) {
 	if strings.Contains(read("preferences.css"), ".toast-container") {
 		t.Error("preferences.css must not move .toast-container back over the page header")
 	}
-	lift := "body:has(#settingsView.active, #kbConnDrawer.open, #kbDrawer.open, #repoDrawer.open, #skillhubDrawer.open) #toastContainer{bottom:84px}"
+	lift := "body:has(#settingsView.active, #kbConnDrawer.open, #kbDrawer.open, #repoDrawer.open) #toastContainer{bottom:84px}"
 	if !strings.Contains(platform, lift) {
 		t.Errorf("platform.css must lift the toast stack above sticky footers: %s", lift)
+	}
+	// Each drawer in the lift must be opened with the class the selector names.
+	for drawer, script := range map[string]string{"kbDrawer": "knowledge.js", "kbConnDrawer": "app/knowledge.js", "repoDrawer": "app/repo_drawer.js"} {
+		if src := read(script); !strings.Contains(src, "classList.add('open')") && !strings.Contains(src, "classList.contains('open')") {
+			t.Errorf("%s no longer opens %s with the .open class the toast lift matches", script, drawer)
+		}
 	}
 }

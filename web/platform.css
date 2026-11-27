@@ -2315,8 +2315,9 @@ html[data-theme="light"] body{color-scheme:light}html[data-theme="light"] .platf
 #settingsView .personal-settings-return[hidden]{display:none}
 #settingsView .personal-settings-heading{align-items:center;gap:12px 20px;margin-bottom:28px}
 /* Lift the toast stack above sticky footers that sit in the bottom-right corner:
-   the settings save bar and the Save/Cancel row of the right-hand drawers. */
-body:has(#settingsView.active, #kbConnDrawer.open, #kbDrawer.open, #repoDrawer.open, #skillhubDrawer.open) #toastContainer{bottom:84px}
+   the settings save bar and the Save/Cancel row of the right-hand drawers. The
+   SkillHub drawer keeps its actions in the header, so it has nothing to lift over. */
+body:has(#settingsView.active, #kbConnDrawer.open, #kbDrawer.open, #repoDrawer.open) #toastContainer{bottom:84px}
 .credential-account{display:flex;align-items:center;gap:8px;min-width:0;max-width:45%;color:var(--hui-secondary)}
 .credential-account[hidden]{display:none}
 .credential-account>div{min-width:0}
