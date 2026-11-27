@@ -354,6 +354,11 @@ func TestAssistantProgressOnlyRequiresPlanLines(t *testing.T) {
 		{"我先看一下仓库。\n重点关注 store.py 和 handler 的调用关系。", true},
 		{"我先跑测试。\n测试都通过，可以合并。", false},
 		{"我先跑测试。\n单测都通过。", false},
+		// The verdict's subject is not a check intent of its own.
+		{"我先看一下仓库。\n检查通过，工作区干净。", false},
+		{"我先看一下仓库。\n校验通过。", false},
+		{"我先看一下仓库。\n确认检查通过。", true},
+		{"我先看一下仓库。\n检查测试是否通过。", true},
 		{"Let me first look around.\nCheck the config, then run the tests.", true},
 		{"", false},
 		{"   \n\n  ", false},

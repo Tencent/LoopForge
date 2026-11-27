@@ -1260,7 +1260,10 @@ var assistantPlanCleanupVerb = []string{"清理", "清空", "清除", "删除", 
 
 func assistantPlanStatesVerdict(line string) bool {
 	if strings.Contains(line, "通过") {
-		return assistantPlanPassVerdict(line) && !assistantPlanCheckIntentIn(line)
+		// The verdict's own subject is not a check intent: "检查通过" states
+		// the result, "确认检查通过" still plans to verify it.
+		rest, ok := assistantPlanPassVerdict(line)
+		return ok && !assistantPlanCheckIntentIn(rest)
 	}
 	if i := strings.Index(line, "干净"); i >= 0 && !assistantPlanCheckIntentIn(line) {
 		for _, verb := range assistantPlanCleanupVerb {
@@ -1295,12 +1298,13 @@ func assistantPlanCheckIntentIn(line string) bool {
 
 // assistantPlanPassVerdict reports whether 通过 is a verdict: it follows a
 // subject it passes ("测试通过", "单测都通过") or closes a clause
-// ("测试都通过，可以合并。").
-func assistantPlanPassVerdict(line string) bool {
+// ("测试都通过，可以合并。"). It also returns the line without that verdict
+// so the caller can look for a check intent around it.
+func assistantPlanPassVerdict(line string) (string, bool) {
 	for i := 0; ; {
 		j := strings.Index(line[i:], "通过")
 		if j < 0 {
-			return false
+			return line, false
 		}
 		j += i
 		before := line[:j]
@@ -1309,14 +1313,15 @@ func assistantPlanPassVerdict(line string) bool {
 				before = strings.TrimSuffix(before, skip)
 			}
 		}
+		after := line[j+len("通过"):]
 		for _, subject := range assistantPlanPassSubject {
 			if strings.HasSuffix(before, subject) {
-				return true
+				return strings.TrimSuffix(before, subject) + after, true
 			}
 		}
-		rest := strings.TrimSpace(line[j+len("通过"):])
+		rest := strings.TrimSpace(after)
 		if rest == "" || strings.ContainsAny(rest[:1], "，,。.；;！!、") {
-			return true
+			return line[:j] + after, true
 		}
 		i = j + len("通过")
 	}
