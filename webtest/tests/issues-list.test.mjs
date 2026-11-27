@@ -123,6 +123,51 @@ test('issue list helpers filter, format, parse repositories, and persist edits',
   await settle(1);
 });
 
+test('issue list empty states distinguish search, filters, loading, and truly empty projects', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  const issue = { id: 'empty-1', projectId: 'project-1', number: 1, title: 'Searchable title',
+    status: 'todo', priority: 'medium', source: 'local' };
+  const emptyText = () => app.document.querySelector('#issueBoard .issue-table-empty')?.textContent || '';
+
+  // 1. Search with no match must not suggest syncing or creating requirements.
+  app.evaluate(`state.data.issues=[${JSON.stringify(issue)}];state.projectFilter='project-1';
+    state.sourceFilter='';state.issueStatusFilter='';state.issueAssigneeFilter='';
+    state.issueRunFilter='';state.issueQuery='nomatch';
+    state.issueView='table';renderIssues()`);
+  assert.match(emptyText(), /未找到与当前关键词匹配的需求/);
+  assert.match(emptyText(), /清除搜索/);
+  assert.doesNotMatch(emptyText(), /从 GitHub 同步/);
+  assert.doesNotMatch(emptyText(), /新建需求/);
+
+  // 2. Clearing the search restores the rows.
+  app.evaluate(`state.issueQuery='';renderIssues()`);
+  assert.ok(app.document.querySelector('#issueBoard .issue-table-row[data-id]'));
+  assert.equal(emptyText(), '');
+
+  // 3. Search no match plus a filter mentions both search and filter adjustments.
+  app.evaluate(`state.issueQuery='nomatch';state.sourceFilter='tapd';renderIssues()`);
+  assert.match(emptyText(), /未找到与当前关键词匹配的需求/);
+  assert.match(emptyText(), /调整筛选条件/);
+
+  // 4. Filter-only no match asks to adjust filters, not to sync or create.
+  app.evaluate(`state.issueQuery='';state.sourceFilter='tapd';renderIssues()`);
+  assert.match(emptyText(), /当前筛选下没有匹配的需求/);
+  assert.doesNotMatch(emptyText(), /从 GitHub 同步/);
+
+  // 5. Before data is loaded the empty state is a waiting hint, not sync guidance.
+  app.evaluate(`state.sourceFilter='';const issues=state.data.issues;
+    state.data.issues=undefined;renderIssues()`);
+  assert.match(emptyText(), /正在加载需求/);
+  assert.doesNotMatch(emptyText(), /从 GitHub 同步/);
+  app.evaluate(`state.data.issues=issues;renderIssues()`);
+
+  // 6. A successfully loaded project with zero requirements keeps the sync/create guidance.
+  app.evaluate(`state.data.issues=[];renderIssues()`);
+  assert.match(emptyText(), /当前项目还没有需求/);
+  assert.match(emptyText(), /从 GitHub 同步，或在本平台新建需求/);
+});
+
 test('issue row actions close and delete eligible issues through named controls', async (t) => {
   const app = await loadApp();
   t.after(app.close);

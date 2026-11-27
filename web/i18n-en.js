@@ -1095,3 +1095,22 @@ Object.assign(window.LF_I18N_EN, {
   "在对话里澄清和改代码": "Clarify and change code in chat",
   "这条需求不使用 LOOP，在对话里澄清需求、直接改代码；定时任务不会自动认领它。": "This requirement uses no LOOP: clarify and change code in chat; scheduled jobs won't pick it up.",
 });
+Object.assign(window.LF_I18N_EN, {
+  "这里记录需求内的成员与 Agent 评论；会话里的讨论在「会话」标签，聊天群发起的操作见「操作日志」。": "Member and agent comments on this requirement are recorded here; conversation discussions live in the Conversations tab and chat-triggered operations in Operations.",
+  "登录成员可在这里发表评论。": "Sign in as a project member to comment here.",
+  "发表第一条评论，参与这条需求的讨论": "Write the first comment to join this requirement's discussion",
+  "发表评论": "Comment",
+  "评论内容不能为空": "Comment cannot be empty",
+  "评论已发表": "Comment posted",
+  "未找到与当前关键词匹配的需求": "No requirements match the current keyword",
+  "可修改关键词，或点击搜索框右侧 × 清除搜索。": "Try another keyword, or click the × on the right of the search box to clear it.",
+  "可修改关键词、点击搜索框右侧 × 清除搜索，或调整筛选条件。": "Try another keyword, click the × on the right of the search box to clear the search, or adjust the filters.",
+  "当前筛选下没有匹配的需求": "No requirements match the current filters",
+  "可调整或清除筛选条件后重试。": "Adjust or clear the filters and try again.",
+  "正在加载需求": "Loading requirements",
+  "读取完成后会显示当前项目的需求。": "Requirements for this project will appear once loading finishes.",
+  "当前项目还没有需求": "This project has no requirements yet",
+  "调整筛选条件，或清除搜索后查看全部需求。": "Adjust the filters, or clear the search to see all requirements.",
+  "没有待处理 MR 的需求": "No requirements with pending MRs",
+  "已提 MR 但还没合入的需求会显示在这里。": "Requirements with open MRs that have not been merged yet will appear here.",
+});
