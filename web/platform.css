@@ -2325,8 +2325,12 @@ body:has(#settingsView.active, #kbConnDrawer.open, #kbDrawer.open, #repoDrawer.o
    Its top-right corner holds the artifact panel's tabs and close button, so the
    stack stays at the bottom and clears the composer instead. Declared after the
    footer lift so a drawer left open over the workbench keeps the higher offset,
-   which clears the drawer footer too. */
-body:has(#collaborationView.active) #toastContainer{bottom:136px}
+   which clears the drawer footer too. Only while a conversation is open: on the
+   home page the composer is centred and grows downward into that band on short
+   viewports, so the chat frame reports its layout and the stack stays at 24px
+   (84px under a drawer) there. :where() keeps the specificity equal to the
+   footer lift's so the order above still decides. */
+body:has(#collaborationView.active:not(:where([data-chat-layout="home"]))) #toastContainer{bottom:136px}
 .credential-account{display:flex;align-items:center;gap:8px;min-width:0;max-width:45%;color:var(--hui-secondary)}
 .credential-account[hidden]{display:none}
 .credential-account>div{min-width:0}

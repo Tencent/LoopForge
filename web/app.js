@@ -1638,6 +1638,10 @@ function mountNativeChat(){
         postQuickAccessReturn(frame);
         finishBootLoader();
       }
+      if(message.type==='agentflow-chat-layout'){
+        const view=$('#collaborationView');
+        if(view)view.dataset.chatLayout=message.layout==='home'?'home':'conversation';
+      }
       if(message.type==='agentflow-chat-session'){
         const id=message.sessionId||'';
         if(id&&!/^[a-zA-Z0-9_-]{1,64}$/.test(id))return;

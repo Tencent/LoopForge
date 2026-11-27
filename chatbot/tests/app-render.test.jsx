@@ -71,6 +71,33 @@ vi.mock("mermaid", () => ({
 import App from "../src/App.jsx";
 
 describe("App", () => {
+  test("tells the workbench whether the composer is centred (home) or at the bottom (conversation)", () => {
+    const parent = { postMessage: vi.fn() };
+    const descriptor = Object.getOwnPropertyDescriptor(window, "parent");
+    const original = { activeId: chat.activeId, session: chat.session };
+    Object.defineProperty(window, "parent", { configurable: true, get: () => parent });
+    const layouts = () => parent.postMessage.mock.calls.filter(([m]) => m?.type === "agentflow-chat-layout").map(([m, origin]) => [m.layout, origin]);
+    try {
+      Object.assign(chat, { activeId: null, session: null });
+      const view = render(<App />);
+      expect(layouts()).toEqual([["home", location.origin]]);
+      Object.assign(chat, { activeId: "s1", session: { id: "s1", messages: [{ role: "user", content: "hi" }] } });
+      view.rerender(<App />);
+      expect(layouts()).toEqual([["home", location.origin], ["conversation", location.origin]]);
+      Object.assign(chat, { activeId: "s2", session: { id: "s2", messages: [{ role: "user", content: "hi" }] } });
+      view.rerender(<App />);
+      expect(layouts()).toHaveLength(2);
+      Object.assign(chat, { activeId: null, session: null });
+      view.rerender(<App />);
+      expect(layouts().at(-1)).toEqual(["home", location.origin]);
+      view.unmount();
+    } finally {
+      Object.assign(chat, original);
+      if (descriptor) Object.defineProperty(window, "parent", descriptor);
+      else delete window.parent;
+    }
+  });
+
   test("pages the transcript without losing the reading position or original message indexes", () => {
     const original = { activeId: chat.activeId, session: chat.session };
     const messages = Array.from({ length: 85 }, (_, index) => ({

@@ -113,7 +113,10 @@ func TestToastStackStaysOffPageHeaderActions(t *testing.T) {
 	}
 	// The workbench composer (with its 发送 button) is about 125px tall at the
 	// bottom of the chat iframe; a toast at bottom:24px sat on the send button.
-	chat := "body:has(#collaborationView.active) #toastContainer{bottom:"
+	// Only an open conversation keeps the composer at the bottom; the home
+	// page centres it, and a lifted toast landed on 发送 there on short
+	// viewports. :where() keeps the specificity equal, so order still decides.
+	chat := `body:has(#collaborationView.active:not(:where([data-chat-layout="home"]))) #toastContainer{bottom:`
 	i := strings.Index(platform, chat)
 	if i < 0 {
 		t.Fatalf("platform.css must lift the toast stack above the workbench composer: %s…", chat)
@@ -127,6 +130,11 @@ func TestToastStackStaysOffPageHeaderActions(t *testing.T) {
 	// 84px footer lift and clears the drawer footer too, so it must come last.
 	if j := strings.Index(platform, lift); j >= 0 && j > i {
 		t.Error("the workbench composer lift must come after the footer lift so a drawer open over the workbench does not drop the toast back to 84px")
+	}
+	// The chat frame reports its layout and the shell records it where the
+	// lift's selector reads it.
+	if src := read("app.js"); !strings.Contains(src, "message.type==='agentflow-chat-layout'") || !strings.Contains(src, "dataset.chatLayout=message.layout==='home'?'home':'conversation'") {
+		t.Error("app.js must record the chat frame's layout on #collaborationView for the toast lift")
 	}
 	// Each drawer in the lift must be opened with the class the selector names.
 	for drawer, script := range map[string]string{"kbDrawer": "knowledge.js", "kbConnDrawer": "app/knowledge.js", "repoDrawer": "app/repo_drawer.js"} {
