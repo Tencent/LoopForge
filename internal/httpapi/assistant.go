@@ -1269,7 +1269,42 @@ var assistantPlanPassActSubject = []string{"检查", "审核", "校验"}
 // rather than describing a state ("lint 也干净").
 var assistantPlanCleanupVerb = []string{"清理", "清空", "清除", "删除", "删掉", "擦", "洗", "扫", "收拾"}
 
+// assistantPlanCleanComplement is a verb that takes 干净 as its result
+// complement right after it ("清干净", "整理干净", "改干净"): the step makes
+// something clean. A state is stated with an adverb or a subject instead
+// ("工作区已经干净", "lint 也干净").
+var assistantPlanCleanComplement = []string{"清", "理", "扫", "弄", "搞", "洗", "擦", "删", "改", "收拾", "打扫"}
+
+// assistantPlanCleanGoal reports whether the 干净 at i is the result a step
+// is to reach: a complement right after its verb, or the end of a 把
+// construction ("把分支整理干净", "把环境弄得干净").
+func assistantPlanCleanGoal(line string, i int) bool {
+	before := strings.TrimSuffix(line[:i], "得")
+	for _, verb := range assistantPlanCleanComplement {
+		if strings.HasSuffix(before, verb) {
+			return true
+		}
+	}
+	clause := before
+	if loc := assistantPlanClause.FindAllStringIndex(clause, -1); len(loc) > 0 {
+		clause = clause[loc[len(loc)-1][1]:]
+	}
+	return strings.Contains(clause, "把")
+}
+
+// assistantPlanTargetIn reports whether line names the state a step runs
+// until, as in "修到测试全部通过为止". "到目前为止" dates a report instead.
+func assistantPlanTargetIn(line string) bool {
+	for _, since := range []string{"目前为止", "现在为止", "今为止", "此为止"} {
+		line = strings.ReplaceAll(line, since, "")
+	}
+	return strings.Contains(line, "为止")
+}
+
 func assistantPlanStatesVerdict(line string) bool {
+	if assistantPlanTargetIn(line) {
+		return false
+	}
 	if strings.Contains(line, "通过") {
 		// The verdict's own subject is not a check intent: "检查通过" states
 		// the result, "确认检查通过" still plans to verify it.
@@ -1282,7 +1317,7 @@ func assistantPlanStatesVerdict(line string) bool {
 				return false
 			}
 		}
-		return true
+		return !assistantPlanCleanGoal(line, i)
 	}
 	if strings.Contains(line, "干净") {
 		return false
@@ -1420,6 +1455,9 @@ func assistantPlanProse(line string) bool {
 			return true
 		}
 	}
+	if assistantPlanTargetIn(line) {
+		return true
+	}
 	// A plan lead-in ("先…", "最后…", "第一步：…", "Step 1: …") opens a step
 	// unless the line is one of the forms that report what was found: a
 	// report header, a stated total, a status that closes a clause, a
@@ -1429,6 +1467,11 @@ func assistantPlanProse(line string) bool {
 		if strings.HasPrefix(line, lead) {
 			return !assistantPlanStatesTotal(line) && !assistantPlanStatesStatus(line)
 		}
+	}
+	// "拿到 token 后调用接口" or "等拿到权限再部署" names what a step waits
+	// for: the 到 is a precondition, not something found.
+	if assistantPlanStatesPrecondition(line) {
+		return !assistantPlanStatesTotal(line) && !assistantPlanStatesStatus(line)
 	}
 	// An action word names a step only before any result it might be
 	// reporting ("接口看着正常" reports the state 正常). A line with a count
@@ -1459,9 +1502,89 @@ func assistantPlanStatesTotal(line string) bool {
 }
 
 // assistantPlanStatesStatus reports whether line states a status rather than
-// one still to be checked ("先确认服务是否正常").
+// one still to be checked ("先确认服务是否正常") or the object of a step
+// ("先修复报错", "最后排查异常").
 func assistantPlanStatesStatus(line string) bool {
-	return assistantPlanStatus.MatchString(line) && !assistantPlanCheckIntentIn(line)
+	if assistantPlanCheckIntentIn(line) {
+		return false
+	}
+	for _, loc := range assistantPlanStatus.FindAllStringIndex(line, -1) {
+		if !assistantPlanStatusIsObject(line[:loc[0]], line[loc[0]:loc[1]]) {
+			return true
+		}
+	}
+	return false
+}
+
+// assistantPlanStatusNoun is a status that is also a noun a step can act on
+// ("修复报错", "处理超时"). 成功/失败/正常 after a verb state its outcome
+// ("部署失败", "运行成功"), so they are left out.
+var assistantPlanStatusNoun = []string{"报错", "异常", "超时"}
+
+// assistantPlanStatusVerb is an action that takes such a noun as its object.
+var assistantPlanStatusVerb = []string{"修复", "修", "排查", "定位", "复现", "分析", "处理", "解决", "查看", "检查", "调查", "跟进", "诊断", "避免", "规避", "消除", "捕获", "查", "看", "找"}
+
+// assistantPlanStatusModifier may stand between the verb and its object, as
+// in "定位这个报错" or "处理相关的超时".
+var assistantPlanStatusModifier = []string{"的", "这个", "这些", "那个", "那些", "该", "此", "相关", "所有", "全部"}
+
+func assistantPlanStatusIsObject(before, status string) bool {
+	noun := false
+	for _, word := range assistantPlanStatusNoun {
+		if strings.HasPrefix(status, word) {
+			noun = true
+			break
+		}
+	}
+	if !noun {
+		return false
+	}
+	before = strings.TrimSpace(before)
+	for trimmed := true; trimmed; {
+		trimmed = false
+		for _, modifier := range assistantPlanStatusModifier {
+			if rest, ok := strings.CutSuffix(before, modifier); ok {
+				before, trimmed = strings.TrimSpace(rest), true
+			}
+		}
+	}
+	for _, verb := range assistantPlanStatusVerb {
+		if strings.HasSuffix(before, verb) {
+			return true
+		}
+	}
+	return false
+}
+
+// assistantPlanPrecondition matches a 到 the next step waits for, as in "拿到
+// token 后调用接口", "读到文件末尾后统计行数", "收到回调之后更新状态" or "等
+// 拿到权限再部署".
+var assistantPlanPrecondition = regexp.MustCompile(`(?:查|找|看|搜|拿|读|取|收|得)到[^，,。；;！!：:]*?(?:之后|以后|后|再|才)`)
+
+// assistantPlanFinding follows a precondition in a report of what it turned
+// up: "查到原因后发现是配置错误".
+var assistantPlanFinding = []string{"发现", "显示", "表明", "原因是", "结论", "确认是", "原来"}
+
+// assistantPlanStatesPrecondition reports whether line plans a step after a
+// precondition it waits for. Words that start with 后 (后端, 后续…) do not
+// close one.
+func assistantPlanStatesPrecondition(line string) bool {
+	masked := line
+	for _, word := range []string{"后端", "后台", "后续", "后面", "后者", "后缀", "后果", "后门", "后来", "再次"} {
+		masked = strings.ReplaceAll(masked, word, strings.Repeat("·", utf8.RuneCountInString(word)))
+	}
+	loc := assistantPlanPrecondition.FindStringIndex(masked)
+	if loc == nil {
+		return false
+	}
+	rest := masked[loc[1]:]
+	for _, finding := range assistantPlanFinding {
+		if strings.Contains(rest, finding) {
+			return false
+		}
+	}
+	// "拿到 token 后接口返回 200" reports what followed.
+	return assistantPlanResultStart(rest, true) == len(rest)
 }
 
 // assistantPlanResultStart returns where the first result word of line

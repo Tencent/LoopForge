@@ -203,6 +203,10 @@ func TestAssistantMultiLinePlanBeforeToolsStillContinues(t *testing.T) {
 		{"goal clause", "goal-step", `我先看一下报错的用例。\n然后修改代码，让测试通过。`},
 		{"check via", "check-via", `我先看一下数据。\n先检查通过 API 拿到的数据，再对比数据库。`},
 		{"embedded question", "question-step", `我先看一下测试。\n先看看为什么测试挂了，再修复。`},
+		{"precondition", "precondition-step", `我先看一下。\n拿到 token 后调用接口。`},
+		{"status as object", "status-object-step", `我先看一下。\n先看日志，再定位报错。`},
+		{"clean complement", "clean-complement-step", `我先看一下。\n先把环境清干净，再跑测试。`},
+		{"run until", "run-until-step", `我先看一下。\n修到测试全部通过为止。`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			runMultiLinePlanCase(t, tc.session, tc.plan, "2", "均在正常运行")
@@ -216,6 +220,9 @@ func TestAssistantPlanOpeningWithVerdictIsTheAnswer(t *testing.T) {
 	runMultiLinePlanCase(t, "verdict-answer", `我先跑测试。\n测试全过。`, "1", "测试全过")
 	runMultiLinePlanCase(t, "check-verdict-answer", `我先跑一下检查。\n检查通过，工作区干净。`, "1", "工作区干净")
 	runMultiLinePlanCase(t, "report-header-answer", `我先跑一下检查。\n检查结果：共 3 处告警，都在 store 包。`, "1", "都在 store 包")
+	runMultiLinePlanCase(t, "found-answer", `我先查一下。\n查到 3 个失败用例。`, "1", "查到 3 个失败用例")
+	runMultiLinePlanCase(t, "status-answer", `我先看一下。\n接口超时。`, "1", "接口超时")
+	runMultiLinePlanCase(t, "clean-state-answer", `我先看一下。\n工作区已经干净。`, "1", "工作区已经干净")
 }
 
 func runMultiLinePlanCase(t *testing.T, session, plan, wantCalls, wantBody string) {
@@ -442,6 +449,46 @@ func TestAssistantProgressOnlyRequiresPlanLines(t *testing.T) {
 		{"我先看一下。\n先看看有没有 3 个以上的报错。", true},
 		{"我先看一下。\n最后，测试全部成功。", false},
 		{"我先看一下。\n首先，接口返回正常。", false},
+		// A 到 the next step waits for is a precondition, not something
+		// found; 报错/异常/超时 right after an action are its object; 干净
+		// right after its verb or closing a 把 clause, and 通过 before 为止,
+		// are the state a step is to reach.
+		{"我先看一下。\n读到文件末尾后统计行数。", true},
+		{"我先看一下。\n查到对应提交后回滚。", true},
+		{"我先看一下。\n拿到 token 后调用接口。", true},
+		{"我先看一下。\n等拿到权限再部署。", true},
+		{"我先看一下。\n拿到结果后整理成表格。", true},
+		{"我先看一下。\n找到入口函数后再加日志。", true},
+		{"我先看一下。\n收到回调之后更新状态。", true},
+		{"我先看一下。\n先修复报错。", true},
+		{"我先看一下。\n最后排查异常。", true},
+		{"我先看一下。\n先看日志，再定位报错。", true},
+		{"我先看一下。\n首先复现超时，然后修复。", true},
+		{"我先看一下。\n先下载日志，再分析报错。", true},
+		{"我先看一下。\n先处理超时。", true},
+		{"我先看一下。\n先定位这个报错。", true},
+		{"我先看一下。\n先把环境清干净，再跑测试。", true},
+		{"我先看一下。\n然后把分支整理干净。", true},
+		{"我先看一下。\n先把工作区改干净再提交。", true},
+		{"我先看一下。\n修到测试全部通过为止。", true},
+		{"我先看一下。\n- 把临时文件删干净", true},
+		// The same words still report what was found.
+		{"我先看一下。\n查到 3 个失败用例。", false},
+		{"我先看一下。\n找到两个仓库：api 和 web。", false},
+		{"我先看一下。\n读取到的配置是 v2。", false},
+		{"我先看一下。\n拿到了 token，接口返回 200。", false},
+		{"我先看一下。\n查到原因后发现是配置错误。", false},
+		{"我先看一下。\n查到后端日志里有 3 处报错。", false},
+		{"我先看一下。\n最近一次成功。", false},
+		{"我先看一下。\n接口超时。", false},
+		{"我先看一下。\n测试全部通过。", false},
+		{"我先看一下。\n构建报错。", false},
+		{"我先看一下。\n日志里有 2 处报错。", false},
+		{"我先看一下。\n工作区已经干净。", false},
+		{"我先看一下。\n改动干净。", false},
+		{"我先看一下。\n首先，部署报错。", false},
+		{"我先看一下。\n最后，修复失败。", false},
+		{"我先看一下。\n到目前为止测试全部通过。", false},
 		{"", false},
 		{"   \n\n  ", false},
 	}
