@@ -145,7 +145,7 @@ func bindCommand(ctx context.Context, sandbox Sandbox, workspace string, command
 			if bound.environment["CODEX_API_KEY"] == "" {
 				return CommandSpec{}, fmt.Errorf("需求责任人未配置 Codex API Key，请在个人配置中配置")
 			}
-			argv, err := CodexUserProviderArgv(bound.Argv, credentials.Codex.BaseURL)
+			argv, err := CodexUserProviderArgvWithCatalog(bound.Argv, credentials.Codex.BaseURL, codexCatalogArg(bound, credentials.CodexModels))
 			if err != nil {
 				return CommandSpec{}, err
 			}
@@ -225,6 +225,17 @@ func bindTelemetryEnvironment(env map[string]string, telemetry *InvocationOption
 // only its variable name is written to argv, and the dedicated provider
 // prevents a fallback to the host login. The input slice is not modified.
 func CodexUserProviderArgv(argv []string, baseURL string) ([]string, error) {
+	return CodexUserProviderArgvWithCatalog(argv, baseURL, "")
+}
+
+// CodexUserProviderArgvWithCatalog is CodexUserProviderArgv with an optional
+// model catalog. The catalog path is passed to the CLI as
+// model_catalog_json, so a model outside OpenAI's own catalog keeps the real
+// context window instead of the CLI's fallback.
+//
+// An empty catalog path leaves the CLI with its own catalog, which is right
+// for OpenAI's own endpoint.
+func CodexUserProviderArgvWithCatalog(argv []string, baseURL, catalogPath string) ([]string, error) {
 	if len(argv) < 2 {
 		return nil, fmt.Errorf("invalid Codex invocation")
 	}
@@ -239,6 +250,9 @@ func CodexUserProviderArgv(argv []string, baseURL string) ([]string, error) {
 		"-c", `model_providers.agentflow_user.env_key="CODEX_API_KEY"`,
 		"-c", `model_providers.agentflow_user.wire_api="responses"`,
 		"-c", "model_providers.agentflow_user.requires_openai_auth=false",
+	}
+	if catalogPath = strings.TrimSpace(catalogPath); catalogPath != "" {
+		config = append(config, "-c", "model_catalog_json="+strconv.Quote(catalogPath))
 	}
 	out := make([]string, 0, len(argv)+len(config))
 	out = append(out, argv[:len(argv)-1]...)

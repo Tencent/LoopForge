@@ -59,11 +59,17 @@ func CodeBuddyUserCredential(user domain.User) CodeBuddyCredential {
 // RunCredentials lives only on the in-memory run sandbox handle. It is never
 // serialized into domain objects, run-context.json, or workspace files.
 type RunCredentials struct {
-	CodeBuddy  CodeBuddyCredential
-	Codex      ProviderCredential
-	ClaudeCode ProviderCredential
-	AgentCLI   map[string]ProviderCredential
-	GitSSHKeys map[string]string `json:"-"`
+	CodeBuddy CodeBuddyCredential
+	Codex     ProviderCredential
+	// CodexModels is the model catalog written for the Codex CLI. Codex falls
+	// back to its own metadata for a model it does not know, which understates
+	// the context window of a model served by another gateway. The catalog
+	// travels beside the credential rather than inside it, because a
+	// credential is compared for equality in several places.
+	CodexModels []CodexModel
+	ClaudeCode  ProviderCredential
+	AgentCLI    map[string]ProviderCredential
+	GitSSHKeys  map[string]string `json:"-"`
 	// GitSSHHostKeys maps "host:port" to the requester's private key for a
 	// conversation workspace. It travels to the execution machine on the
 	// authenticated control connection only, in the start request of the CLI.

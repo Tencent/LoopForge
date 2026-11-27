@@ -54,7 +54,7 @@ func prepareAssistantCodexInvocation(o assistantEngineInvocationOpts) (assistant
 	server.request("initialize", map[string]any{"clientInfo": map[string]string{"name": "agentflow", "title": "AgentFlow", "version": "1"}})
 	return assistantCLIInvocation{
 		command:     runtime.CommandSpec{Argv: argv, Provider: "codex", CredentialBindings: []runtime.CredentialBinding{runtime.BindCodex}, Stdin: stdin},
-		credentials: runtime.RunCredentials{Codex: o.User},
+		credentials: runtime.RunCredentials{Codex: o.User, CodexModels: o.Models},
 		sessionRef:  thread,
 		translate:   server.translate,
 		finish: func(ok bool) {

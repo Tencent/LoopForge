@@ -219,6 +219,7 @@ func (e *Engine) resolveRunCredentials(run domain.Run) runtime.RunCredentials {
 	}
 	if user, ok := e.repo.User(userID); ok {
 		credentials.Codex = runtime.ProviderCredential{APIKey: user.CodexAPIKey, BaseURL: user.CodexBaseURL}
+		credentials.CodexModels = e.codexCatalogModels(user)
 		credentials.ClaudeCode = runtime.ProviderCredential{APIKey: user.ClaudeCodeAPIKey, BaseURL: user.ClaudeCodeBaseURL}
 		credentials.AgentCLI = runtime.AgentCLIUserCredentials(user)
 	}
