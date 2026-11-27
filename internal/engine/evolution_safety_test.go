@@ -80,7 +80,8 @@ func TestEvolutionReplayRejectsExternalWorkflows(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Command verification gates are ONLY allowed in replay when the workflow runs
-	// in a non-privileged, network-isolated Docker sandbox (networkDisabled or AGENTFLOW_DOCKER_NETWORK=none).
+	// in a cloud non-privileged Docker sandbox (where gate commands execute inside
+	// an ephemeral `--network none` container while Agent keeps model API access).
 	cmdAgent := agent
 	cmdAgent.ID = "replay-safe-cmd"
 	cmdAgent.Verification = []domain.VerificationGate{{ID: "command", Mode: "command", Commands: []string{"exit 0"}, ExecutionScope: "run"}}
@@ -94,25 +95,11 @@ func TestEvolutionReplayRejectsExternalWorkflows(t *testing.T) {
 	if err := st.PutWorkflow(cmdNativeWF); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.ValidateEvolutionReplay(domain.Run{WorkflowID: cmdNativeWF.ID}); err == nil || !strings.Contains(err.Error(), "网络隔离") {
+	if err := e.ValidateEvolutionReplay(domain.Run{WorkflowID: cmdNativeWF.ID}); err == nil || !strings.Contains(err.Error(), "非特权 Docker") {
 		t.Fatalf("expected command gate on native sandbox to be rejected, got: %v", err)
 	}
-	// 2. Ordinary Docker sandbox (network enabled) must reject command gate in replay.
+	// 2. Privileged Docker sandbox must reject command gate in replay.
 	dockerFile := &domain.SandboxDockerfile{Content: "FROM alpine:3.20\n"}
-	openDocker := domain.SandboxProfile{ID: "docker-open", Name: "Open Docker", Driver: domain.SandboxDriverDocker, Dockerfile: dockerFile}
-	if err := st.PutSandbox(openDocker); err != nil {
-		t.Fatal(err)
-	}
-	cmdOpenDockerWF := cmdNativeWF
-	cmdOpenDockerWF.ID = "replay-cmd-docker-open"
-	cmdOpenDockerWF.SandboxProfileID = openDocker.ID
-	if err := st.PutWorkflow(cmdOpenDockerWF); err != nil {
-		t.Fatal(err)
-	}
-	if err := e.ValidateEvolutionReplay(domain.Run{WorkflowID: cmdOpenDockerWF.ID}); err == nil || !strings.Contains(err.Error(), "网络隔离") {
-		t.Fatalf("expected command gate on non-isolated docker sandbox to be rejected, got: %v", err)
-	}
-	// 3. Privileged Docker sandbox must reject even with NetworkDisabled=true.
 	privDocker := domain.SandboxProfile{ID: "docker-priv", Name: "Priv Docker", Driver: domain.SandboxDriverDocker, Privileged: true, NetworkDisabled: true, Dockerfile: dockerFile}
 	if err := st.PutSandbox(privDocker); err != nil {
 		t.Fatal(err)
@@ -123,27 +110,30 @@ func TestEvolutionReplayRejectsExternalWorkflows(t *testing.T) {
 	if err := st.PutWorkflow(cmdPrivWF); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.ValidateEvolutionReplay(domain.Run{WorkflowID: cmdPrivWF.ID}); err == nil || !strings.Contains(err.Error(), "网络隔离") {
+	if err := e.ValidateEvolutionReplay(domain.Run{WorkflowID: cmdPrivWF.ID}); err == nil || !strings.Contains(err.Error(), "非特权 Docker") {
 		t.Fatalf("expected command gate on privileged docker sandbox to be rejected, got: %v", err)
 	}
-	// 4. Non-privileged Docker sandbox with NetworkDisabled=true allows command gate in replay.
-	isolatedDocker := domain.SandboxProfile{ID: "docker-isolated", Name: "Isolated Docker", Driver: domain.SandboxDriverDocker, NetworkDisabled: true, Dockerfile: dockerFile}
-	if err := st.PutSandbox(isolatedDocker); err != nil {
+	// 3. Non-privileged Docker sandbox (e.g. generic-docker) allows command gate in cloud replay
+	// because gateExec runs the gate command in an ephemeral `--network none` container.
+	stdDocker := domain.SandboxProfile{ID: "docker-std", Name: "Std Docker", Driver: domain.SandboxDriverDocker, Dockerfile: dockerFile}
+	if err := st.PutSandbox(stdDocker); err != nil {
 		t.Fatal(err)
 	}
-	cmdIsolatedWF := cmdNativeWF
-	cmdIsolatedWF.ID = "replay-cmd-docker-isolated"
-	cmdIsolatedWF.SandboxProfileID = isolatedDocker.ID
-	if err := st.PutWorkflow(cmdIsolatedWF); err != nil {
+	cmdStdDockerWF := cmdNativeWF
+	cmdStdDockerWF.ID = "replay-cmd-docker-std"
+	cmdStdDockerWF.SandboxProfileID = stdDocker.ID
+	if err := st.PutWorkflow(cmdStdDockerWF); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.ValidateEvolutionReplay(domain.Run{WorkflowID: cmdIsolatedWF.ID}); err != nil {
-		t.Fatalf("expected command gate on network-isolated docker sandbox to be allowed, got: %v", err)
+	if err := e.ValidateEvolutionReplay(domain.Run{WorkflowID: cmdStdDockerWF.ID}); err != nil {
+		t.Fatalf("expected command gate on non-privileged docker sandbox to be allowed, got: %v", err)
 	}
-	// 5. Deployment-level AGENTFLOW_DOCKER_NETWORK=none also qualifies non-privileged Docker sandboxes.
-	t.Setenv("AGENTFLOW_DOCKER_NETWORK", "none")
-	if err := e.ValidateEvolutionReplay(domain.Run{WorkflowID: cmdOpenDockerWF.ID}); err != nil {
-		t.Fatalf("expected AGENTFLOW_DOCKER_NETWORK=none to allow command gate in docker replay, got: %v", err)
+	// 4. Remote runner execution mode must reject command gate in replay even with a Docker profile.
+	if err := e.ValidateEvolutionReplay(domain.Run{
+		WorkflowID:       cmdStdDockerWF.ID,
+		ExecutionContext: domain.TelemetryContext{ExecutionMode: domain.ExecutionModeRunner},
+	}); err == nil || !strings.Contains(err.Error(), "非特权 Docker") {
+		t.Fatalf("expected remote runner command gate in replay to be rejected, got: %v", err)
 	}
 }
 

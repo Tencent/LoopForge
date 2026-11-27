@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"os"
 	"sort"
 	"strings"
 	"time"
@@ -24,13 +23,14 @@ func (e *Engine) ValidateEvolutionReplay(source domain.Run) error {
 	if !ok {
 		return fmt.Errorf("workflow not found")
 	}
-	return e.validateEvolutionReplayDefinition(wf, nil)
+	return e.validateEvolutionReplayDefinition(wf, nil, source.ExecutionContext)
 }
 
-func (e *Engine) validateEvolutionReplayDefinition(wf domain.WorkflowDefinition, repositories []domain.RepositoryContext) error {
+func (e *Engine) validateEvolutionReplayDefinition(wf domain.WorkflowDefinition, repositories []domain.RepositoryContext, execCtx ...domain.TelemetryContext) error {
 	if len(normalizeRepositories(repositories)) > 0 {
 		return fmt.Errorf("当前仅支持未绑定代码仓库的历史回放，Git / MR 流程暂不支持")
 	}
+	isRemoteRunner := len(execCtx) > 0 && strings.EqualFold(strings.TrimSpace(execCtx[0].ExecutionMode), domain.ExecutionModeRunner)
 	for _, node := range wf.Nodes {
 		if len(node.CredentialEnv) > 0 {
 			return fmt.Errorf("进化回放不允许节点「%s」使用外部凭据", node.ID)
@@ -52,8 +52,10 @@ func (e *Engine) validateEvolutionReplayDefinition(wf domain.WorkflowDefinition,
 			if strings.EqualFold(gate.Mode, domain.VerificationModeMR) {
 				return fmt.Errorf("进化回放暂不支持角色「%s」的 MR 验证", agent.ID)
 			}
-			if isCommandVerificationGate(gate) && !e.workflowSandboxNetworkIsolated(wf) {
-				return fmt.Errorf("进化回放仅允许在网络隔离的 Docker 沙箱（networkDisabled 或 AGENTFLOW_DOCKER_NETWORK=none）中执行角色「%s」的命令验收门禁", agent.ID)
+			if isCommandVerificationGate(gate) {
+				if isRemoteRunner || !e.workflowSupportsIsolatedCommandGate(wf) {
+					return fmt.Errorf("进化回放仅允许在云端非特权 Docker 沙箱中执行角色「%s」的命令验收门禁（回放时门禁命令会在 --network none 断网容器内隔离执行）", agent.ID)
+				}
 			}
 		}
 	}
@@ -75,10 +77,9 @@ func isCommandVerificationGate(gate domain.VerificationGate) bool {
 	return false
 }
 
-func (e *Engine) workflowSandboxNetworkIsolated(wf domain.WorkflowDefinition) bool {
-	defaultNet := os.Getenv("AGENTFLOW_DOCKER_NETWORK")
+func (e *Engine) workflowSupportsIsolatedCommandGate(wf domain.WorkflowDefinition) bool {
 	if wf.SandboxSnapshot != nil {
-		return wf.SandboxSnapshot.Profile.IsNetworkIsolated(defaultNet)
+		return wf.SandboxSnapshot.Profile.SupportsIsolatedCommandGate()
 	}
 	id := strings.TrimSpace(wf.SandboxProfileID)
 	if id == "" {
@@ -91,7 +92,7 @@ func (e *Engine) workflowSandboxNetworkIsolated(wf domain.WorkflowDefinition) bo
 	if !ok {
 		return false
 	}
-	return profile.IsNetworkIsolated(defaultNet)
+	return profile.SupportsIsolatedCommandGate()
 }
 
 // Evolution replay runs execute a historical input with candidate asset

@@ -189,6 +189,9 @@ func processSandboxBinary(driver, requiredOS, osName, binaryName string) (string
 }
 
 func (s *processSandbox) Exec(ctx context.Context, command CommandSpec, sink EventSink) (string, error) {
+	if command.NetworkIsolated {
+		return "", fmt.Errorf("%w: 网络隔离命令执行需要非特权 Docker 沙箱", errProcessNotStarted)
+	}
 	command, err := projectCommandEnvironment(ctx, command, s.profile.Environment)
 	if err != nil {
 		return "", fmt.Errorf("%w: %w", errProcessNotStarted, err)

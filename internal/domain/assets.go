@@ -176,16 +176,21 @@ func (p SandboxProfile) HasResourceLimits() bool {
 // isolation: a non-privileged Docker sandbox with NetworkDisabled enabled or
 // deployment-level AGENTFLOW_DOCKER_NETWORK=none.
 func (p SandboxProfile) IsNetworkIsolated(defaultDockerNetwork string) bool {
-	if !strings.EqualFold(strings.TrimSpace(p.Driver), SandboxDriverDocker) {
-		return false
-	}
-	if p.Privileged {
+	if !p.SupportsIsolatedCommandGate() {
 		return false
 	}
 	if p.NetworkDisabled {
 		return true
 	}
 	return strings.EqualFold(strings.TrimSpace(defaultDockerNetwork), "none")
+}
+
+// SupportsIsolatedCommandGate reports whether this sandbox can execute
+// evolution-replay command verification gates inside an ephemeral
+// `--network none` Docker container while keeping the Agent container's own
+// model API connectivity intact.
+func (p SandboxProfile) SupportsIsolatedCommandGate() bool {
+	return strings.EqualFold(strings.TrimSpace(p.Driver), SandboxDriverDocker) && !p.Privileged
 }
 
 func (p SandboxProfile) ValidateResourceLimits() error {

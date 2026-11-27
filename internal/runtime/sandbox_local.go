@@ -28,6 +28,9 @@ func (s *localSandbox) Close(context.Context) error {
 	return nil
 }
 func (s *localSandbox) Exec(ctx context.Context, command CommandSpec, sink EventSink) (string, error) {
+	if command.NetworkIsolated {
+		return "", fmt.Errorf("%w: 网络隔离命令执行需要非特权 Docker 沙箱", errProcessNotStarted)
+	}
 	command, err := projectCommandEnvironment(ctx, command, s.environment)
 	if err != nil {
 		return "", fmt.Errorf("%w: %w", errProcessNotStarted, err)
