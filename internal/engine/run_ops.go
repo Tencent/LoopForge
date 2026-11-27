@@ -765,6 +765,21 @@ func (e *Engine) resumePaused(runID, humanContext string, expected ...NodeExpect
 			if err != nil {
 				return err
 			}
+			// Acquiring the lease reloads the persisted run. Apply the
+			// resume decision to that snapshot before saving it.
+			if r.Status != "waiting" || !r.PauseRequested {
+				return fmt.Errorf("run is not paused")
+			}
+			if err := checkNodeExpectation(r, expected); err != nil {
+				return err
+			}
+			resumed, err = resumeUnpausedGraph(&r)
+			if err != nil {
+				return err
+			}
+			if !resumed {
+				return fmt.Errorf("paused node not found")
+			}
 		}
 		message := "人工确认直接继续运行"
 		if r.IsWorkspace() && r.Status == "waiting" {

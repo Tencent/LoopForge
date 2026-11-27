@@ -574,3 +574,27 @@ func TestResumePausedAfterLastStepWithoutInterruptedNode(t *testing.T) {
 		t.Fatalf("human gate resume err = %v", err)
 	}
 }
+
+func TestResumePausedWithoutInterruptedNodeOnExecutionHost(t *testing.T) {
+	t.Parallel()
+	e, s := newRecoveryEngine(t)
+	wf := domain.WorkflowDefinition{ID: "resume-idle-loop", Nodes: []domain.WorkflowNode{
+		{ID: "complete", Type: "script", Script: "true"},
+	}}
+	run := domain.Run{
+		ID: "run-resume-idle-loop", WorkflowID: wf.ID, WorkflowSnapshot: wf,
+		Status: "waiting", PauseRequested: true,
+		Nodes: map[string]*domain.NodeRun{"complete": {NodeID: "complete", Status: "succeeded"}},
+	}
+	if err := s.PutRun(run); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.ResumePaused(run.ID, ""); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := s.RunState(run.ID)
+	if got.PauseRequested || (got.Status != "running" && got.Status != "succeeded") {
+		t.Fatalf("resume did not clear the pause on the execution host: status=%s pause=%v", got.Status, got.PauseRequested)
+	}
+	waitRun(t, s, run.ID, 3*time.Second, func(got domain.Run) bool { return got.Status == "succeeded" })
+}
