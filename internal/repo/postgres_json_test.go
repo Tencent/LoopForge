@@ -40,8 +40,9 @@ func TestPostgresJSONStatements(t *testing.T) {
 		t.Fatalf("AGENTFLOW_TEST_POSTGRES_URL points at database %q, which is not a test database", database)
 	}
 	// The test database starts empty; the schema is created here with the
-	// same gorm AutoMigrate the platform's own open path uses.
-	if err := db.AutoMigrate(allModels()...); err != nil {
+	// same incremental DDL the platform's own open path uses, so the schema
+	// under test is the schema production would build.
+	if err := autoMigrateIncremental(db); err != nil {
 		t.Fatalf("auto migrate the postgres schema: %v", err)
 	}
 	tx := db.Begin()
