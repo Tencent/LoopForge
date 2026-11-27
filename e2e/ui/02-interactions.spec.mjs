@@ -263,8 +263,11 @@ test('LOOP designer: all nodes stay in view when the AI assistant closes', async
   // Entering the designer folds the settings sidebar, so at 1440px the canvas
   // has room for the assistant drawer and the node library stays open; at
   // 1100px it still has to fold to its 48px rail to keep every node in view.
+  // Reopen the designer at each width: resizing alone does not re-centre the canvas.
   for (const [width, paletteWithAssistant] of [[1440, 256], [1100, 48]]) {
     await page.setViewportSize({ width, height: 900 });
+    await page.reload();
+    await expect(nodes).toHaveCount(3);
     for (const reducedMotion of ['no-preference', 'reduce']) {
       await page.emulateMedia({ reducedMotion });
       await expect.poll(paletteWidth).toBe(256);
