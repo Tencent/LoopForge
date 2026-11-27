@@ -425,6 +425,19 @@ func TestAssistantVisibleReplyDropsTheLastPhaseResult(t *testing.T) {
 	if got := assistantVisibleReply(final, events); got != want+"\n\n下一轮继续实现。" {
 		t.Fatalf("new tail: %q", got)
 	}
+	// The last segment alone can hold several paragraphs; a result that glues
+	// them and adds a summary keeps them once and appends only the summary.
+	single := []domain.AssistantActivityEvent{
+		{Kind: "text", Text: "先看代码。"},
+		{Kind: "tool", ID: "read"},
+		{Kind: "text", Text: "改好了。\n\n测试通过。"},
+	}
+	if got := assistantVisibleReply("改好了。测试通过。\n\n下一步合入。", single); got != "先看代码。\n\n改好了。\n\n测试通过。\n\n下一步合入。" {
+		t.Fatalf("last segment glued: %q", got)
+	}
+	if got := assistantVisibleReply("改好了。测试通过。", single); got != "先看代码。\n\n改好了。\n\n测试通过。" {
+		t.Fatalf("last segment glued, no tail: %q", got)
+	}
 	// Text that merely starts like the last phase is not mistaken for it.
 	final = "工作区这次没有打开。我先核对需求。另一个结论。"
 	if got := assistantVisibleReply(final, events); !strings.HasSuffix(got, "\n\n"+final) {

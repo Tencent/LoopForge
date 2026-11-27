@@ -292,8 +292,10 @@ func assistantVisibleReply(final string, events []domain.AssistantActivityEvent)
 	// A turn that switches phases (opening a workspace, falling back to the
 	// platform, a handoff) streams every phase, while the result of the last
 	// phase repeats all of that phase's paragraphs, sometimes glued together
-	// without the blank line. Match it against the trailing paragraphs.
-	for i := 1; i < len(parts)-1; i++ {
+	// without the blank line. Match it against the trailing paragraphs,
+	// down to the last segment alone: one segment can hold several
+	// paragraphs that the result glues together.
+	for i := 1; i < len(parts); i++ {
 		rest, ok := cutCompactPrefix(final, replyCompact(strings.Join(parts[i:], "")))
 		if !ok {
 			continue
