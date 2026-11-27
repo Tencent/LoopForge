@@ -767,11 +767,12 @@ export function useChat() {
         );
     return () => window.removeEventListener("message", listener);
   }, [ready]);
-  const transcriptVisible = !!session && session.id === activeId;
+  // The composer can restore this user's draft once their identity is known.
+  // The chat already renders its own loading state for a pending transcript.
   useEffect(() => {
-    if (transcriptVisible && window.parent !== window)
+    if (identityKnown && window.parent !== window)
       window.parent.postMessage({ type: "agentflow-chat-visible" }, location.origin);
-  }, [transcriptVisible]);
+  }, [identityKnown]);
   const missingKey = !!user && !user.codeBuddyApiKeyConfigured;
   // Without their own key users chat on the platform's shared key, limited to
   // the models the administrator allowed (the first is the default).

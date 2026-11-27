@@ -81,6 +81,27 @@ test('code editor keyboard controls indent, outdent, auto-indent, save, and clos
   assert.equal(app.document.querySelector('#codeEditorModal').classList.contains('open'), false);
 });
 
+test('refresh restores a hash-only chat and reveals its frame before the composer is ready', async (t) => {
+  const app = await loadApp({ hash: '/collaboration/session-42' });
+  t.after(app.close);
+  const frame = app.document.querySelector('#chatNextFrame');
+  assert.equal(new URL(frame.src).searchParams.get('session'), 'session-42');
+  assert.ok(app.document.body.classList.contains('booting'));
+  app.window.dispatchEvent(new app.window.MessageEvent('message', {
+    data: { type: 'agentflow-chat-visible' }, origin: app.window.location.origin, source: frame.contentWindow,
+  }));
+  assert.equal(app.document.body.classList.contains('booting'), false);
+  assert.equal(app.evaluate('nativeChatReady'), false);
+  app.evaluate('settleBootLoader()');
+  assert.equal(app.evaluate('bootLoaderTimer'), 0);
+
+  app.window.history.replaceState({}, '', '/?chatIssue=issue-1#/collaboration/session-42');
+  app.evaluate("$('#chatNextFrame').dataset.src='';mountNativeChat()");
+  const issueLink = new URL(frame.src);
+  assert.equal(issueLink.searchParams.get('issueId'), 'issue-1');
+  assert.equal(issueLink.searchParams.get('session'), null);
+});
+
 test('native chat bridge validates messages and updates session, project, and requested views', async (t) => {
   const app = await loadApp();
   t.after(app.close);

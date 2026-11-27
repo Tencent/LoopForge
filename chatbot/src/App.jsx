@@ -986,7 +986,7 @@ export default function App() {
     closeMenu();
   }
   async function submit() {
-    if (!hasComposerExecutor || uploading || composerLoading || draftReady.current !== draftKey ||
+    if (!chat.ready || !hasComposerExecutor || uploading || composerLoading || draftReady.current !== draftKey ||
         (!chat.activeId && savingDraftApproval.current)) return;
     follow.current = true;
     const snapshot = draftSnapshot({ text, attachments, references });

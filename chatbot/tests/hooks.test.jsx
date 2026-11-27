@@ -74,6 +74,39 @@ describe("conversation hooks", () => {
     } finally { apiMock.mockImplementation(original); }
   });
 
+  test.each(["/", "/?session=s1"])("reveals the embedded chat on %s while models and history are pending", async (url) => {
+    const postMessage = vi.fn();
+    const parent = vi.spyOn(window, "parent", "get").mockReturnValue({ postMessage });
+    const original = apiMock.getMockImplementation();
+    const auth = Promise.withResolvers();
+    const remaining = Promise.withResolvers();
+    apiMock.mockImplementation(async (path, options) => {
+      if (path === "/api/auth/current") await auth.promise;
+      if (path === "/api/assistant/models" || path.endsWith("?view=recent")) await remaining.promise;
+      return original(path, options);
+    });
+    history.replaceState({}, "", url);
+    const { result, unmount } = renderHook(useChat);
+    try {
+      const visible = { type: "agentflow-chat-visible" };
+      const ready = { type: "agentflow-chat-ready" };
+      expect(postMessage).not.toHaveBeenCalledWith(visible, location.origin);
+      await act(async () => auth.resolve());
+      await waitFor(() => expect(postMessage).toHaveBeenCalledWith(visible, location.origin));
+      expect(result.current.session).toBeNull();
+      expect(result.current.ready).toBe(false);
+      expect(postMessage).not.toHaveBeenCalledWith(ready, location.origin);
+      await act(async () => remaining.resolve());
+      await waitFor(() => expect(postMessage).toHaveBeenCalledWith(ready, location.origin));
+    } finally {
+      unmount();
+      auth.resolve();
+      remaining.resolve();
+      apiMock.mockImplementation(original);
+      parent.mockRestore();
+    }
+  });
+
   test("opens a deep link after authentication while the model catalog is still loading", async () => {
     const original = apiMock.getMockImplementation();
     let releaseCatalog;
