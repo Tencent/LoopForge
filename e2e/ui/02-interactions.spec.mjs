@@ -260,18 +260,24 @@ test('LOOP designer: all nodes stay in view when the AI assistant closes', async
         rect.top >= canvas.top && rect.bottom <= canvas.bottom;
     });
   });
-  for (const reducedMotion of ['no-preference', 'reduce']) {
-    await page.emulateMedia({ reducedMotion });
-    await expect.poll(paletteWidth).toBe(256);
-    await expect.poll(nodesFit).toBe(true);
-    await page.locator('#openAIOrchestrator').click();
-    await expect(assistant).toBeVisible();
-    await expect.poll(paletteWidth).toBe(48);
-    await expect.poll(nodesFit).toBe(true);
-    await page.locator('#closeAIOrchestrator').click();
-    await expect(assistant).toBeHidden();
-    await expect.poll(paletteWidth).toBe(256);
-    await expect.poll(nodesFit).toBe(true);
+  // Entering the designer folds the settings sidebar, so at 1440px the canvas
+  // has room for the assistant drawer and the node library stays open; at
+  // 1100px it still has to fold to its 48px rail to keep every node in view.
+  for (const [width, paletteWithAssistant] of [[1440, 256], [1100, 48]]) {
+    await page.setViewportSize({ width, height: 900 });
+    for (const reducedMotion of ['no-preference', 'reduce']) {
+      await page.emulateMedia({ reducedMotion });
+      await expect.poll(paletteWidth).toBe(256);
+      await expect.poll(nodesFit).toBe(true);
+      await page.locator('#openAIOrchestrator').click();
+      await expect(assistant).toBeVisible();
+      await expect.poll(paletteWidth).toBe(paletteWithAssistant);
+      await expect.poll(nodesFit).toBe(true);
+      await page.locator('#closeAIOrchestrator').click();
+      await expect(assistant).toBeHidden();
+      await expect.poll(paletteWidth).toBe(256);
+      await expect.poll(nodesFit).toBe(true);
+    }
   }
 });
 
