@@ -1077,6 +1077,7 @@ Object.assign(window.LF_I18N_EN, {
   "用小写英文概括改动，带上需求编号": "Summarize the change in lowercase English and include the issue number",
   "AI 根据任务和命名要求生成完整的分支名。": "AI uses the task and naming instructions to generate the full branch name.",
   "请输入自定义前缀，或选择无前缀": "Enter a custom prefix or choose No prefix",
+
   "当前执行调度": "Execution dispatch",
   "本项目执行调度": "Project execution dispatch",
   "已开启自动分配：新建顶层 LOOP 将在「平台机器」和兼容的「可用机器」间自动调度。": "Auto-assign is on: new top-level LOOPs are scheduled across platform machines and compatible available machines.",
@@ -1094,4 +1095,8 @@ Object.assign(window.LF_I18N_EN, {
   "对话处理": "Handled in chat",
   "在对话里澄清和改代码": "Clarify and change code in chat",
   "这条需求不使用 LOOP，在对话里澄清需求、直接改代码；定时任务不会自动认领它。": "This requirement uses no LOOP: clarify and change code in chat; scheduled jobs won't pick it up.",
+
+  "角色节点使用任务责任人的执行器配置。": "Role steps run with the responsible user's configured executor.",
+  "角色未固定 CLI：直接运行跟随任务责任人的默认执行器，复制后可在角色编辑器里更换": "Roles do not pin a CLI: direct runs follow the responsible user's default executor, and copies can switch CLI in the role editor",
+
 });
