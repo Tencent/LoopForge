@@ -99,7 +99,7 @@ func (h *assistantHandlers) runConversation(c *gin.Context) {
 	}
 	c.Header("Cache-Control", "no-store")
 	session.IssueID = r.ExecutionContext.IssueID
-	c.JSON(200, session)
+	c.JSON(200, sanitizeAssistantSessionForViewer(session, user.ID))
 }
 func sharedTranscriptPrefix(old []assistantMessage, next []assistantMessage) bool {
 	if len(next) < len(old) {

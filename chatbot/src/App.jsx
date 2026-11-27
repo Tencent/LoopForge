@@ -1950,7 +1950,7 @@ export default function App() {
               {/* The live reply belongs right under its question. Alerts stay
                   last, so a finished reply does not jump above them. */}
               {chat.busy ? (
-                <LiveMessage live={chat.live} generation={chat.generation} local={chat.local} readOnly={chat.readOnly} hasKnowledgeRefs={Boolean(chat.knowledgeRefs?.length)} approvals={approvals.items} />
+                <LiveMessage live={chat.live} generation={chat.generation} local={chat.local} readOnly={chat.readOnly} hasKnowledgeRefs={Boolean(chat.knowledgeRefs?.length || chat.session?.knowledgeRestricted)} approvals={approvals.items} />
               ) : chat.generation &&
                 !generationStored(messages, chat.generation) &&
                 !["completed", "running"].includes(chat.generation.status) &&
@@ -1962,7 +1962,7 @@ export default function App() {
                   finished
                   local={chat.local}
                   readOnly={chat.readOnly}
-                  hasKnowledgeRefs={Boolean(chat.knowledgeRefs?.length)}
+                  hasKnowledgeRefs={Boolean(chat.knowledgeRefs?.length || chat.session?.knowledgeRestricted)}
                 />
               ) : null}
               <NativeApprovalPanel approvals={approvals} onChange={() => {

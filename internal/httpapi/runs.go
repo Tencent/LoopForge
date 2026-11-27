@@ -151,7 +151,8 @@ func (h *runsHandlers) runs(c *gin.Context) {
 				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 				return
 			}
-			copied := append([]domain.KnowledgeRef(nil), (*req.KnowledgeRefs)...)
+			copied := make([]domain.KnowledgeRef, len(*req.KnowledgeRefs))
+			copy(copied, *req.KnowledgeRefs)
 			runKnowledgeRefs = &copied
 		}
 		var repositories []domain.RepositoryContext

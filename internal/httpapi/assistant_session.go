@@ -120,6 +120,9 @@ func (h *assistantHandlers) listSessions(c *gin.Context) {
 		out = filtered
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].UpdatedAt.After(out[j].UpdatedAt) })
+	for i := range out {
+		out[i] = sanitizeAssistantSessionForViewer(out[i], current.ID)
+	}
 	c.JSON(200, decorateRunSessions(h.repo, out))
 }
 
@@ -327,6 +330,7 @@ func (h *assistantHandlers) session(c *gin.Context) {
 			}
 		}
 		item.Executor = h.forkExecutor(c, item, current.ID)
+		item = sanitizeAssistantSessionForViewer(item, current.ID)
 		if readOnly {
 			project, _ := h.repo.Project(item.ProjectID)
 			c.JSON(200, readOnlyConversation{AssistantSession: item, ReadOnly: true, ProjectName: project.Name})
@@ -357,13 +361,11 @@ func (h *assistantHandlers) session(c *gin.Context) {
 			conv.ProjectID = existing.ProjectID
 		}
 		if existing.ID != "" {
+			// Existing bindings are server-owned and modified only through the
+			// dedicated /knowledge endpoint; keep historical refs even if a
+			// connector was later disabled or deleted so receipts can still save.
 			conv.KnowledgeRefs = existing.KnowledgeRefs
-		}
-		refOwnerID := current.ID
-		if existing.ID != "" && ownerID > 0 {
-			refOwnerID = ownerID
-		}
-		if err := h.validateUserKnowledgeRefs(refOwnerID, conv.KnowledgeRefs); err != nil {
+		} else if err := h.validateUserKnowledgeRefs(current.ID, conv.KnowledgeRefs); err != nil {
 			c.JSON(400, gin.H{"error": err.Error()})
 			return
 		}
@@ -515,7 +517,7 @@ func (h *assistantHandlers) session(c *gin.Context) {
 			c.JSON(500, gin.H{"error": "保存对话失败"})
 			return
 		}
-		c.JSON(200, stored)
+		c.JSON(200, sanitizeAssistantSessionForViewer(stored, current.ID))
 	case "DELETE":
 		if shared {
 			_, project := h.repo.ProjectAssistantSession(id)
@@ -740,6 +742,16 @@ func (h *assistantHandlers) sessionKnowledge(c *gin.Context) {
 	}
 	saved, _ := h.repo.AssistantSession(owner, id)
 	c.JSON(200, saved)
+}
+
+// sanitizeAssistantSessionForViewer strips the creator's personal knowledge
+// connector bindings when returning a session to another viewer (for example,
+// another project member reading or updating a shared project conversation).
+func sanitizeAssistantSessionForViewer(s domain.AssistantSession, viewerID int64) domain.AssistantSession {
+	if s.UserID != viewerID {
+		s.KnowledgeRefs = nil
+	}
+	return s
 }
 
 func (h *assistantHandlers) validateUserKnowledgeRefs(uid int64, refs []domain.KnowledgeRef) error {

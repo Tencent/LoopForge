@@ -407,4 +407,32 @@ func TestResolveNodeAssetsUnionOfNodeAndRoleKnowledgeRefs(t *testing.T) {
 	if len(bundleOverride.MCPServers) != 1 || bundleOverride.MCPServers[0].ID != domain.KnowledgeMCPServerID+"-"+connA2.ID {
 		t.Fatalf("expected explicit run override to mount only connA2, got %+v", bundleOverride.MCPServers)
 	}
+
+	// Case 4: Explicit empty run-level override ("knowledgeRefs": []) survives DB round-trip
+	// and suppresses both node bindings and role toggle.
+	emptyOverride := make([]domain.KnowledgeRef, 0)
+	runEmpty := run
+	runEmpty.ID = "run-empty-override"
+	runEmpty.WorkflowID = "wf-1"
+	runEmpty.Status = "running"
+	runEmpty.ExecutionContext.KnowledgeRefs = &emptyOverride
+	if err := store.PutRun(runEmpty); err != nil {
+		t.Fatalf("PutRun empty override: %v", err)
+	}
+	reloaded, ok := store.RunState(runEmpty.ID)
+	if !ok {
+		t.Fatal("RunState did not find persisted empty-override run")
+	}
+	if reloaded.ExecutionContext.KnowledgeRefs == nil || len(*reloaded.ExecutionContext.KnowledgeRefs) != 0 {
+		t.Fatalf("expected persisted empty override non-nil empty slice, got %#v", reloaded.ExecutionContext.KnowledgeRefs)
+	}
+	bundleEmpty := eng.resolveNodeAssets(context.Background(), agent, reloaded, "wf-1", node)
+	if len(bundleEmpty.MCPServers) != 0 {
+		t.Fatalf("expected explicit empty override to mount 0 KB MCP servers, got %+v", bundleEmpty.MCPServers)
+	}
+	for _, r := range bundleEmpty.Rules {
+		if r.ID == domain.SOPKnowledgeUsageRuleID {
+			t.Fatalf("expected explicit empty override not to inject SOP KB usage rule, got %+v", r)
+		}
+	}
 }

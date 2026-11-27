@@ -376,3 +376,84 @@ func TestKnowledgeProxyIsReadOnlyAndUserConnectorScoped(t *testing.T) {
 		t.Fatalf("expected empty usage after reset, got %+v", afterSummary)
 	}
 }
+
+func TestManualRunKnowledgeRefsOverridePersistence(t *testing.T) {
+	s, h, _, mcpURL := newKnowledgeTestServer(t)
+
+	_ = s.PutUser(domain.User{ID: 301, LoginName: "alice"})
+	alice, _ := s.User(301)
+	_ = s.PutProject(domain.Project{ID: "p-run-kb", Name: "Run KB Project", OwnerID: alice.ID})
+	_ = s.PutAgent(domain.AgentDefinition{ID: "dev-kb", Name: "Dev KB", KnowledgeBase: true})
+
+	createRec := doJSONAsUser(t, h, alice, http.MethodPost, "/api/knowledge/connectors", `{"name":"Alice KB","type":"mcp","endpoint":"`+mcpURL+`"}`)
+	if createRec.Code != http.StatusCreated {
+		t.Fatalf("create connector = %d (%s)", createRec.Code, createRec.Body.String())
+	}
+	var conn domain.KnowledgeConnector
+	if err := json.Unmarshal(createRec.Body.Bytes(), &conn); err != nil {
+		t.Fatal(err)
+	}
+
+	_ = s.PutWorkflow(domain.WorkflowDefinition{
+		ID:        "wf-run-kb",
+		Name:      "WF Run KB",
+		ProjectID: "p-run-kb",
+		Nodes: []domain.WorkflowNode{
+			{
+				ID:            "n1",
+				Type:          "agent",
+				AgentID:       "dev-kb",
+				KnowledgeRefs: []domain.KnowledgeRef{{ConnectorID: conn.ID, Mode: "all"}},
+			},
+		},
+	})
+
+	startAndStop := func(body string) (domain.Run, domain.Run) {
+		t.Helper()
+		rec := doJSONAsUser(t, h, alice, http.MethodPost, "/api/runs", body)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("POST /api/runs (%s) = %d (%s)", body, rec.Code, rec.Body.String())
+		}
+		var respRun domain.Run
+		if err := json.Unmarshal(rec.Body.Bytes(), &respRun); err != nil {
+			t.Fatal(err)
+		}
+		reloaded, ok := s.RunState(respRun.ID)
+		if !ok {
+			t.Fatalf("RunState(%q) not found", respRun.ID)
+		}
+		_ = doJSONAsUser(t, h, alice, http.MethodPost, "/api/runs/"+respRun.ID+"/cancel", `{}`)
+		deadline := time.Now().Add(3 * time.Second)
+		for time.Now().Before(deadline) {
+			if latest, ok := s.Run(respRun.ID); ok && (latest.Status == "succeeded" || latest.Status == "failed" || latest.Status == "cancelled") {
+				break
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		return respRun, reloaded
+	}
+
+	// 1. Omitted knowledgeRefs keeps nil (follow node/role defaults).
+	respOmitted, dbOmitted := startAndStop(`{"workflowId":"wf-run-kb","projectId":"p-run-kb","input":"omitted"}`)
+	if respOmitted.ExecutionContext.KnowledgeRefs != nil || dbOmitted.ExecutionContext.KnowledgeRefs != nil {
+		t.Fatalf("omitted knowledgeRefs should stay nil: resp=%#v db=%#v", respOmitted.ExecutionContext.KnowledgeRefs, dbOmitted.ExecutionContext.KnowledgeRefs)
+	}
+
+	// 2. Explicit empty array ("knowledgeRefs": []) must survive DB save & reload as non-nil empty slice.
+	respEmpty, dbEmpty := startAndStop(`{"workflowId":"wf-run-kb","projectId":"p-run-kb","input":"none","knowledgeRefs":[]}`)
+	if respEmpty.ExecutionContext.KnowledgeRefs == nil || len(*respEmpty.ExecutionContext.KnowledgeRefs) != 0 {
+		t.Fatalf("explicit empty override lost in HTTP response: %#v", respEmpty.ExecutionContext.KnowledgeRefs)
+	}
+	if dbEmpty.ExecutionContext.KnowledgeRefs == nil || len(*dbEmpty.ExecutionContext.KnowledgeRefs) != 0 {
+		t.Fatalf("explicit empty override lost after DB round-trip: %#v", dbEmpty.ExecutionContext.KnowledgeRefs)
+	}
+
+	// 3. Explicit non-empty allowlist override survives DB save & reload.
+	respPinned, dbPinned := startAndStop(`{"workflowId":"wf-run-kb","projectId":"p-run-kb","input":"pinned","knowledgeRefs":[{"connectorId":"` + conn.ID + `","mode":"allowlist","sources":["a"]}]}`)
+	if respPinned.ExecutionContext.KnowledgeRefs == nil || len(*respPinned.ExecutionContext.KnowledgeRefs) != 1 || (*respPinned.ExecutionContext.KnowledgeRefs)[0].ConnectorID != conn.ID {
+		t.Fatalf("pinned override missing in HTTP response: %#v", respPinned.ExecutionContext.KnowledgeRefs)
+	}
+	if dbPinned.ExecutionContext.KnowledgeRefs == nil || len(*dbPinned.ExecutionContext.KnowledgeRefs) != 1 || (*dbPinned.ExecutionContext.KnowledgeRefs)[0].ConnectorID != conn.ID {
+		t.Fatalf("pinned override missing after DB round-trip: %#v", dbPinned.ExecutionContext.KnowledgeRefs)
+	}
+}
