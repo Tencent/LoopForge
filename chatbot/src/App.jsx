@@ -27,6 +27,7 @@ import {
   attachmentURL,
   parseReply,
   collectArtifacts,
+  messageOffset,
   visibleText,
   elapsedSeconds,
   formatElapsed,
@@ -852,6 +853,10 @@ export default function App() {
       previousArtifacts.current = previous;
     }
     if (!chat.activeId || chat.session?.id !== chat.activeId) return;
+    // A view=recent tail is still part of restoring the conversation. The
+    // full transcript adds the artifacts of earlier turns, which are not new,
+    // so the first complete snapshot is the baseline, as for any other open.
+    if (chat.session.messagesPartial) return;
     const entries = [...sidebarArtifacts, ...conversationRuns];
     const addedEntries = previous.baselined
       ? entries.filter((entry) => !previous.ids.has(entry.id)) : [];
@@ -890,6 +895,7 @@ export default function App() {
   }, [
     chat.activeId,
     chat.session?.id,
+    chat.session?.messagesPartial,
     artifactList,
     conversationRuns,
     panel,
@@ -1169,6 +1175,8 @@ export default function App() {
     }));
   }, [chat.activeId, chat.projectId]);
   const messages = chat.session?.messages || [];
+  // Stored index of messages[0]; artifacts name messages by that index.
+  const messageBase = messageOffset(chat.session);
   const conversationStarted = Boolean(
     chat.activeId && chat.session?.id === chat.activeId &&
     (messages.length || chat.busy || sidebarArtifacts.length || conversationRuns.length),
@@ -1912,7 +1920,7 @@ export default function App() {
                       <>
                         <div className="message-drafts">
                           {artifactList
-                            .filter((a) => a.draft && a.messageIndex === index)
+                            .filter((a) => a.draft && a.messageIndex === messageBase + index)
                             .map((a) => (
                               <DraftCard
                                 key={a.id}

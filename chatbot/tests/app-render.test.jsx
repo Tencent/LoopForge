@@ -1237,6 +1237,93 @@ describe("App", () => {
     Object.assign(chat, previous);
   });
 
+  // 46 turns with pending drafts in MSG-039 and MSG-045; the recent view holds
+  // the last 40 (offset 6) until the full transcript arrives.
+  const longDraftSession = () => {
+    const messages = Array.from({ length: 46 }, (_, index) => {
+      const label = `MSG-${String(index).padStart(3, "0")}`;
+      if (index !== 39 && index !== 45)
+        return { id: label, role: index % 2 ? "assistant" : "user", content: label };
+      const title = `DRAFT-${String(index).padStart(3, "0")}`;
+      return {
+        id: label,
+        role: "assistant",
+        content: JSON.stringify({
+          message: `${label} 草稿`,
+          drafts: [{ tool: "issues_save", body: { projectId: "p1", title } }],
+        }),
+      };
+    });
+    const full = { id: "long-draft", title: "长会话", projectId: "p1", messages };
+    const tail = { ...full, messagesPartial: true, messagesOffset: 6, messages: messages.slice(6) };
+    return { full, tail };
+  };
+  const openLongDraft = (session) => Object.assign(chat, {
+    local: false,
+    projectId: "p1",
+    activeId: "long-draft",
+    readOnly: false,
+    sessions: [],
+    busy: false,
+    generation: null,
+    live: { answer: "", thinking: "", tools: [], activity: [] },
+    session,
+  });
+
+  test("keeps the drawer closed when the full transcript replaces the recent tail", async () => {
+    const previous = { ...chat };
+    const { full, tail } = longDraftSession();
+    openLongDraft(tail);
+    const view = render(<App />);
+    await new Promise((resolve) => setTimeout(resolve, 320));
+    expect(document.getElementById("conversation-artifacts")).toBeNull();
+    // The earlier turns arrive; their artifacts are restored, not generated.
+    openLongDraft(full);
+    view.rerender(<App />);
+    await new Promise((resolve) => setTimeout(resolve, 320));
+    expect(document.getElementById("conversation-artifacts")).toBeNull();
+    expect(document.getElementById("artifact-unread-description")).toBeNull();
+    view.unmount();
+    Object.assign(chat, previous);
+  });
+
+  test("a draft selected on the recent tail stays selected when the full transcript arrives", async () => {
+    const previous = { ...chat };
+    const { full, tail } = longDraftSession();
+    openLongDraft(tail);
+    const applyDraft = vi.fn(async () => {});
+    chat.applyDraft = applyDraft;
+    const view = render(<App />);
+    await userEvent.click(screen.getByLabelText("查看会话产物"));
+    const drawer = await waitFor(() => {
+      const panel = document.getElementById("conversation-artifacts");
+      expect(panel).toBeTruthy();
+      return panel;
+    });
+    await userEvent.click(within(drawer).getByText("DRAFT-045"));
+    await waitFor(() => expect(within(drawer).getAllByText(/DRAFT-045/).length).toBeGreaterThan(0));
+    // Each transcript turn still shows its own draft card.
+    const cards = [...document.querySelectorAll(".message-drafts .draft-card")].map((card) => card.textContent);
+    expect(cards).toHaveLength(2);
+    expect(cards[0]).toContain("DRAFT-039");
+    expect(cards[1]).toContain("DRAFT-045");
+
+    openLongDraft(full);
+    view.rerender(<App />);
+    const panel = document.getElementById("conversation-artifacts");
+    expect(within(panel).queryByText(/DRAFT-039/)).toBeNull();
+    const confirm = within(panel)
+      .getAllByRole("button")
+      .find((button) => button.className.includes("primary-button") && /^确认/.test(button.textContent));
+    expect(confirm).toBeTruthy();
+    await userEvent.click(confirm);
+    await waitFor(() => expect(applyDraft).toHaveBeenCalled());
+    expect(applyDraft.mock.calls[0].slice(0, 2)).toEqual([45, 0]);
+    expect(applyDraft.mock.calls[0][2].expected.body.title).toBe("DRAFT-045");
+    view.unmount();
+    Object.assign(chat, previous);
+  });
+
   test("keeps the artifact drawer closed when the user attaches a file", async () => {
     const previous = { ...chat };
     Object.assign(chat, {

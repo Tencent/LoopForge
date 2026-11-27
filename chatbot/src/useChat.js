@@ -403,6 +403,11 @@ export function useChat() {
         if (!current || currentId.current !== activeId || !sessionRef.current?.messagesPartial) return;
         const stored = await readSession(activeId);
         if (!current || currentId.current !== activeId) return;
+        // This read only completes the tail. A write made meanwhile (binding a
+        // project, sandbox, knowledge, linked issue) already replaced the tail
+        // with the complete conversation it saved; the server may have served
+        // this read before that write, so it must not undo it.
+        if (sessionRef.current?.id === activeId && !sessionRef.current.messagesPartial) return;
         receiveSession(stored);
         const recovered = connectionError;
         setError((old) => (old === recovered ? "" : old));
@@ -639,10 +644,11 @@ export function useChat() {
             {
               ...current, projectId: id,
               title: undefined, titleEdited: undefined, titleGenerated: undefined,
-              messages: undefined, messagesPartial: undefined,
+              messages: undefined, messagesPartial: undefined, messagesOffset: undefined,
             },
             "PUT",
           );
+          if (currentId.current === current.id) sessionRef.current = saved;
           setSession(saved);
           setProjectId(id);
           syncProject(id);

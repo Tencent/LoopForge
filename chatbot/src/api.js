@@ -81,11 +81,20 @@ export function visibleText(message) {
   }
   return text;
 }
+// Stored index of session.messages[0]. A view=recent tail starts later in the
+// transcript; anything named after a message position (draft-<index>-<n>,
+// block-<index>-<n>) must use the stored index so it keeps naming the same
+// message once the full transcript replaces the tail.
+export function messageOffset(session) {
+  return session?.messagesPartial ? Math.max(0, Number(session.messagesOffset) || 0) : 0;
+}
 export function collectArtifacts(session) {
   if (!session) return [];
   const artifacts = [];
   const seen = new Set();
-  (session.messages || []).forEach((message, messageIndex) => {
+  const offset = messageOffset(session);
+  (session.messages || []).forEach((message, position) => {
+    const messageIndex = offset + position;
     for (const attachment of message.attachments || []) {
       if (seen.has(attachment.id)) continue;
       seen.add(attachment.id);

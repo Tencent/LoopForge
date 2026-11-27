@@ -287,10 +287,11 @@ export const resumeMissed = (step) =>
 // dispatched it; a live dispatch has no saved reply yet and uses liveModel,
 // the model the running reply was sent with. agent.model is the latest
 // dispatch's, agent.models[step.id] each dispatch's.
-export function collectSubagents(messages = [], liveSteps = [], liveModel = "") {
+export function collectSubagents(messages = [], liveSteps = [], liveModel = "", offset = 0) {
   const agents = [];
-  // messageIndex is the saved reply that holds the dispatch; a live one has
-  // none yet, and its collected files are not attachments until it is saved.
+  // messageIndex is the saved reply that holds the dispatch (its stored index,
+  // see messageOffset); a live one has none yet, and its collected files are
+  // not attachments until it is saved.
   const add = (step, messageIndex = null, replyModel = "") => {
     const key = step.agentId || step.id;
     let agent = agents.find((item) => item.key === key || (step.agentId && item.agentId === step.agentId));
@@ -323,7 +324,7 @@ export function collectSubagents(messages = [], liveSteps = [], liveModel = "") 
     if (message.role !== "assistant") return;
     savedActivity(message)
       .filter(isDispatch)
-      .forEach((step) => add(step, index, message.model));
+      .forEach((step) => add(step, offset + index, message.model));
   });
   liveSteps.filter(isDispatch).forEach((step) => add(step, null, liveModel));
   return agents;

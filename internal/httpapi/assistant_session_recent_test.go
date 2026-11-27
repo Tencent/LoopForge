@@ -145,3 +145,47 @@ func TestRecentSessionViewCannotOverwriteTheTranscript(t *testing.T) {
 		t.Fatalf("bind response should carry the full transcript: %v %d", err, len(saved.Messages))
 	}
 }
+
+// Message positions name things the client keeps across the switch from the
+// tail to the full transcript (draft artifacts are draft-<index>-<n>). The
+// tail therefore reports where it starts in the stored transcript.
+func TestRecentSessionViewReportsWhereTheTailStarts(t *testing.T) {
+	h, owner := workbenchFixture(t)
+	read := func(id string) map[string]any {
+		t.Helper()
+		c, rec := workbenchContext(owner, "GET", "/api/assistant/sessions/"+id+"?view=recent", bytes.NewBuffer(nil))
+		c.Params = gin.Params{{Key: "id", Value: id}}
+		h.session(c)
+		if rec.Code != 200 {
+			t.Fatalf("%s recent status %d: %s", id, rec.Code, rec.Body.String())
+		}
+		var view map[string]any
+		if err := json.Unmarshal(rec.Body.Bytes(), &view); err != nil {
+			t.Fatal(err)
+		}
+		return view
+	}
+	for _, tc := range []struct {
+		total  int
+		offset float64
+	}{{46, 6}, {41, 1}, {40, 0}, {6, 0}} {
+		id := fmt.Sprintf("chat-%d", tc.total)
+		messages := make([]domain.AssistantMessage, tc.total)
+		for i := range messages {
+			messages[i] = domain.AssistantMessage{Role: "user", Content: fmt.Sprintf("MSG-%03d", i)}
+		}
+		if err := h.repo.PutAssistantSession(owner.ID, domain.AssistantSession{ID: id, Title: id, Messages: messages}); err != nil {
+			t.Fatal(err)
+		}
+		view := read(id)
+		offset, _ := view["messagesOffset"].(float64)
+		if offset != tc.offset {
+			t.Fatalf("%d messages: offset %v, want %v", tc.total, view["messagesOffset"], tc.offset)
+		}
+		tail, _ := view["messages"].([]any)
+		first, _ := tail[0].(map[string]any)
+		if want := fmt.Sprintf("MSG-%03d", int(tc.offset)); first["content"] != want {
+			t.Fatalf("%d messages: tail starts at %v, want %s", tc.total, first["content"], want)
+		}
+	}
+}

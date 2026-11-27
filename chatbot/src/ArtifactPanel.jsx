@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import HarnessIcon from "./HarnessIcon";
-import { api } from "./api";
+import { api, messageOffset } from "./api";
 import { ArtifactPreview, RichContent } from "./RichContent";
 import { DraftCard } from "./SidePanel";
 import SopRunPanel, { runStatus } from "./SopRunPanel";
@@ -207,6 +207,7 @@ export default function ArtifactPanel({
     chat?.session?.messages || [],
     live ? chat?.live?.activity || [] : [],
     chat?.model || "",
+    messageOffset(chat?.session),
   );
   // A new subagent is keyed by its dispatch until its agent ID arrives, so
   // an opened one is found by either.

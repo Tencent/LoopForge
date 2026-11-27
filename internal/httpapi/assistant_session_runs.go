@@ -27,6 +27,8 @@ type runSessionView struct {
 	// MessagesPartial is set when this response holds only the tail of a long
 	// transcript. The full conversation is loaded separately.
 	MessagesPartial bool `json:"messagesPartial,omitempty"`
+	// MessagesOffset is the stored index of the first message in that tail.
+	MessagesOffset int `json:"messagesOffset,omitempty"`
 }
 
 // rootRunConversation reports whether the session is the shared conversation of

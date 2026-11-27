@@ -28,6 +28,7 @@ type readOnlyConversation struct {
 	ReadOnly        bool   `json:"readOnly"`
 	ProjectName     string `json:"projectName,omitempty"`
 	MessagesPartial bool   `json:"messagesPartial,omitempty"`
+	MessagesOffset  int    `json:"messagesOffset,omitempty"`
 }
 
 // assistantRecentMessages matches the chat transcript's first painted page.
@@ -329,6 +330,13 @@ func (h *assistantHandlers) session(c *gin.Context) {
 			return
 		}
 		partial := recent && messageTotal > len(item.Messages)
+		// offset is the stored index of the first message in a recent tail, so
+		// the client can keep message positions (and the ids derived from them)
+		// stable when the full transcript replaces the tail.
+		offset := 0
+		if partial {
+			offset = messageTotal - len(item.Messages)
+		}
 		if !recent && !item.Shared && !readOnly {
 			if job, ok := h.readGeneration(ownerID, id); !ok || job.Status != "running" {
 				if materializeWorkspaceImages(ownerID, &item) {
@@ -346,7 +354,7 @@ func (h *assistantHandlers) session(c *gin.Context) {
 		item = sanitizeAssistantSessionForViewer(item, current.ID)
 		if readOnly {
 			project, _ := h.repo.Project(item.ProjectID)
-			c.JSON(200, readOnlyConversation{AssistantSession: item, ReadOnly: true, ProjectName: project.Name, MessagesPartial: partial})
+			c.JSON(200, readOnlyConversation{AssistantSession: item, ReadOnly: true, ProjectName: project.Name, MessagesPartial: partial, MessagesOffset: offset})
 			return
 		}
 		if shared {
@@ -356,6 +364,7 @@ func (h *assistantHandlers) session(c *gin.Context) {
 		}
 		view := decorateRunSessionView(h.repo, item)
 		view.MessagesPartial = partial
+		view.MessagesOffset = offset
 		c.JSON(200, view)
 	case "PUT":
 		if job, ok := h.readGeneration(ownerID, id); ok && job.Status == "running" {

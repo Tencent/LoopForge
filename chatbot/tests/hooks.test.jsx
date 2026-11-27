@@ -175,6 +175,80 @@ describe("conversation hooks", () => {
     }
   });
 
+  // The full read can be served before a write made while the tail is shown
+  // and still arrive after it (a slow server). It must not undo that write.
+  test.each([
+    ["binds a project", (chat) => chat.selectProject("p1"), (session) => expect(session.projectId).toBe("p1")],
+    ["chooses a sandbox", (chat) => chat.selectSandbox("sandbox-1"), (session) => expect(session.sandboxProfileId).toBe("sandbox-1")],
+    ["chooses knowledge", (chat) => chat.saveKnowledgeRefs([{ connectorId: "kb-1", id: "doc-1" }]),
+      (session) => expect(session.knowledgeRefs).toEqual([{ connectorId: "kb-1", id: "doc-1" }])],
+    ["links an issue", (chat) => chat.linkIssue("CRL-1"), (session) => expect(session.issueId).toBe("CRL-1")],
+    ["renames the conversation", (chat) => chat.rename("long", "改过的标题"), (session) => expect(session.title).toBe("改过的标题")],
+  ])("a late full read keeps what the user saved when it %s on the recent tail", async (_, change, check) => {
+    const original = apiMock.getMockImplementation();
+    const originalWrite = writeMock.getMockImplementation();
+    let releaseFull;
+    const fullGate = new Promise((resolve) => { releaseFull = resolve; });
+    const messages = Array.from({ length: 46 }, (_, index) => ({
+      role: index % 2 ? "assistant" : "user", content: `MSG-${String(index).padStart(3, "0")}`,
+    }));
+    let stored = { id: "long", title: "长会话", projectId: "", updatedAt: "2026-11-27T00:00:00.000Z", messages };
+    apiMock.mockImplementation((path, options) => {
+      if (path === "/api/assistant/sessions") return Promise.resolve([{ id: "long", title: stored.title }]);
+      if (path === "/api/assistant/sessions/long?view=recent") return Promise.resolve({
+        ...structuredClone(stored), messagesPartial: true, messagesOffset: 6, messages: messages.slice(-40),
+      });
+      if (path === "/api/assistant/sessions/long") {
+        // Served now, delivered when the test releases it.
+        const snapshot = structuredClone(stored);
+        return fullGate.then(() => snapshot);
+      }
+      if (path.includes("/generation")) return Promise.reject(Object.assign(Error("生成不存在"), { status: 404 }));
+      return original(path, options);
+    });
+    writeMock.mockImplementation((path, body, method) => {
+      if (!path.startsWith("/api/assistant/sessions/long")) return originalWrite(path, body, method);
+      const saved = (changes) => {
+        stored = { ...stored, ...changes, updatedAt: "2026-11-27T00:00:01.000Z" };
+        return Promise.resolve(structuredClone(stored));
+      };
+      if (path.endsWith("/title")) {
+        stored = { ...stored, title: body.title, titleEdited: true };
+        return Promise.resolve({ title: body.title, titleEdited: true });
+      }
+      if (path.endsWith("/sandbox")) return saved({ sandboxProfileId: body.sandboxProfileId });
+      if (path.endsWith("/knowledge")) return saved({ knowledgeRefs: body.knowledgeRefs });
+      if (path.endsWith("/issue")) return saved({ issueId: body.issueId });
+      return saved({ projectId: body.projectId });
+    });
+    try {
+      history.replaceState({}, "", "/?session=long");
+      const { result } = renderHook(useChat);
+      await waitFor(() => expect(result.current.session?.messagesPartial).toBe(true));
+      await waitFor(() => expect(apiMock).toHaveBeenCalledWith("/api/assistant/sessions/long"));
+      await act(async () => { await change(result.current); });
+      expect(result.current.error).toBe("");
+      check(result.current.session);
+
+      releaseFull();
+      await act(async () => { await fullGate; await new Promise((resolve) => setTimeout(resolve, 0)); });
+      expect(result.current.session.messages).toHaveLength(46);
+      expect(result.current.session.messagesPartial).toBeFalsy();
+      check(result.current.session);
+      // Choosing another project follows the server's binding, not the late
+      // read's: a bound conversation starts a new chat instead of a PUT (409).
+      const bound = !!stored.projectId;
+      writeMock.mockClear();
+      await act(() => result.current.selectProject("p2"));
+      expect(writeMock.mock.calls.filter(([path, , method]) => path === "/api/assistant/sessions/long" && method === "PUT"))
+        .toHaveLength(bound ? 0 : 1);
+    } finally {
+      releaseFull?.();
+      apiMock.mockImplementation(original);
+      writeMock.mockImplementation(originalWrite);
+    }
+  });
+
   test("drops the recent tail when the server refuses the full transcript", async () => {
     const original = apiMock.getMockImplementation();
     let fullReads = 0;
