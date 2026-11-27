@@ -129,7 +129,7 @@ function renderScheduleLatestExecBar(job){
     ?`<button type="button" class="button ghost small schedule-latest-btn" data-tone="${escapeHTML(action.tone)}" data-modal-jump-latest="${escapeHTML(job.id)}">${escapeHTML(action.label)}</button>`
     :'';
   const runBtn=`<button type="button" class="button ghost small" data-modal-run-schedule="${escapeHTML(job.id)}" ${running||!canRun?'disabled':''}>${running?'运行中…':'立即执行一次'}</button>`;
-  host.innerHTML=`<div class="schedule-latest-exec-head"><div class="schedule-latest-exec-meta"><b>最近一次执行</b>${badge}<span>${escapeHTML(when)}</span></div><div class="schedule-latest-exec-actions">${runBtn}${jumpBtn}</div></div>${summary?`<p class="schedule-latest-exec-summary${job.lastStatus==='failed'?' is-error':''}"${running?'':' data-i18n-data'}>${escapeHTML(String(summary).slice(0,220))}</p>`:''}`;
+  host.innerHTML=`<div class="schedule-latest-exec-head"><div class="schedule-latest-exec-meta"><b>最近一次执行</b>${badge}<span>${escapeHTML(when)}</span></div><div class="schedule-latest-exec-actions">${runBtn}${jumpBtn}</div></div>${summary?`<p class="schedule-latest-exec-summary${job.lastStatus==='failed'?' is-error':''}"${running?'':(job.lastError?' data-i18n-data':' data-i18n-skip')}>${escapeHTML(String(summary).slice(0,220))}</p>`:''}`;
   window.AgentFlowHarnessIcons?.hydrate(host);
   const runEl=host.querySelector('[data-modal-run-schedule]');
   if(runEl)runEl.onclick=()=>{
@@ -149,13 +149,16 @@ function scheduleJobStatusText(job){
   if(job?.lastStatus==='failed')return `失败：${job.lastError||''}`;
   return '';
 }
-// Names, errors and AI replies are user/server data: data-i18n-data keeps the
-// English page from rewriting fragments of them (i18n.js only swaps exact hits).
-function scheduleUserTextHTML(text){return `<span data-i18n-data>${escapeHTML(text)}</span>`}
+// A task name is pure user data: data-i18n-skip never translates it, so a name
+// that happens to equal product copy ("执行记录") keeps showing as typed.
+function scheduleUserTextHTML(text){return `<span data-i18n-skip>${escapeHTML(text)}</span>`}
+// Errors come from the server and are product copy: data-i18n-data lets i18n.js
+// swap a whole-string dictionary hit but never rewrites fragments of it.
+function scheduleErrorTextHTML(text){return `<span data-i18n-data>${escapeHTML(text)}</span>`}
 function scheduleJobStatusHTML(job){
   if(scheduleJobRunning(job))return escapeHTML(scheduleJobStatusText(job));
-  if(job?.lastStatus==='waiting')return `${lfT('待对齐基线：','Waiting for baseline alignment: ')}${scheduleUserTextHTML(job.lastError||'')}`;
-  if(job?.lastStatus==='failed')return `${lfT('失败：','Failed: ')}${scheduleUserTextHTML(job.lastError||'')}`;
+  if(job?.lastStatus==='waiting')return `${lfT('待对齐基线：','Waiting for baseline alignment: ')}${scheduleErrorTextHTML(job.lastError||'')}`;
+  if(job?.lastStatus==='failed')return `${lfT('失败：','Failed: ')}${scheduleErrorTextHTML(job.lastError||'')}`;
   return '';
 }
 function scheduleJobsInView(jobs, projectId){
@@ -712,7 +715,7 @@ function scheduleJobGroupHTML(g,rowHTML){
   const last=g.jobs.map(j=>knownTime(j.lastRunAt)).filter(Boolean).sort((a,b)=>b-a)[0];
   const summary=[timings.slice(0,3).join('、')+(timings.length>3?` 等 ${timings.length} 种`:''),`已启用 ${enabled}/${g.jobs.length}`,running?`${running} 个运行中`:'',failed?`${failed} 个失败`:'',updates?`${updates} 个待升级`:''].filter(Boolean).join(' · ');
   const key=escapeHTML(g.key),id=`schedule-group-${g.jobs[0].id}`;
-  return `<div class="schedule-job-group${open?' is-open':''}${running?' is-running':''}${enabled?'':' is-paused'}" data-group-for="${key}"><button type="button" class="schedule-job-group-head" data-schedule-group="${key}" aria-expanded="${open}" aria-controls="${escapeHTML(id)}"><svg class="agent-icon harness-icon schedule-job-group-chevron" data-icon="chevron-right" width="16" height="16" aria-hidden="true" focusable="false"></svg><span class="schedule-job-group-text"><b><span class="schedule-kind-tag is-assistant">AI</span><span class="schedule-job-group-name" data-i18n-data>${escapeHTML(g.name)}</span><span class="hui-badge" data-tone="neutral" data-size="sm">${g.jobs.length} 个</span></b><span class="${running?'schedule-run-live':''}">${escapeHTML(summary)}</span><small>${last?`最近：${last.toLocaleString()}`:'尚未运行'}</small></span></button><div class="schedule-job-group-body" id="${escapeHTML(id)}" ${open?'':'hidden'}>${g.jobs.map(rowHTML).join('')}</div></div>`;
+  return `<div class="schedule-job-group${open?' is-open':''}${running?' is-running':''}${enabled?'':' is-paused'}" data-group-for="${key}"><button type="button" class="schedule-job-group-head" data-schedule-group="${key}" aria-expanded="${open}" aria-controls="${escapeHTML(id)}"><svg class="agent-icon harness-icon schedule-job-group-chevron" data-icon="chevron-right" width="16" height="16" aria-hidden="true" focusable="false"></svg><span class="schedule-job-group-text"><b><span class="schedule-kind-tag is-assistant">AI</span><span class="schedule-job-group-name" data-i18n-skip>${escapeHTML(g.name)}</span><span class="hui-badge" data-tone="neutral" data-size="sm">${g.jobs.length} 个</span></b><span class="${running?'schedule-run-live':''}">${escapeHTML(summary)}</span><small>${last?`最近：${last.toLocaleString()}`:'尚未运行'}</small></span></button><div class="schedule-job-group-body" id="${escapeHTML(id)}" ${open?'':'hidden'}>${g.jobs.map(rowHTML).join('')}</div></div>`;
 }
 function renderScheduleJobList(list,jobs,kind,canRun){
   if(!list)return;

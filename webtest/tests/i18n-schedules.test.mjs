@@ -17,7 +17,7 @@ async function englishPage() {
   return dom.window;
 }
 
-// Chinese left in product copy; user data (data-i18n-data) may stay Chinese.
+// Chinese left in product copy; user data (data-i18n-skip, data-i18n-data) may stay Chinese.
 function leftoverChinese(root, { skipHidden = false } = {}) {
   const left = [];
   const skip = `[data-i18n-data],[data-i18n-skip],code${skipHidden ? ',[hidden]' : ''}`;
@@ -74,7 +74,7 @@ test('English AI schedule list keeps job names and AI replies as written and lea
   const app = await scheduleApp(t);
   const root = await englishCopy(t, app, ['#aiSchedulesView .tabs, #aiSchedulesView [role=tablist]', '#aiScheduleProjectPanel']);
   assert.deepEqual(leftoverChinese(root), []);
-  const names = [...root.querySelectorAll('.schedule-job-main b [data-i18n-data]')].map((el) => el.textContent);
+  const names = [...root.querySelectorAll('.schedule-job-main b [data-i18n-skip]')].map((el) => el.textContent);
   assert.deepEqual(names.sort(), [NAME, '巡检-Cursor', '巡检-Pi'].sort());
   const text = root.textContent.replace(/\s+/g, ' ');
   assert.ok(text.includes(REPLY), 'the AI reply is not fragment-translated');
@@ -128,7 +128,7 @@ test('English run history keeps job names, AI replies and errors as written', as
   assert.deepEqual([...root.querySelectorAll('.sched-exec-action > span')].map((el) => el.textContent), ['Session cleaned up', 'Open conversation']);
   assert.equal(root.querySelector('[data-schedule-menu="sjx-1"]').getAttribute('aria-label').startsWith(`More actions: ${NAME} `), true);
   const options = [...app.document.querySelectorAll('#scheduleExecJob option')].slice(1);
-  assert.ok(options.length && options.every((o) => o.hasAttribute('data-i18n-data')), 'job names in the filter are data');
+  assert.ok(options.length && options.every((o) => o.hasAttribute('data-i18n-skip')), 'job names in the filter are never translated');
 });
 
 test('English run-history filter keeps the chosen job name in the overview scope', async (t) => {
@@ -144,4 +144,20 @@ test('English run-history filter keeps the chosen job name in the overview scope
   const [all, ...names] = [...root.querySelectorAll('option')].map((o) => o.textContent);
   assert.equal(all, 'All tasks');
   assert.deepEqual(names.sort(), ['巡检-Cursor', '巡检-Pi', NAME].sort());
+});
+
+test('a job name that equals product copy is shown as typed in English', async (t) => {
+  const app = await scheduleApp(t);
+  // "执行记录" is product copy that this PR translates to "Run history"; a task
+  // named after it is user data and must stay Chinese.
+  app.evaluate(`state.data.scheduleJobs=[{id:'job-copy',projectId:'project-1',name:'执行记录',skipDispatch:true,assistantPrompt:'x',enabled:true,intervalSec:3600,lastStatus:'success',lastRunAt:'2026-11-27T05:27:21Z',lastAssistantMessage:'代码审查'}]; renderScheduleJobs()`);
+  await settle(4);
+  const root = await englishCopy(t, app, ['#aiSchedulesView .tabs, #aiSchedulesView [role=tablist]', '#aiScheduleProjectPanel']);
+  const row = root.querySelector('[data-edit-schedule="job-copy"]');
+  assert.ok(row);
+  assert.ok(row.textContent.includes('执行记录'), 'the task name is kept');
+  assert.ok(row.textContent.includes('代码审查'), 'an AI reply that equals product copy is kept');
+  assert.ok(!row.textContent.includes('Run history'), 'the task name is not translated to product copy');
+  assert.equal(root.querySelector('[data-schedule-menu="job-copy"]').getAttribute('aria-label'), 'More actions: 执行记录');
+  assert.equal(root.querySelector('[data-toggle-schedule="job-copy"]').getAttribute('aria-label'), 'Enable 执行记录');
 });
