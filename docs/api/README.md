@@ -7,6 +7,7 @@
 - [资产进化](evolution.md)：问题诊断、候选回放、项目内灰度、版本与回滚
 - [编排与运行](orchestration.md)：LOOP、运行、审批、日志、制品、分析和定时任务
 - [共享 AI 定时任务与订阅](shared-schedules.md)：发布版本、业务参数、独立执行与手动升级
+- [AI 对话诊断与 CLI 安装](#ai-对话诊断与-cli-安装)：诊断报告、下载和安装状态
 - [外部同步](sync.md)：工蜂/TAPD 同步
 
 ## 基础约定
@@ -145,6 +146,47 @@ curl -H "Authorization: Bearer $AGENTFLOW_TOKEN" "$AGENTFLOW_URL/api/health"
 | `POST` | `/api/schedule-jobs/{id}/enabled` |
 | `GET` | `/api/schedule-job-executions` |
 
+### AI 对话（助手）
+
+| 方法 | 路径 |
+|---|---|
+| `POST` | `/api/assistant/chat` |
+| `POST` | `/api/assistant/generations` |
+| `GET` | `/api/assistant/sessions/{id}/generation` |
+| `GET` | `/api/assistant/sessions/{id}/generations/{generationId}/diagnostics` |
+| `POST` | `/api/assistant/sessions/{id}/generation/cancel` |
+| `POST` | `/api/assistant/sessions/{id}/generation/steer` |
+| `POST` | `/api/assistant/sessions/{id}/proposals` |
+| `GET`, `PUT` | `/api/assistant/preferences` |
+| `GET` | `/api/assistant/models` |
+| `GET`, `POST` | `/api/assistant/cli-install` |
+| `POST` | `/api/assistant/attachments` |
+| `GET` | `/api/assistant/attachments/{id}` |
+| `GET` | `/api/assistant/references` |
+| `POST` | `/api/assistant/sessions/{id}/edit` |
+| `PUT` | `/api/assistant/sessions/{id}/issue` |
+| `GET` | `/api/assistant/sessions` |
+| `POST` | `/api/assistant/sessions/{id}/archive` |
+| `POST` | `/api/assistant/sessions/{id}/read` |
+| `POST` | `/api/assistant/sessions/{id}/fork` |
+| `GET`, `PUT`, `DELETE` | `/api/assistant/sessions/{id}` |
+| `PUT` | `/api/assistant/sessions/{id}/sandbox` |
+| `PUT` | `/api/assistant/sessions/{id}/mode` |
+| `GET` | `/api/assistant/sessions/{id}/native-approvals` |
+| `POST` | `/api/assistant/sessions/{id}/native-approvals/{approvalId}` |
+| `GET`, `PUT` | `/api/assistant/tasks` |
+| `DELETE` | `/api/assistant/tasks/{id}` |
+| `POST` | `/api/assistant/tasks/{id}/run` |
+
+### 共享 AI 定时任务
+
+| 方法 | 路径 |
+|---|---|
+| `GET` | `/api/shared-schedule-tasks` |
+| `GET` | `/api/shared-schedule-tasks/{id}/versions` |
+
+发布与订阅接口及权限见[共享 AI 定时任务与订阅](shared-schedules.md)。
+
 ### 同步
 
 | 方法 | 路径 |
@@ -154,6 +196,38 @@ curl -H "Authorization: Bearer $AGENTFLOW_TOKEN" "$AGENTFLOW_URL/api/health"
 | `GET` | `/api/sync/logs` |
 | `GET` | `/api/sync/status` |
 | `POST` | `/api/sync/create` |
+
+## AI 对话诊断与 CLI 安装
+
+这两个接口接受登录 Cookie 或用户 Bearer Token；它们不在 `/api/capabilities` 的公共操作清单中。
+
+### 获取对话诊断报告
+
+`GET /api/assistant/sessions/{id}/generations/{generationId}/diagnostics` 返回指定会话轮次的 JSON 诊断报告。调用者必须登录并具有该会话的访问权限；未登录返回 `401`，无权访问返回 `403`，没有该轮次的诊断记录返回 `404`。成功响应带 `Cache-Control: no-store`。附加 `?download=1` 时，响应为格式化 JSON 附件，文件名为 `loopforge-diagnostics-{generationId}.json`，并带 `X-Content-Type-Options: nosniff`。
+
+报告包含 `version`、`generationId`、`sessionId`、`status`、时间、`attempts`；可选的 `failure`、`termination`、`assessment`、`timeline`、`tools`、`coverage` 和 `dropped` 描述失败、终止、已有证据及截断情况。生成状态包括 `running`、`completed`、`failed`、`cancelled` 和 `interrupted`；不要把诊断 ID 当作供应商 trace ID。
+
+诊断结构不主动收集提示词、命令参数、环境变量或原始供应商流，也不收集工具参数和成功工具输出。错误与 stderr 摘要经过脱敏，但仍可能含其他诊断上下文；分享前应检查报告。
+
+```bash
+curl -H "Authorization: Bearer $AGENTFLOW_TOKEN" \
+  "$AGENTFLOW_URL/api/assistant/sessions/$SESSION_ID/generations/$GENERATION_ID/diagnostics?download=1" \
+  -o diagnostics.json
+```
+
+### 安装 CLI 和查询状态
+
+`POST /api/assistant/cli-install` 接收 `{"engine":"opencode"}`；安装成功返回 `200` 和 `{"engine":"opencode","installed":true}`。`GET /api/assistant/cli-install?engine=opencode` 返回 `engine`、`status`，失败时还包含 `error`；状态为 `missing`、`installing`、`installed` 或 `failed`。未登录返回 `401`，无效或不可安装的引擎返回 `400`，POST 安装失败返回 `502`。
+
+允许的引擎为 `codebuddy`、`codex`、`claude-code`、`opencode`、`cursor`、`agy`、`kimi`、`pi` 和 `dsh`；`claude` 会归一化为 `claude-code`。`zcode` 不在对话安装清单中。安装在服务器上执行；断开请求不会取消后台任务，后台超时为 10 分钟，同一引擎的并发请求复用正在进行的任务。
+
+```bash
+curl -X POST -H "Authorization: Bearer $AGENTFLOW_TOKEN" \
+  -H 'Content-Type: application/json' -d '{"engine":"opencode"}' \
+  "$AGENTFLOW_URL/api/assistant/cli-install"
+curl -H "Authorization: Bearer $AGENTFLOW_TOKEN" \
+  "$AGENTFLOW_URL/api/assistant/cli-install?engine=opencode"
+```
 
 ## 公共能力发现与 MCP
 
