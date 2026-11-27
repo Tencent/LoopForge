@@ -51,30 +51,33 @@ func TestPostgresDialectorDataTypeOf(t *testing.T) {
 // in its config, so the wrapper has to be the one bound there.
 func TestPostgresMigratorDataTypeOf(t *testing.T) {
 	d := postgresDialector{Dialector: &postgres.Dialector{Config: &postgres.Config{}}}
-	m := postgresMigrator{postgres.Migrator{Migrator: migrator.Migrator{Config: migrator.Config{
-		Dialector: d,
-	}}}}
+	m := postgresMigrator{
+		Migrator: postgres.Migrator{Migrator: migrator.Migrator{Config: migrator.Config{
+			Dialector: d,
+		}}},
+		stock: *d.Dialector,
+	}
 	field := &schema.Field{DataType: schema.DataType("json"), IndirectFieldType: reflect.TypeOf("")}
 	if got := m.DataTypeOf(field); got != "jsonb" {
 		t.Fatalf("migrator DataTypeOf(json) = %q; want jsonb", got)
 	}
 }
 
-// TestPostgresMigratorKeepsSimpleProtocol pins the behaviour the stock
-// Postgres driver relies on: its GetRows forces pgx's simple protocol, and
-// without it a cached statement plan breaks ("cached plan must not change
-// result type") as soon as a table gains a column.
-func TestPostgresMigratorKeepsSimpleProtocol(t *testing.T) {
-	d := postgresDialector{Dialector: &postgres.Dialector{Config: &postgres.Config{}}}
-	m := postgresMigrator{postgres.Migrator{Migrator: migrator.Migrator{Config: migrator.Config{
-		Dialector: d,
-	}}}}
-	if !m.preferSimpleProtocol() {
-		t.Fatal("the migrator must keep the stock driver's simple protocol for GetRows")
+// TestPostgresMigratorKeepsStockDialector checks the wiring the driver
+// depends on: the DDL path must keep the wrapped dialector (so column types
+// are translated) while the migrator also carries the unwrapped one (so the
+// driver's own type assertion in GetRows keeps working).
+func TestPostgresMigratorKeepsStockDialector(t *testing.T) {
+	stock := &postgres.Dialector{Config: &postgres.Config{}}
+	d := postgresDialector{Dialector: stock}
+	m, ok := d.Migrator(nil).(postgresMigrator)
+	if !ok {
+		t.Fatal("the postgres dialector must hand out a postgresMigrator")
 	}
-	// The wrapper deliberately breaks the stock type assertion; GetRows
-	// compensates by reading the config instead.
-	if _, ok := m.Dialector.(postgres.Dialector); ok {
-		t.Fatal("the wrapper is expected to break the stock postgres.Dialector type assertion")
+	if _, wrapped := m.Migrator.Config.Dialector.(postgresDialector); !wrapped {
+		t.Fatal("the DDL path must keep the wrapped dialector")
+	}
+	if m.stock.Config != stock.Config {
+		t.Fatal("the migrator must carry the stock dialector for the driver's type assertion")
 	}
 }

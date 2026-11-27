@@ -1,11 +1,8 @@
 package repo
 
 import (
-	"database/sql"
-	"fmt"
 	"strings"
 
-	"github.com/jackc/pgx/v5"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/migrator"
@@ -47,53 +44,47 @@ func (d postgresDialector) DataTypeOf(field *schema.Field) string {
 // Migrator binds gorm's migrator to this dialector so AutoMigrate creates the
 // columns with the translated types.
 func (d postgresDialector) Migrator(db *gorm.DB) gorm.Migrator {
-	return postgresMigrator{postgres.Migrator{Migrator: migrator.Migrator{Config: migrator.Config{
-		DB:                          db,
-		Dialector:                   d,
-		CreateIndexAfterCreateTable: true,
-	}}}}
+	return postgresMigrator{
+		Migrator: postgres.Migrator{Migrator: migrator.Migrator{Config: migrator.Config{
+			DB:                          db,
+			Dialector:                   d,
+			CreateIndexAfterCreateTable: true,
+		}}},
+		stock: *d.Dialector,
+	}
 }
 
 // postgresMigrator is the stock Postgres migrator running on the wrapped
 // dialector.
 //
-// It restores one guarantee the stock driver relies on. The driver's GetRows
-// forces pgx's simple protocol by asserting that the migrator's dialector is
-// the stock postgres.Dialector *value* type. The wrapper is a different type,
-// so that assertion fails and GetRows would silently fall back to pgx's
-// default cached-statement mode: once a table gained or lost a column, the
-// cached plan for "SELECT * FROM t LIMIT 1" no longer matches the table and
+// The stock driver's GetRows decides whether to use pgx's simple protocol by
+// asserting that the migrator's dialector is the stock postgres.Dialector
+// *value* type. The wrapper is a different type, so that assertion fails and
+// GetRows falls back to pgx's cached-statement mode: a table that gained or
+// lost a column invalidates the cached plan of "SELECT * FROM t LIMIT 1" and
 // Postgres rejects it with "cached plan must not change result type"
-// (SQLSTATE 0A000). Mirroring GetRows keeps the stock behaviour.
+// (SQLSTATE 0A000).
+//
+// GetRows is not part of the gorm.Migrator interface and its only caller is
+// the stock ColumnTypes, whose receiver type is postgres.Migrator — Go binds
+// that call statically, so an override on this outer type would never run.
+// The fix therefore overrides ColumnTypes itself (depth 0) and hands the
+// stock implementation a stock dialector for the duration of the call.
 type postgresMigrator struct {
 	postgres.Migrator
+	// stock is the unwrapped dialector the driver recognises.
+	stock postgres.Dialector
 }
 
-// GetRows mirrors postgres.Migrator.GetRows. It decides the simple protocol
-// from the wrapped dialector's config instead of the stock type assertion the
-// wrapper breaks.
-func (m postgresMigrator) GetRows(currentSchema interface{}, table interface{}) (*sql.Rows, error) {
-	name := table.(string)
-	if _, ok := currentSchema.(string); ok {
-		name = fmt.Sprintf("%v.%v", currentSchema, table)
-	}
-	return m.DB.Session(&gorm.Session{}).Table(name).Limit(1).Scopes(func(d *gorm.DB) *gorm.DB {
-		// use simple protocol
-		if !m.DB.PrepareStmt && m.preferSimpleProtocol() {
-			d.Statement.Vars = append([]interface{}{pgx.QueryExecModeSimpleProtocol}, d.Statement.Vars...)
-		}
-		return d
-	}).Rows()
-}
-
-// preferSimpleProtocol reports whether pgx may serve the migrator's
-// introspection queries with the simple protocol, which is what the stock
-// driver does for its own introspection queries.
-func (m postgresMigrator) preferSimpleProtocol() bool {
-	dialector, ok := m.Dialector.(postgresDialector)
-	if !ok || dialector.Dialector == nil {
-		return false
-	}
-	cfg := dialector.Dialector.Config
-	return cfg != nil && (cfg.DriverName == "" || cfg.DriverName == "pgx")
+// ColumnTypes runs the stock introspection with the stock dialector.
+//
+// The stock ColumnTypes only reads information_schema / pg_catalog and never
+// asks the dialector for a column type, so swapping the dialector back for
+// the duration of the call affects nothing but the GetRows simple-protocol
+// decision. Re-check this assumption when gorm.io/driver/postgres is
+// upgraded.
+func (m postgresMigrator) ColumnTypes(value interface{}) ([]gorm.ColumnType, error) {
+	inner := m.Migrator
+	inner.Migrator.Config.Dialector = m.stock
+	return inner.ColumnTypes(value)
 }
