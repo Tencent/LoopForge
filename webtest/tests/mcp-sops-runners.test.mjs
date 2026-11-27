@@ -136,6 +136,63 @@ test('runner cards expose runtime controls and persist limits, defaults, and aut
   assert.ok(app.router.calls.some(c => c.method === 'DELETE' && c.path === '/api/runners/runner-local'));
 });
 
+test('runner commands copy over HTTP and retain clipboard support in secure contexts', async (t) => {
+  const app = await loadApp({ origin: 'http://runner.example.test:8090' });
+  t.after(app.close);
+  app.evaluate(`state.runnerBindCode={code:'fixture',expiresAt:'2099-01-01T00:00:00Z'};renderRunnersView()`);
+  const bind = app.document.querySelector('#copyBindCommand');
+  const uninstall = app.document.querySelector('#copyUninstallCommand');
+  const bindCommand = app.document.querySelector('#bindCliCommand');
+  const uninstallCommand = uninstall.parentElement.querySelector('pre');
+  uninstall.closest('details').open = true;
+  for (const command of [bindCommand, uninstallCommand]) {
+    // jsdom does not implement innerText, which the console uses to read the command.
+    Object.defineProperty(command, 'innerText', { get: () => command.textContent });
+  }
+  const writes = [];
+  let legacyResult = true;
+  app.document.execCommand = (action) => {
+    assert.equal(action, 'copy');
+    const input = app.document.querySelector('body > textarea');
+    assert.ok(input);
+    writes.push(['legacy', input.value.slice(input.selectionStart, input.selectionEnd)]);
+    return legacyResult;
+  };
+  Object.defineProperty(app.window, 'isSecureContext', { configurable: true, value: false });
+  bind.click();
+  uninstall.click();
+  assert.deepEqual(writes, [['legacy', bindCommand.textContent], ['legacy', uninstallCommand.textContent]]);
+  assert.equal(bind.textContent, '已复制');
+  assert.equal(uninstall.textContent, '已复制');
+  assert.equal(app.document.activeElement, uninstall);
+  assert.equal(app.document.querySelector('body > textarea'), null);
+
+  Object.defineProperty(app.window, 'isSecureContext', { value: true });
+  let rejectWrite = false;
+  Object.defineProperty(app.window.navigator, 'clipboard', { value: {
+    async writeText(value) {
+      writes.push(['clipboard', value]);
+      if (rejectWrite) throw new app.window.DOMException('Clipboard denied', 'NotAllowedError');
+    },
+  } });
+  bind.click();
+  await settle();
+  assert.deepEqual(writes.slice(2), [['clipboard', bindCommand.textContent]]);
+
+  rejectWrite = true;
+  uninstall.click();
+  await settle();
+  assert.deepEqual(writes.slice(3), [['clipboard', uninstallCommand.textContent], ['legacy', uninstallCommand.textContent]]);
+
+  legacyResult = false;
+  uninstall.textContent = uninstall.dataset.label;
+  uninstall.click();
+  await settle();
+  assert.equal(uninstall.textContent, '复制');
+  assert.equal(app.window.getSelection().toString(), uninstallCommand.textContent);
+  assert.match(app.document.querySelector('#toastContainer').textContent, /复制失败，请手动选择复制/);
+});
+
 test('runner sharing saves multiple projects and offers project defaults for eligible machines', async (t) => {
   const app = await loadApp();
   t.after(app.close);

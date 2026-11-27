@@ -211,16 +211,31 @@ function runnerLastSeen(value){
   if(seconds<3600)return `${Math.floor(seconds/60)} 分钟前`;
   return new Date(value).toLocaleString();
 }
-function runnerCopyCommand(btn,text,message){
-  const done=()=>{
-    toast(message,'ok');
-    if(!btn.dataset.label)btn.dataset.label=btn.textContent;
-    btn.textContent='已复制';btn.classList.add('copied');
-    clearTimeout(btn._copiedTimer);
-    btn._copiedTimer=setTimeout(()=>{btn.textContent=btn.dataset.label;btn.classList.remove('copied')},1400);
-  };
-  if(!navigator.clipboard){toast('复制失败，请手动选择复制');return}
-  navigator.clipboard.writeText(text).then(done).catch(()=>toast('复制失败，请手动选择复制'));
+async function runnerCopyCommand(btn,command,message){
+  if(!command)return;
+  const text=command.innerText;
+  let copied=false;
+  if(window.isSecureContext&&navigator.clipboard){
+    try{await navigator.clipboard.writeText(text);copied=true}catch{}
+  }
+  // On plain HTTP, copy synchronously while the click still has user activation.
+  if(!copied){
+    copied=fallbackCopyText(text);
+    btn.focus({preventScroll:true});
+  }
+  if(!copied){
+    const range=document.createRange();
+    range.selectNodeContents(command);
+    const selection=window.getSelection();
+    selection.removeAllRanges();selection.addRange(range);
+    toast('复制失败，请手动选择复制');
+    return;
+  }
+  toast(message,'ok');
+  if(!btn.dataset.label)btn.dataset.label=btn.textContent;
+  btn.textContent='已复制';btn.classList.add('copied');
+  clearTimeout(btn._copiedTimer);
+  btn._copiedTimer=setTimeout(()=>{btn.textContent=btn.dataset.label;btn.classList.remove('copied')},1400);
 }
 function runnerProjectWritable(project){
   const userId=Number(state.currentUser?.id)||0;
@@ -256,17 +271,11 @@ function renderRunnersView(){
   const tokenSpan=$('#bindToken');
   if(tokenSpan)tokenSpan.textContent=state.runnerBindCode?.code||'生成中…';
   const copyBtn=$('#copyBindCommand');
-  if(copyBtn)copyBtn.onclick=()=>{
-    const text=$('#bindCliCommand')?.innerText||'';
-    runnerCopyCommand(copyBtn,text,'已复制，10 分钟内有效');
-  };
+  if(copyBtn)copyBtn.onclick=()=>runnerCopyCommand(copyBtn,$('#bindCliCommand'),'已复制，10 分钟内有效');
   const uninstallHTTPS=$('#uninstallHttpsOrigin'),uninstallHTTP=$('#uninstallHttpOrigin');
   if(uninstallHTTPS)uninstallHTTPS.textContent=httpsOrigin;if(uninstallHTTP)uninstallHTTP.textContent=httpOrigin;
   const copyUnBtn=$('#copyUninstallCommand');
-  if(copyUnBtn)copyUnBtn.onclick=(e)=>{
-    const text=e.currentTarget.parentElement?.querySelector('pre')?.innerText||'';
-    runnerCopyCommand(copyUnBtn,text,'已复制卸载命令');
-  };
+  if(copyUnBtn)copyUnBtn.onclick=()=>runnerCopyCommand(copyUnBtn,copyUnBtn.parentElement?.querySelector('pre'),'已复制卸载命令');
   const project=currentProject();
   const projectId=project?.id||'';
   const projectLoaded=state.runnerProjectId===projectId;
