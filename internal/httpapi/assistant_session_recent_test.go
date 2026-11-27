@@ -272,6 +272,27 @@ func TestCompactTranscriptActivitiesAndCompletedGeneration(t *testing.T) {
 	}
 }
 
+func TestCompactActivityPreservesReplyTextBoundaries(t *testing.T) {
+	message := domain.AssistantMessage{Role: "assistant", Activity: []domain.AssistantActivityEvent{
+		{Kind: "thinking", Text: strings.Repeat("hidden", 2000)},
+		{Kind: "tool", ID: "read", Tool: "Read"},
+		{Kind: "text", Text: "First"},
+		{Kind: "status"},
+		{Kind: "toolDone", ID: "read", Failed: true},
+		{Kind: "text", Text: " paragraph."},
+		{Kind: "toolDone", ID: "missing-start", Failed: true},
+		{Kind: "text", Text: "Final answer."},
+	}}
+	previewAssistantActivity(&message)
+	want := []domain.AssistantActivityEvent{
+		{Kind: "text", Text: "First"}, {Kind: "text", Text: " paragraph."},
+		{Kind: "thinkingStart"}, {Kind: "text", Text: "Final answer."},
+	}
+	if message.ActivityRef == "" || !reflect.DeepEqual(message.Activity, want) {
+		t.Fatalf("compact trace changed visible text boundaries: %+v", message.Activity)
+	}
+}
+
 func TestRecentShortSessionRecoversGeneratedImage(t *testing.T) {
 	h, owner := workbenchFixture(t)
 	now := time.Now().UTC()
