@@ -445,7 +445,7 @@ test('前端隐藏 OAuth 入口，四大主力原生连接器卡片预填对应�
   assert.equal(drawer.querySelector('#kbField-endpoint').value, 'https://127.0.0.1:27124');
   assert.equal(drawer.querySelector('#kbField-tlsInsecureSkipVerify').value, 'true');
 
-  drawer.querySelector('#kbField-token').value = 'obs-api-key-123';
+  drawer.querySelector('#kbField-token').value = 'obs-test-000';
   drawer.querySelector('#kbConnDrawerSaveBtn').click();
   await settle(12);
 
@@ -453,7 +453,7 @@ test('前端隐藏 OAuth 入口，四大主力原生连接器卡片预填对应�
   assert.equal(obsPayload.type, 'obsidian');
   assert.equal(obsPayload.endpoint, 'https://127.0.0.1:27124');
   assert.equal(obsPayload.config.extra.tlsInsecureSkipVerify, 'true');
-  assert.equal(obsPayload.secret.token, 'obs-api-key-123');
+  assert.equal(obsPayload.secret.token, 'obs-test-000');
   assert.equal(obsPayload.config.extra.oauthMode, undefined);
 
   const updatedObsCard = document.querySelector('.kb-vendor-card[data-vendor-key="obsidian"]');
@@ -470,7 +470,7 @@ test('前端隐藏 OAuth 入口，四大主力原生连接器卡片预填对应�
   assert.ok(drawer.querySelector('#kbField-token'), '飞书抽屉应渲染 App Secret 输入框');
 
   drawer.querySelector('#kbField-appId').value = 'cli_a5829100';
-  drawer.querySelector('#kbField-token').value = 'feishu-secret-456';
+  drawer.querySelector('#kbField-token').value = 'feishu-test-000';
   drawer.querySelector('#kbConnDrawerSaveBtn').click();
   await settle(12);
 
@@ -478,7 +478,7 @@ test('前端隐藏 OAuth 入口，四大主力原生连接器卡片预填对应�
   assert.equal(feishuPayload.type, 'feishu');
   assert.equal(feishuPayload.endpoint, 'https://open.feishu.cn');
   assert.equal(feishuPayload.config.extra.appId, 'cli_a5829100');
-  assert.equal(feishuPayload.secret.token, 'feishu-secret-456');
+  assert.equal(feishuPayload.secret.token, 'feishu-test-000');
 
   const updatedFeishuCard = document.querySelector('.kb-vendor-card[data-vendor-key="feishu"]');
   assert.equal(updatedFeishuCard.getAttribute('data-vendor-state'), 'configured');
