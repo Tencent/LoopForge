@@ -2,6 +2,26 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { chooseOption, loadApp, settle } from '../lib/load-app.mjs';
 
+test('workflow names distinguish same-named project roles in the catalog and picker', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  app.evaluate(`
+    const original = state.data.agents[0];
+    state.data.agents.push({...original, id:'second-role'});
+    state.data.workflows.push({id:'second-flow',projectId:original.projectId,name:'Report & Review',nodes:[{agentId:'second-role'}]});
+    switchView('agents');
+    renderAgents();
+    state.workflow=state.data.workflows[0];
+  `);
+  const row = id => app.document.querySelector(`[data-agent-id="${id}"] .agent-row-uses`).textContent;
+  assert.match(row('agent-1'), /Delivery Flow/);
+  assert.match(row('second-role'), /Report & Review/);
+  const card = app.document.createElement('div');
+  card.innerHTML = app.evaluate(`agentBindCard({agentId:'agent-1'})`);
+  assert.match(card.querySelector('option[value="agent-1"]').textContent, /Delivery Flow/);
+  assert.match(card.querySelector('option[value="second-role"]').textContent, /Report & Review/);
+});
+
 test('asset catalog filters, opens, marks dirty, shares, saves, and deletes assets', async (t) => {
   const app = await loadApp();
   t.after(app.close);

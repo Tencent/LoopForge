@@ -787,6 +787,19 @@ function workflowAgents(){
   return (state.data?.agents||[]).filter(a=>projectWorkflowAgent(a,projectId));
 }
 function workflowAgent(id){return workflowAgents().find(a=>a.id===id)}
+function agentWorkflowUsage(workflows){
+  const usage=new Map();
+  for(const workflow of workflows){
+    for(const node of workflow.nodes||[]){
+      if(!node.agentId)continue;
+      if(!usage.has(node.agentId))usage.set(node.agentId,{count:0,names:new Set()});
+      const entry=usage.get(node.agentId);
+      entry.count++;
+      entry.names.add(workflow.name||workflow.id);
+    }
+  }
+  return usage;
+}
 async function refreshWorkflowAgents(){
   const wf=state.workflow;
   if(catalogGeneric(wf))return hydrateGenericWorkflowRoles(wf);

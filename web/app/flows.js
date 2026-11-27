@@ -1009,7 +1009,8 @@ function agentBindCard(n){
   const projectId=state.workflow?.projectId||state.projectFilter||'',projects=state.data.projects||[];
   const invalid=n.agentId&&!agent?'<option value="" selected disabled>当前绑定角色不可用，请重新选择</option>':'';
   const available=workflowAgents(),owned=available.filter(x=>!generic&&x.projectId===projectId),shared=available.filter(x=>!generic&&x.projectId!==projectId);
-  const options=items=>items.map(x=>{const owner=projects.find(p=>p.id===x.projectId)?.name||x.projectId;return `<option value="${escapeHTML(x.id)}" ${x.id===n.agentId?'selected':''}>${escapeHTML(x.name)}${!generic&&x.projectId!==projectId?` · 来自 ${escapeHTML(owner)}`:''}</option>`}).join('');
+  const usage=agentWorkflowUsage(generic?[state.workflow]:(state.data.workflows||[]).filter(w=>!catalogGeneric(w)));
+  const options=items=>items.map(x=>{const owner=projects.find(p=>p.id===x.projectId)?.name||x.projectId;return `<option value="${escapeHTML(x.id)}" ${x.id===n.agentId?'selected':''}>${escapeHTML(x.name)}${usage.has(x.id)?" · "+escapeHTML([...usage.get(x.id).names].join("、")):""}${!generic&&x.projectId!==projectId?` · 来自 ${escapeHTML(owner)}`:''}</option>`}).join('');
   const grouped=generic
     ?(available.length?`<optgroup label="通用模板角色 · ${available.length} 个">${options(available)}</optgroup>`:'')
     :(owned.length?`<optgroup label="本项目角色 · ${owned.length} 个">${options(owned)}</optgroup>`:'')+(shared.length?`<optgroup label="共享角色 · ${shared.length} 个">${options(shared)}</optgroup>`:'');
