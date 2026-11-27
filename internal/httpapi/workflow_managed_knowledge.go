@@ -33,21 +33,29 @@ func managedKnowledgeRefsUnsupported(agent domain.AgentDefinition, provider, nod
 // workflowManagedKnowledgeRole resolves the role a node runs as, preferring the
 // role's executor over the node override exactly like the engine does when it
 // routes a node to the managed path. Generic templates keep their packaged
-// roles outside the catalog, so those are resolved from the template.
+// roles outside the catalog, so those are resolved from the stored template.
+// The lookup keys on the workflow id rather than the payload's generic flag:
+// the template save branch of PUT /api/workflows stamps Generic itself, so an
+// editor payload without "generic": true must still see the packaged roles.
 func workflowManagedKnowledgeRole(store *repo.Store, w domain.WorkflowDefinition, node domain.WorkflowNode) (domain.AgentDefinition, string, bool) {
 	agentID := strings.TrimSpace(node.AgentID)
 	if agentID == "" || domain.IsPreviewBuildAgent(agentID) {
 		return domain.AgentDefinition{}, "", false
 	}
-	agent, ok := store.Agent(agentID)
-	if !ok && w.Generic {
-		if template, found := store.GenericTemplateByWorkflow(w.ID); found {
-			for _, role := range template.Agents {
-				if role.ID == agentID {
-					agent, ok = role, true
-					break
-				}
+	var agent domain.AgentDefinition
+	ok := false
+	if template, found := store.GenericTemplateByWorkflow(w.ID); found {
+		for _, role := range template.Agents {
+			if role.ID == agentID {
+				agent, ok = role, true
+				break
 			}
+		}
+	}
+	if !ok {
+		agent, ok = store.Agent(agentID)
+		if ok && store.AgentShadowsTemplateOutside(agent, w.ProjectID) {
+			agent, ok = store.GenericAgentByID(agentID)
 		}
 	}
 	if !ok {

@@ -1248,6 +1248,13 @@ func (h *catalogHandlers) workflow(c *gin.Context) {
 		if !h.validateWorkflowProjectCredentials(c, restored) {
 			return
 		}
+		// Restoring writes the old node graph back as-is; a revision saved
+		// before the role switched to a managed Agent would otherwise bring
+		// back a knowledge binding the save path now refuses.
+		if err := validateWorkflowManagedKnowledge(h.repo, restored); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
 		if v.Shared && !restored.Shared && h.sharedScheduleReferences("sop", id) {
 			c.JSON(http.StatusConflict, map[string]string{"error": "该 LOOP 仍被共享任务引用，不能取消共享"})
 			return
@@ -1365,6 +1372,18 @@ func (h *catalogHandlers) workflow(c *gin.Context) {
 		}
 		taken, _ := h.repo.Workflow(req.ID)
 		if !h.requireProjectWriter(c, req.ProjectID, taken.ProjectID) {
+			return
+		}
+		// A clone copies every node binding verbatim, so a source saved before
+		// its role became a managed Agent (or a template whose packaged role
+		// is managed) must not mint a new LOOP the save path would refuse.
+		// Checked before adoption so a rejected clone creates no roles.
+		probe := v
+		if !v.Generic {
+			probe.ProjectID = req.ProjectID // roles resolve in the copy's project
+		}
+		if err := validateWorkflowManagedKnowledge(h.repo, probe); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
 		if req.AutoSelectSandbox {
