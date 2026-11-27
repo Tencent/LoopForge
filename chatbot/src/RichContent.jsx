@@ -43,6 +43,12 @@ import {
   presentationTitle,
   exportPresentation,
 } from "./presentation.js";
+import {
+  formatLineRange,
+  highlightCodeNodes,
+  parseCodeBlockMeta,
+  splitPathParts,
+} from "./code-block.js";
 import "./artifact-preview.css";
 
 const Check = (props) => <HarnessIcon name="check" {...props} />;
@@ -211,32 +217,93 @@ export function Slides({ source }) {
     </div>
   );
 }
-export function CodeBlock({ language, source }) {
-  const [preview, setPreview] = useState(
-    ["svg", "mermaid", "html", "slides", "ppt"].includes(language),
+export function CodeBlock({
+  language = "",
+  source = "",
+  filePath = "",
+  rawFilePath = "",
+  startLine = null,
+  endLine = null,
+  isReference = false,
+}) {
+  const meta = useMemo(() => {
+    if (filePath || isReference) {
+      const normalizedLang = String(language || "").toLowerCase();
+      return {
+        language: normalizedLang,
+        filePath,
+        rawPath: rawFilePath || filePath,
+        startLine,
+        endLine,
+        isReference,
+        visual:
+          !isReference &&
+          ["svg", "mermaid", "html", "slides", "ppt"].includes(normalizedLang),
+      };
+    }
+    return parseCodeBlockMeta(language);
+  }, [language, filePath, rawFilePath, startLine, endLine, isReference]);
+
+  const [preview, setPreview] = useState(meta.visual);
+  useEffect(() => {
+    setPreview(meta.visual);
+  }, [meta.visual]);
+
+  const highlighted = useMemo(
+    () =>
+      preview && meta.visual
+        ? null
+        : highlightCodeNodes(source, meta.language),
+    [preview, meta.visual, meta.language, source],
   );
-  const visual = ["svg", "mermaid", "html", "slides", "ppt"].includes(language);
+
+  const lineRange = formatLineRange(meta.startLine, meta.endLine);
+  const pathParts = meta.filePath ? splitPathParts(meta.filePath) : null;
+  const fullTitle = meta.filePath
+    ? `${meta.rawPath || meta.filePath}${lineRange ? `:${lineRange}` : ""}`
+    : meta.language || "文本";
+
   return (
     <div className="code-block">
       <div className="code-toolbar">
-        <span>{language || "文本"}</span>
-        <div>
-          {visual ? (
-            <button onClick={() => setPreview(!preview)}>
+        <span className="code-toolbar-title" title={fullTitle}>
+          {pathParts ? (
+            <>
+              <FileText size={12} className="code-toolbar-icon" />
+              <span className="code-toolbar-ref">
+                {pathParts.dir ? (
+                  <span className="code-toolbar-dir">{pathParts.dir}</span>
+                ) : null}
+                <span className="code-toolbar-file">{pathParts.file}</span>
+                {lineRange ? (
+                  <span className="code-toolbar-lines">:{lineRange}</span>
+                ) : null}
+              </span>
+            </>
+          ) : (
+            meta.language || "文本"
+          )}
+        </span>
+        <div className="code-toolbar-actions">
+          {pathParts && meta.language ? (
+            <span className="code-toolbar-lang">{meta.language}</span>
+          ) : null}
+          {meta.visual ? (
+            <button type="button" onClick={() => setPreview(!preview)}>
               {preview ? "查看源码" : "预览"}
             </button>
           ) : null}
           <CopyButton value={source} label="复制代码" />
         </div>
       </div>
-      {preview && language === "svg" ? (
+      {preview && meta.language === "svg" ? (
         <div
           className="svg-preview"
           dangerouslySetInnerHTML={{ __html: safeSVG(source) }}
         />
-      ) : preview && language === "mermaid" ? (
+      ) : preview && meta.language === "mermaid" ? (
         <Diagram source={source} />
-      ) : preview && language === "html" ? (
+      ) : preview && meta.language === "html" ? (
         <iframe
           title="HTML 产物预览"
           className="html-preview"
@@ -250,11 +317,17 @@ export function CodeBlock({ language, source }) {
             )
           }
         />
-      ) : preview && ["slides", "ppt"].includes(language) ? (
+      ) : preview && ["slides", "ppt"].includes(meta.language) ? (
         <Slides source={source} />
       ) : (
         <pre>
-          <code>{source}</code>
+          <code
+            className={
+              highlighted ? `hljs language-${highlighted.language}` : undefined
+            }
+          >
+            {highlighted ? highlighted.nodes : source}
+          </code>
         </pre>
       )}
     </div>
@@ -299,14 +372,22 @@ function AgentBrowserLink({ target, open, children }) {
 }
 const markdownComponents = {
   pre: ({ children }) => <>{children}</>,
-  code: ({ className, children }) => {
+  code: ({ node, className, children }) => {
     const { assets, projectId } = useContext(MarkdownAssets);
     const openInBrowser = useContext(AgentBrowserLinks);
     const insideLink = useContext(InsideLink);
-    const source = String(children).replace(/\n$/, "");
-    const language = /language-([^\s]+)/.exec(className || "")?.[1];
+    const raw = String(children).replace(/\n$/, "");
+    const source = raw.replace(/^(?:[ \t]*\r?\n)+(?=[ \t]*\S)/, "");
+    const rawLang =
+      String(className || "")
+        .split(/\s+/)
+        .find((c) => c.startsWith("language-"))
+        ?.slice("language-".length) || "";
+    const rawMeta = node?.data?.meta ? String(node.data.meta).trim() : "";
+    const parsed = parseCodeBlockMeta(rawLang, rawMeta);
+    const hasFenceInfo = Boolean(rawLang || rawMeta);
     const browserTarget =
-      openInBrowser && !insideLink && !language && !source.includes("\n")
+      openInBrowser && !insideLink && !hasFenceInfo && !source.includes("\n")
         ? agentBrowserTarget(source)
         : "";
     if (browserTarget)
@@ -316,7 +397,7 @@ const markdownComponents = {
         </AgentBrowserLink>
       );
     const target =
-      !language && !source.includes("\n")
+      !hasFenceInfo && !source.includes("\n")
         ? assets
             .map((a) => definitionTarget(a, projectId))
             .find((a) => a?.id === source)
@@ -333,8 +414,16 @@ const markdownComponents = {
           <code>{children}</code>
         </a>
       );
-    return language || source.includes("\n") ? (
-      <CodeBlock language={language || ""} source={source} />
+    return hasFenceInfo || source.includes("\n") ? (
+      <CodeBlock
+        language={parsed.language}
+        source={source}
+        filePath={parsed.filePath}
+        rawFilePath={parsed.rawPath}
+        startLine={parsed.startLine}
+        endLine={parsed.endLine}
+        isReference={parsed.isReference}
+      />
     ) : (
       <code>{children}</code>
     );

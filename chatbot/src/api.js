@@ -1,4 +1,5 @@
 import { mergeActivity } from "./activity.js";
+import { formatLineRange, parseCodeBlockMeta } from "./code-block.js";
 import { actionName } from "./platform.js";
 export async function api(path, options = {}) {
   const headers = { accept: "application/json", ...options.headers };
@@ -179,12 +180,15 @@ export function collectArtifacts(session) {
     );
     for (const [index, match] of [...blocks].entries()) {
       const label = match[1].trim();
-      const language = label.split(/\s/)[0].toLowerCase();
-      const type = ["mermaid", "svg", "html", "slides", "ppt"].includes(
-        language,
-      )
-        ? language
-        : "code";
+      const firstSpace = label.search(/\s/);
+      const rawLang = firstSpace === -1 ? label : label.slice(0, firstSpace);
+      const rawMeta = firstSpace === -1 ? "" : label.slice(firstSpace + 1).trim();
+      const meta = parseCodeBlockMeta(rawLang, rawMeta);
+      const language = meta.language;
+      const type = meta.visual ? language : "code";
+      const fileExt = meta.filePath.includes(".")
+        ? meta.filePath.split(".").pop().toLowerCase()
+        : "";
       const extension =
         {
           mermaid: "mmd",
@@ -197,20 +201,28 @@ export function collectArtifacts(session) {
           ppt: "pptx",
           json: "json",
         }[language] ||
+        fileExt ||
         language ||
         "txt";
       const named = label.match(/(?:filename=|title=)["']?([^\s"']+)/)?.[1];
+      const fileName = meta.filePath
+        ? meta.filePath.split(/[\\/]/).filter(Boolean).pop()
+        : "";
+      const lineRange = formatLineRange(meta.startLine, meta.endLine);
       artifacts.push({
         id: `block-${messageIndex}-${index}`,
         name:
           named ||
+          fileName ||
           `${{ svg: "图像", mermaid: "流程图", html: "网页", slides: "演示文稿", ppt: "演示文稿" }[language] || "代码"}-${messageIndex + 1}-${index + 1}.${extension}`,
         kind: type,
         content: match[2],
         language,
         mimeType: type === "svg" ? "image/svg+xml" : "text/plain",
         messageIndex,
-        source: "AI 生成",
+        source: meta.filePath
+          ? `代码引用 · ${meta.filePath}${lineRange ? `:${lineRange}` : ""}`
+          : "AI 生成",
       });
     }
   });
