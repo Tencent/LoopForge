@@ -102,21 +102,46 @@ func managedNodeKnowledgeUnsupported(node domain.WorkflowNode, provider string, 
 	return nil
 }
 
+// errManagedAgentConfiguration marks a managed-Agent node the frozen run
+// snapshot can never execute (role assets, knowledge bindings, evolution
+// replay, workspace outputs). These checks run before dispatch and read only
+// the snapshot, so every further attempt fails identically; nodeFailedAt
+// fails the node at once instead of burning MaxAttempts or auto-rejecting
+// upstream work that cannot change the outcome.
+var errManagedAgentConfiguration = errors.New("托管 Agent 节点配置不受支持")
+
+type managedConfigurationError struct{ err error }
+
+func (e managedConfigurationError) Error() string { return e.err.Error() }
+func (e managedConfigurationError) Unwrap() error { return e.err }
+func (e managedConfigurationError) Is(target error) bool {
+	return target == errManagedAgentConfiguration
+}
+
+// managedConfiguration keeps the original message (shown on the node) while
+// tagging it as deterministic.
+func managedConfiguration(err error) error {
+	if err == nil {
+		return nil
+	}
+	return managedConfigurationError{err: err}
+}
+
 func (e *Engine) executeManagedAgentNode(ctx context.Context, wf domain.WorkflowDefinition, run domain.Run, node domain.WorkflowNode, agent domain.AgentDefinition, provider string, generation, attempt int) error {
 	if err := agent.ValidateManagedExecutor(provider); err != nil {
-		return err
+		return managedConfiguration(err)
 	}
 	// Check before the dispatch fence below: a rejected node never sends a
 	// turn, so an explicit retry must not be told a turn is already in flight.
 	if err := managedNodeKnowledgeUnsupported(node, provider, run.ExecutionContext.KnowledgeRefs); err != nil {
-		return err
+		return managedConfiguration(err)
 	}
 	if run.ExecutionContext.IsEvolutionReplay() {
-		return errors.New("进化回放暂不支持托管 Agent")
+		return managedConfiguration(errors.New("进化回放暂不支持托管 Agent"))
 	}
 	if len(node.ArtifactOutputs) > 0 || normalizeExecutionScope(node.ExecutionScope) == domain.ExecutionScopeRepositories ||
 		len(node.CredentialEnv) > 0 {
-		return fmt.Errorf("%s 节点 %q 的工作区产物和逐仓库执行需要 CLI", provider, node.Name)
+		return managedConfiguration(fmt.Errorf("%s 节点 %q 的工作区产物和逐仓库执行需要 CLI", provider, node.Name))
 	}
 	var runnerID string
 	var client managedagent.TextAgent

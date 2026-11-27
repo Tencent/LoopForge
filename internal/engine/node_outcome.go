@@ -54,7 +54,7 @@ func shouldCommitNodeOutcome(r domain.Run, nr *domain.NodeRun, generation, attem
 
 func (e *Engine) nodeFailedAt(runID string, node domain.WorkflowNode, attempt, generation int, err error, allowReject bool) {
 	var rejectFrom NodeExpectation
-	configurationFailure := errors.Is(err, ErrWorkspaceControlConfiguration)
+	configurationFailure := errors.Is(err, ErrWorkspaceControlConfiguration) || errors.Is(err, errManagedAgentConfiguration)
 	storeFailure := func(r *domain.Run) {
 		nr := r.Nodes[node.ID]
 		if !shouldCommitNodeOutcome(*r, nr, generation, attempt, false) {
@@ -135,7 +135,7 @@ var errNodeArtifactCommit = errors.New("保存节点终态和产物失败")
 
 func shouldRetryFailedAttempt(node domain.WorkflowNode, attempt int, err error) bool {
 	// A failed artifact write follows a completed execution, which may have side effects.
-	if errors.Is(err, ErrWorkspaceControlConfiguration) || errors.Is(err, errManagedTurnUnknown) || errors.Is(err, managedagent.ErrTurnTimedOut) || errors.Is(err, errSOPArtifactWrite) || errors.Is(err, errNodeArtifactCommit) || isArtifactHandoffFailure(err) {
+	if errors.Is(err, ErrWorkspaceControlConfiguration) || errors.Is(err, errManagedAgentConfiguration) || errors.Is(err, errManagedTurnUnknown) || errors.Is(err, managedagent.ErrTurnTimedOut) || errors.Is(err, errSOPArtifactWrite) || errors.Is(err, errNodeArtifactCommit) || isArtifactHandoffFailure(err) {
 		return false
 	}
 	if err != nil && (isMaxTurnsErr(err) || strings.Contains(err.Error(), "verification ") || runtime.IsCwdMountFailure(err)) {

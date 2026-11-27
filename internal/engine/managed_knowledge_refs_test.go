@@ -164,3 +164,86 @@ func TestReview1469ManagedNodeKnowledgeRefs(t *testing.T) {
 		t.Fatalf("managed node without knowledge bindings should dispatch once, runs=%d prompts=%q", agent.runs, agent.prompts)
 	}
 }
+
+// TestManagedNodeConfigurationFailureIsNotRetried covers the 3819f1c9 review:
+// the knowledge check (and the other snapshot-only managed checks) fail the
+// same way on every attempt, so a node with MaxAttempts>1 must fail at once
+// instead of looping to MaxAttempts. A transient precondition — no managed
+// client configured yet — keeps the normal retry.
+func TestManagedNodeConfigurationFailureIsNotRetried(t *testing.T) {
+	store, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(store.Close)
+	for _, role := range []domain.AgentDefinition{
+		{ID: "nr-a2a", Name: "A2A", ProjectID: "default", ExecutorID: domain.A2AExecutorID, ExternalAgentTarget: domain.ExternalAgentRemote, Prompt: "answer"},
+		{ID: "nr-a2a-model", Name: "A2A model", ProjectID: "default", ExecutorID: domain.A2AExecutorID, ExternalAgentTarget: domain.ExternalAgentRemote, Prompt: "answer", Model: "pinned"},
+		{ID: "nr-wma", Name: "WMA", ProjectID: "default", ExecutorID: domain.WMAExecutorID, Prompt: "answer"},
+	} {
+		if err := store.PutAgent(role); err != nil {
+			t.Fatal(err)
+		}
+	}
+	agent := &recordingManagedAgent{}
+	eng := New(store, runtime.NewManagerWithLimit(t.TempDir(), 1))
+	if err := eng.ConfigureManagedAgent(domain.A2AExecutorID, "default", 42, agent); err != nil {
+		t.Fatal(err)
+	}
+	execute := func(runID string, node domain.WorkflowNode) domain.Run {
+		t.Helper()
+		wf := domain.WorkflowDefinition{ID: "wf-" + runID, Name: "wf", ProjectID: "default", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{node}}
+		run := domain.Run{
+			ID: runID, Status: "running", WorkflowID: wf.ID, WorkflowSnapshot: wf,
+			ExecutionContext: domain.TelemetryContext{ProjectID: "default", ResponsibleUserID: 42},
+			Nodes:            map[string]*domain.NodeRun{node.ID: {NodeID: node.ID, Status: "pending"}},
+		}
+		if err := store.PutRun(run); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := eng.acquireLease(run); err != nil {
+			t.Fatal(err)
+		}
+		eng.executeNode(context.Background(), run.ID, wf, node)
+		got, ok := store.Run(run.ID)
+		if !ok {
+			t.Fatalf("run %s not found", run.ID)
+		}
+		return got
+	}
+	retried := func(r domain.Run) bool {
+		for _, ev := range r.Events {
+			if ev.Type == "node.retry" {
+				return true
+			}
+		}
+		return false
+	}
+	kb := []domain.KnowledgeRef{{ConnectorID: "kc-nr", Mode: "all"}}
+	for _, tc := range []struct {
+		name, runID string
+		node        domain.WorkflowNode
+	}{
+		{"knowledge binding", "nr-kb", domain.WorkflowNode{ID: "n1", Name: "KB", Type: "agent", AgentID: "nr-a2a", MaxAttempts: 3, KnowledgeRefs: kb}},
+		{"role assets", "nr-model", domain.WorkflowNode{ID: "n1", Name: "Model", Type: "agent", AgentID: "nr-a2a-model", MaxAttempts: 3}},
+		{"workspace outputs", "nr-outputs", domain.WorkflowNode{ID: "n1", Name: "Outputs", Type: "agent", AgentID: "nr-a2a", MaxAttempts: 3,
+			ArtifactOutputs: []domain.ArtifactContract{{Name: "out", Path: "out.md"}}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := execute(tc.runID, tc.node)
+			nr := got.Nodes["n1"]
+			if nr.Status != "failed" || retried(got) {
+				t.Fatalf("deterministic managed configuration failure: status=%q retried=%v error=%q, want failed without retry", nr.Status, retried(got), nr.Error)
+			}
+			if agent.runs != 0 {
+				t.Fatalf("provider dispatched %d turns for a rejected node", agent.runs)
+			}
+		})
+	}
+	t.Run("missing managed client still retries", func(t *testing.T) {
+		got := execute("nr-no-client", domain.WorkflowNode{ID: "n1", Name: "WMA", Type: "agent", AgentID: "nr-wma", MaxAttempts: 3})
+		if nr := got.Nodes["n1"]; nr.Status != "pending" || !retried(got) {
+			t.Fatalf("transient managed precondition: status=%q retried=%v error=%q, want pending retry", nr.Status, retried(got), nr.Error)
+		}
+	})
+}
