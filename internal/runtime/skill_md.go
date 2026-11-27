@@ -8,6 +8,8 @@ import (
 	"strings"
 
 	"agentflow/internal/domain"
+	"github.com/goccy/go-yaml"
+	"github.com/goccy/go-yaml/parser"
 )
 
 type selectedSkill struct {
@@ -93,25 +95,20 @@ func setFrontmatterField(raw []byte, key, value string) []byte {
 	if !ok {
 		return raw
 	}
-	line := key + ": " + yamlFrontmatterScalar(value)
-	lines := strings.Split(header, "\n")
-	found := false
-	for i, existing := range lines {
-		k, _, cut := strings.Cut(strings.TrimRight(existing, "\r"), ":")
-		if cut && strings.TrimSpace(k) == key {
-			lines[i] = line
-			found = true
-			break
-		}
+	file, err := parser.ParseBytes([]byte(header), parser.ParseComments)
+	if err != nil {
+		return raw
 	}
-	if !found {
-		if strings.TrimSpace(header) == "" {
-			lines = []string{line}
-		} else {
-			lines = append([]string{line}, lines...)
-		}
+	root, err := yaml.PathString("$")
+	if err != nil {
+		return raw
 	}
-	header = strings.Join(lines, "\n")
+	// Merge the top-level key as YAML so replacing a block scalar removes
+	// its continuation lines and never changes a nested metadata key.
+	if err := root.MergeFromReader(file, strings.NewReader(key+": "+yamlFrontmatterScalar(value))); err != nil {
+		return raw
+	}
+	header = file.String()
 	var b strings.Builder
 	b.WriteString("---\n")
 	b.WriteString(header)
@@ -143,36 +140,14 @@ func parseSkillFrontmatter(body []byte) (name, description string) {
 	if !ok {
 		return "", ""
 	}
-	for _, line := range strings.Split(header, "\n") {
-		key, val, cut := strings.Cut(strings.TrimRight(line, "\r"), ":")
-		if !cut {
-			continue
-		}
-		key = strings.TrimSpace(key)
-		val = unquoteFrontmatterValue(strings.TrimSpace(val))
-		switch key {
-		case "name":
-			name = val
-		case "description":
-			description = val
-		}
+	var metadata struct {
+		Name        string `yaml:"name"`
+		Description string `yaml:"description"`
 	}
-	return name, description
-}
-
-func unquoteFrontmatterValue(val string) string {
-	if val == "" {
-		return ""
+	if err := yaml.Unmarshal([]byte(header), &metadata); err != nil {
+		return "", ""
 	}
-	if strings.HasPrefix(val, `"`) {
-		if unquoted, err := strconv.Unquote(val); err == nil {
-			return unquoted
-		}
-	}
-	if len(val) >= 2 && strings.HasPrefix(val, "'") && strings.HasSuffix(val, "'") {
-		return val[1 : len(val)-1]
-	}
-	return val
+	return metadata.Name, metadata.Description
 }
 
 var yamlPlainScalar = regexp.MustCompile(`^[A-Za-z0-9._/-]+$`)
