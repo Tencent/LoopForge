@@ -79,3 +79,48 @@ test('issue clarification helpers handle thinking, protocol recovery, and action
   assert.ok(recovered.length === 4);
   app.evaluate(`finishIssueClarifyJob('issue-1',true);closeIssueDrawer()`);
 });
+
+test('discussion empty state explains sources and offers a comment entry point', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  const issue = app.evaluate('structuredClone(state.data.issues[0])');
+  app.router.get('/api/issues/issue-1', { issue, comments: [] });
+  app.router.get('/api/issues/issue-1/requirement', {
+    title: issue.title, description: issue.description,
+  });
+  const run = {
+    ...app.evaluate('structuredClone(state.data.runs[0])'),
+    executionContext: { ...app.evaluate('structuredClone(state.data.runs[0])').executionContext },
+  };
+  app.router.get('/api/runs/run-1', run);
+  app.router.post('/api/issues/issue-1/comments', call => ({
+    id: 'comment-1', issueId: 'issue-1', authorType: 'member',
+    authorId: String(call.body.body).slice(0, 3), body: call.body.body,
+    createdAt: '2026-10-21T11:00:00Z',
+  }));
+  await app.evaluate(`openIssueDetail('issue-1','activity')`);
+  await settle(5);
+  const body = app.document.querySelector('#issueDetailBody');
+  // Empty discussion: source explanation plus a working comment form for members.
+  assert.match(body.textContent, /暂无讨论/);
+  assert.match(body.textContent, /这里记录需求内的成员与 Agent 评论/);
+  assert.match(body.textContent, /「会话」标签/);
+  assert.match(body.textContent, /「操作日志」/);
+  const form = body.querySelector('[data-issue-comment="issue-1"]');
+  assert.ok(form, 'member empty state should render the comment form');
+  form.elements.body.value = 'first comment';
+  await app.evaluate(`document.querySelector('#issueDetailBody [data-issue-comment="issue-1"]').requestSubmit()`);
+  await settle(6);
+  const posted = app.router.calls.find(c => c.method === 'POST' && c.path === '/api/issues/issue-1/comments');
+  assert.equal(posted.body.body, 'first comment');
+  // Guests get the source explanation but no comment form.
+  app.evaluate(`state.currentUser={...state.currentUser,isGuest:true};renderIssueDetailTab()`);
+  assert.match(body.textContent, /这里记录需求内的成员与 Agent 评论/);
+  assert.match(body.textContent, /登录成员可在这里发表评论。/);
+  assert.equal(body.querySelector('[data-issue-comment]'), null);
+  app.evaluate(`state.currentUser={...state.currentUser,isGuest:false};state.issueDetailData.comments=[
+    {id:'comment-1',authorType:'member',authorId:'user-1',body:'already here',createdAt:'2026-10-21T11:00:00Z'}];
+    renderIssueDetailTab()`);
+  assert.match(body.textContent, /already here/);
+  assert.equal(body.querySelector('[data-issue-comment]'), null);
+});

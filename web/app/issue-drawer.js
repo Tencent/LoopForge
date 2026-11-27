@@ -204,6 +204,11 @@ function renderIssueDetailTab(){
   host.querySelectorAll('[data-rerun-from-here]').forEach(b=>b.onclick=()=>openRerunFromNode(cachedRun(b.dataset.run),b.dataset.rerunFromHere));
   host.querySelectorAll('[data-export-logs]').forEach(b=>b.onclick=()=>downloadRunLogs(b.dataset.exportLogs));
   host.querySelectorAll('[data-artifact]').forEach(b=>b.onclick=()=>previewArtifact(data.run,b.dataset.artifact));
+  host.querySelectorAll('[data-issue-comment]').forEach(f=>f.onsubmit=e=>{
+    e.preventDefault();
+    const input=f.elements.body;
+    void submitIssueComment(f.dataset.issueComment||issue.id,input?.value).then(()=>{if(input)input.value=''});
+  });
   host.querySelectorAll('[data-start-clarify]').forEach(b=>b.onclick=()=>openIssueClarification(true));
   host.querySelectorAll('[data-continue-clarify]').forEach(b=>b.onclick=()=>{
     const current=state.issueDetailData?.issue;
@@ -975,7 +980,7 @@ function operationsPane(issue){
 }
 function activityPane(issue,data){
   const comments=data.comments||[],task=data.task,run=data.run;
-  const commentHtml=comments.slice().reverse().map(c=>`<div class="comment-row"><div class="muted">${c.authorType==='agent'?'Agent':c.authorId||'成员'} · ${new Date(c.createdAt).toLocaleString()}</div><p>${escapeHTML(c.body)}</p></div>`).join('')||'<div class="detail-empty compact">暂无讨论</div>';
+  const commentHtml=comments.slice().reverse().map(c=>`<div class="comment-row"><div class="muted">${c.authorType==='agent'?'Agent':c.authorId||'成员'} · ${new Date(c.createdAt).toLocaleString()}</div><p>${escapeHTML(c.body)}</p></div>`).join('')||issueDiscussionEmptyHTML(issue);
   const items=[];
   for(const item of [task,data.deletionTask].filter((t,i,all)=>t&&all.findIndex(x=>x?.id===t.id)===i)){
     items.push({t:new Date(item.createdAt).getTime(),type:'task.created',label:item.id===data.deletionTask?.id?'阻止删除的任务':'创建任务',detail:`${taskStatusLabel(item.status)} · ${item.id}${item.agentId?' · '+item.agentId:''}`});
@@ -989,6 +994,24 @@ function activityPane(issue,data){
   }).join('');
   const empty=conversationWorkspaceIssue(issue,run)?'对话需求没有 LOOP 任务，执行过程见会话记录':'尚未创建执行任务';
   return `<div class="detail-section"><h3>讨论与评论</h3>${commentHtml}</div><div class="detail-section"><h3>任务与运行轨迹</h3>${rows?`<div class="activity-list">${rows}</div>`:`<div class="detail-empty compact">${empty}</div>`}</div>`;
+}
+// 讨论区空态：说明记录来源并提供参与入口。成员可直接在这里发表评论；
+// 聊天里围绕需求发起的讨论在「会话」标签，IM 群聊触发的操作记录在
+// 「操作日志」。访客没有发布入口，只保留来源说明。
+function issueDiscussionEmptyHTML(issue){
+  const guest=!!(state.currentUser&&state.currentUser.isGuest);
+  const intro='这里记录需求内的成员与 Agent 评论；会话里的讨论在「会话」标签，聊天群发起的操作见「操作日志」。';
+  if(guest)return `<div class="detail-empty compact">暂无讨论<p>${intro}登录成员可在这里发表评论。</p></div>`;
+  return `<div class="detail-empty compact">暂无讨论<p>${intro}</p><form class="issue-comment-form" data-issue-comment="${escapeHTML(issue?.id||'')}"><input type="text" name="body" placeholder="发表第一条评论，参与这条需求的讨论" aria-label="发表评论"><button type="submit" class="button primary small">发表评论</button></form></div>`;
+}
+async function submitIssueComment(issueId,body){
+  const text=String(body||'').trim();
+  if(!text)return toast('评论内容不能为空','info');
+  try{
+    await api(`/api/issues/${encodeURIComponent(issueId)}/comments`,{method:'POST',body:JSON.stringify({body:text})});
+    toast('评论已发表','ok');
+    await refreshIssues();
+  }catch(err){toast(err.message,'err')}
 }
 
 

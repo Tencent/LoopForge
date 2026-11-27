@@ -546,6 +546,9 @@ html[data-theme="dark"] .issue-title-tag.tone-cyan{color:#67e8f9}
 .comment-row{border-left:2px solid var(--blue-soft);background:var(--panel);border-radius:0 10px 10px 0;padding:10px 14px;margin-bottom:9px}
 .comment-row .muted{font-size:10.5px}
 .comment-row p{margin:5px 0 0;font-size:12.5px;white-space:pre-wrap}
+.issue-comment-form{display:flex;gap:8px;margin-top:10px;text-align:left}
+.issue-comment-form input[type="text"]{flex:1;min-width:0;padding:6px 10px;border:1px solid var(--line);border-radius:8px;font-size:12.5px}
+.issue-comment-form input[type="text"]:focus{outline:0;border-color:var(--blue)}
 .activity-list{display:flex;flex-direction:column}
 .activity-row{display:grid;grid-template-columns:108px 88px minmax(0,1fr);column-gap:12px;align-items:start;padding:10px 0;border-bottom:1px solid var(--line);font-size:12px;color:var(--text)}
 .activity-row:last-child{border-bottom:0}
