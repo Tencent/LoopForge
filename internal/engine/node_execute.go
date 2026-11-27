@@ -762,6 +762,9 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 				}
 				return sb.Exec(ctx, scriptSpec, targetSink)
 			})
+			if runErr != nil {
+				runErr = withScriptFailureDetail(runErr, rawOutput)
+			}
 			if execMachine := e.defaultExecutionRunner(current); execMachine != "" {
 				workspace := runnerWorkspaceRel(current, node.ID)
 				gateExec = func(command string, target executionTarget, gateSink runtime.EventSink) (string, error) {
@@ -1498,4 +1501,54 @@ func joinGateCommands(commands []string, artifacts []domain.ArtifactContract) st
 		return bound[0]
 	}
 	return "set -e\n" + strings.Join(bound, "\n")
+}
+
+// maxScriptFailureDetail bounds the captured script output appended to a failed
+// node's error. The tail is kept because gate scripts usually print the concrete
+// failing checks to stderr right before exiting non-zero.
+const maxScriptFailureDetail = 4 << 10
+
+// withScriptFailureDetail keeps the process error (exit status) while attaching
+// the script output, so the run page, retry feedback and loop retrospective show
+// the real gate failure instead of only "Run: exit status 1" (issue #1191).
+func withScriptFailureDetail(err error, output string) error {
+	if err == nil {
+		return nil
+	}
+	detail := strings.TrimSpace(output)
+	if detail == "" {
+		return err
+	}
+	detail = stripANSIOutput(detail)
+	if detail == "" {
+		return err
+	}
+	if len(detail) > maxScriptFailureDetail {
+		detail = "…" + detail[len(detail)-maxScriptFailureDetail:]
+	}
+	return fmt.Errorf("%w\n--- 脚本输出 ---\n%s", err, detail)
+}
+
+// stripANSIOutput removes terminal escape sequences so node errors and retry
+// feedback stay readable when rendered in the web UI.
+func stripANSIOutput(value string) string {
+	if !strings.Contains(value, "\x1b") {
+		return value
+	}
+	var b strings.Builder
+	b.Grow(len(value))
+	escaped := false
+	for _, r := range value {
+		switch {
+		case r == 0x1b:
+			escaped = true
+		case escaped:
+			if r == 'm' || (r >= '@' && r <= '~') {
+				escaped = false
+			}
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return strings.TrimSpace(b.String())
 }
