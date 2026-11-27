@@ -98,7 +98,7 @@ export const CREDENTIAL_GUIDES = {
   forgeToken: {
     steps: [
       "在 Forgejo「设置 → 应用」为当前实例生成有 read:user 和 write:repository 权限的访问令牌",
-      "到 LoopForge「个人配置 → Forgejo」为该实例保存令牌，然后重试",
+      "到 LoopForge「个人配置 → 新增 Git 配置 → Forgejo」添加令牌。替换令牌时，打开对应实例的配置",
     ],
   },
   gitHttpCredentials: {

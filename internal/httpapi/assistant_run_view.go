@@ -124,7 +124,7 @@ var assistantCredentialRules = []struct {
 	}},
 	{"forgeToken", "Forgejo 访问令牌", regexp.MustCompile(`Forgejo[^。\n]*(令牌|HTTP 40[13])`), "", []string{
 		"在 Forgejo「设置 → 应用」为当前实例生成有 read:user 和 write:repository 权限的访问令牌",
-		"到 LoopForge「个人配置 → Forgejo」为该实例保存令牌，然后重试",
+		"到 LoopForge「个人配置 → 新增 Git 配置 → Forgejo」添加令牌。替换令牌时，打开对应实例的配置",
 	}},
 	{"gitToken", "GitHub Git Token", regexp.MustCompile(`(?i)Git Token|工蜂[^。\n]{0,12}令牌|could not read Username|Authentication failed|HTTP Basic: Access denied|terminal prompts disabled|requested URL returned error: 40[13]`), "https://github.com/settings/tokens", []string{
 		"打开 GitHub「Settings → Developer settings → Personal access tokens」新建令牌",

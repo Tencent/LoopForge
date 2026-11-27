@@ -35,7 +35,7 @@ func newAPIClient(transport http.RoundTripper) *http.Client {
 	}
 }
 
-var ErrTokenRequired = errors.New("请在「个人配置 → Forgejo」配置该实例的访问令牌")
+var ErrTokenRequired = errors.New("请在「个人配置 → 新增 Git 配置 → Forgejo」配置该实例的访问令牌")
 
 // ValidToken treats a PAT as opaque, but rejects whitespace and control
 // characters before it can enter storage or an HTTP header.

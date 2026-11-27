@@ -527,10 +527,14 @@ assert.deepEqual(credentialSavePayload(cred.kind('gitToken'), {secret: ' ghp_1 '
 const sshRow = credentialRowHTML(cred.kind('gitSshKey'), {...user, gitSshKeyConfigured: true});
 assert.match(sshRow, /aria-haspopup="dialog">管理密钥/);
 assert.ok(!sshRow.includes('credential-editor-form'));
-const forgeRow = credentialRowHTML(cred.kind('forgeToken'), {...user, forgeTokenConfigured: true});
-assert.match(forgeRow, /aria-haspopup="dialog">管理令牌/);
-assert.ok(!forgeRow.includes('credential-editor-form'));
-assert.ok(credentialPanelHTML({...user, forgeTokenConfigured: true}).includes('data-credential-row="forgeToken"'));
+const forgeRows = credentialGitRowsHTML([], [], false, [
+  {id:'one',instance:'https://forge.example.org/one'},
+  {id:'two',instance:'https://forge.example.org/two'},
+]);
+assert.equal(count(forgeRows, 'data-credential-git-kind="forge"'), 2);
+assert.match(forgeRows, /https:\/\/forge\.example\.org\/one.*data-credential-git-id="one"/s);
+assert.match(forgeRows, /https:\/\/forge\.example\.org\/two.*data-credential-git-id="two"/s);
+assert.ok(!forgeRows.includes('credential-editor-form'));
 const httpsRow = credentialRowHTML(cred.kind('gitHttpCredentials'), {...user, gitHttpCredentialsConfigured: true});
 assert.match(httpsRow, /aria-haspopup="dialog">管理令牌/);
 assert.ok(!httpsRow.includes('credential-editor-form'));

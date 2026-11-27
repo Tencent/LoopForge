@@ -756,7 +756,7 @@ function credentialAddMenu(group,user){
 }
 function credentialGroupHTML(group,user){
   const git=group.id==='platform';
-  const kinds=CREDENTIAL_KINDS.filter(kind=>kind.group===group.id&&(!kind.dialog||kind.key==='forgeToken')&&credentialConfigured(kind,user));
+  const kinds=CREDENTIAL_KINDS.filter(kind=>kind.group===group.id&&!kind.dialog&&credentialConfigured(kind,user));
   const scope=git&&(kinds.length||user.gitHttpCredentialsConfigured||user.gitSshKeyConfigured);
   return `<section class="credential-group" data-credential-group="${group.id}" aria-labelledby="credential-group-${group.id}">
     <header class="credential-group-title">
@@ -784,13 +784,22 @@ function credentialPanelHTML(user){
     ${hasCLI?`<section class="credential-group credential-defaults" aria-labelledby="credentialDefaultsTitle" data-credential-defaults>${credentialDefaultsHeader()}<p class="credential-default-status" role="status">正在读取执行器…</p></section>`:''}
   </div>`;
 }
-function credentialGitRowsHTML(http,ssh,showGitHub){
-  return [...http.filter(item=>item.host!=='github.com'||!showGitHub).map(item=>({...item,kind:'http'})),...ssh.map(item=>({...item,kind:'ssh'}))].map(item=>{
+function credentialGitRowsHTML(http,ssh,showGitHub,forge=[]){
+  const rows=[
+    ...http.filter(item=>item.host!=='github.com'||!showGitHub).map(item=>({...item,kind:'http'})),
+    ...ssh.map(item=>({...item,kind:'ssh'})),
+    ...forge.map(item=>({...item,kind:'forge'})),
+  ];
+  return rows.map(item=>{
     const isSSH=item.kind==='ssh';
-    const platform=GIT_ADD_OPTIONS.find(type=>type.id===(isSSH?'gitSshKey':item.platform))||GIT_ADD_OPTIONS.find(type=>type.id==='other');
-    const endpoint=item.host.startsWith('http://')?item.host:`${isSSH?'ssh':'https'}://${item.host}`;
+    const isForge=item.kind==='forge';
+    const platformID=isForge?'forgeToken':isSSH?'gitSshKey':item.platform;
+    const platform=GIT_ADD_OPTIONS.find(type=>type.id===platformID)||GIT_ADD_OPTIONS.find(type=>type.id==='other');
+    const endpoint=isForge?item.instance:item.host.startsWith('http://')?item.host:`${isSSH?'ssh':'https'}://${item.host}`;
+    const name=isForge?platform.name:item.name;
+    const scope=isForge?endpoint:`${platform.name} · ${endpoint}`;
     return `<div class="credential-row"><div class="credential-row-main">
-      ${credentialLogo(platform)}<div class="credential-row-who"><b>${escapeHTML(item.name)}</b><small><span>${platform.name} · ${escapeHTML(endpoint)}</span></small></div>
+      ${credentialLogo(platform)}<div class="credential-row-who"><b>${escapeHTML(name)}</b><small><span>${escapeHTML(scope)}</span></small></div>
       <div class="credential-row-end"><button type="button" class="credential-btn ghost credential-row-link" aria-haspopup="dialog" data-credential-git-kind="${item.kind}" data-credential-git-id="${escapeHTML(item.id)}">${item.managed?'查看':'编辑'}${credentialGlyph('chevron-right',14)}</button></div>
     </div></div>`;
   }).join('');
@@ -800,12 +809,13 @@ async function loadCredentialGitRows(panel,user){
   if(!host||!user.id)return;
   const http=api(`/api/users/${user.id}/git-http-credentials`,{silent:true});
   const ssh=user.gitSshKeyConfigured?loadGitSSHKeys():[];
-  const [httpRows,sshRows]=await Promise.allSettled([http,ssh]);
+  const forge=user.forgeTokenConfigured?api(`/api/users/${user.id}/forge-tokens`,{silent:true}).then(result=>result.tokens):[];
+  const [httpRows,sshRows,forgeRows]=await Promise.allSettled([http,ssh,forge]);
   if(!host.isConnected||state.currentUser?.id!==user.id)return;
   const listed=entry=>entry.status==='fulfilled'&&Array.isArray(entry.value)?entry.value:[];
-  host.innerHTML=credentialGitRowsHTML(listed(httpRows),listed(sshRows),user.gitHubCredentialConfigured);
+  host.innerHTML=credentialGitRowsHTML(listed(httpRows),listed(sshRows),user.gitHubCredentialConfigured,listed(forgeRows));
   const note=panel.querySelector('[data-credential-group="platform"] .credential-group-note');
-  if(note)note.hidden=!user.gitHubCredentialConfigured&&!host.firstElementChild;
+  if(note)note.hidden=!user.gitHubCredentialConfigured&&!host.querySelector('[data-credential-git-kind="http"],[data-credential-git-kind="ssh"]');
   hydrateCredentialIcons(host);
 }
 function credentialMenuReady(panel){
@@ -1217,7 +1227,12 @@ function bindCredentialPanel(panel){
   panel.onclick=event=>{
     const target=event.target;
     const git=target.closest('[data-credential-git-kind]');
-    if(git)return git.dataset.credentialGitKind==='ssh'?openGitSSHKeys('',{id:git.dataset.credentialGitId}):openGitHTTPCredentials({id:git.dataset.credentialGitId});
+    if(git){
+      const id=git.dataset.credentialGitId;
+      if(git.dataset.credentialGitKind==='ssh')return openGitSSHKeys('',{id});
+      if(git.dataset.credentialGitKind==='forge')return openForgeTokens({id});
+      return openGitHTTPCredentials({id});
+    }
     const eye=target.closest('[data-credential-eye]');if(eye)return toggleCredentialSecret(eye);
     const row=target.closest('[data-credential-row]');if(!row)return;
     const catalogAction=target.closest('[data-catalog-act]');
@@ -1234,8 +1249,9 @@ function bindCredentialPanel(panel){
       select.value='';
       if(!key)return;
       select.focus();
-      if(select.dataset.credentialAddMenu==='model'||key==='gitToken'||key==='forgeToken')openCredentialWizard(key);
+      if(select.dataset.credentialAddMenu==='model'||key==='gitToken')openCredentialWizard(key);
       else if(key==='gitSshKey')openGitSSHKeys('',{add:true});
+      else if(key==='forgeToken')openForgeTokens({add:true});
       else if(key)openGitHTTPCredentials({platform:key,add:true});
       return;
     }
