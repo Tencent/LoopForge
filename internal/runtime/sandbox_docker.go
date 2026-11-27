@@ -142,6 +142,9 @@ func DockerReady() bool {
 }
 
 func (s *dockerSandbox) Exec(ctx context.Context, command CommandSpec, sink EventSink) (string, error) {
+	if command.NetworkIsolated {
+		return s.execNetworkIsolated(ctx, command, sink)
+	}
 	if err := s.ensureStarted(ctx); err != nil {
 		return "", fmt.Errorf("%w: %w", errProcessNotStarted, &ConversationWorkspaceSetupError{Cause: err})
 	}
@@ -233,6 +236,83 @@ func (s *dockerSandbox) execOnce(ctx context.Context, command CommandSpec, sink 
 	}
 	cmd.Stdin = command.Stdin
 	return runCommand(cmd, sink, command)
+}
+
+// execNetworkIsolated runs a single command (such as an evolution-replay
+// verification gate) inside an ephemeral `--network none` Docker container
+// sharing only the run workspace, without cutting off the main Agent container's
+// model API network connectivity.
+func (s *dockerSandbox) execNetworkIsolated(ctx context.Context, command CommandSpec, sink EventSink) (string, error) {
+	if s.profile.Privileged {
+		return "", fmt.Errorf("%w: 特权 Docker 沙箱不允许执行网络隔离门禁命令", errProcessNotStarted)
+	}
+	command, err := projectCommandEnvironment(ctx, command, s.profile.Environment)
+	if err != nil {
+		return "", fmt.Errorf("%w: %w", errProcessNotStarted, err)
+	}
+	workspace, err := filepath.Abs(s.workspace)
+	if err != nil {
+		return "", fmt.Errorf("%w: sandbox workspace: %w", errProcessNotStarted, err)
+	}
+	image := strings.TrimSpace(s.builtImage)
+	if image == "" {
+		image, err = ensureDockerImage(ctx, workspace, s.dockerfile)
+		if err != nil {
+			return "", fmt.Errorf("%w: %w", errProcessNotStarted, err)
+		}
+	}
+	userSpec := ""
+	if os.Geteuid() != 0 {
+		configured, err := exec.CommandContext(ctx, "docker", "image", "inspect", "--format", "{{.Config.User}}", image).CombinedOutput()
+		if err != nil {
+			return "", fmt.Errorf("%w: inspect sandbox image user: %w: %s", errProcessNotStarted, err, strings.TrimSpace(string(configured)))
+		}
+		user, _, _ := strings.Cut(strings.TrimSpace(string(configured)), ":")
+		if user == "" || user == "root" || user == "0" {
+			userSpec = fmt.Sprintf("%d:%d", os.Geteuid(), os.Getegid())
+		}
+	}
+	args := dockerNetworkIsolatedRunArgs(workspace, image, s.profile, s.limits, userSpec, command)
+	cmd := exec.CommandContext(ctx, "docker", args...)
+	cmd.Stdin = command.Stdin
+	return runCommand(cmd, sink, command)
+}
+
+func dockerNetworkIsolatedRunArgs(
+	workspace, image string,
+	profile domain.SandboxProfile,
+	limits dockerSandboxLimits,
+	userSpec string,
+	command CommandSpec,
+) []string {
+	args := []string{
+		"run", "--rm", "--init",
+		"--network", "none",
+		"--cap-drop=ALL",
+		"--security-opt", "no-new-privileges",
+		"-v", workspace + ":/workspace",
+	}
+	args = append(args, limits.createArgs()...)
+	if strings.TrimSpace(userSpec) != "" {
+		args = append(args, "--user", userSpec)
+	}
+	if profile.ReadOnlyRootFS {
+		args = append(args, "--read-only", "--tmpfs", "/tmp:rw,noexec,nosuid,size=256m")
+	}
+	if command.Stdin != nil {
+		args = append(args, "-i")
+	}
+	for _, envLine := range appendEnvironment(nil, profile.Environment, command.environment) {
+		name, _, _ := strings.Cut(envLine, "=")
+		if _, secret := command.projectCredentialEnv[name]; secret {
+			continue
+		}
+		args = append(args, "-e", envLine)
+	}
+	argv := dockerWorkspaceExecArgv(command.Argv)
+	args = append(args, "--entrypoint", argv[0], image)
+	args = append(args, argv[1:]...)
+	return args
 }
 
 // dockerWorkspaceExecArgv runs argv inside /workspace without docker exec -w.
@@ -938,7 +1018,9 @@ func (s *dockerSandbox) start(ctx context.Context, mode dockerStartMode) error {
 		}
 	}
 	network := strings.TrimSpace(os.Getenv("AGENTFLOW_DOCKER_NETWORK"))
-	if s.requirements.ConversationRoot != "" || s.requirements.RunnerLoginRelay {
+	if s.profile.NetworkDisabled {
+		network = "none"
+	} else if s.requirements.ConversationRoot != "" || s.requirements.RunnerLoginRelay {
 		_, relayNetwork, err := conversationDockerAccess(ctx)
 		if err != nil {
 			return err

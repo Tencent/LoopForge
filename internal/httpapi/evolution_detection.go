@@ -101,6 +101,7 @@ func (h *evolutionHandlers) sweepSOPDetections(ctx context.Context, evaluate sop
 		log.Printf("SOP detection projects: %v", err)
 		return
 	}
+	now := time.Now().UTC()
 	scannedProjects := map[string]bool{}
 	for _, project := range projects {
 		if ctx.Err() != nil {
@@ -109,10 +110,15 @@ func (h *evolutionHandlers) sweepSOPDetections(ctx context.Context, evaluate sop
 		if project.Config.EnabledAt.IsZero() {
 			continue
 		}
+		if budget := h.projectBudgetStatus(project.ID, now); budget.Exceeded {
+			log.Printf("SOP detection project %s skipped: %s", project.ID, budget.Reason)
+			scannedProjects[project.ID] = true
+			continue
+		}
 		scannedProjects[project.ID] = true
 		var disabledWFIDs []string
 		for wfID, pol := range h.repo.EvoSOPPolicies(project.ID) {
-			if !pol.Enabled && strings.TrimSpace(wfID) != "" {
+			if (!pol.Enabled || evolution.IsSOPPolicySleeping(pol, now)) && strings.TrimSpace(wfID) != "" {
 				disabledWFIDs = append(disabledWFIDs, wfID)
 			}
 		}
@@ -137,7 +143,7 @@ func (h *evolutionHandlers) sweepSOPDetections(ctx context.Context, evaluate sop
 	since := time.Now().UTC().AddDate(0, 0, -evoDefaultWindowDays)
 	policiesByProject := map[string]map[string]domain.EvoSOPPolicy{}
 	for _, policy := range h.repo.AllEnabledEvoSOPPolicies() {
-		if scannedProjects[policy.ProjectID] {
+		if scannedProjects[policy.ProjectID] || evolution.IsSOPPolicySleeping(policy, now) {
 			continue
 		}
 		if policiesByProject[policy.ProjectID] == nil {
@@ -148,6 +154,10 @@ func (h *evolutionHandlers) sweepSOPDetections(ctx context.Context, evaluate sop
 	for projectID, wfPolicies := range policiesByProject {
 		if ctx.Err() != nil {
 			return
+		}
+		if budget := h.projectBudgetStatus(projectID, now); budget.Exceeded {
+			log.Printf("SOP policy detection project %s skipped: %s", projectID, budget.Reason)
+			continue
 		}
 		wfIDs := make([]string, 0, len(wfPolicies))
 		for wfID := range wfPolicies {

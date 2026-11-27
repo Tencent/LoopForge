@@ -24,12 +24,19 @@ type evolutionHandlers struct {
 	findingsM sync.Mutex
 	healthM   sync.Mutex
 	health    map[string]evoHealthCache
-	// trial / watch sweep throttle and per-run score cache
+	// trial / watch sweep throttle and per-run score+metrics cache
 	trialM      sync.Mutex
 	trialAt     time.Time
-	trialScores map[string]int
-	sopBatchM  sync.Mutex
-	sopBatchAt time.Time
+	trialScores map[string]evoTrialRunSample
+	sopBatchM   sync.Mutex
+	sopBatchAt  time.Time
+}
+
+type evoTrialRunSample struct {
+	score  int
+	tokens int64
+	tools  int
+	durMs  int64
 }
 
 type evoHealthCache struct {
@@ -48,16 +55,22 @@ const (
 )
 
 func newEvolutionHandlers(d *deps) *evolutionHandlers {
-	return &evolutionHandlers{deps: d, jobs: make(chan struct{}, evoMaxConcurrentJobs), health: map[string]evoHealthCache{}, trialScores: map[string]int{}}
+	return &evolutionHandlers{deps: d, jobs: make(chan struct{}, evoMaxConcurrentJobs), health: map[string]evoHealthCache{}, trialScores: map[string]evoTrialRunSample{}}
 }
 
 func registerEvolutionRoutes(g *gin.Engine, h *evolutionHandlers) {
 	g.GET("/api/evolution/overview", h.overview)
 	g.POST("/api/evolution/diagnose", h.diagnose)
 	g.PUT("/api/evolution/sop-detection", h.putSOPDetection)
+	g.PUT("/api/evolution/budget", h.putBudget)
 	g.GET("/api/evolution/sops", h.listSOPs)
 	g.GET("/api/evolution/sops/:workflowId", h.sopDetail)
 	g.PUT("/api/evolution/sops/:workflowId/policy", h.putSOPPolicy)
+	g.POST("/api/evolution/sops/:workflowId/assertions/generate", h.generateSOPAssertions)
+	g.POST("/api/evolution/sops/:workflowId/assertions/suggest", h.suggestSOPAssertions)
+	g.PUT("/api/evolution/sops/:workflowId/assertions", h.putSOPAssertions)
+	g.POST("/api/evolution/sops/:workflowId/baseline/reset", h.resetSOPBaseline)
+	g.POST("/api/evolution/sops/:workflowId/wake", h.wakeSOP)
 	g.POST("/api/evolution/sops/:workflowId/optimize", h.optimizeSOP)
 	g.GET("/api/evolution/findings", h.findings)
 	g.GET("/api/evolution/findings/:id/runs", h.findingRuns)
@@ -186,6 +199,7 @@ func (h *evolutionHandlers) overview(c *gin.Context) {
 	if project, ok := h.repo.Project(projectID); ok && project.SOPDetection != nil {
 		out.SOPDetection = domain.EvoSOPDetectionSetting{Enabled: project.SOPDetection.Enabled, Model: project.SOPDetection.Model}
 	}
+	out.Budget = h.projectBudgetStatus(projectID, out.GeneratedAt)
 	out.Findings = h.repo.EvoFindings(projectID, domain.EvoFindingOpen)
 	out.Queue = h.repo.EvoQueue(projectID)
 	out.Validating = evoProposalListView(h.repo.EvoProposals(projectID, 50, domain.EvoProposalDrafting, domain.EvoProposalValidating))
@@ -799,6 +813,7 @@ func (h *evolutionHandlers) rejectProposal(c *gin.Context) {
 		return
 	}
 	h.cancelReplays(p)
+	h.recordSOPProposalOutcome(p, false, firstNonEmpty(p.DecisionNote, "人工打回"), p.DecidedAt)
 	stored, _ := h.repo.EvoProposal(p.ID)
 	c.JSON(http.StatusOK, evoProposalView(stored, false))
 }

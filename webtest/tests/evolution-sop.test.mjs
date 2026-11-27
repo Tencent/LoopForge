@@ -375,13 +375,26 @@ test('SOP workbench detail: canvas trend, versions rollback labels, gray publish
   await settle(5);
   assert.ok(app.router.calls.some(c => c.method === 'POST' && c.path === '/api/evolution/proposals/evp-opt/approve' && c.body?.mode === 'canary'));
 
-  // Verify drafting, validating, pending-unpassed, monitor-failed, monitor-ready, monitor-waiting, paused, and empty data callouts
+  // Verify drafting, validating, reflect-refine rounds, sleeping + wake, pending-unpassed, monitor-failed, monitor-ready, monitor-waiting, paused, and empty data callouts
+  app.router.post('/api/evolution/sops/wf-bug/wake', () => ({ workflowId: 'wf-bug', enabled: true, consecutiveNoGain: 0, sleepStage: 0 }));
+  app.router.put('/api/evolution/budget', ({ body }) => ({
+    dailyTokenLimit: body.dailyTokenLimit,
+    monthlyTokenLimit: body.monthlyTokenLimit,
+    dailyUsedTokens: 12000,
+    monthlyUsedTokens: 45000,
+    exceeded: false,
+  }));
   const variants = [
     { enabled: false, stage: 'monitor', activeProposal: null },
+    { stage: 'sleeping', activeProposal: null, consecutiveNoGain: 3, sleepStage: 1, sleepingUntil: '2026-11-28T00:00:00Z', sleepReason: '连续 3 次优化未产生有效收益，已自动休眠 1 天' },
     { stage: 'optimize', activeProposal: { id: 'p-d', status: 'drafting', title: '生成中' } },
+    { stage: 'optimize', activeProposal: { id: 'p-dr', status: 'drafting', title: '反思修正中', refineRound: 1, refineHistory: [{ round: 1, verdict: 'P1 省 Token 未达标' }] } },
     { stage: 'optimize', activeProposal: { id: 'p-v', status: 'validating', title: '回放中', summary: { finished: 1, total: 3 } } },
+    { stage: 'optimize', activeProposal: { id: 'p-vr', status: 'validating', title: '二次回放', refineRound: 1, summary: { finished: 2, total: 3 } } },
+    { stage: 'optimize', activeProposal: { id: 'p-pr', status: 'pending', title: '反思通过', refineRound: 1, candidateContent: 'better', summary: { passed: true, verdict: '通过（P1 省 Token 达标）' } } },
     { stage: 'optimize', activeProposal: { id: 'p-u', status: 'pending', summary: { passed: false } } },
-    { stage: 'monitor', activeProposal: null, lastProposal: { id: 'p-f', status: 'failed', error: '模型不可用' } },
+    { stage: 'monitor', activeProposal: null, lastProposal: { id: 'p-f', status: 'failed', error: '模型不可用', refineRound: 1 } },
+    { stage: 'monitor', activeProposal: null, lastProposal: null, pendingRuns: 10, batchSize: 10, autoBlockReason: '策略配置人未配置个人模型 Key' },
     { stage: 'monitor', activeProposal: null, lastProposal: null, pendingRuns: 10, batchSize: 10 },
     { stage: 'monitor', activeProposal: null, lastProposal: null, pendingRuns: 2, batchSize: 10, latestMetrics: { runs: 12 }, versions: [], grayRounds: [], changeFiles: [], recentEdits: [], problems: [] },
   ];
@@ -389,6 +402,12 @@ test('SOP workbench detail: canvas trend, versions rollback labels, gray publish
     app.router.get('/api/evolution/sops/wf-bug?projectId=project-1', makeDetail(v));
     await app.evaluate('evoSOPLoadDetail(evoSOPState.view)');
     await settle(3);
+    if (v.stage === 'sleeping') {
+      assert.match($('#evoSopDetailPage').textContent, /自动进化休眠中/);
+      $('[data-evo-sop-wake="wf-bug"]').click();
+      await settle(4);
+      assert.ok(app.router.calls.some(c => c.method === 'POST' && c.path === '/api/evolution/sops/wf-bug/wake'));
+    }
   }
   // Empty chart message & empty tables
   assert.equal($('#evoSopTrendCanvas').hidden, true);
@@ -398,12 +417,23 @@ test('SOP workbench detail: canvas trend, versions rollback labels, gray publish
   $('[data-evo-sop-tab="change"]').click();
   assert.match($('#evoSopDetailPage').textContent, /本轮尚未生成修改文件/);
 
-  // Manual trigger optimize button from monitor stage
+  // Manual trigger optimize button from monitor stage: queued response surfaces persistent notice, error response surfaces persistent notice, normal response succeeds
   app.router.get('/api/evolution/sops/wf-bug?projectId=project-1', makeDetail({
     stage: 'monitor', activeProposal: null, lastProposal: null, pendingRuns: 10, batchSize: 10,
   }));
+  app.router.post('/api/evolution/sops/wf-bug/optimize', () => ({ status: 'queued', queueId: 'evq-1', message: '关联资产正处于发布后观察期，已加入排队' }));
   await app.evaluate('evoSOPLoadDetail(evoSOPState.view)');
   await settle(3);
+  $('[data-evo-sop-optimize="wf-bug"]').click();
+  await settle(5);
+  assert.match($('#evoSopDetailPage').textContent, /已加入优化排队/);
+
+  app.router.post('/api/evolution/sops/wf-bug/optimize', { status: 409, body: { error: '暂无私有角色' } });
+  $('[data-evo-sop-optimize="wf-bug"]').click();
+  await settle(5);
+  assert.match($('#evoSopDetailPage').textContent, /暂无私有角色/);
+
+  app.router.post('/api/evolution/sops/wf-bug/optimize', () => ({ id: 'evp-new', status: 'drafting' }));
   $('[data-evo-sop-optimize="wf-bug"]').click();
   await settle(5);
   assert.ok(app.router.calls.some(c => c.method === 'POST' && c.path === '/api/evolution/sops/wf-bug/optimize'));
@@ -418,8 +448,14 @@ test('SOP workbench detail: canvas trend, versions rollback labels, gray publish
   await settle(4);
   assert.ok($('#evoSopDetailTitle'));
 
-  // Back to list
+  // Back to list and test project budget dialog save
   $('[data-evo-sop-back]').click();
   await settle(4);
   assert.equal($('#evoSopDetailPage'), null);
+  $('[data-evo-budget-open]').click();
+  $('#evoBudgetDaily').value = '100000';
+  $('#evoBudgetMonthly').value = '500000';
+  $('#evoBudgetForm').dispatchEvent(new app.window.Event('submit', { bubbles: true, cancelable: true }));
+  await settle(4);
+  assert.ok(app.router.calls.some(c => c.method === 'PUT' && c.path === '/api/evolution/budget' && c.body?.dailyTokenLimit === 100000));
 });

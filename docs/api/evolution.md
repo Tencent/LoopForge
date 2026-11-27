@@ -6,16 +6,20 @@
 
 - 项目成员可读；诊断、生成、队列处理及发布需要项目写权限。
 - 仅当前项目的私有角色和规则允许生成、试用和发布。共享／平台资产可以诊断；需要修改时先复制为项目私有资产。已有共享资产提案仍可取消，历史版本仍可按原权限人工回滚。
-- 回放只接受未绑定仓库、由角色和审批节点组成的流程。脚本、命令、子 SOP、角色生命周期脚本、命令／MR 验证、节点外部凭据映射均拒绝。会检查当前工作流定义，不能用旧快照绕过。
+- 回放只接受未绑定仓库、由角色和审批节点组成的流程。脚本、命令、子 SOP、角色生命周期脚本、MR 验证、节点外部凭据映射均拒绝。**命令验收门禁（`mode: "command"`）仅允许在云端非特权 Docker 沙箱（如 `generic-docker`）中参与回放**，且回放执行该门禁时会自动启动临时 **`--network none`** 断网容器（`--cap-drop=ALL`、`--security-opt no-new-privileges`、仅挂载回放工作区、不注入业务凭据），既保证门禁命令完全断网隔离，又不影响 Agent 节点本身调用大模型 API；`native`、特权 Docker 或远程执行机器一律拒绝。会检查当前工作流定义，不能用旧快照绕过。
 - 不支持的样本在调用改进器前使提案失败，不会静默丢弃该样本后宣称验证通过。候选生成期间的资产变化仍按原有 CAS／基线检查处理。
 - 回放仅解析模型凭据，清除 Git、部署扩展凭据、所有 MCP 及其配置文件；关闭自动浏览器 MCP。执行机器必须使用个人模型 Key，不能使用本机登录凭据。业务运行与真实灰度保留原有能力。
-- 这些限制关闭平台已知的外部写入通道，**不提供任意 CLI 命令的网络出口隔离**。仅回放可信的文档流程；需要网络隔离或 Git／MR 回放的任务仍不在首版范围内。
+- 自动后台进化任务（周期批次触发、自动轨迹检测、自动反思修正）**默认不使用平台共享 CodeBuddy Key**（仅在显式配置 `AGENTFLOW_EVOLUTION_AUTO_ALLOW_SHARED_KEY=true` 时允许），避免无人值守任务消耗共享配额；按项目支持设置每日与每月 RSI Token 预算（`PUT /api/evolution/budget`），自动触发前先预检。
+- 单个 SOP 连续 3 次优化未产生有效收益后自动进入 `sleeping`（休眠中）状态，休眠间隔按 **1 天 → 3 天 → 7 天 → 最长 14 天** 逐步拉长；用户可随时通过 `POST /api/evolution/sops/{workflowId}/wake` 或重新开启开关手动唤醒并清零退避计数。
+- 以上限制关闭平台已知的外部写入通道；未启用网络隔离沙箱时，不提供任意 CLI 命令的网络出口隔离，需要 Git／MR 回放的任务仍不在首版范围内。
 
 ## 接口
 
 | 方法 | 路径 | 用途 |
 | --- | --- | --- |
-| GET | `/api/evolution/overview?projectId=…&days=14` | 概览、资产健康度、队列与进行中的修改 |
+| GET | `/api/evolution/overview?projectId=…&days=14` | 概览、预算用量、资产健康度、SOP 列表与进行中的修改 |
+| PUT | `/api/evolution/budget?projectId=…` | 配置项目每日/每月 RSI Token 预算 `{dailyTokenLimit, monthlyTokenLimit}` |
+| POST | `/api/evolution/sops/{workflowId}/wake` | 手动唤醒休眠中的 SOP 并重置连续无收益退避计数 |
 | POST | `/api/evolution/diagnose` | 检查最近运行，正文 `{projectId, days}` |
 | GET | `/api/evolution/findings?projectId=…` | 问题记录 |
 | GET | `/api/evolution/findings/{id}/runs?cluster=…` | 问题分组的原始运行证据 |

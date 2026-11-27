@@ -538,7 +538,17 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 	// (执行器) it is dispatched to that machine so gates run next to the CLI
 	// output in the runner-side task workspace.
 	gateExec := func(command string, target executionTarget, gateSink runtime.EventSink) (string, error) {
-		spec, err := runtime.CommandSpecWithCredentialEnv(runtime.CommandSpec{Argv: []string{"sh", "-lc", bindExecutionTarget(command, target)}, Provider: "verification", CredentialBindings: []runtime.CredentialBinding{runtime.BindGit, runtime.BindMCP}}, node.CredentialEnv, sb.credentialSnapshot())
+		isReplay := current.ExecutionContext.IsEvolutionReplay()
+		bindings := []runtime.CredentialBinding{runtime.BindGit, runtime.BindMCP}
+		if isReplay {
+			bindings = nil
+		}
+		spec, err := runtime.CommandSpecWithCredentialEnv(runtime.CommandSpec{
+			Argv:               []string{"sh", "-lc", bindExecutionTarget(command, target)},
+			Provider:           "verification",
+			CredentialBindings: bindings,
+			NetworkIsolated:    isReplay,
+		}, node.CredentialEnv, sb.credentialSnapshot())
 		if err != nil {
 			return "", err
 		}
@@ -938,6 +948,9 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 				result, dispatchErr := e.dispatchRunnerTask(ctx, execMachine, current, effectiveNode, sb, workspace, ex, agent, assets, prompt, invocationID, options, sink)
 				if dispatchErr == nil {
 					gateExec = func(command string, target executionTarget, gateSink runtime.EventSink) (string, error) {
+						if current.ExecutionContext.IsEvolutionReplay() {
+							return "", fmt.Errorf("进化回放不支持在远程执行机器上运行命令验收门禁（仅支持云端非特权 Docker 沙箱 --network none 隔离执行）")
+						}
 						return e.dispatchRunnerCommand(ctx, execMachine, runID, node.ID, workspace, bindExecutionTarget(command, target), gateSink)
 					}
 				}

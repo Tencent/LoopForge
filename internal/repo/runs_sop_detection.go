@@ -107,3 +107,58 @@ func (r *RunsRepo) SOPDetectionTools(runID string, limit int) ([]domain.Telemetr
 	}
 	return events, nil
 }
+
+// EvolutionReplayTokensSince returns the total token usage consumed by
+// evolution replay runs for a project since the given UTC timestamp.
+func (r *RunsRepo) EvolutionReplayTokensSince(projectID string, since time.Time) (int64, error) {
+	project := r.sqlExecutionContextJSONText("projectId")
+	purpose := r.sqlExecutionContextJSONText("purpose")
+	var rows []runRow
+	if err := r.DB.Select("id", "usage_json").
+		Where("created_at >= ?", since).
+		Where(purpose+" = ?", domain.RunPurposeEvolutionReplay).
+		Where(project+" = ?", projectID).
+		Find(&rows).Error; err != nil {
+		return 0, err
+	}
+	var total int64
+	runIDs := make([]string, 0, len(rows))
+	missingUsage := map[string]bool{}
+	for _, row := range rows {
+		var u domain.TokenUsage
+		if len(row.UsageJSON) > 0 {
+			_ = json.Unmarshal(row.UsageJSON, &u)
+		}
+		t := u.TotalTokens
+		if t <= 0 {
+			t = u.InputTokens + u.OutputTokens + u.CacheReadTokens + u.CacheWriteTokens + u.ReasoningTokens
+		}
+		if t > 0 {
+			total += t
+		} else {
+			runIDs = append(runIDs, row.ID)
+			missingUsage[row.ID] = true
+		}
+	}
+	if len(runIDs) > 0 {
+		var nodeRows []runNodeRow
+		if err := r.DB.Select("run_id", "payload").Where("run_id IN ?", runIDs).Find(&nodeRows).Error; err == nil {
+			for _, nr := range nodeRows {
+				if !missingUsage[nr.RunID] {
+					continue
+				}
+				var node domain.NodeRun
+				if json.Unmarshal(nr.Payload, &node) == nil {
+					t := node.Usage.TotalTokens
+					if t <= 0 {
+						t = node.Usage.InputTokens + node.Usage.OutputTokens + node.Usage.CacheReadTokens + node.Usage.CacheWriteTokens + node.Usage.ReasoningTokens
+					}
+					if t > 0 {
+						total += t
+					}
+				}
+			}
+		}
+	}
+	return total, nil
+}

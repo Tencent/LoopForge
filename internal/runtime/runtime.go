@@ -115,6 +115,10 @@ type CommandSpec struct {
 	// The cwd is mounted at the same absolute path in host and Docker modes.
 	WorkingDir         string
 	OwnProcessGroup    bool
+	// NetworkIsolated runs this single command in an ephemeral `--network none`
+	// Docker container mounted to the run workspace (no outbound network).
+	// Non-Docker and privileged sandboxes fail closed.
+	NetworkIsolated    bool
 	Argv               []string
 	Provider           string
 	CredentialBindings []CredentialBinding

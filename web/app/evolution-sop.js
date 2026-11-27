@@ -18,6 +18,7 @@ const EVO_SOP_STAGES = {
   monitor: ['监测中', ''],
   optimize: ['优化中', 'warn'],
   gray: ['灰度中', 'ok'],
+  sleeping: ['休眠中', 'warn'],
 };
 const EVO_SOP_METRICS = [
   { key: 'score', label: 'SOP 评分', higherBetter: true, format: v => v == null ? '—' : `${Math.round(v)}`, unit: '分' },
@@ -31,8 +32,9 @@ const evoSOPState = {
   filter: 'all',
   q: '',
   mode: 'sop', // 'sop' | 'assets'
-  view: null,  // { workflowId, tab, scope, metric, fileIndex, diffMode, detail, loading, error, expandedGray, seq }
+  view: null,  // { workflowId, tab, scope, metric, fileIndex, diffMode, detail, loading, error, expandedGray, traceOpen, seq }
   prefTarget: null,
+  assertTarget: null, // { workflowId, assertions: [], candidates: [], prompt: '', busy: false, saving: false, error: '' }
   busyIds: new Set(),
 };
 
@@ -117,6 +119,131 @@ function evoSOPIsEnabledView() {
 
 // ---------- 首页（SOP 维度） ----------
 
+function evoSOPBudgetButtonHTML() {
+  const b = evo.overview?.budget || {};
+  const hasLimit = (Number(b.dailyTokenLimit) || 0) > 0 || (Number(b.monthlyTokenLimit) || 0) > 0;
+  let label = 'Token 预算';
+  if (b.exceeded) {
+    label = '预算已达上限';
+  } else if (b.dailyTokenLimit > 0) {
+    label = `日预算 ${evoSOPFormatTokens(b.dailyUsedTokens)}/${evoSOPFormatTokens(b.dailyTokenLimit)}`;
+  } else if (b.monthlyTokenLimit > 0) {
+    label = `月预算 ${evoSOPFormatTokens(b.monthlyUsedTokens)}/${evoSOPFormatTokens(b.monthlyTokenLimit)}`;
+  }
+  const title = hasLimit
+    ? `今日 ${evoSOPFormatTokens(b.dailyUsedTokens)} / ${b.dailyTokenLimit > 0 ? evoSOPFormatTokens(b.dailyTokenLimit) : '不限'}；本月 ${evoSOPFormatTokens(b.monthlyUsedTokens)} / ${b.monthlyTokenLimit > 0 ? evoSOPFormatTokens(b.monthlyTokenLimit) : '不限'}`
+    : '设置项目每日和每月 RSI Token 预算（自动触发前预检）';
+  return `<button type="button" class="kb-btn ${b.exceeded ? 'warn' : 'quiet'} small" data-evo-budget-open title="${escapeHTML(title)}">${escapeHTML(label)}</button>`;
+}
+
+function evoSOPBudgetBannerHTML() {
+  const b = evo.overview?.budget;
+  if (!b?.exceeded) return '';
+  return `<div class="evo-sop-callout is-warn" role="status">
+    <div><strong>已暂停后台自动进化</strong><p>${escapeHTML(b.reason || '项目 RSI Token 预算已用尽')}，可调高预算或等待下个周期自动恢复。</p></div>
+    <div class="evo-sop-callout-actions"><button type="button" class="kb-btn small" data-evo-budget-open>调整预算</button></div>
+  </div>`;
+}
+
+function evoSOPBudgetDialogHTML() {
+  return `<dialog id="evoBudgetDialog" class="evo-sop-dialog" aria-labelledby="evoBudgetTitle">
+    <form method="dialog" id="evoBudgetForm" class="evo-sop-dialog-card">
+      <header class="evo-sop-dialog-head">
+        <div class="evo-sop-dialog-title-wrap">
+          <h2 id="evoBudgetTitle">项目 RSI Token 预算</h2>
+          <p>自动批次优化、自动轨迹检测与自动反思修正触发前均会预检预算；填 0 表示不限制。</p>
+        </div>
+        <button type="button" class="evo-sop-dialog-close" data-evo-budget-close aria-label="关闭弹窗">
+          <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"/></svg>
+        </button>
+      </header>
+      <div class="evo-sop-batch-editor">
+        <label for="evoBudgetDaily">每日 Token 上限</label>
+        <div class="evo-sop-batch-custom-row">
+          <input id="evoBudgetDaily" type="number" class="kb-input" min="0" step="10000" value="0" aria-label="每日 Token 上限">
+          <span id="evoBudgetDailyUsed">今日已用 0</span>
+        </div>
+      </div>
+      <div class="evo-sop-batch-editor">
+        <label for="evoBudgetMonthly">每月 Token 上限</label>
+        <div class="evo-sop-batch-custom-row">
+          <input id="evoBudgetMonthly" type="number" class="kb-input" min="0" step="100000" value="0" aria-label="每月 Token 上限">
+          <span id="evoBudgetMonthlyUsed">本月已用 0</span>
+        </div>
+      </div>
+      <footer class="evo-sop-dialog-foot">
+        <button type="button" class="kb-btn quiet" data-evo-budget-close>取消</button>
+        <button type="submit" class="kb-btn primary" id="evoBudgetSave">保存预算</button>
+      </footer>
+    </form>
+  </dialog>`;
+}
+
+function evoSOPOpenBudgetDialog() {
+  const dlg = $('#evoBudgetDialog');
+  if (!dlg) return;
+  const b = evo.overview?.budget || {};
+  $('#evoBudgetDaily').value = String(Number(b.dailyTokenLimit) || 0);
+  $('#evoBudgetMonthly').value = String(Number(b.monthlyTokenLimit) || 0);
+  $('#evoBudgetDailyUsed').textContent = `今日已用 ${evoSOPFormatTokens(b.dailyUsedTokens) === '—' ? '0' : evoSOPFormatTokens(b.dailyUsedTokens)}`;
+  $('#evoBudgetMonthlyUsed').textContent = `本月已用 ${evoSOPFormatTokens(b.monthlyUsedTokens) === '—' ? '0' : evoSOPFormatTokens(b.monthlyUsedTokens)}`;
+  if (typeof dlg.showModal === 'function') dlg.showModal();
+  else dlg.setAttribute('open', '');
+}
+
+async function evoSOPSaveBudget(daily, monthly, btn) {
+  const pid = evoProjectId();
+  if (!pid) return null;
+  if (btn) btn.disabled = true;
+  try {
+    const saved = await api(`/api/evolution/budget?projectId=${encodeURIComponent(pid)}`, {
+      method: 'PUT',
+      body: JSON.stringify({ projectId: pid, dailyTokenLimit: daily, monthlyTokenLimit: monthly }),
+    });
+    if (evo.overview && pid === evoProjectId()) {
+      evo.overview.budget = saved;
+      evoRender();
+    }
+    toast('项目 RSI 预算已更新', 'ok');
+    return saved;
+  } catch (err) {
+    toast(err.message, 'err');
+    return null;
+  } finally {
+    if (btn?.isConnected) btn.disabled = false;
+  }
+}
+
+async function evoSOPWake(workflowId, btn) {
+  const pid = evoProjectId();
+  if (!pid || !workflowId || evoSOPState.busyIds.has(workflowId)) return null;
+  evoSOPState.busyIds.add(workflowId);
+  if (btn) btn.disabled = true;
+  try {
+    const saved = await api(`/api/evolution/sops/${encodeURIComponent(workflowId)}/wake`, {
+      method: 'POST',
+      body: JSON.stringify({ projectId: pid }),
+    });
+    evoSOPState.busyIds.delete(workflowId);
+    if (pid === evoProjectId()) {
+      if (evoSOPState.view?.workflowId === workflowId) {
+        await evoSOPLoadDetail(evoSOPState.view);
+      } else if (typeof evoLoad === 'function') {
+        await evoLoad(pid);
+      }
+    }
+    toast('已重新开启自动进化并重置休眠计数', 'ok');
+    return saved;
+  } catch (err) {
+    evoSOPState.busyIds.delete(workflowId);
+    toast(err.message, 'err');
+    return null;
+  } finally {
+    evoSOPState.busyIds.delete(workflowId);
+    if (btn?.isConnected) btn.disabled = false;
+  }
+}
+
 function evoSOPHomeHTML() {
   const sops = evo.overview?.sops || [];
   const counts = {
@@ -124,6 +251,7 @@ function evoSOPHomeHTML() {
     monitor: sops.filter(s => s.stage === 'monitor').length,
     optimize: sops.filter(s => s.stage === 'optimize').length,
     gray: sops.filter(s => s.stage === 'gray').length,
+    sleeping: sops.filter(s => s.stage === 'sleeping').length,
   };
 
   const filters = [
@@ -131,16 +259,19 @@ function evoSOPHomeHTML() {
     ['monitor', '监测中', counts.monitor],
     ['optimize', '优化中', counts.optimize],
     ['gray', '灰度中', counts.gray],
+    ['sleeping', '休眠中', counts.sleeping],
   ];
 
   return `<div class="evo-sop-home">
     ${evoHomeStatusHTML()}
+    ${evoSOPBudgetBannerHTML()}
     <section class="evo-sop-panel" aria-label="SOP 进化列表">
       <div class="evo-sop-toolbar">
         <div class="evo-sop-filters" role="group" aria-label="按 SOP 状态筛选">
           ${filters.map(([k, label, n]) => `<button type="button" class="evo-sop-filter-btn" data-evo-sop-filter="${k}" aria-pressed="${evoSOPState.filter === k}">${label}<span>${n}</span></button>`).join('')}
         </div>
         <div class="evo-sop-toolbar-right">
+          ${evoSOPBudgetButtonHTML()}
           <label class="evo-home-search">
             ${evoReviewIcon('search')}
             <input class="kb-input" type="search" data-evo-sop-search data-evo-key="sop-search" aria-label="搜索 SOP" placeholder="搜索 SOP 名称或说明" value="${escapeHTML(evoSOPState.q)}">
@@ -150,6 +281,7 @@ function evoSOPHomeHTML() {
       <div id="evoSopListHost">${evoSOPListHTML(sops)}</div>
     </section>
     ${evoSOPPrefDialogHTML()}
+    ${evoSOPBudgetDialogHTML()}
   </div>`;
 }
 
@@ -222,6 +354,7 @@ function evoSOPUpdateList() {
     monitor: sops.filter(s => s.stage === 'monitor').length,
     optimize: sops.filter(s => s.stage === 'optimize').length,
     gray: sops.filter(s => s.stage === 'gray').length,
+    sleeping: sops.filter(s => s.stage === 'sleeping').length,
   };
   host.innerHTML = evoSOPListHTML(sops);
   $$('[data-evo-sop-filter]').forEach(btn => {
@@ -539,6 +672,7 @@ async function evoSOPLoadDetail(view) {
     if (evoSOPState.view !== view || view.seq !== seq || pid !== evoProjectId()) return;
     view.detail = detail;
     view.loading = false;
+    if (detail.stage === 'optimize' || detail.stage === 'gray') view.actionNotice = null;
     if (view.fileIndex >= (detail.changeFiles?.length || 0)) view.fileIndex = 0;
     evoSOPRenderDetail();
   } catch (err) {
@@ -553,10 +687,234 @@ function evoSOPRenderDetail() {
   const root = $('#evolutionBody');
   const view = evoSOPState.view;
   if (!root || !view) return;
-  root.innerHTML = evoSOPDetailHTML(view) + evoSOPPrefDialogHTML();
+  root.innerHTML = evoSOPDetailHTML(view) + evoSOPPrefDialogHTML() + evoSOPAssertDialogHTML();
   window.AgentFlowHarnessIcons?.hydrate(root);
   if (view.detail && view.tab === 'trend') {
     evoSOPDrawTrendChart(view);
+  }
+}
+
+// ---------- 结果验收（默认隐藏，点击按需打开的一句话配置弹窗） ----------
+
+const EVO_SOP_ASSERT_EXAMPLES = [
+  { label: 'JSON 必填字段', text: '必须生成 triage.json 且包含 ticketId、route、reason' },
+  { label: '枚举范围', text: 'route 只能是 logistics / refund / human' },
+  { label: '命令退出码', text: '命令验收退出码必须为 0' },
+];
+
+const EVO_SOP_ASSERT_KIND_LABELS = {
+  artifact_exists: '文件',
+  json_valid: 'JSON',
+  json_field: '字段',
+  output_regex: '内容',
+  gate_verdict: '门禁',
+  command_exit: '命令',
+};
+
+function evoSOPAssertDialogHTML() {
+  return `<dialog id="evoSopAssertDialog" class="evo-sop-dialog evo-sop-assert-dialog" aria-labelledby="evoSopAssertTitle">
+    <form method="dialog" id="evoSopAssertForm" class="evo-sop-dialog-card">
+      <header class="evo-sop-dialog-head">
+        <div class="evo-sop-dialog-title-wrap">
+          <h2 id="evoSopAssertTitle">结果验收（一句话配置）</h2>
+          <p>默认可不配；配置后用于硬门槛拦截错误产物，并解锁自动发布。</p>
+        </div>
+        <button type="button" class="evo-sop-dialog-close" data-evo-sop-assert-close aria-label="关闭弹窗">
+          <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"/></svg>
+        </button>
+      </header>
+      <div class="evo-sop-assert-gen">
+        <div class="evo-sop-assert-gen-row">
+          <input id="evoSopAssertPrompt" type="text" class="kb-input" placeholder="一句话说明什么算做对，例如：必须生成 triage.json，route 只能是 logistics 或 refund" aria-label="一句话结果验收描述">
+          <button type="button" class="kb-btn primary small" id="evoSopAssertGenBtn" data-evo-sop-assert-gen>生成</button>
+        </div>
+        <div class="evo-sop-assert-chips">
+          ${EVO_SOP_ASSERT_EXAMPLES.map(ex => `<button type="button" class="evo-sop-assert-chip" data-evo-sop-assert-example="${escapeHTML(ex.text)}">+ ${escapeHTML(ex.label)}</button>`).join('')}
+        </div>
+        <div id="evoSopAssertError" class="evo-sop-assert-error" hidden role="alert"></div>
+      </div>
+      <div id="evoSopAssertCandidates" class="evo-sop-assert-candidates" hidden></div>
+      <div class="evo-sop-assert-list-wrap">
+        <div class="evo-sop-assert-list-head">
+          <span>已添加规则 <b id="evoSopAssertCount">0</b></span>
+          <button type="button" class="evo-sop-link-btn" id="evoSopAssertSuggestBtn" data-evo-sop-assert-suggest>从历史产物猜几条</button>
+        </div>
+        <div id="evoSopAssertList" class="evo-sop-assert-list"></div>
+      </div>
+      <footer class="evo-sop-dialog-foot evo-sop-assert-foot">
+        <span id="evoSopAssertFootStatus" class="evo-sop-assert-status"></span>
+        <div class="evo-sop-assert-foot-actions">
+          <button type="button" class="kb-btn quiet" data-evo-sop-assert-close>取消</button>
+          <button type="submit" class="kb-btn primary" id="evoSopAssertSave">保存生效</button>
+        </div>
+      </footer>
+    </form>
+  </dialog>`;
+}
+
+function evoSOPRenderAssertDialogBody() {
+  const t = evoSOPState.assertTarget;
+  if (!t) return;
+  const errEl = $('#evoSopAssertError');
+  if (errEl) {
+    errEl.hidden = !t.error;
+    errEl.textContent = t.error || '';
+  }
+  const genBtn = $('#evoSopAssertGenBtn');
+  if (genBtn) {
+    genBtn.disabled = !!t.busy;
+    genBtn.textContent = t.busy ? '生成中…' : '生成';
+  }
+  const candEl = $('#evoSopAssertCandidates');
+  if (candEl) {
+    const cands = t.candidates || [];
+    candEl.hidden = !cands.length;
+    candEl.innerHTML = cands.map((c, idx) => {
+      const a = c.assertion || {};
+      const kindLbl = EVO_SOP_ASSERT_KIND_LABELS[a.kind] || a.kind || '规则';
+      const tested = Number(c.testedRuns) || 0;
+      const passed = Number(c.passedRuns) || 0;
+      const btTone = tested === 0 ? '' : (c.allPassed ? 'ok' : 'warn');
+      const btText = tested === 0 ? '暂无历史样本' : `历史回测 ${passed}/${tested} ${c.allPassed ? '✓' : '⚠'}`;
+      return `<div class="evo-sop-assert-cand${tested > 0 && !c.allPassed ? ' is-warn' : ''}">
+        <div class="evo-sop-assert-cand-top">
+          <div class="evo-sop-assert-cand-title">${kbBadge(escapeHTML(kindLbl), 'info')}<b>${escapeHTML(a.name || '')}</b></div>
+          ${kbBadge(escapeHTML(btText), btTone)}
+        </div>
+        <code class="evo-sop-assert-expr">${escapeHTML(c.expression || a.expression || '')}</code>
+        ${tested > 0 && !c.allPassed ? `<p class="evo-sop-assert-warn-note">历史成功运行未全部通过此规则，请核对后再添加</p>` : ''}
+        <div class="evo-sop-assert-cand-actions">
+          <button type="button" class="kb-btn quiet small" data-evo-sop-assert-drop-cand="${idx}">忽略</button>
+          <button type="button" class="kb-btn primary small" data-evo-sop-assert-add-cand="${idx}">+ 添加到验收</button>
+        </div>
+      </div>`;
+    }).join('');
+  }
+  const list = t.assertions || [];
+  const countEl = $('#evoSopAssertCount');
+  if (countEl) countEl.textContent = String(list.length);
+  const listEl = $('#evoSopAssertList');
+  if (listEl) {
+    listEl.innerHTML = list.length
+      ? list.map((a, idx) => {
+          const kindLbl = EVO_SOP_ASSERT_KIND_LABELS[a.kind] || a.kind || '规则';
+          return `<div class="evo-sop-assert-item">
+            <div class="evo-sop-assert-item-main">
+              <div class="evo-sop-assert-item-title">${kbBadge(escapeHTML(kindLbl), '')}<b>${escapeHTML(a.name || '')}</b></div>
+              ${a.expression ? `<code class="evo-sop-assert-expr">${escapeHTML(a.expression)}</code>` : ''}
+            </div>
+            <button type="button" class="evo-sop-assert-del" data-evo-sop-assert-remove="${idx}" aria-label="删除规则">✕</button>
+          </div>`;
+        }).join('')
+      : '<div class="evo-sop-pref-empty">暂无验收规则；在上方输入一句话生成后添加</div>';
+  }
+  const foot = $('#evoSopAssertFootStatus');
+  if (foot) {
+    foot.textContent = list.length > 0
+      ? `已配 ${list.length} 条 · 保存后支持自动发布`
+      : '未配置规则 · 仅限人工发布';
+    foot.classList.toggle('is-ready', list.length > 0);
+  }
+}
+
+function evoSOPOpenAssertDialog(workflowId) {
+  const detail = evoSOPState.view?.workflowId === workflowId ? evoSOPState.view.detail : null;
+  if (!detail) return;
+  const dlg = $('#evoSopAssertDialog');
+  if (!dlg) return;
+  evoSOPState.assertTarget = {
+    workflowId,
+    assertions: (detail.assertions || []).map(a => ({ ...a })),
+    candidates: [],
+    prompt: '',
+    busy: false,
+    saving: false,
+    error: '',
+  };
+  const input = $('#evoSopAssertPrompt');
+  if (input) input.value = '';
+  evoSOPRenderAssertDialogBody();
+  if (typeof dlg.showModal === 'function') dlg.showModal();
+  else dlg.setAttribute('open', '');
+  input?.focus();
+}
+
+async function evoSOPGenerateAssertions(promptText) {
+  const t = evoSOPState.assertTarget;
+  const pid = evoProjectId();
+  if (!t || !pid || t.busy) return;
+  const text = String(promptText ?? $('#evoSopAssertPrompt')?.value ?? '').trim();
+  if (!text) {
+    t.error = '请先输入一句话结果验收描述';
+    evoSOPRenderAssertDialogBody();
+    return;
+  }
+  t.busy = true;
+  t.error = '';
+  evoSOPRenderAssertDialogBody();
+  try {
+    const res = await api(`/api/evolution/sops/${encodeURIComponent(t.workflowId)}/assertions/generate`, {
+      method: 'POST',
+      body: JSON.stringify({ projectId: pid, prompt: text }),
+    });
+    t.candidates = Array.isArray(res?.candidates) ? res.candidates : [];
+    if (!t.candidates.length) t.error = '未生成可用规则，请补充文件名或字段要求';
+  } catch (err) {
+    t.error = err?.message || '生成规则失败';
+  } finally {
+    t.busy = false;
+    evoSOPRenderAssertDialogBody();
+  }
+}
+
+async function evoSOPSuggestAssertions() {
+  const t = evoSOPState.assertTarget;
+  const pid = evoProjectId();
+  if (!t || !pid || t.busy) return;
+  t.busy = true;
+  t.error = '';
+  evoSOPRenderAssertDialogBody();
+  try {
+    const res = await api(`/api/evolution/sops/${encodeURIComponent(t.workflowId)}/assertions/suggest`, {
+      method: 'POST',
+      body: JSON.stringify({ projectId: pid }),
+    });
+    t.candidates = Array.isArray(res?.candidates) ? res.candidates : [];
+    if (!t.candidates.length) t.error = '最近成功运行暂无共同产物可提取，建议直接输入一句话生成';
+  } catch (err) {
+    t.error = err?.message || '提取历史规则失败';
+  } finally {
+    t.busy = false;
+    evoSOPRenderAssertDialogBody();
+  }
+}
+
+async function evoSOPSaveAssertions(btn) {
+  const t = evoSOPState.assertTarget;
+  const pid = evoProjectId();
+  if (!t || !pid || t.saving) return null;
+  t.saving = true;
+  if (btn) btn.disabled = true;
+  try {
+    const saved = await api(`/api/evolution/sops/${encodeURIComponent(t.workflowId)}/assertions`, {
+      method: 'PUT',
+      body: JSON.stringify({ projectId: pid, assertions: t.assertions || [] }),
+    });
+    const dlg = $('#evoSopAssertDialog');
+    if (dlg) { if (typeof dlg.close === 'function') dlg.close(); else dlg.removeAttribute('open'); }
+    if (evoSOPState.view?.workflowId === t.workflowId) {
+      await evoSOPLoadDetail(evoSOPState.view);
+    }
+    toast(saved?.autoReleaseAllowed ? '结果验收已生效，已解锁自动发布' : '结果验收已更新（当前仅限人工发布）', 'ok');
+    return saved;
+  } catch (err) {
+    t.error = err?.message || '保存验收规则失败';
+    evoSOPRenderAssertDialogBody();
+    toast(t.error, 'err');
+    return null;
+  } finally {
+    t.saving = false;
+    if (btn?.isConnected) btn.disabled = false;
   }
 }
 
@@ -581,15 +939,25 @@ function evoSOPDetailHTML(view) {
   const normPrefs = evoSOPNormalizePrefs(d.preferences);
   const primaryPref = normPrefs[0];
   const primaryAsset = (d.assets || [])[0] || null;
+  const assertCount = Number(d.assertionCount) || (d.assertions || []).filter(a => a.enabled).length;
+  const assertBtnLabel = assertCount > 0 ? `结果验收 · ${assertCount} 条 ✓` : '结果验收 · 未配置';
+  const assertBtnTitle = assertCount > 0
+    ? `已配置 ${assertCount} 条结果验收规则（支持自动发布），点击修改`
+    : '默认未配置结果验收（仅限人工发布），点击用一句话添加验收规则';
   const headActions = [
     `<button type="button" class="kb-btn quiet small" data-evo-sop-pref-open="${escapeHTML(d.workflowId)}" title="${escapeHTML(evoSOPPrefsTitle(normPrefs))}"${busy}>偏好 · P1 ${escapeHTML(EVO_SOP_PREF_MAP[primaryPref]?.short || '省 Token')}</button>`,
+    `<button type="button" class="kb-btn quiet small${assertCount > 0 ? ' is-assert-ready' : ''}" data-evo-sop-assert-open="${escapeHTML(d.workflowId)}" title="${escapeHTML(assertBtnTitle)}"${busy}>${escapeHTML(assertBtnLabel)}</button>`,
   ];
   if (primaryAsset) {
     const verSuffix = primaryAsset.currentVersion ? ` · v${primaryAsset.currentVersion}` : '';
     headActions.push(`<button type="button" class="kb-btn quiet small" data-evo-asset="${escapeHTML(primaryAsset.kind)}" data-id="${escapeHTML(primaryAsset.id)}" title="查看历史版本对比并一键回滚到指定版本">版本与回滚${escapeHTML(verSuffix)}</button>`);
   }
-  if (d.stage === 'monitor' && d.enabled) {
-    headActions.push(`<button type="button" class="kb-btn small" data-evo-sop-optimize="${escapeHTML(d.workflowId)}"${busy}>立即发起优化</button>`);
+  if (d.stage === 'sleeping' && d.enabled) {
+    headActions.push(`<button type="button" class="kb-btn primary small" data-evo-sop-wake="${escapeHTML(d.workflowId)}"${busy}>重新开启自动进化</button>`);
+  }
+  if ((d.stage === 'monitor' || d.stage === 'sleeping') && d.enabled) {
+    const optLabel = evoSOPState.busyIds.has(d.workflowId) ? '正在发起…' : '立即发起优化';
+    headActions.push(`<button type="button" class="kb-btn small" data-evo-sop-optimize="${escapeHTML(d.workflowId)}"${busy}>${optLabel}</button>`);
   }
   if (active?.id) {
     headActions.push(`<button type="button" class="kb-btn quiet small" data-evo-proposal="${escapeHTML(active.id)}">查看完整提案</button>`);
@@ -610,7 +978,8 @@ function evoSOPDetailHTML(view) {
     </header>
 
     ${evoSOPCalloutHTML(d)}
-    ${evoSOPMetricsGridHTML(curM, prevM, primaryPref)}
+    ${evoSOPMetricsGridHTML(curM, prevM, primaryPref, d.latestScoreTrace || curM.deductions || [], !!view.traceOpen)}
+    ${view.traceOpen ? evoSOPScoreTraceHTML(d.latestScoreTrace || curM.deductions || [], curM) : ''}
 
     <div class="evo-sop-tabs" role="tablist" aria-label="SOP 详情视图">
       <button type="button" role="tab" data-evo-sop-tab="trend" aria-selected="${view.tab === 'trend'}">历史版本趋势</button>
@@ -631,13 +1000,23 @@ function evoSOPCalloutHTML(d) {
   }
   const p = d.activeProposal;
   if (d.stage === 'optimize' && p) {
+    const refineRound = Number(p.refineRound) || 0;
+    const lastAttempt = Array.isArray(p.refineHistory) && p.refineHistory.length ? p.refineHistory[p.refineHistory.length - 1] : null;
     if (p.status === 'drafting' || p.status === 'validating') {
       const s = p.summary || {};
-      const detail = p.status === 'drafting'
-        ? '正在结合本轮问题与优化偏好生成修改稿，完成后将自动回放历史样本验证。'
-        : `正在回放历史运行验证修改稿（已完成 ${s.finished || 0}/${s.total || 0} 条）。`;
+      const roundLabel = refineRound > 0 ? `第 ${refineRound + 1} 轮反思修正` : '正在优化中';
+      let detail = '';
+      if (p.status === 'drafting') {
+        detail = refineRound > 0
+          ? `上轮回放未通过（${lastAttempt?.verdict || '未达标'}），正在结合工具轨迹与失败原因自动生成修正稿并重新回放。`
+          : '正在结合本轮问题、工具热点轨迹与优化偏好生成修改稿，完成后将自动回放历史样本验证。';
+      } else {
+        detail = refineRound > 0
+          ? `正在对第 ${refineRound + 1} 轮反思修正稿回放验证（已完成 ${s.finished || 0}/${s.total || 0} 条）。`
+          : `正在回放历史运行验证修改稿（已完成 ${s.finished || 0}/${s.total || 0} 条）。`;
+      }
       return `<div class="evo-sop-callout is-info" role="status">
-        <div><strong>正在优化中 · ${escapeHTML(p.title || '生成修改稿')}</strong><p>${escapeHTML(detail)}</p></div>
+        <div><strong>${roundLabel} · ${escapeHTML(p.title || '生成修改稿')}</strong><p>${escapeHTML(detail)}</p></div>
         <div class="evo-sop-callout-actions">
           <button type="button" class="kb-btn small" data-evo-proposal="${escapeHTML(p.id)}">查看验证进展</button>
         </div>
@@ -645,12 +1024,18 @@ function evoSOPCalloutHTML(d) {
     }
     if (p.status === 'pending') {
       const passed = !!p.summary?.passed && !!p.candidateContent;
+      const iterNote = refineRound > 0 ? `（经 ${refineRound + 1} 轮反思迭代达标）` : '';
+      const autoBlock = p.autoReleaseBlocked ? ` · ${p.autoReleaseBlocked}` : '';
       const msg = passed
-        ? `已完成回放验证（${p.summary.verdict || `修复 ${p.summary.fixed || 0} 条，无退化`}）。开启灰度后将以 50% 流量对比新旧版本，发布后再进入下一轮统计。`
+        ? `已完成回放验证${iterNote}（${p.summary.verdict || `修复 ${p.summary.fixed || 0} 条，无退化`}）${autoBlock}。开启灰度后将以 50% 流量对比新旧版本，发布后再进入下一轮统计。`
         : `回放结果尚需人工核对（${p.summary?.verdict || '未达自动通过条件'}），建议先查看修改与样本细节。`;
+      const semHTML = p.semanticJudge?.summary
+        ? `<div class="evo-sop-semantic-ref"><span>AI 语义参考</span>${escapeHTML(p.semanticJudge.summary)}</div>`
+        : '';
       return `<div class="evo-sop-callout ${passed ? 'is-ready' : 'is-warn'}" role="status">
-        <div><strong>${passed ? '优化完成，是否开始灰度？' : '优化稿待核对'}</strong><p>${escapeHTML(msg)}</p></div>
+        <div><strong>${passed ? '优化完成，是否开始灰度？' : '优化稿待核对'}</strong><p>${escapeHTML(msg)}</p>${semHTML}</div>
         <div class="evo-sop-callout-actions">
+          ${p.autoReleaseBlocked ? `<button type="button" class="kb-btn quiet small" data-evo-sop-assert-open="${escapeHTML(d.workflowId)}">去配 1 句验收</button>` : ''}
           <button type="button" class="kb-btn quiet small" data-evo-sop-tab="change">看本次修改</button>
           ${passed ? `<button type="button" class="kb-btn primary small" data-evo-sop-start-gray="${escapeHTML(p.id)}">开始灰度</button>` : `<button type="button" class="kb-btn small" data-evo-proposal="${escapeHTML(p.id)}">核对样本</button>`}
         </div>
@@ -675,10 +1060,21 @@ function evoSOPCalloutHTML(d) {
       </div>
     </div>`;
   }
+  if (d.stage === 'sleeping') {
+    const until = d.sleepingUntil ? new Date(d.sleepingUntil).toLocaleString() : '';
+    const detail = d.sleepReason || `连续 ${Number(d.consecutiveNoGain) || 3} 次优化未产生有效收益，已自动休眠。`;
+    return `<div class="evo-sop-callout is-warn" role="status">
+      <div><strong>自动进化休眠中${until ? `（预计 ${escapeHTML(until)} 自动恢复）` : ''}</strong><p>${escapeHTML(detail)}</p></div>
+      <div class="evo-sop-callout-actions">
+        <button type="button" class="kb-btn primary small" data-evo-sop-wake="${escapeHTML(d.workflowId)}">重新开启自动进化</button>
+      </div>
+    </div>`;
+  }
   if (d.stage === 'monitor') {
     const last = d.lastProposal;
     if (last?.status === 'failed') {
-      const reason = last.error || last.summary?.verdict || '优化生成或回放未通过';
+      const refineSuffix = (Number(last.refineRound) || 0) > 0 ? `（已自动反思修正 ${Number(last.refineRound)} 轮仍未达标）` : '';
+      const reason = (last.error || last.summary?.verdict || '优化生成或回放未通过') + refineSuffix;
       return `<div class="evo-sop-callout is-warn" role="status">
         <div><strong>上次优化未通过</strong><p>${escapeHTML(reason)}</p></div>
         <div class="evo-sop-callout-actions">
@@ -690,12 +1086,25 @@ function evoSOPCalloutHTML(d) {
     const batchSize = Number(d.batchSize) || 10;
     const pending = Number(d.pendingRuns) || 0;
     const totalRuns = Number(d.latestMetrics?.runs) || 0;
+    const notice = evoSOPState.view?.workflowId === d.workflowId ? evoSOPState.view.actionNotice : null;
+    const optBusy = evoSOPState.busyIds.has(d.workflowId);
+    const optBtn = `<button type="button" class="kb-btn primary small" data-evo-sop-optimize="${escapeHTML(d.workflowId)}"${optBusy ? ' disabled' : ''}>${optBusy ? '正在发起…' : '立即发起优化'}</button>`;
+    if (notice?.text) {
+      return `<div class="evo-sop-callout ${notice.tone === 'info' ? 'is-info' : 'is-warn'}" role="status">
+        <div><strong>${escapeHTML(notice.title || '无法立即启动优化')}</strong><p>${escapeHTML(notice.text)}</p></div>
+        <div class="evo-sop-callout-actions">${optBtn}</div>
+      </div>`;
+    }
     if (pending >= batchSize) {
+      if (d.autoBlockReason) {
+        return `<div class="evo-sop-callout is-warn" role="status">
+          <div><strong>本轮已达触发阈值（${pending}/${batchSize} 次），但后台未自动启动</strong><p>${escapeHTML(d.autoBlockReason)}</p></div>
+          <div class="evo-sop-callout-actions">${optBtn}</div>
+        </div>`;
+      }
       return `<div class="evo-sop-callout is-ready" role="status">
-        <div><strong>本轮已达触发阈值（${pending}/${batchSize} 次）</strong><p>系统将在后台自动发起优化；若未自动启动，可点击右侧按钮立即触发并查看具体提示。</p></div>
-        <div class="evo-sop-callout-actions">
-          <button type="button" class="kb-btn primary small" data-evo-sop-optimize="${escapeHTML(d.workflowId)}">立即发起优化</button>
-        </div>
+        <div><strong>本轮已达触发阈值（${pending}/${batchSize} 次）</strong><p>系统将在后台自动发起优化（约 30 秒内扫描触发）；也可点击右侧按钮立即启动。</p></div>
+        <div class="evo-sop-callout-actions">${optBtn}</div>
       </div>`;
     }
     if (totalRuns >= batchSize && pending < batchSize) {
@@ -707,11 +1116,43 @@ function evoSOPCalloutHTML(d) {
   return '';
 }
 
-function evoSOPMetricsGridHTML(cur, prev, primaryPref = '') {
+function evoSOPScoreTraceHTML(deductions, cur) {
+  const list = Array.isArray(deductions) ? deductions : [];
+  const headMeta = cur?.baselineReady && cur?.baselineScore
+    ? `规则 ${cur.scorerVersion || 'v1.0'} · 相对冻结基线 ${cur.baselineScore} 分`
+    : `规则 ${cur?.scorerVersion || 'v1.0'} · 基线积累中`;
+  return `<section class="evo-sop-trace-strip" aria-label="过程分事件溯源">
+    <div class="evo-sop-trace-head">
+      <b>过程分事件溯源</b>
+      <span class="mono">${escapeHTML(headMeta)}</span>
+    </div>
+    ${list.length
+      ? `<div class="evo-sop-trace-chips">${list.map(d => {
+          const sign = d.delta > 0 ? '+' : '';
+          const tone = d.delta > 0 ? 'is-pos' : d.delta < 0 ? 'is-neg' : '';
+          return `<span class="evo-sop-trace-chip ${tone}" title="${escapeHTML(d.eventRef || '')}"><b>${sign}${d.delta} 分</b><span>${escapeHTML(d.reason || d.label)}</span></span>`;
+        }).join('')}</div>`
+      : '<p class="evo-sop-trace-empty">最近一次运行与冻结基线持平，无明显加减分事件。</p>'}
+  </section>`;
+}
+
+function evoSOPMetricsGridHTML(cur, prev, primaryPref = '', deductions = [], traceOpen = false) {
   const runs = cur.runs || 0;
-  const scoreNote = runs > 0
-    ? (cur.scoreSource === 'eval' ? `近 ${cur.scoredRuns || runs} 次运行评测均分` : `结果稳定性 65 分 + Token/工具/耗时连续效率 35 分`)
-    : '完成至少 1 次运行后自动计算';
+  const hasTrace = Array.isArray(deductions) && deductions.length > 0;
+  let scoreNote = '完成至少 1 次运行后自动计算';
+  if (runs > 0) {
+    if (cur.scoreSource === 'process_v1') {
+      const baseTxt = cur.baselineReady && cur.baselineScore ? `基线 ${cur.baselineScore}` : '基线积累中';
+      scoreNote = `纯规则 ${cur.scorerVersion || 'v1.0'} · ${baseTxt}`;
+    } else if (cur.scoreSource === 'eval') {
+      scoreNote = `近 ${cur.scoredRuns || runs} 次运行评测均分`;
+    } else {
+      scoreNote = '结果稳定性 65 分 + Token/工具/耗时连续效率 35 分';
+    }
+  }
+  const traceBtn = runs > 0 && cur.scoreSource === 'process_v1' && hasTrace
+    ? ` <button type="button" class="evo-sop-link-btn" data-evo-sop-trace-toggle aria-expanded="${traceOpen}">${traceOpen ? '收起溯源' : '看扣分'}</button>`
+    : '';
   const cards = [
     {
       key: 'score',
@@ -721,6 +1162,7 @@ function evoSOPMetricsGridHTML(cur, prev, primaryPref = '') {
       unit: cur.score != null ? '/ 100' : '',
       delta: evoSOPDeltaHTML(evoSOPMetricValue(cur, 'score'), evoSOPMetricValue(prev, 'score'), true, d => `${d > 0 ? '+' : ''}${Math.round(d)} 分`),
       note: scoreNote,
+      extraHTML: traceBtn,
     },
     {
       key: 'tokens',
@@ -758,7 +1200,7 @@ function evoSOPMetricsGridHTML(cur, prev, primaryPref = '') {
     <article class="evo-sop-kpi${c.primary ? ' is-primary' : ''}${isP1Target ? ' is-p1-target' : ''}">
       <div class="evo-sop-kpi-top"><span class="evo-sop-kpi-label">${c.label}${isP1Target ? '<em class="evo-sop-kpi-p1">P1 主目标</em>' : ''}</span>${c.delta || ''}</div>
       <div class="evo-sop-kpi-val"><b>${escapeHTML(c.value)}</b>${c.unit ? `<small>${escapeHTML(c.unit)}</small>` : ''}</div>
-      <p class="evo-sop-kpi-note">${escapeHTML(c.note)}</p>
+      <p class="evo-sop-kpi-note">${escapeHTML(c.note)}${c.extraHTML || ''}</p>
     </article>`;
   }).join('')}</div>`;
 }
@@ -787,10 +1229,11 @@ function evoSOPTrendTabHTML(view, d) {
     ${scope === 'versions' ? evoSOPVersionsTableHTML(d.versions || [], d.assets || []) : evoSOPGrayTableHTML(d.grayRounds || [], view.expandedGray)}
 
     <details class="evo-sop-method">
-      <summary>指标与 SOP 评分是怎么算出来的？</summary>
+      <summary>指标与三层衡量器是怎么算出来的？</summary>
       <ul>
-        <li><b>SOP 评分（0–100）</b>：当运行存在自动评测结果（RunEval）时，直接取该批次评测均分；暂无评测时按连续公式加权：一次成功运行为结果稳定性 65 分（成功 40 + 无返工 15 + 工具无报错 10）+ 连续效率 35 分（Token 15 + 工具 10 + 耗时 10，平滑曲线计分）；返工成功按 0.6 倍计入效率分；失败运行不计效率加分（8–18 分），确保「失败 &lt; 返工成功 &lt; 一次成功」。</li>
-        <li><b>核心指标口径</b>：所有统计仅包含非回放的终态业务运行；每个正式版本取该版本最近一轮（最多 N 次）运行的均值，灰度数据则按同一时间窗内的旧版对照组与候选版分流运行分别汇总。</li>
+        <li><b>L1 过程分（纯规则 0–100 · v1.0）</b>：直接由运行数据计算 6 维（返工重试、耗时、重复/失败工具调用、Token、重复错误、产物完整），相对本 SOP 自己的冻结基线加减分，同一次运行永远得同一分，且每笔加减分均可溯源到具体事件；AI 评测结果永不覆盖主评分曲线。</li>
+        <li><b>L2 结果验收（硬门槛 · 可选）</b>：点击右上角「结果验收」可用一句话生成确定性规则并用历史样本回测。断言未通过的候选版本直接淘汰；未配置任何验收规则的 SOP 仅支持人工确认发布，不允许自动发布。</li>
+        <li><b>L3 语义质量（AI 换序双评 · 仅参考）</b>：仅在过程分接近时以固定低温 + 是/否清单进行 A/B 换序双评，两次一致才展示为旁栏参考，不单独决定发布。</li>
       </ul>
     </details>
   </div>`;
@@ -1270,19 +1713,50 @@ async function evoSOPPublishGray(proposalId, nextVer, ready, btn) {
 async function evoSOPTriggerOptimize(workflowId, btn) {
   const view = evoSOPState.view;
   const pid = evoProjectId();
-  if (!pid || !workflowId) return;
-  if (btn) btn.disabled = true;
+  if (!pid || !workflowId || evoSOPState.busyIds.has(workflowId)) return;
+  evoSOPState.busyIds.add(workflowId);
+  if (view && view.workflowId === workflowId) {
+    view.actionNotice = null;
+    evoSOPRenderDetail();
+  } else if (btn) {
+    btn.disabled = true;
+    btn.textContent = '正在发起…';
+  }
   try {
-    await api(`/api/evolution/sops/${encodeURIComponent(workflowId)}/optimize`, {
+    const res = await api(`/api/evolution/sops/${encodeURIComponent(workflowId)}/optimize`, {
       method: 'POST',
       body: JSON.stringify({ projectId: pid }),
     });
-    toast('已发起 SOP 优化，正在生成修改稿并回放验证', 'ok');
+    evoSOPState.busyIds.delete(workflowId);
+    if (res?.status === 'queued') {
+      const msg = res.message || '该 SOP 关联角色当前已有进行中的优化或处于发布后观察期，已加入排队。';
+      if (view && evoSOPState.view === view) {
+        view.actionNotice = { title: '已加入优化排队', text: msg, tone: 'warn' };
+      }
+      toast(msg, 'warn');
+    } else if (res?.status === 'failed') {
+      const msg = res.error || '优化发起失败，请检查模型配置与回放条件';
+      if (view && evoSOPState.view === view) {
+        view.actionNotice = { title: '优化发起失败', text: msg, tone: 'warn' };
+      }
+      toast(msg, 'err');
+    } else {
+      if (view && evoSOPState.view === view) view.actionNotice = null;
+      toast('已发起 SOP 优化，正在生成修改稿并回放验证', 'ok');
+    }
     await evoRefresh();
     if (evoSOPState.view === view) await evoSOPLoadDetail(view);
   } catch (err) {
-    toast(err.message, 'err');
+    evoSOPState.busyIds.delete(workflowId);
+    const msg = err?.message || '发起优化失败';
+    if (view && evoSOPState.view === view) {
+      view.actionNotice = { title: '无法发起优化', text: msg, tone: 'warn' };
+      evoSOPRenderDetail();
+    }
+    toast(msg, 'err');
     if (btn?.isConnected) btn.disabled = false;
+  } finally {
+    evoSOPState.busyIds.delete(workflowId);
   }
 }
 
@@ -1420,6 +1894,77 @@ document.addEventListener('click', e => {
     evoSOPTriggerOptimize(optBtn.dataset.evoSopOptimize, optBtn);
     return;
   }
+  const wakeBtn = e.target.closest('[data-evo-sop-wake]');
+  if (wakeBtn) {
+    evoSOPWake(wakeBtn.dataset.evoSopWake, wakeBtn);
+    return;
+  }
+  if (e.target.closest('[data-evo-budget-open]')) {
+    evoSOPOpenBudgetDialog();
+    return;
+  }
+  if (e.target.closest('[data-evo-budget-close]')) {
+    const dlg = $('#evoBudgetDialog');
+    if (dlg) { if (typeof dlg.close === 'function') dlg.close(); else dlg.removeAttribute('open'); }
+    return;
+  }
+  const assertOpen = e.target.closest('[data-evo-sop-assert-open]');
+  if (assertOpen) {
+    evoSOPOpenAssertDialog(assertOpen.dataset.evoSopAssertOpen);
+    return;
+  }
+  if (e.target.closest('[data-evo-sop-assert-close]')) {
+    const dlg = $('#evoSopAssertDialog');
+    if (dlg) { if (typeof dlg.close === 'function') dlg.close(); else dlg.removeAttribute('open'); }
+    return;
+  }
+  if (e.target.closest('[data-evo-sop-assert-gen]')) {
+    evoSOPGenerateAssertions();
+    return;
+  }
+  const exBtn = e.target.closest('[data-evo-sop-assert-example]');
+  if (exBtn) {
+    const txt = exBtn.dataset.evoSopAssertExample || '';
+    const input = $('#evoSopAssertPrompt');
+    if (input) input.value = txt;
+    evoSOPGenerateAssertions(txt);
+    return;
+  }
+  if (e.target.closest('[data-evo-sop-assert-suggest]')) {
+    evoSOPSuggestAssertions();
+    return;
+  }
+  const addCand = e.target.closest('[data-evo-sop-assert-add-cand]');
+  if (addCand && evoSOPState.assertTarget) {
+    const idx = Number(addCand.dataset.evoSopAssertAddCand);
+    const cand = evoSOPState.assertTarget.candidates?.[idx];
+    if (cand?.assertion) {
+      const exists = evoSOPState.assertTarget.assertions.some(x => x.expression && x.expression === cand.assertion.expression);
+      if (!exists) evoSOPState.assertTarget.assertions.push({ ...cand.assertion, enabled: true });
+      evoSOPState.assertTarget.candidates.splice(idx, 1);
+      evoSOPRenderAssertDialogBody();
+    }
+    return;
+  }
+  const dropCand = e.target.closest('[data-evo-sop-assert-drop-cand]');
+  if (dropCand && evoSOPState.assertTarget) {
+    const idx = Number(dropCand.dataset.evoSopAssertDropCand);
+    evoSOPState.assertTarget.candidates.splice(idx, 1);
+    evoSOPRenderAssertDialogBody();
+    return;
+  }
+  const remRule = e.target.closest('[data-evo-sop-assert-remove]');
+  if (remRule && evoSOPState.assertTarget) {
+    const idx = Number(remRule.dataset.evoSopAssertRemove);
+    evoSOPState.assertTarget.assertions.splice(idx, 1);
+    evoSOPRenderAssertDialogBody();
+    return;
+  }
+  if (e.target.closest('[data-evo-sop-trace-toggle]') && evoSOPState.view) {
+    evoSOPState.view.traceOpen = !evoSOPState.view.traceOpen;
+    evoSOPRenderDetail();
+    return;
+  }
 });
 
 document.addEventListener('input', e => {
@@ -1484,7 +2029,30 @@ document.addEventListener('dragend', () => {
   $$('#evoSopPrefOptions .evo-sop-pref-option').forEach(el => el.classList.remove('is-dragging', 'is-drag-over'));
 });
 
+document.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && e.target?.id === 'evoSopAssertPrompt') {
+    e.preventDefault();
+    evoSOPGenerateAssertions();
+  }
+});
+
 document.addEventListener('submit', async e => {
+  if (e.target?.id === 'evoSopAssertForm') {
+    e.preventDefault();
+    await evoSOPSaveAssertions($('#evoSopAssertSave'));
+    return;
+  }
+  if (e.target?.id === 'evoBudgetForm') {
+    e.preventDefault();
+    const daily = Math.max(0, Math.round(Number($('#evoBudgetDaily')?.value) || 0));
+    const monthly = Math.max(0, Math.round(Number($('#evoBudgetMonthly')?.value) || 0));
+    const saved = await evoSOPSaveBudget(daily, monthly, $('#evoBudgetSave'));
+    if (saved) {
+      const dlg = $('#evoBudgetDialog');
+      if (dlg) { if (typeof dlg.close === 'function') dlg.close(); else dlg.removeAttribute('open'); }
+    }
+    return;
+  }
   if (e.target?.id !== 'evoSopPrefForm') return;
   e.preventDefault();
   const target = evoSOPState.prefTarget;

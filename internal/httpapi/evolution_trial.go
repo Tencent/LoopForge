@@ -88,47 +88,61 @@ func (h *evolutionHandlers) sweepTrials(now time.Time) {
 	}
 }
 
-// trialScore grades one business run for the asset; terminal results are
-// cached because a finished run never changes.
+// trialScore returns only the clean/rework/fail score of one business run.
 func (h *evolutionHandlers) trialScore(projectID, runID string, asset evoAsset) (int, bool) {
+	sample, ok := h.trialSample(projectID, runID, asset)
+	return sample.score, ok
+}
+
+// trialSample grades one business run for the asset and captures its efficiency
+// metrics; terminal results are cached because a finished run never changes.
+func (h *evolutionHandlers) trialSample(projectID, runID string, asset evoAsset) (evoTrialRunSample, bool) {
 	key := projectID + ":" + asset.Kind + ":" + asset.ID + ":" + runID
 	h.trialM.Lock()
-	score, cached := h.trialScores[key]
+	sample, cached := h.trialScores[key]
 	h.trialM.Unlock()
 	if cached {
-		return score, score >= 0
+		return sample, sample.score >= 0
 	}
 	run, ok := h.repo.RunState(runID)
 	if !ok {
-		return 0, false
+		return evoTrialRunSample{}, false
 	}
 	if run.ExecutionContext.IsEvolutionReplay() || h.runProject(run) != projectID {
-		h.cacheTrialScore(key, -1)
-		return 0, false
+		h.cacheTrialSample(key, evoTrialRunSample{score: -1})
+		return evoTrialRunSample{}, false
 	}
-	score, ok = evolution.AssetRunScore(run, h.assetNodeIDs(run, asset))
+	score, ok := evolution.AssetRunScore(run, h.assetNodeIDs(run, asset))
+	out := evoTrialRunSample{
+		score:  score,
+		tokens: evolution.RunTokens(run),
+		tools:  evolution.RunToolCalls(run),
+		durMs:  evolution.RunDurationMs(run),
+	}
 	if domain.TerminalRunStatus(run.Status) {
 		if !ok {
-			h.cacheTrialScore(key, -1)
+			h.cacheTrialSample(key, evoTrialRunSample{score: -1})
 		} else {
-			h.cacheTrialScore(key, score)
+			h.cacheTrialSample(key, out)
 		}
 	}
-	return score, ok
+	return out, ok
 }
 
-func (h *evolutionHandlers) cacheTrialScore(key string, score int) {
+func (h *evolutionHandlers) cacheTrialSample(key string, sample evoTrialRunSample) {
 	h.trialM.Lock()
 	defer h.trialM.Unlock()
 	if len(h.trialScores) >= evoTrialScoreCacheMax {
-		h.trialScores = map[string]int{}
+		h.trialScores = map[string]evoTrialRunSample{}
 	}
-	h.trialScores[key] = score
+	h.trialScores[key] = sample
 }
 
-// armStats scores the pinned runs whose start body has the given hash.
+// armStats scores the pinned runs whose start body has the given hash and
+// aggregates their average token, tool-call, and duration metrics.
 func (h *evolutionHandlers) armStats(projectID string, pins []domain.RunAssetPin, hash string, asset evoAsset, limit int) domain.EvoArmStats {
 	stats := domain.EvoArmStats{}
+	var acc evolution.ArmMetricAcc
 	for _, pin := range pins {
 		if pin.Hash != hash {
 			continue
@@ -136,10 +150,12 @@ func (h *evolutionHandlers) armStats(projectID string, pins []domain.RunAssetPin
 		if limit > 0 && stats.Runs >= limit {
 			break
 		}
-		if score, ok := h.trialScore(projectID, pin.RunID, asset); ok {
-			evolution.AddScore(&stats, score)
+		if sample, ok := h.trialSample(projectID, pin.RunID, asset); ok {
+			evolution.AddScore(&stats, sample.score)
+			acc.Add(sample.tokens, sample.tools, sample.durMs)
 		}
 	}
+	acc.Apply(&stats)
 	return stats
 }
 
@@ -153,6 +169,9 @@ func (h *evolutionHandlers) endCanary(p domain.EvoProposal, now time.Time, canar
 	if err := h.repo.PutEvoProposal(p); err != nil {
 		log.Printf("evolution trial %s persist: %v", p.ID, err)
 		return
+	}
+	if canaryStatus == domain.EvoCanaryFailed {
+		h.recordSOPProposalOutcome(p, false, verdict, now)
 	}
 }
 
@@ -174,7 +193,7 @@ func (h *evolutionHandlers) sweepCanary(p domain.EvoProposal, now time.Time) dom
 	p.Canary.Canary = h.armStats(p.ProjectID, pins, domain.ContentHash(p.CandidateContent), asset, 0)
 	p.Canary.Control = h.armStats(p.ProjectID, pins, p.BaseHash, asset, 0)
 	p.Canary.ProbWorse = evolution.ProbWorse(p.Canary.Canary, p.Canary.Control)
-	status, verdict := evolution.JudgeCanary(*p.Canary)
+	status, verdict := evolution.JudgeCanaryWithPreferences(*p.Canary, h.proposalPreferences(p))
 	p.Canary.Verdict = verdict
 	if status == domain.EvoCanaryFailed {
 		h.endCanary(p, now, domain.EvoCanaryFailed, verdict)
@@ -194,6 +213,13 @@ func (h *evolutionHandlers) sweepCanary(p domain.EvoProposal, now time.Time) dom
 		p, _ = h.repo.EvoProposal(p.ID)
 	}
 	if p.Canary.Status == domain.EvoCanaryPassed && h.autoEvolution(asset) {
+		if allowed, reason := h.proposalAllowsAutoRelease(p); !allowed {
+			if p.AutoReleaseBlocked != reason {
+				p.AutoReleaseBlocked = reason
+				_ = h.repo.PutEvoProposal(p)
+			}
+			return p
+		}
 		released, err := h.releaseProposal(p, asset, 0, "L3 自动全量："+verdict, false)
 		if err != nil {
 			log.Printf("evolution trial %s auto release: %v", p.ID, err)
@@ -234,7 +260,7 @@ func (h *evolutionHandlers) sweepWatch(p domain.EvoProposal, now time.Time) doma
 	pins := h.repo.AssetPinsBetween(asset.Kind, asset.ID, w.StartedAt, time.Time{}, evolution.TrialRunScanLimit)
 	w.Current = h.armStats(p.ProjectID, pins, w.Hash, asset, 0)
 	w.ProbWorse = evolution.ProbWorse(w.Current, w.Baseline)
-	status, verdict := evolution.JudgeWatch(*w, now.Sub(w.StartedAt))
+	status, verdict := evolution.JudgeWatchWithHealthyRuns(*w, now.Sub(w.StartedAt), h.proposalSOPWatchHealthyRuns(p))
 	w.Status, w.Verdict = status, verdict
 	if status == domain.EvoWatchHealthy || status == domain.EvoWatchEnded {
 		w.EndedAt = now
@@ -265,6 +291,77 @@ func (h *evolutionHandlers) sweepWatch(p domain.EvoProposal, now time.Time) doma
 	}
 	stored, _ := h.repo.EvoProposal(p.ID)
 	return stored
+}
+
+// proposalSOPWatchHealthyRuns aligns post-release watch completion with the
+// governing SOP's batchSize so completing one full SOP batch without degradation
+// settles the watch and unlocks the next optimization round immediately.
+func (h *evolutionHandlers) proposalSOPWatchHealthyRuns(p domain.EvoProposal) int {
+	if strings.TrimSpace(p.ProjectID) == "" {
+		return 0
+	}
+	checkWF := func(wfID string) int {
+		wfID = strings.TrimSpace(wfID)
+		if wfID == "" {
+			return 0
+		}
+		if pol, stored := h.repo.EvoSOPPolicyStored(p.ProjectID, wfID); stored && pol.Enabled {
+			return evolution.NormalizeSOPBatchSize(pol.BatchSize)
+		}
+		return 0
+	}
+	if n := checkWF(p.WorkflowID); n > 0 {
+		return n
+	}
+	if strings.TrimSpace(p.FindingID) != "" {
+		if f, ok := h.repo.EvoFinding(p.FindingID); ok {
+			for _, wfID := range f.WorkflowIDs {
+				if n := checkWF(wfID); n > 0 {
+					return n
+				}
+			}
+		}
+	}
+	// Fallback for legacy released proposals created before WorkflowID was stamped:
+	// match any enabled SOP policy in the same project whose workflow uses this asset.
+	policies := h.repo.EvoSOPPolicies(p.ProjectID)
+	minBatch := 0
+	for wfID, pol := range policies {
+		if !pol.Enabled {
+			continue
+		}
+		wf, ok := h.repo.Workflow(wfID)
+		if !ok {
+			continue
+		}
+		uses := false
+		for _, node := range wf.Nodes {
+			if p.AssetKind == domain.EvoAssetAgent && node.AgentID == p.AssetID {
+				uses = true
+				break
+			}
+			if p.AssetKind == domain.EvoAssetRule && node.AgentID != "" {
+				if ag, found := h.repo.Agent(node.AgentID); found {
+					for _, rid := range ag.Rules {
+						if rid == p.AssetID {
+							uses = true
+							break
+						}
+					}
+				}
+			}
+			if uses {
+				break
+			}
+		}
+		if uses {
+			b := evolution.NormalizeSOPBatchSize(pol.BatchSize)
+			if minBatch == 0 || b < minBatch {
+				minBatch = b
+			}
+		}
+	}
+	return minBatch
 }
 
 // rollbackTo writes a stored version back into the live asset, appends a

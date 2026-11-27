@@ -10,7 +10,75 @@ import (
 	"agentflow/internal/domain"
 )
 
-const SignalSOPPreference = "sop_preference"
+const (
+	SignalSOPPreference     = "sop_preference"
+	SOPNoGainSleepThreshold = 3
+)
+
+// SOPSleepBackoffDays defines progressive sleep intervals after consecutive
+// no-gain optimization attempts: 1d -> 3d -> 7d -> max 14d.
+var SOPSleepBackoffDays = []int{1, 3, 7, 14}
+
+// NextSOPSleepDuration returns the sleep backoff duration for a 1-based stage.
+func NextSOPSleepDuration(stage int) time.Duration {
+	if stage < 1 {
+		stage = 1
+	}
+	idx := stage - 1
+	if idx >= len(SOPSleepBackoffDays) {
+		idx = len(SOPSleepBackoffDays) - 1
+	}
+	return time.Duration(SOPSleepBackoffDays[idx]) * 24 * time.Hour
+}
+
+// IsSOPPolicySleeping reports whether an SOP policy is currently in sleep backoff.
+func IsSOPPolicySleeping(policy domain.EvoSOPPolicy, now time.Time) bool {
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	return !policy.SleepingUntil.IsZero() && now.Before(policy.SleepingUntil)
+}
+
+// ApplySOPProposalOutcome updates consecutive no-gain counters and progressive
+// sleep backoff after an SOP optimization attempt settles.
+//   - gained=true (released with improvement): clears all sleep backoff state.
+//   - gained=false (failed/rejected/rolled_back): increments ConsecutiveNoGain;
+//     once >= 3, advances SleepStage and sleeps for 1 -> 3 -> 7 -> max 14 days.
+func ApplySOPProposalOutcome(policy domain.EvoSOPPolicy, gained bool, reason string, now time.Time) domain.EvoSOPPolicy {
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	if gained {
+		policy.ConsecutiveNoGain = 0
+		policy.SleepStage = 0
+		policy.SleepingUntil = time.Time{}
+		policy.SleepReason = ""
+		return policy
+	}
+	policy.ConsecutiveNoGain++
+	if policy.ConsecutiveNoGain >= SOPNoGainSleepThreshold {
+		policy.SleepStage++
+		dur := NextSOPSleepDuration(policy.SleepStage)
+		days := int(dur / (24 * time.Hour))
+		policy.SleepingUntil = now.Add(dur)
+		base := fmt.Sprintf("连续 %d 次优化未产生有效收益，已自动休眠 %d 天（可随时手动重新开启）", policy.ConsecutiveNoGain, days)
+		if r := strings.TrimSpace(reason); r != "" {
+			base += "：" + domain.TrimEvoText(r, 80)
+		}
+		policy.SleepReason = base
+	}
+	return policy
+}
+
+// WakeSOPPolicy clears sleep backoff state when the user explicitly reopens an SOP.
+func WakeSOPPolicy(policy domain.EvoSOPPolicy) domain.EvoSOPPolicy {
+	policy.Enabled = true
+	policy.ConsecutiveNoGain = 0
+	policy.SleepStage = 0
+	policy.SleepingUntil = time.Time{}
+	policy.SleepReason = ""
+	return policy
+}
 
 var sopPreferenceOrder = []string{
 	domain.EvoPrefTokens,
@@ -545,6 +613,39 @@ func SplitSOPVersionsByAssetHistory(
 	runPinVersion map[string]int,
 	batchSize int,
 ) []domain.EvoSOPVersionPoint {
+	return splitSOPVersionsByAssetHistoryWith(wf, points, runs, asset, versions, runPinVersion, batchSize, func(group []domain.Run) domain.EvoSOPMetrics {
+		return SummarizeSOPRuns(group, evals)
+	})
+}
+
+// SplitSOPVersionsByAssetHistoryWithScorer is the Layer 1 deterministic scorer
+// variant of SplitSOPVersionsByAssetHistory.
+func SplitSOPVersionsByAssetHistoryWithScorer(
+	wf domain.WorkflowDefinition,
+	points []domain.EvoSOPVersionPoint,
+	runs []domain.Run,
+	baseline *domain.EvoSOPScoreBaseline,
+	assertions []domain.EvoSOPAssertion,
+	asset domain.EvoSOPAssetRef,
+	versions []domain.AssetVersion,
+	runPinVersion map[string]int,
+	batchSize int,
+) []domain.EvoSOPVersionPoint {
+	return splitSOPVersionsByAssetHistoryWith(wf, points, runs, asset, versions, runPinVersion, batchSize, func(group []domain.Run) domain.EvoSOPMetrics {
+		return SummarizeSOPRunsWithScorer(group, baseline, assertions)
+	})
+}
+
+func splitSOPVersionsByAssetHistoryWith(
+	wf domain.WorkflowDefinition,
+	points []domain.EvoSOPVersionPoint,
+	runs []domain.Run,
+	asset domain.EvoSOPAssetRef,
+	versions []domain.AssetVersion,
+	runPinVersion map[string]int,
+	batchSize int,
+	summarize func([]domain.Run) domain.EvoSOPMetrics,
+) []domain.EvoSOPVersionPoint {
 	if len(points) == 0 || len(versions) < 2 || strings.TrimSpace(asset.ID) == "" {
 		return points
 	}
@@ -656,7 +757,7 @@ func SplitSOPVersionsByAssetHistory(
 			AssetID:         asset.ID,
 			AssetName:       asset.Name,
 			RollbackVersion: rollbackVer,
-			Metrics:         SummarizeSOPRuns(group, evals),
+			Metrics:         summarize(group),
 		})
 	}
 
@@ -711,6 +812,35 @@ func SplitSOPVersionsWithExternalEdits(
 	evals map[string]domain.RunEvalRecord,
 	edits []domain.EvoSOPExternalEdit,
 	batchSize int,
+) []domain.EvoSOPVersionPoint {
+	return splitSOPVersionsWithExternalEditsWith(wf, points, runs, edits, batchSize, func(group []domain.Run) domain.EvoSOPMetrics {
+		return SummarizeSOPRuns(group, evals)
+	})
+}
+
+// SplitSOPVersionsWithExternalEditsWithScorer is the Layer 1 deterministic
+// scorer variant of SplitSOPVersionsWithExternalEdits.
+func SplitSOPVersionsWithExternalEditsWithScorer(
+	wf domain.WorkflowDefinition,
+	points []domain.EvoSOPVersionPoint,
+	runs []domain.Run,
+	baseline *domain.EvoSOPScoreBaseline,
+	assertions []domain.EvoSOPAssertion,
+	edits []domain.EvoSOPExternalEdit,
+	batchSize int,
+) []domain.EvoSOPVersionPoint {
+	return splitSOPVersionsWithExternalEditsWith(wf, points, runs, edits, batchSize, func(group []domain.Run) domain.EvoSOPMetrics {
+		return SummarizeSOPRunsWithScorer(group, baseline, assertions)
+	})
+}
+
+func splitSOPVersionsWithExternalEditsWith(
+	wf domain.WorkflowDefinition,
+	points []domain.EvoSOPVersionPoint,
+	runs []domain.Run,
+	edits []domain.EvoSOPExternalEdit,
+	batchSize int,
+	summarize func([]domain.Run) domain.EvoSOPMetrics,
 ) []domain.EvoSOPVersionPoint {
 	if len(points) == 0 || len(edits) == 0 {
 		return points
@@ -794,7 +924,7 @@ func SplitSOPVersionsWithExternalEdits(
 	}
 
 	out[curIdx].Current = false
-	out[curIdx].Metrics = SummarizeSOPRuns(before, evals)
+	out[curIdx].Metrics = summarize(before)
 	if prevAssetVer > 0 {
 		out[curIdx].AssetKind = latestEdit.AssetKind
 		out[curIdx].AssetID = latestEdit.AssetID
@@ -809,7 +939,7 @@ func SplitSOPVersionsWithExternalEdits(
 		AssetKind:  latestEdit.AssetKind,
 		AssetID:    latestEdit.AssetID,
 		AssetName:  latestEdit.AssetName,
-		Metrics:    SummarizeSOPRuns(after, evals),
+		Metrics:    summarize(after),
 	}
 	// Insert right after curIdx.
 	res := make([]domain.EvoSOPVersionPoint, 0, len(out)+1)

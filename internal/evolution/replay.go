@@ -72,15 +72,27 @@ func FeedbackSample(run domain.Run, finding domain.EvoFinding) bool {
 	return false
 }
 
-// Summarize tallies replays and decides whether the candidate passes:
-// every replay finished, at least one more fixed than regressed, at least
-// one fix, and no more than one regression.
-//
-// When every diagnosis/holdout sample already succeeded (a finding raised
-// only by user feedback or low eval scores), run status cannot prove a fix.
-// The candidate then passes when nothing regressed, and the verdict asks the
-// reviewer to compare replay outputs before releasing.
+// Summarize tallies replays and decides whether the candidate passes without
+// an efficiency-specific P1 preference gate.
 func Summarize(replays []domain.EvoReplay) domain.EvoReplaySummary {
+	return SummarizeWithPreferences(replays, nil)
+}
+
+// Replay goal-gate thresholds for efficiency P1 preferences (tokens / tools / duration).
+const (
+	ReplayGoalTokenMinDropPct    = 8.0
+	ReplayGoalToolMinDropPct     = 10.0
+	ReplayGoalToolMinAbsDrop     = 1.0
+	ReplayGoalDurationMinDropPct = 8.0
+)
+
+// SummarizeWithPreferences tallies replays and applies a dual gate when the
+// proposal's P1 preference is an efficiency target (tokens / tools / duration):
+//   - Correctness gate: no regressions (for fixable==0) or net fixes (for fixable>0).
+//   - P1 efficiency gate: when fixable==0 and comparable replay measurements exist,
+//     the P1 metric must actually improve past threshold instead of passing on a
+//     flat or worse replay.
+func SummarizeWithPreferences(replays []domain.EvoReplay, preferences []string) domain.EvoReplaySummary {
 	s := domain.EvoReplaySummary{Total: len(replays)}
 	fixable := 0
 	for _, r := range replays {
@@ -93,6 +105,9 @@ func Summarize(replays []domain.EvoReplay) domain.EvoReplaySummary {
 			continue
 		}
 		s.Finished++
+		if r.AssertionReport != nil && r.AssertionReport.Configured && !r.AssertionReport.AllPassed {
+			s.AssertionsFailed++
+		}
 		switch r.Outcome {
 		case domain.EvoOutcomeFixed:
 			s.Fixed++
@@ -106,6 +121,11 @@ func Summarize(replays []domain.EvoReplay) domain.EvoReplaySummary {
 			s.Unchanged++
 		}
 	}
+	if hasProc, procBefore, procAfter, procDelta := evaluateReplayProcessScore(replays); hasProc {
+		s.ProcessBefore = procBefore
+		s.ProcessAfter = procAfter
+		s.ProcessDelta = procDelta
+	}
 	if s.Total == 0 {
 		s.Verdict = "没有可回放的样本"
 		return s
@@ -116,9 +136,32 @@ func Summarize(replays []domain.EvoReplay) domain.EvoReplaySummary {
 	}
 	judged := s.Total - s.Blocked
 	same := s.Unchanged + s.Changed
+
+	goalMetric := primaryEfficiencyPreference(preferences)
+	hasGoal, goalBefore, goalAfter, goalDeltaPct, goalMet := evaluateReplayGoal(replays, goalMetric)
+	if hasGoal {
+		s.GoalMetric = goalMetric
+		s.GoalBefore = goalBefore
+		s.GoalAfter = goalAfter
+		s.GoalDeltaPct = goalDeltaPct
+		s.GoalMet = goalMet
+	}
+	goalLabel, goalCmp := formatGoalComparison(goalMetric, goalBefore, goalAfter, goalDeltaPct)
+
 	switch {
+	case s.AssertionsFailed > 0:
+		s.Passed = false
+		s.Verdict = fmt.Sprintf("未通过（L2 结果验收拦截）：%d 个回放样本未通过配置的结果断言", s.AssertionsFailed)
 	case judged == 0:
 		s.Verdict = "全部回放被人工节点或异常阻塞，无法判定"
+	case fixable == 0 && s.Regressed == 0 && hasGoal:
+		if goalMet {
+			s.Passed = true
+			s.Verdict = fmt.Sprintf("通过（P1 %s 达标）：%d 个回放无退化，%s", goalLabel, judged, goalCmp)
+		} else {
+			s.Passed = false
+			s.Verdict = fmt.Sprintf("未通过（P1 %s 未达标）：%d 个回放虽无退化，但 %s（未达到目标降幅）", goalLabel, judged, goalCmp)
+		}
 	case fixable == 0 && s.Regressed == 0 && s.Changed > 0:
 		s.Passed = true
 		s.Verdict = fmt.Sprintf("通过（反馈类问题）：%d 个回放按新正文改变了结论，%d 个结论不变，均未退化；请查看回放产出确认是否符合反馈后再发布", s.Changed, s.Unchanged)
@@ -130,15 +173,138 @@ func Summarize(replays []domain.EvoReplay) domain.EvoReplaySummary {
 	case s.Fixed >= 1 && s.Regressed <= 1 && s.Fixed > s.Regressed:
 		s.Passed = true
 		s.Verdict = fmt.Sprintf("通过：修好 %d，回归 %d，持平 %d", s.Fixed, s.Regressed, same)
+		if hasGoal {
+			s.Verdict += fmt.Sprintf("；P1 %s：%s", goalLabel, goalCmp)
+		}
 	case s.Fixed == 0:
 		s.Verdict = fmt.Sprintf("未通过：没有修好任何失败样本（回归 %d，持平 %d）", s.Regressed, same)
+		if hasGoal {
+			s.Verdict += fmt.Sprintf("；P1 %s：%s", goalLabel, goalCmp)
+		}
 	default:
 		s.Verdict = fmt.Sprintf("未通过：修好 %d，回归 %d", s.Fixed, s.Regressed)
+	}
+	if s.ProcessDelta != 0 && s.AssertionsFailed == 0 && judged > 0 {
+		sign := ""
+		if s.ProcessDelta > 0 {
+			sign = "+"
+		}
+		s.Verdict += fmt.Sprintf("；过程分 %.0f → %.0f（%s%.1f）", s.ProcessBefore, s.ProcessAfter, sign, s.ProcessDelta)
 	}
 	if s.Blocked > 0 {
 		s.Verdict += fmt.Sprintf("；%d 个样本被阻塞", s.Blocked)
 	}
 	return s
+}
+
+func evaluateReplayProcessScore(replays []domain.EvoReplay) (ok bool, before, after, delta float64) {
+	var sumBefore, sumAfter float64
+	count := 0
+	for _, r := range replays {
+		if r.Outcome == "" || r.Outcome == domain.EvoOutcomeBlocked {
+			continue
+		}
+		if r.SourceProcessScore == nil || r.ReplayProcessScore == nil {
+			continue
+		}
+		sumBefore += float64(r.SourceProcessScore.Score)
+		sumAfter += float64(r.ReplayProcessScore.Score)
+		count++
+	}
+	if count == 0 {
+		return false, 0, 0, 0
+	}
+	before = round1(sumBefore / float64(count))
+	after = round1(sumAfter / float64(count))
+	delta = round1(after - before)
+	return true, before, after, delta
+}
+
+func primaryEfficiencyPreference(preferences []string) string {
+	if len(preferences) == 0 {
+		return ""
+	}
+	p1 := strings.TrimSpace(strings.ToLower(preferences[0]))
+	switch p1 {
+	case domain.EvoPrefTokens, domain.EvoPrefTools, domain.EvoPrefDuration:
+		return p1
+	default:
+		return ""
+	}
+}
+
+func measurementValue(m *domain.EvoReplayMeasurements, metric string) (float64, bool) {
+	if m == nil {
+		return 0, false
+	}
+	switch metric {
+	case domain.EvoPrefTokens:
+		if m.Tokens != nil && *m.Tokens > 0 {
+			return float64(*m.Tokens), true
+		}
+	case domain.EvoPrefTools:
+		if m.ToolCalls != nil && *m.ToolCalls > 0 {
+			return float64(*m.ToolCalls), true
+		}
+	case domain.EvoPrefDuration:
+		if m.ExecutionMs != nil && *m.ExecutionMs > 0 {
+			return float64(*m.ExecutionMs) / 1000.0, true
+		}
+	}
+	return 0, false
+}
+
+func evaluateReplayGoal(replays []domain.EvoReplay, metric string) (ok bool, before, after, deltaPct float64, met bool) {
+	if metric == "" {
+		return false, 0, 0, 0, false
+	}
+	var sumBefore, sumAfter float64
+	count := 0
+	for _, r := range replays {
+		if r.Outcome == "" || r.Outcome == domain.EvoOutcomeBlocked {
+			continue
+		}
+		sb, okB := measurementValue(r.SourceMeasurements, metric)
+		sa, okA := measurementValue(r.ReplayMeasurements, metric)
+		if !okB || !okA {
+			continue
+		}
+		sumBefore += sb
+		sumAfter += sa
+		count++
+	}
+	if count == 0 || sumBefore <= 0 {
+		return false, 0, 0, 0, false
+	}
+	before = round1(sumBefore / float64(count))
+	after = round1(sumAfter / float64(count))
+	deltaPct = round1(((sumAfter - sumBefore) / sumBefore) * 100.0)
+	switch metric {
+	case domain.EvoPrefTokens:
+		met = deltaPct <= -ReplayGoalTokenMinDropPct
+	case domain.EvoPrefTools:
+		met = deltaPct <= -ReplayGoalToolMinDropPct || (before-after) >= ReplayGoalToolMinAbsDrop
+	case domain.EvoPrefDuration:
+		met = deltaPct <= -ReplayGoalDurationMinDropPct
+	}
+	return true, before, after, deltaPct, met
+}
+
+func formatGoalComparison(metric string, before, after, deltaPct float64) (label, text string) {
+	sign := ""
+	if deltaPct > 0 {
+		sign = "+"
+	}
+	switch metric {
+	case domain.EvoPrefTokens:
+		return "省 Token", fmt.Sprintf("平均 Token %.0f → %.0f（%s%.1f%%）", before, after, sign, deltaPct)
+	case domain.EvoPrefTools:
+		return "少工具调用", fmt.Sprintf("平均工具调用 %.1f → %.1f 次（%s%.1f%%）", before, after, sign, deltaPct)
+	case domain.EvoPrefDuration:
+		return "降耗时", fmt.Sprintf("平均耗时 %.1fs → %.1fs（%s%.1f%%）", before, after, sign, deltaPct)
+	default:
+		return "", ""
+	}
 }
 
 // SamplePlan is one replay to start.
