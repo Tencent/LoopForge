@@ -300,6 +300,12 @@ func assistantToolInput(call assistantMCPCall) mcpserver.ToolInput {
 	}
 	if body, ok := call.Arguments["body"]; ok {
 		input.Body = body
+		if encoded, ok := body.(string); ok && strings.TrimSpace(call.Tool) == "issues_save" {
+			var patch map[string]any
+			if json.Unmarshal([]byte(encoded), &patch) == nil && patch != nil {
+				input.Body = patch
+			}
+		}
 	}
 	if len(input.Path) == 0 {
 		if id, ok := call.Arguments["id"].(string); ok {

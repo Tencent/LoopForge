@@ -18,6 +18,17 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+func TestAssistantIssueSaveAcceptsEncodedObject(t *testing.T) {
+	input := assistantToolInput(assistantMCPCall{
+		Tool: "issues_save",
+		Arguments: map[string]any{"body": `{"id":"existing","workflowId":"new-workflow"}`},
+	})
+	body, ok := input.Body.(map[string]any)
+	if !ok || body["id"] != "existing" || body["workflowId"] != "new-workflow" {
+		t.Fatalf("unexpected issue patch: %#v", input.Body)
+	}
+}
+
 func TestAssistantMCPStaysInProjectAndRejectsStdio(t *testing.T) {
 	st, err := repo.OpenTest()
 	if err != nil {
