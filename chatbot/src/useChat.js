@@ -56,6 +56,7 @@ function effortPreference(executor, model) {
 }
 
 const runnerLoginExecutors = ["codex", "claude-code", "agy"];
+const historyPendingMessage = "正在补齐更早的对话，请稍候再操作。";
 
 function usesRunnerLogin(machine, executor) {
   return runnerLoginExecutors.includes(executor) &&
@@ -411,6 +412,13 @@ export function useChat() {
         // otherwise the composer stays blocked on messagesPartial.
         if (sessionRef.current?.id === activeId && !sessionRef.current.messagesPartial) return;
         const retry = !e.status || e.status >= 500;
+        if (!retry && sessionRef.current?.id === activeId) {
+          // The server refused the full transcript (deleted, access revoked).
+          // Drop the tail too: it cannot be completed, so it must not stay on
+          // screen as a conversation that only waits for its history.
+          sessionRef.current = null;
+          setSession(null);
+        }
         connectionError = retry ? "连接暂时中断，正在重连…" : e.message;
         setError(connectionError);
         if (retry) timer = setTimeout(load, 2000);
@@ -625,9 +633,13 @@ export function useChat() {
           const saved = await write(
             sessionPath(current.id),
             // Another device may have renamed the session since this one read it.
+            // Binding changes metadata only. Without messages the server keeps
+            // the stored transcript, so a recent-only view or a copy that missed
+            // newer turns cannot overwrite it.
             {
               ...current, projectId: id,
               title: undefined, titleEdited: undefined, titleGenerated: undefined,
+              messages: undefined, messagesPartial: undefined,
             },
             "PUT",
           );
@@ -876,6 +888,12 @@ export function useChat() {
   }
   function sessionLoading() {
     return !!currentId.current && sessionRef.current?.id !== currentId.current;
+  }
+  // A recent view holds only the tail of the transcript. Its message indices
+  // are not transcript indices, and writing it back would drop earlier turns,
+  // so every index-based or whole-transcript write waits for the full read.
+  function historyPending() {
+    return !!sessionRef.current?.messagesPartial && sessionRef.current.id === currentId.current;
   }
   function replyStatePending() {
     const id = currentId.current;
@@ -1130,7 +1148,7 @@ export function useChat() {
       setError("会话仍在加载，请稍候再发送。");
       return false;
     }
-    if (sessionRef.current?.messagesPartial && sessionRef.current.id === currentId.current) {
+    if (historyPending()) {
       setError("正在补齐更早的对话，请稍候再发送。");
       return false;
     }
@@ -1361,6 +1379,10 @@ export function useChat() {
     }
   }
   async function edit(index, content, fork = false) {
+    if (historyPending()) {
+      setError(historyPendingMessage);
+      return null;
+    }
     try {
       const stored = await write(
         `${sessionPath(activeId)}/${fork ? "fork" : "edit"}`,
@@ -1415,6 +1437,7 @@ export function useChat() {
     }
   }
   async function applyDraft(messageIndex, draftIndex, review = {}) {
+    if (historyPending()) throw Error(historyPendingMessage);
     const id = activeId;
     const key = `${id}:${messageIndex}:${draftIndex}`;
     if (applyingRef.current.has(key)) throw Error("这项操作正在执行，请稍候。");
@@ -1528,6 +1551,7 @@ export function useChat() {
   // Answers an assistant proposal card. Declining work the assistant had not
   // started continues with the turn the server returns.
   async function decideProposal(messageIndex, draftIndex, decision, approvalMode = "confirm") {
+    if (historyPending()) throw Error(historyPendingMessage);
     const id = activeId;
     if (generation?.status === "running")
       throw Error("请等待回复结束后再处理建议。");

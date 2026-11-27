@@ -365,13 +365,25 @@ func (h *assistantHandlers) session(c *gin.Context) {
 		existing, _ := loadAssistantConversation(h.repo, ownerID, id)
 		var body struct {
 			assistantConversation
-			Effort         *string `json:"effort"`
-			ApprovalUserID int64   `json:"approvalUserId"`
+			Effort          *string `json:"effort"`
+			ApprovalUserID  int64   `json:"approvalUserId"`
+			MessagesPartial bool    `json:"messagesPartial"`
 		}
 		if !decodeLimit(c, &body, assistantRequestBodyLimit) || !requireAssistantApprovalUser(c, current.ID, body.ApprovalUserID) {
 			return
 		}
+		if body.MessagesPartial {
+			// A view=recent response holds only the tail. Saving it back would
+			// drop every earlier turn of the stored transcript.
+			c.JSON(409, gin.H{"error": "会话历史尚未加载完整，请稍候再试"})
+			return
+		}
 		conv := body.assistantConversation
+		if conv.Messages == nil && existing.ID != "" {
+			// A metadata update (such as binding a project) may omit messages;
+			// the stored transcript stays as it is.
+			conv.Messages = existing.Messages
+		}
 		if conv.ProjectID == "" {
 			conv.ProjectID = existing.ProjectID
 		}

@@ -83,3 +83,65 @@ func TestRecentSessionViewReturnsOnlyTheTail(t *testing.T) {
 		t.Fatalf("short transcript should be complete: %s", rec.Body.String())
 	}
 }
+
+// The chat paints view=recent before the full read returns. Neither that tail
+// nor a metadata-only update may replace the stored transcript.
+func TestRecentSessionViewCannotOverwriteTheTranscript(t *testing.T) {
+	h, owner := workbenchFixture(t)
+	const id = "long-bind"
+	messages := make([]domain.AssistantMessage, 46)
+	for i := range messages {
+		role := "user"
+		if i%2 == 1 {
+			role = "assistant"
+		}
+		messages[i] = domain.AssistantMessage{Role: role, Content: fmt.Sprintf("MSG-%03d", i)}
+	}
+	if err := h.repo.PutAssistantSession(owner.ID, domain.AssistantSession{ID: id, Title: "长会话", Messages: messages}); err != nil {
+		t.Fatal(err)
+	}
+	call := func(method, path, body string) (int, string) {
+		c, rec := workbenchContext(owner, method, path, bytes.NewBufferString(body))
+		c.Params = gin.Params{{Key: "id", Value: id}}
+		h.session(c)
+		return rec.Code, rec.Body.String()
+	}
+	stored := func() domain.AssistantSession {
+		t.Helper()
+		item, ok := h.repo.AssistantSession(owner.ID, id)
+		if !ok {
+			t.Fatal("session disappeared")
+		}
+		return item
+	}
+
+	code, recent := call("GET", "/api/assistant/sessions/"+id+"?view=recent", "")
+	if code != 200 || !strings.Contains(recent, `"messagesPartial":true`) {
+		t.Fatalf("recent view: %d %s", code, recent)
+	}
+	var view map[string]any
+	if err := json.Unmarshal([]byte(recent), &view); err != nil {
+		t.Fatal(err)
+	}
+	view["projectId"] = "workbench"
+	echoed, _ := json.Marshal(view)
+	if code, body := call("PUT", "/api/assistant/sessions/"+id, string(echoed)); code != 409 {
+		t.Fatalf("saving the recent tail back: %d %s", code, body)
+	}
+	if item := stored(); len(item.Messages) != 46 || item.ProjectID != "" {
+		t.Fatalf("tail write changed the session: %d messages, project %q", len(item.Messages), item.ProjectID)
+	}
+
+	code, body := call("PUT", "/api/assistant/sessions/"+id, `{"id":"long-bind","projectId":"workbench"}`)
+	if code != 200 {
+		t.Fatalf("bind without messages: %d %s", code, body)
+	}
+	item := stored()
+	if item.ProjectID != "workbench" || len(item.Messages) != 46 || item.Messages[0].Content != "MSG-000" || item.Messages[45].Content != "MSG-045" {
+		t.Fatalf("bound session: project %q, %d messages", item.ProjectID, len(item.Messages))
+	}
+	var saved domain.AssistantSession
+	if err := json.Unmarshal([]byte(body), &saved); err != nil || len(saved.Messages) != 46 {
+		t.Fatalf("bind response should carry the full transcript: %v %d", err, len(saved.Messages))
+	}
+}
