@@ -710,15 +710,19 @@ func (r *RunsRepo) runViewNodesQuery() *gorm.DB {
 	}{{"output", 2501}, {"error", 1201}, {"feedback", 801}, {"activity", 301}}
 	if r.isPostgres() {
 		// Postgres has no path/value alternation, so the four members are
-		// built as a key/value object and merged into the payload. The text
-		// branch keeps the JSON string shape MySQL stores; the value branch
-		// keeps the JSON value.
+		// built as a key/value object and merged into the payload.
+		//
+		// MySQL's CASE unifies both arms to a string, so the value arm stores
+		// the JSON value's text as a JSON string. Postgres has to do the same
+		// by hand: a text arm and a jsonb arm cannot share one CASE, and
+		// keeping the raw JSON value would make json.Unmarshal fail on a
+		// non-string output and drop the whole node from the run view.
 		pairs := make([]string, 0, len(fields))
 		for _, field := range fields {
 			extract := r.jsonValueLiteral("payload", "$."+field.name)
 			text := r.jsonTextLiteral("payload", "$."+field.name)
 			pairs = append(pairs, "'"+field.name+"'", fmt.Sprintf(
-				"CASE WHEN jsonb_typeof(%s) = 'string' THEN to_jsonb(SUBSTR(%s, 1, %d)) ELSE %s END",
+				"CASE WHEN jsonb_typeof(%s) = 'string' THEN to_jsonb(SUBSTR(%s, 1, %d)) ELSE to_jsonb((%s)::text) END",
 				extract, text, field.limit, extract))
 		}
 		return r.DB.Select("run_id, node_id, payload::jsonb || jsonb_build_object(" + strings.Join(pairs, ", ") + ") AS payload")

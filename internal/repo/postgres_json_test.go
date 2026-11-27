@@ -16,8 +16,8 @@ import (
 // so every one of those statements grew a Postgres branch.
 //
 // This test runs the rewritten statements against a real Postgres database.
-// The fixtures live in one transaction that is rolled back, so the database
-// keeps whatever it had.
+// The fixtures live in one transaction that is rolled back, so the test
+// database keeps only the schema afterwards.
 //
 // It is skipped when AGENTFLOW_TEST_POSTGRES_URL is unset.
 func TestPostgresJSONStatements(t *testing.T) {
@@ -28,6 +28,21 @@ func TestPostgresJSONStatements(t *testing.T) {
 	db, err := openDB(dsn)
 	if err != nil {
 		t.Fatalf("open postgres: %v", err)
+	}
+	// This test writes fixtures, so the guard has to run before the first
+	// write: a runtime database must never be touched. A skip would hide
+	// exactly the mistake this guard exists for.
+	var database string
+	if err := db.Raw("SELECT current_database()").Row().Scan(&database); err != nil {
+		t.Fatalf("read current_database: %v", err)
+	}
+	if !strings.Contains(strings.ToLower(database), "test") {
+		t.Fatalf("AGENTFLOW_TEST_POSTGRES_URL points at database %q, which is not a test database", database)
+	}
+	// The test database starts empty; the schema is created here with the
+	// same gorm AutoMigrate the platform's own open path uses.
+	if err := db.AutoMigrate(allModels()...); err != nil {
+		t.Fatalf("auto migrate the postgres schema: %v", err)
 	}
 	tx := db.Begin()
 	if tx.Error != nil {
@@ -46,16 +61,25 @@ func TestPostgresJSONStatements(t *testing.T) {
 	if err != nil {
 		t.Fatalf("run summaries: %v", err)
 	}
-	if len(runs) != 1 {
-		t.Fatalf("run summaries = %d rows, want the fixture run", len(runs))
+	// The summary query filters nothing, so the fixture is looked up by id
+	// instead of counted.
+	var fixtureRun *domain.Run
+	for i := range runs {
+		if runs[i].ID == runID {
+			fixtureRun = &runs[i]
+			break
+		}
 	}
-	if got := runs[0].WorkflowSnapshot.Name; got != "流程" {
+	if fixtureRun == nil {
+		t.Fatalf("run summaries do not contain the fixture run %q", runID)
+	}
+	if got := fixtureRun.WorkflowSnapshot.Name; got != "流程" {
 		t.Fatalf("snapshot name = %q, want 流程", got)
 	}
-	if got := runs[0].WorkflowSnapshot.Version; got != 3 {
+	if got := fixtureRun.WorkflowSnapshot.Version; got != 3 {
 		t.Fatalf("snapshot version = %d, want 3 (a JSON number, not a string)", got)
 	}
-	if got := runs[0].WorkflowSnapshot.PublishedRevision; got != 7 {
+	if got := fixtureRun.WorkflowSnapshot.PublishedRevision; got != 7 {
 		t.Fatalf("snapshot publishedRevision = %d, want 7", got)
 	}
 
@@ -74,7 +98,7 @@ func TestPostgresJSONStatements(t *testing.T) {
 		t.Fatalf("dockerfiles = %+v, want the frozen Dockerfile", dockerfiles)
 	}
 
-	// runs.go: the node view truncates the long output and keeps the rest.
+	// runs.go: the node view truncates every long member and keeps the rest.
 	view, ok := store.RunsRepo.RunView(runID)
 	if !ok {
 		t.Fatal("run view not found")
@@ -83,11 +107,40 @@ func TestPostgresJSONStatements(t *testing.T) {
 	if node == nil {
 		t.Fatalf("run view nodes = %+v, want node-1", view.Nodes)
 	}
-	if node.Output != strings.Repeat("x", 40) {
-		t.Fatalf("node output = %q, want the fixture output", node.Output)
+	for _, member := range []struct {
+		name string
+		got  string
+		want string
+	}{
+		{"output", node.Output, postgresLongOutput[:2501]},
+		{"error", node.Error, postgresLongError[:1201]},
+		{"feedback", node.Feedback, postgresLongFeedback[:801]},
+		{"activity", node.Activity, postgresLongActivity[:301]},
+	} {
+		if member.got != member.want {
+			t.Fatalf("node %s = %d characters, want the %d character truncation of the fixture", member.name, len(member.got), len(member.want))
+		}
 	}
-	if node.Error != "boom" || node.Feedback != "fb" || node.Activity != "act" {
-		t.Fatalf("node error/feedback/activity = %q/%q/%q", node.Error, node.Feedback, node.Activity)
+
+	// runs.go: a payload whose output is not a JSON string keeps its node.
+	// MySQL's CASE unifies both arms to a string, so the value arrives as
+	// text; a raw JSON value would fail the unmarshal and drop the node.
+	numberNode := view.Nodes["node-number"]
+	if numberNode == nil {
+		t.Fatalf("run view dropped the node with a numeric output: %+v", view.Nodes)
+	}
+	if numberNode.Output != "42" {
+		t.Fatalf("numeric output = %q, want 42 as text", numberNode.Output)
+	}
+	objectNode := view.Nodes["node-object"]
+	if objectNode == nil {
+		t.Fatalf("run view dropped the node with an object output: %+v", view.Nodes)
+	}
+	// jsonb orders the keys of an object by length and then bytewise, so the
+	// stored text reads {"a": 2, "b": 1} where MySQL keeps the insertion
+	// order {"b": 1, "a": 2}. Both are JSON strings, so the node survives.
+	if objectNode.Output != `{"a": 2, "b": 1}` {
+		t.Fatalf("object output = %q, want the jsonb text", objectNode.Output)
 	}
 
 	// runs.go: the node summary projection keeps the JSON values.
@@ -269,6 +322,29 @@ func TestPostgresJSONStatements(t *testing.T) {
 		t.Fatalf("analytics usage = %+v, want 5 total tokens", usageSeen[0].Usage)
 	}
 
+	// analytics_activity_usage.go: the fallback projection reads the whole
+	// transcript when the JSON_TABLE projection is unavailable. Postgres has
+	// no JSON_TABLE, but the fallback path still has to work there.
+	previous := noAnalyticsUsageProjection.Swap(true)
+	t.Cleanup(func() { noAnalyticsUsageProjection.Store(previous) })
+	var fallbackUsage []analyticsUsageMessage
+	if err := store.AnalyticsRepo.analyticsSessionUsage(usageIDs, func(id string, messages []analyticsUsageMessage) {
+		fallbackUsage = messages
+	}); err != nil {
+		noAnalyticsUsageProjection.Store(previous)
+		t.Fatalf("analytics session usage fallback: %v", err)
+	}
+	noAnalyticsUsageProjection.Store(previous)
+	if len(fallbackUsage) != 1 {
+		t.Fatalf("analytics fallback usage messages = %+v, want the one assistant reply", fallbackUsage)
+	}
+	if fallbackUsage[0].Index != 1 {
+		t.Fatalf("analytics fallback usage index = %d, want 1", fallbackUsage[0].Index)
+	}
+	if fallbackUsage[0].Usage == nil || fallbackUsage[0].Usage.TotalTokens != 5 {
+		t.Fatalf("analytics fallback usage = %+v, want 5 total tokens", fallbackUsage[0].Usage)
+	}
+
 	// analytics_activity.go / analytics_dashboard.go /
 	// analytics_dashboard_signals.go: the snapshot and metadata projections.
 	snapshot := domain.AnalyticsSnapshot{Dashboard: &domain.AnalyticsDashboard{}}
@@ -281,6 +357,16 @@ func TestPostgresJSONStatements(t *testing.T) {
 	signalRuns, err := store.AnalyticsRepo.analyticsDashboardSignalRuns(runs, domain.AnalyticsFilter{UserID: "1"}, issues)
 	if err != nil {
 		t.Fatalf("analytics dashboard signal runs: %v", err)
+	}
+	found := false
+	for _, run := range signalRuns {
+		if run.ID == runID {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("analytics dashboard signal runs dropped the fixture run %q", runID)
 	}
 	if len(signalRuns) != len(runs) {
 		t.Fatalf("analytics dashboard signal runs = %d, want %d", len(signalRuns), len(runs))
@@ -299,6 +385,15 @@ func TestPostgresJSONStatements(t *testing.T) {
 	}
 }
 
+// The node view truncates every member it projects, so the fixture values are
+// longer than the four limits (2501 / 1201 / 801 / 301).
+var (
+	postgresLongOutput   = strings.Repeat("x", 3000)
+	postgresLongError    = strings.Repeat("e", 1500)
+	postgresLongFeedback = strings.Repeat("f", 1000)
+	postgresLongActivity = strings.Repeat("a", 400)
+)
+
 // seedPostgresJSONFixtures writes one row per JSON shape the rewritten
 // statements read. The caller rolls the transaction back.
 func seedPostgresJSONFixtures(t *testing.T, store *Store, runID, sessionID string) {
@@ -316,10 +411,22 @@ func seedPostgresJSONFixtures(t *testing.T, store *Store, runID, sessionID strin
 	}
 	if err := store.DB.Exec(`INSERT INTO run_nodes (run_id, node_id, status, attempt, payload)
 		VALUES (?, 'node-1', 'succeeded', 1, ?::jsonb)`, runID,
-		`{"output":"`+strings.Repeat("x", 40)+`","error":"boom","feedback":"fb","activity":"act",`+
-			`"provider":"openai","model":"gpt","reworkCount":2,"usage":{"totalTokens":10},"toolCalls":3,`+
-			`"startedAt":"2026-01-01T00:00:00Z","finishedAt":"2026-01-01T00:01:00Z"}`).Error; err != nil {
+		`{"output":"`+postgresLongOutput+`","error":"`+postgresLongError+`","feedback":"`+postgresLongFeedback+`",`+
+			`"activity":"`+postgresLongActivity+`","provider":"openai","model":"gpt","reworkCount":2,`+
+			`"usage":{"totalTokens":10},"toolCalls":3,"startedAt":"2026-01-01T00:00:00Z","finishedAt":"2026-01-01T00:01:00Z"}`).Error; err != nil {
 		t.Fatalf("insert run node: %v", err)
+	}
+	// A node whose output is a JSON number and one whose output is a JSON
+	// object: MySQL stringifies both, so both must survive the run view.
+	if err := store.DB.Exec(`INSERT INTO run_nodes (run_id, node_id, status, attempt, payload)
+		VALUES (?, 'node-number', 'succeeded', 1, ?::jsonb)`, runID,
+		`{"output":42,"provider":"openai","model":"gpt"}`).Error; err != nil {
+		t.Fatalf("insert run node with a numeric output: %v", err)
+	}
+	if err := store.DB.Exec(`INSERT INTO run_nodes (run_id, node_id, status, attempt, payload)
+		VALUES (?, 'node-object', 'succeeded', 1, ?::jsonb)`, runID,
+		`{"output":{"b":1,"a":2},"provider":"openai","model":"gpt"}`).Error; err != nil {
+		t.Fatalf("insert run node with an object output: %v", err)
 	}
 	if err := store.DB.Exec(`INSERT INTO run_telemetry (run_id, seq, payload) VALUES (?, 1, ?::jsonb)`, runID,
 		`{"id":"evt-1","category":"tool","name":"tool.call","phase":"finish","level":"info","tool":{"success":true}}`).Error; err != nil {

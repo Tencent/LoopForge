@@ -63,15 +63,16 @@ func (r *AssistantRepo) ListAssistantSessions(userID int64) []domain.AssistantSe
 // Remove transcripts in SQL so list and permission checks never transfer or
 // decode chat history. Retain all other metadata, including legacy fallbacks.
 func (r *AssistantRepo) assistantSessionSummaries() *gorm.DB {
-	summary := "json(" + r.assistantParticipantSummarySQL() + ")"
+	participantSummary := r.assistantParticipantSummarySQL()
+	summary := "json(" + participantSummary + ")"
 	if r.DB.Dialector.Name() != "sqlite" {
-		summary = "CAST((" + r.assistantParticipantSummarySQL() + ") AS JSON)"
+		summary = "CAST((" + participantSummary + ") AS JSON)"
 	}
 	outer := "JSON_SET(JSON_REMOVE(payload, '$.messages'), '$.executionMessageCount', " + r.assistantExecutionMessageCountSQL() + ", '$.participantSummaryMessages', " + summary + ") AS payload"
 	if r.isPostgres() {
 		// The participant summary is already a jsonb value, so it is merged
 		// as one instead of being cast back from its text form.
-		summary = "(" + r.assistantParticipantSummarySQL() + ")"
+		summary = "(" + participantSummary + ")"
 		outer = r.jsonRemoveLiteral("payload", "$.messages") + " || " + r.jsonBuildObject(
 			"'executionMessageCount'", r.assistantExecutionMessageCountSQL(),
 			"'participantSummaryMessages'", summary) + " AS payload"

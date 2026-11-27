@@ -203,7 +203,10 @@ func (d *deps) jsonRemoveLiteral(column, path string) string {
 	if d.isPostgres() {
 		return "(" + column + "::jsonb #- '" + jsonPathToPGArray(path) + "')"
 	}
-	return "JSON_REMOVE(" + column + ", '" + path + "')"
+	if d.isMySQL() {
+		return "JSON_REMOVE(" + column + ", '" + path + "')"
+	}
+	return "json_remove(" + column + ", '" + path + "')"
 }
 
 // jsonTextParam extracts a text value at a path bound as a parameter. The
