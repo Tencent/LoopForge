@@ -99,10 +99,19 @@ func (h *botInteractionHandlers) conversations(c *gin.Context) {
 	for _, ch := range chats {
 		convIDs = append(convIDs, ch.ID)
 	}
-	latest, err := h.repo.LatestBotInteractions(convIDs)
+	recentRows, err := h.repo.RecentBotInteractionsByConversations(convIDs)
 	if err != nil {
 		respond(c, err)
 		return
+	}
+	latest := make(map[string]domain.BotInteraction, len(convIDs))
+	for _, row := range recentRows {
+		if isBotBindingExchange(row) {
+			continue
+		}
+		if _, seen := latest[row.ConversationID]; !seen {
+			latest[row.ConversationID] = row
+		}
 	}
 	out := make([]imConversationSummary, 0, len(chats))
 	for _, ch := range chats {
@@ -277,7 +286,7 @@ func (h *botInteractionHandlers) readableIMProjects(c *gin.Context) ([]domain.Pr
 			continue
 		}
 		for _, m := range p.Members {
-			if m.UserID == user.ID {
+			if m.UserID == user.ID && !strings.EqualFold(strings.TrimSpace(m.Role), "viewer") {
 				out = append(out, p)
 				break
 			}
@@ -297,7 +306,7 @@ func (h *botInteractionHandlers) resolveReadableIMConversation(c *gin.Context) (
 		c.JSON(http.StatusNotFound, gin.H{"error": "对应的机器人不存在"})
 		return domain.BotConversation{}, domain.NotificationBot{}, false
 	}
-	if !h.notifications.access(c, bot.ProjectID, false) {
+	if !h.notifications.access(c, bot.ProjectID, true) {
 		return domain.BotConversation{}, domain.NotificationBot{}, false
 	}
 	return conv, bot, true

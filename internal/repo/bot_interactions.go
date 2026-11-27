@@ -550,23 +550,20 @@ func (r *BotInteractionsRepo) BotConversationInteractions(conversationID string,
 	return rows, nil
 }
 
-// LatestBotInteractions returns the most recent interaction per conversation
-// ID so the workbench IM sidebar can show previews without N+1 queries.
-func (r *BotInteractionsRepo) LatestBotInteractions(conversationIDs []string) (map[string]domain.BotInteraction, error) {
-	out := make(map[string]domain.BotInteraction, len(conversationIDs))
+// RecentBotInteractionsByConversations returns recent interactions across the
+// given conversation IDs ordered newest first, selecting only display fields
+// (never reply routes) so callers can pick the newest non-binding preview.
+func (r *BotInteractionsRepo) RecentBotInteractionsByConversations(conversationIDs []string) ([]domain.BotInteraction, error) {
 	if len(conversationIDs) == 0 {
-		return out, nil
+		return []domain.BotInteraction{}, nil
 	}
 	var rows []domain.BotInteraction
-	if err := r.DB.Where("conversation_id IN ?", conversationIDs).Order("created_at desc, id desc").Find(&rows).Error; err != nil {
-		return nil, err
-	}
-	for _, row := range rows {
-		if _, seen := out[row.ConversationID]; !seen {
-			out[row.ConversationID] = row
-		}
-	}
-	return out, nil
+	err := r.DB.Select(
+		"id", "bot_id", "conversation_id", "session_id", "sender_id",
+		"content", "quote", "action", "status", "reply", "last_error",
+		"created_at", "updated_at",
+	).Where("conversation_id IN ?", conversationIDs).Order("created_at desc, id desc").Find(&rows).Error
+	return rows, err
 }
 
 func (r *BotInteractionsRepo) BotInteraction(id string) (domain.BotInteraction, error) {

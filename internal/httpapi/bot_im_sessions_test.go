@@ -24,9 +24,16 @@ func TestBotIMConversationsListDetailAndContinue(t *testing.T) {
 
 	owner := domain.User{ID: 10, LoginName: "alice", ChineseName: "Alice"}
 	outsider := domain.User{ID: 11, LoginName: "bob", ChineseName: "Bob"}
+	viewer := domain.User{ID: 12, LoginName: "carol", ChineseName: "Carol"}
 	_ = st.PutUser(owner)
 	_ = st.PutUser(outsider)
-	_ = st.PutProject(domain.Project{ID: "proj-im", Name: "IM 项目", OwnerID: owner.ID})
+	_ = st.PutUser(viewer)
+	_ = st.PutProject(domain.Project{
+		ID:      "proj-im",
+		Name:    "IM 项目",
+		OwnerID: owner.ID,
+		Members: []domain.ProjectMember{{UserID: viewer.ID, Role: "viewer"}},
+	})
 	_ = st.PutProject(domain.Project{ID: "proj-other", Name: "其他项目", OwnerID: outsider.ID})
 
 	bot := domain.NotificationBot{
@@ -81,6 +88,22 @@ func TestBotIMConversationsListDetailAndContinue(t *testing.T) {
 		Reply:          "最近一次失败原因是单测超时",
 		Status:         domain.BotReplied,
 		CreatedAt:      now.Add(-time.Minute),
+		UpdatedAt:      now.Add(-time.Minute),
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	// A newer /bind exchange must be skipped in list previews so bind codes/links never leak.
+	if err := st.DB.Create(&domain.BotInteraction{
+		ID:             "int-bind-latest",
+		BotID:          bot.ID,
+		ProjectID:      bot.ProjectID,
+		ConversationID: convID,
+		SessionID:      "bot-sess-1",
+		SenderID:       "ou_lisi",
+		Content:        "/bind SECRET-CODE-999",
+		Reply:          "请打开 /bot-bind.html#request=SECRET-TOKEN",
+		Status:         domain.BotReplied,
+		CreatedAt:      now,
 		UpdatedAt:      now,
 	}).Error; err != nil {
 		t.Fatal(err)
@@ -97,6 +120,10 @@ func TestBotIMConversationsListDetailAndContinue(t *testing.T) {
 		t.Fatal(err)
 	}
 	outsiderToken, err := authClient.SignUser(&auth.User{ID: outsider.ID, LoginName: outsider.LoginName, AuthTime: time.Now().UTC()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	viewerToken, err := authClient.SignUser(&auth.User{ID: viewer.ID, LoginName: viewer.LoginName, AuthTime: time.Now().UTC()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,7 +156,23 @@ func TestBotIMConversationsListDetailAndContinue(t *testing.T) {
 		t.Fatalf("outsider detail = %d, want 403", w.Code)
 	}
 
-	// Owner sees the IM conversation with Feishu metadata and preview.
+	// Project viewer is denied parity with /api/notification-bots/:id/interactions.
+	w = reqWithCookie("GET", "/api/bot-interactions/conversations", viewerToken)
+	if w.Code != 200 {
+		t.Fatalf("viewer list = %d %s", w.Code, w.Body.String())
+	}
+	var viewerList []imConversationSummary
+	if err := json.Unmarshal(w.Body.Bytes(), &viewerList); err != nil || len(viewerList) != 0 {
+		t.Fatalf("viewer list = %+v (err=%v), want empty", viewerList, err)
+	}
+	if w := reqWithCookie("GET", "/api/bot-interactions/conversations/"+convID, viewerToken); w.Code != 403 {
+		t.Fatalf("viewer detail = %d, want 403", w.Code)
+	}
+	if w := reqWithCookie("POST", "/api/bot-interactions/conversations/"+convID+"/continue", viewerToken); w.Code != 403 {
+		t.Fatalf("viewer continue = %d, want 403", w.Code)
+	}
+
+	// Owner sees the IM conversation with Feishu metadata and preview (skipping newer /bind).
 	w = reqWithCookie("GET", "/api/bot-interactions/conversations", ownerToken)
 	if w.Code != 200 {
 		t.Fatalf("owner list = %d %s", w.Code, w.Body.String())
@@ -138,7 +181,7 @@ func TestBotIMConversationsListDetailAndContinue(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &list); err != nil {
 		t.Fatal(err)
 	}
-	if len(list) != 1 || list[0].ID != convID || list[0].Channel != domain.BotChannelFeishu || list[0].ChatType != "group" || !strings.Contains(list[0].Preview, "构建失败") {
+	if len(list) != 1 || list[0].ID != convID || list[0].Channel != domain.BotChannelFeishu || list[0].ChatType != "group" || !strings.Contains(list[0].Preview, "构建失败") || strings.Contains(list[0].Preview, "SECRET") || list[0].SenderID != "ou_zhang" {
 		t.Fatalf("owner list = %+v", list)
 	}
 

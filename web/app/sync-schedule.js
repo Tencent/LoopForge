@@ -863,8 +863,23 @@ function noteScheduleJobOutcomes(prev, next){
   if(finished){refreshIssues();refreshScheduleExecutions().catch(()=>{})}
 }
 let scheduleJobPollTimer=null;
+const pendingScheduleAutoOpen=new Set();
 function scheduleJobPollSignature(jobs, projectId){
   return scheduleJobsInView(jobs, projectId).map(j=>[j.id,j.lastStatus,j.lastSessionId||'',j.lastSessionGone?1:0,j.lastError||'',j.lastAssistantMessage||'',j.lastPulled||0,j.lastDispatched||0].join(':')).join('|');
+}
+function flushPendingScheduleAutoOpen(jobs){
+  if(!pendingScheduleAutoOpen.size)return;
+  for(const job of jobs||[]){
+    if(!pendingScheduleAutoOpen.has(job.id))continue;
+    if(job.lastSessionId&&!job.lastSessionGone){
+      pendingScheduleAutoOpen.delete(job.id);
+      openScheduleLatestExecution(job);
+      continue;
+    }
+    if(!scheduleJobRunning(job)){
+      pendingScheduleAutoOpen.delete(job.id);
+    }
+  }
 }
 function startScheduleJobPoll(){
   const running=scheduleRunningCount(state.data.scheduleJobs, state.projectFilter)>0;
@@ -882,6 +897,7 @@ function startScheduleJobPoll(){
       const next=jobs||[];
       state.data.scheduleJobs=next;
       noteScheduleJobOutcomes(prev, next);
+      flushPendingScheduleAutoOpen(next);
       if(scheduleRunningCount(next, state.projectFilter)===0){
         if(scheduleJobPollTimer){clearInterval(scheduleJobPollTimer);scheduleJobPollTimer=null}
       }
@@ -907,12 +923,21 @@ async function runScheduleJob(id,{openAfterRun=false,stayInModal=false}={}){
     renderScheduleJobs();
     startScheduleJobPoll();
     refreshScheduleExecutions().catch(()=>{});
-    if(openAfterRun&&saved?.lastSessionId){
-      openScheduleLatestExecution(saved);
-      return;
+    if(openAfterRun){
+      if(saved?.lastSessionId){
+        pendingScheduleAutoOpen.delete(saved.id);
+        openScheduleLatestExecution(saved);
+        return;
+      }
+      if(saved?.id&&scheduleJobRunning(saved)){
+        pendingScheduleAutoOpen.add(saved.id);
+        toast('已启动执行，会话就绪后将自动打开…');
+        return;
+      }
     }
     toast(stayInModal&&saved?.lastSessionId?'已启动执行，可点击上方「查看实时执行 ↗」跳转':'已在服务端启动，关闭页面不会中断');
   }catch(err){
+    pendingScheduleAutoOpen.delete(id);
     toast(err.message,'err');
     await refreshSyncStatus();
   }

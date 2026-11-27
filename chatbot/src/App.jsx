@@ -24,6 +24,7 @@ import {
 } from "./activity";
 import {
   api,
+  write,
   attachmentURL,
   parseReply,
   collectArtifacts,
@@ -1095,7 +1096,8 @@ export default function App() {
   const [collapsedTasks, setCollapsedTasks] = useState({});
   const [expandedTasks, setExpandedTasks] = useState({});
   const [imChannel, setImChannel] = useState("all");
-  const [imConversations, setImConversations] = useState([]);
+  const [imConversationsOverride, setImConversationsOverride] = useState(null);
+  const imConversations = imConversationsOverride ?? chat.imConversations ?? [];
   const [imLoadingList, setImLoadingList] = useState(false);
   const [activeImId, setActiveImId] = useState(null);
   const [imDetail, setImDetail] = useState(null);
@@ -1137,7 +1139,7 @@ export default function App() {
     setImLoadingList(true);
     api("/api/bot-interactions/conversations")
       .then((list) => {
-        if (alive && Array.isArray(list)) setImConversations(list);
+        if (alive && Array.isArray(list)) setImConversationsOverride(list);
       })
       .catch(() => {})
       .finally(() => {
@@ -1864,7 +1866,10 @@ export default function App() {
               role="tab"
               aria-selected={sidebarTab === "personal"}
               className={`sidebar-bucket-tab ${sidebarTab === "personal" ? "active" : ""}`}
-              onClick={() => setSidebarTab("personal")}
+              onClick={() => {
+                setActiveImId(null);
+                setSidebarTab("personal");
+              }}
             >
               <span>个人</span>
               {sidebarTab !== "personal" && sidebarTabBadges.personal.unread > 0 ? (
@@ -1881,7 +1886,10 @@ export default function App() {
               role="tab"
               aria-selected={sidebarTab === "scheduled"}
               className={`sidebar-bucket-tab ${sidebarTab === "scheduled" ? "active" : ""}`}
-              onClick={() => setSidebarTab("scheduled")}
+              onClick={() => {
+                setActiveImId(null);
+                setSidebarTab("scheduled");
+              }}
             >
               <span>定时任务</span>
               {sidebarTabBadges.scheduled.running > 0 ? (
