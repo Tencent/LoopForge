@@ -2104,10 +2104,18 @@ async function loadPlatformSharedKey(host){
     const models=cb?.configured?(cb.models||[]):(cb?.legacySponsor?[cb.legacySponsorModel]:[]);
     state.data.sponsoredModels=models;state.data.sponsoredModel=models[0]||'';
   };
+  // Tab clicks and environment changes can overlap; only the latest request
+  // may fill the form, or a slow reply would show (and save) another CLI's
+  // models and Base URL under the current tab.
+  let loadSeq=0,loading=false;
   const loadProvider=async(id,{keepSelection=false}={})=>{
+    const seq=++loadSeq;loading=true;
     const query=id==='codebuddy'&&env.value!==undefined&&card.dataset.sharedLoaded==='1'?`?environment=${encodeURIComponent(env.value)}`:'';
-    const result=await api(endpoint(id)+query);
+    let result;
+    try{result=await api(endpoint(id)+query)}
+    finally{if(seq===loadSeq)loading=false}
     statuses[id]=result;
+    if(seq!==loadSeq||id!==provider){renderTabs();return null}
     status=result;catalog=Array.isArray(result?.catalog)?result.catalog:[];
     if(!keepSelection){
       selected=result?.configured?[...(result.models||[])]:(id==='codebuddy'&&result?.legacySponsorModel?[result.legacySponsorModel]:[]);
@@ -2127,15 +2135,22 @@ async function loadPlatformSharedKey(host){
   }
   card.querySelectorAll('[data-shared-provider]').forEach(btn=>btn.onclick=async()=>{
     if(provider===btn.dataset.sharedProvider)return;
-    provider=btn.dataset.sharedProvider;
+    const id=provider=btn.dataset.sharedProvider;
+    status=statuses[id]||null;catalog=[];selected=[];key.value='';extra.value='';warning.hidden=true;
+    renderTabs();renderFields();renderStatus();
     modelsHost.innerHTML='<p class="prop-hint">正在读取可用模型…</p>';
-    try{await loadProvider(provider)}catch(e){status=null;catalog=[];toast(e.message,'err')}
+    let result;
+    try{result=await loadProvider(id)}catch(e){if(id!==provider)return;status=null;catalog=[];toast(e.message,'err')}
+    if(result===null)return;
     renderTabs();renderFields();renderStatus();renderModels();
   });
   env.onchange=async()=>{
+    if(provider!=='codebuddy')return;
     renderLink();
     modelsHost.innerHTML='<p class="prop-hint">正在读取可用模型…</p>';
-    try{await loadProvider('codebuddy',{keepSelection:true})}catch(e){catalog=[]}
+    let result;
+    try{result=await loadProvider('codebuddy',{keepSelection:true})}catch(e){if(provider!=='codebuddy')return;catalog=[]}
+    if(result===null)return;
     renderStatus();renderModels();
   };
   probe.onclick=async()=>{
@@ -2156,6 +2171,7 @@ async function loadPlatformSharedKey(host){
   key.oninput=()=>{const text=credentialSecretWarning(credentialKind(provider==='codex'?'codexApiKey':provider==='claude-code'?'claudeCodeApiKey':'codeBuddyApiKey'),key.value);warning.textContent=text;warning.hidden=!text};
   form.onsubmit=async e=>{
     e.preventDefault();
+    if(loading)return toast(lfT('正在读取当前 CLI 的配置，请稍候再保存','Still loading this CLI; save again in a moment'),'err');
     const models=chosen();
     if(!models.length)return toast('请至少勾选一个允许使用的模型','err');
     if(!status?.configured&&!key.value.trim())return toast(`请填写 ${labelOf(provider)} API Key`,'err');

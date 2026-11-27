@@ -120,6 +120,17 @@ func (e *Engine) applySponsoredExecutor(runID string, ex domain.ExecutorDefiniti
 	return ex
 }
 
+// runnerUsesLocalLogin reports whether a node of kind dispatched to runnerID
+// runs with that machine's own CLI login (see dispatchRunnerTask), so no
+// platform shared key reaches it.
+func (e *Engine) runnerUsesLocalLogin(run domain.Run, runnerID, kind string) bool {
+	if runnerID == "" {
+		return false
+	}
+	runner, ok := e.repo.Runner(runnerID)
+	return ok && sopRunnerAuthMode(run.ExecutionContext, runner, kind) == domain.RuntimeAuthLocal
+}
+
 func hasRunEvent(run domain.Run, typ string) bool {
 	return slices.ContainsFunc(run.Events, func(event domain.RunEvent) bool { return event.Type == typ })
 }

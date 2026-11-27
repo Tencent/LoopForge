@@ -391,6 +391,77 @@ test('platform admins share model keys per CLI, limited to the models they pick'
   assert.equal(app.evaluate(`state.data.sponsoredModel`), 'deepseek-v4.1-flash');
 });
 
+// A slow reply for the tab the admin already left must not fill the form of
+// the tab now shown; saving would otherwise write another CLI's models and an
+// empty Base URL under it.
+test('shared model key tabs ignore a late reply from the tab that was left', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  app.evaluate(`state.currentUser={...state.data.users[0],isGuest:false,isPlatformAdmin:true}`);
+  const saved = {
+    codebuddy: { provider: 'codebuddy', configured: true, internetEnvironment: '', models: ['cb-model-1'] },
+    codex: { provider: 'codex', configured: false, baseUrl: '', models: [] },
+    'claude-code': { provider: 'claude-code', configured: true, baseUrl: 'http://127.0.0.1:18511', models: ['claude-opus-5'] },
+  };
+  const held = [];
+  let holdCodeBuddy = false;
+  app.router.get('/api/platform/admins', []);
+  app.router.get('/api/platform/accounts', { accounts: [], signupEnabled: true });
+  app.router.get('/api/platform/model-keys', () => ({ keys: Object.values(saved) }));
+  app.router.get(/^\/api\/platform\/model-keys\/codebuddy(\?|$)/, () => {
+    const reply = { ...saved.codebuddy, catalog: [{ id: 'cb-model-1', name: 'CB Model 1' }] };
+    if (!holdCodeBuddy) return reply;
+    return new Promise((resolve) => held.push(() => resolve(reply)));
+  });
+  app.router.get('/api/platform/model-keys/codex', () => ({ ...saved.codex, catalog: [{ id: 'gpt-6.1-terra', name: 'GPT-6.1-Terra' }] }));
+  app.router.get('/api/platform/model-keys/claude-code', () => ({ ...saved['claude-code'], catalog: [{ id: 'claude-opus-5', name: 'Claude Opus 5' }] }));
+  app.router.put('/api/platform/model-keys/claude-code', (call) => ({ ...saved['claude-code'], ...call.body, configured: true }));
+  app.evaluate(`renderPlatformAdminPanel()`);
+  await settle(8);
+  const card = app.document.querySelector('#platformSharedKeyCard');
+  const form = card.querySelector('#platformSharedKeyForm');
+  const boxes = () => [...card.querySelectorAll('[data-shared-models] input[type="checkbox"]')].filter((box) => box.checked).map((box) => box.value);
+  card.querySelector('[data-shared-provider="codex"]').click();
+  await settle(6);
+
+  // Start loading CodeBuddy, then switch to Claude Code before it replies.
+  holdCodeBuddy = true;
+  card.querySelector('[data-shared-provider="codebuddy"]').click();
+  await settle(2);
+  assert.equal(held.length, 1, 'the CodeBuddy request is pending');
+  card.querySelector('[data-shared-provider="claude-code"]').click();
+  await settle(6);
+  assert.equal(form.elements.baseUrl.value, 'http://127.0.0.1:18511');
+  assert.deepEqual(boxes(), ['claude-opus-5']);
+
+  held.shift()();
+  await settle(6);
+  assert.ok(card.querySelector('[data-shared-provider="claude-code"]').classList.contains('active'));
+  assert.equal(card.querySelector('[data-shared-baseurl-field]').hidden, false, 'the late CodeBuddy reply did not switch the fields');
+  assert.equal(form.elements.baseUrl.value, 'http://127.0.0.1:18511', 'the Claude Code Base URL is kept');
+  assert.deepEqual(boxes(), ['claude-opus-5'], 'CodeBuddy models were not checked under Claude Code');
+  assert.ok(!card.querySelector('[data-shared-models] input[value="cb-model-1"]'), 'the CodeBuddy catalog is not shown');
+
+  form.dispatchEvent(new app.window.Event('submit', { bubbles: true, cancelable: true }));
+  await settle(6);
+  const put = app.router.calls.find((call) => call.method === 'PUT' && call.path === '/api/platform/model-keys/claude-code');
+  assert.deepEqual(put.body, { apiKey: '', models: ['claude-opus-5'], baseUrl: 'http://127.0.0.1:18511' });
+  assert.ok(!app.router.calls.some((call) => call.method === 'PUT' && call.path !== '/api/platform/model-keys/claude-code'));
+
+  // Saving while the shown tab is still loading is refused instead of saving
+  // what the form showed for the previous tab.
+  holdCodeBuddy = true;
+  card.querySelector('[data-shared-provider="codebuddy"]').click();
+  await settle(2);
+  const puts = app.router.calls.filter((call) => call.method === 'PUT').length;
+  form.dispatchEvent(new app.window.Event('submit', { bubbles: true, cancelable: true }));
+  await settle(4);
+  assert.equal(app.router.calls.filter((call) => call.method === 'PUT').length, puts, 'no save while loading');
+  held.shift()();
+  await settle(6);
+  assert.deepEqual(boxes(), ['cb-model-1']);
+});
+
 test('platform admins authorize HTTPS and HTTP separately in the Git host trust tab', async (t) => {
   const app = await loadApp();
   t.after(app.close);
