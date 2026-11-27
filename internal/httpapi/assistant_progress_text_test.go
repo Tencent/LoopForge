@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -188,10 +189,25 @@ JSON
 	}
 }
 
-// A plan written as a numbered list before the tools, with nothing after
-// them, is still a progress note: the turn continues instead of delivering
-// the plan as the answer.
+// A plan written before the tools, with nothing after them, is still a
+// progress note: the turn continues instead of delivering the plan as the
+// answer. The plan may be a numbered list or plain prose
+// ("先确认分支，再读取提交记录。").
 func TestAssistantMultiLinePlanBeforeToolsStillContinues(t *testing.T) {
+	for _, tc := range []struct {
+		name, session, plan string
+	}{
+		{"numbered list", "multi-line-plan", `我先查看项目里的 LOOP：\\n1. 读取工作流配置\\n2. 汇总节点状态`},
+		{"prose steps", "prose-plan", `我先看一下仓库：\\n先确认分支，再读取提交记录。`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			runMultiLinePlanCase(t, tc.session, tc.plan)
+		})
+	}
+}
+
+func runMultiLinePlanCase(t *testing.T, session, plan string) {
+	t.Helper()
 	h, user := workbenchFixture(t)
 	h.titleSummary = func(context.Context, domain.User, string) (string, error) { return "", nil }
 	dir := t.TempDir()
@@ -210,18 +226,18 @@ JSON
 exit 0
 fi
 cat <<'JSON'
-{"type":"assistant","message":{"content":[{"type":"text","text":"我先查看项目里的 LOOP：\n1. 读取工作流配置\n2. 汇总节点状态"}]}}
+{"type":"assistant","message":{"content":[{"type":"text","text":"%[1]s"}]}}
 {"type":"assistant","message":{"content":[{"type":"tool_use","id":"list-1","name":"mcp__agentflow__workflows_list","input":{}}]}}
 {"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"list-1","content":"[]"}]}}
-{"type":"result","result":"我先查看项目里的 LOOP：\n1. 读取工作流配置\n2. 汇总节点状态"}
+{"type":"result","result":"%[1]s"}
 JSON
 `
-	if err := os.WriteFile(bin, []byte(script), 0o700); err != nil {
+	if err := os.WriteFile(bin, []byte(fmt.Sprintf(script, plan)), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("AGENTFLOW_CODEBUDDY_BIN", bin)
 	h.generate = nil
-	body, _ := json.Marshal(assistantRequest{SessionID: "multi-line-plan", ProjectID: "workbench", Messages: []assistantMessage{{Role: "user", Content: "查看已有 LOOP 并给出结果"}}})
+	body, _ := json.Marshal(assistantRequest{SessionID: session, ProjectID: "workbench", Messages: []assistantMessage{{Role: "user", Content: "查看已有 LOOP 并给出结果"}}})
 	c, rec := workbenchContext(user, "POST", "/api/assistant/chat", bytes.NewBuffer(body))
 	h.chat(c)
 	calls, _ := os.ReadFile(counter)
@@ -261,10 +277,12 @@ JSON
 	}
 }
 
-// A reply is a progress note only when every line is a plan. The first case
-// is the text a real Cursor (grok-4.7) turn wrote after its last tool call,
-// with the repository and login renamed.
-func TestAssistantProgressOnlyRequiresEveryLineToBeAPlan(t *testing.T) {
+// A reply is a progress note when it opens with a plan and every further line
+// only continues that plan, in a list or in prose; a line that carries a
+// result of work already done makes the reply an answer. The first case is
+// the text a real Cursor (grok-4.7) turn wrote after its last tool call, with
+// the repository and login renamed.
+func TestAssistantProgressOnlyRequiresPlanLines(t *testing.T) {
 	cases := []struct {
 		text     string
 		progress bool
@@ -290,6 +308,21 @@ func TestAssistantProgressOnlyRequiresEveryLineToBeAPlan(t *testing.T) {
 		{"Let me first check the repository:\n1) read the config\n2) run the tests", true},
 		{"我先按下面的步骤处理：\n① 读取 README\n② 汇总结论", true},
 		{"我先查看仓库：\n- 读取配置\n- 查了 README，项目用 Go 写成", false},
+		// Prose steps that neither open with a whitelisted prefix nor use a
+		// list: "先确认分支，再读取提交记录。".
+		{"我先看一下仓库：\n先确认分支，再读取提交记录。", true},
+		{"我先看一下仓库。\n首先读取配置文件，然后运行测试。", true},
+		{"我先看一下仓库。\n先读取配置文件，再运行测试。", true},
+		{"我先看一下仓库。\n具体步骤：读取配置、运行测试。", true},
+		{"我先看一下仓库。\n第一步：读取配置文件。", true},
+		{"我先看一下仓库。\n检查范围：配置文件和测试。", true},
+		{"我先看一下仓库。\n检查范围：配置文件和测试。\n先运行测试，再读取配置。", true},
+		// A prose line that reports a result is an answer, not a step.
+		{"我先看一下仓库。\n仓库默认分支是 main，最近提交在 11 月 26 日。", false},
+		{"我先看一下仓库。\n项目里有 4 个 LOOP，均正常运行。", false},
+		{"我先看一下仓库。\n共有 2 个成员：alice、bob。", false},
+		{"我先看一下仓库。\n先确认分支，再读取提交记录。\n最近提交是 abc1234。", false},
+		{"我先看一下仓库。\n先看看仓库，查了 README。", false},
 		{"", false},
 		{"   \n\n  ", false},
 	}

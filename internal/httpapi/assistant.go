@@ -1174,9 +1174,11 @@ func assistantProgressOnly(message string, messages []assistantMessage) bool {
 		}
 	}
 	// A progress note opens with a plan and only continues it: more plan
-	// sentences, "然后…" steps or the list of steps it is about to take. Any
-	// other line is an answer, and an opening that reports work already done
-	// ("我先查了…，结论如下。") is the start of an answer, not a plan.
+	// sentences, "然后…" steps, the list of steps it is about to take, or
+	// plain prose steps ("先确认分支，再读取提交记录。"). A line carrying a
+	// result (perfective 了, counts, dates, 结论/结果…) is an answer, and an
+	// opening that reports work already done ("我先查了…，结论如下。") is the
+	// start of an answer, not a plan.
 	opened := false
 	for line := range strings.SplitSeq(text, "\n") {
 		line = strings.TrimSpace(line)
@@ -1190,7 +1192,7 @@ func assistantProgressOnly(message string, messages []assistantMessage) bool {
 			opened = true
 			continue
 		}
-		if !assistantProgressSentence(line) && !assistantPlanStep(line) {
+		if !assistantProgressSentence(line) && !assistantPlanStep(line) && !assistantPlanProse(line) {
 			return false
 		}
 	}
@@ -1224,6 +1226,69 @@ func assistantPlanStep(line string) bool {
 }
 
 var assistantListMarker = regexp.MustCompile(`^(?:[-*•·]|\d{1,2}[.、)）]|[(（]\d{1,2}[)）]|[①-⑳]|[一二三四五六七八九十]{1,3}、)\s*`)
+
+// assistantPlanLeadIn opens a line that names a step of the plan in prose
+// rather than as a list item, as in "首先读取配置文件和测试。" or
+// "检查范围：配置文件和测试。".
+var assistantPlanLeadIn = []string{"首先", "先", "第一步", "第二步", "第三步", "最后", "具体步骤", "步骤", "计划", "检查范围", "检查", "目标", "范围", "First", "first", "Step"}
+
+// assistantPlanVerb is an action a plan step is made of, without the
+// perfective 了 ("先确认分支" plans the check; "先确认了分支" reports it).
+var assistantPlanVerb = []string{"读", "看", "查", "搜", "运行", "执行", "检查", "确认", "汇总", "整理", "对比", "分析", "测试", "验证", "修改", "实现", "记录", "列出", "定位", "复现", "review", "read", "check", "run", "test"}
+
+// assistantPlanResultMark is a word a plan line does not carry: it reports
+// what was found (conclusions) instead of what is next.
+var assistantPlanResultMark = []string{"结论", "结果", "如下", "共", "只有", "一致", "返回", "显示", "分别", "目前", "已经", "完成", "失败", "正常"}
+
+// assistantPlanCJKNumber matches counts written as Chinese numerals, as in
+// "项目里有两个 LOOP".
+var assistantPlanCJKNumber = regexp.MustCompile(`[一二两三四五六七八九十][个条位项次]`)
+
+// assistantPlanDigitsOrDate matches numbers, dates and versions.
+var assistantPlanDigitsOrDate = regexp.MustCompile(`\d|月|日|号`)
+
+// assistantPlanPerfective matches the perfective 了 that reports a step as
+// done. 了解/除了/为了 are plain words, not completions.
+var assistantPlanPerfective = regexp.MustCompile(`了`)
+
+func assistantPlanHasPerfective(line string) bool {
+	for _, word := range []string{"了解", "除了", "为了"} {
+		line = strings.ReplaceAll(line, word, "")
+	}
+	return assistantPlanPerfective.MatchString(line)
+}
+
+// assistantPlanProse reports whether a line after a plan opening continues
+// the plan in prose: it opens with a plan lead-in or names a step to take,
+// and it carries no result of work already done.
+func assistantPlanProse(line string) bool {
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return false
+	}
+	for _, mark := range assistantPlanResultMark {
+		if strings.Contains(line, mark) {
+			return false
+		}
+	}
+	if assistantPlanCJKNumber.MatchString(line) || assistantPlanDigitsOrDate.MatchString(line) || assistantPlanHasPerfective(line) {
+		return false
+	}
+	if assistantReportsDoneWork(line) {
+		return false
+	}
+	for _, lead := range assistantPlanLeadIn {
+		if strings.HasPrefix(line, lead) {
+			return true
+		}
+	}
+	for _, verb := range assistantPlanVerb {
+		if strings.Contains(line, verb) {
+			return true
+		}
+	}
+	return false
+}
 
 func cutAssistantListMarker(line string) (string, bool) {
 	marker := assistantListMarker.FindString(line)
