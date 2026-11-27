@@ -468,7 +468,7 @@ function issueActionButtons(i){
   const more=`<button type="button" class="issue-act-more" data-issue-menu="${escapeHTML(i.id)}" title="更多操作" aria-label="更多操作"><svg class="agent-icon harness-icon" data-icon="more-horizontal" width="16" height="16" aria-hidden="true" focusable="false"></svg></button>`;
   // 对话工作区没有节点，查看打开需求详情里的对话交付，而不是空的运行页。
   if(conversationWorkspaceIssue(i,run))return `<button type="button" class="issue-act" data-open-issue="${escapeHTML(i.id)}" data-dtab="sop">查看</button>${more}`;
-  if(issueManuallyClosed(i)||deliveryLocked(i)||issueTrackerClosed(i))return `${run?`<button type="button" class="issue-act" data-view-run="${escapeHTML(run.id)}">查看</button>`:''}${more}`;
+  if(issueManuallyClosed(i)||deliveryLocked(i)||issueTrackerClosed(i)||i.status==='done')return `${run?`<button type="button" class="issue-act" data-view-run="${escapeHTML(run.id)}">查看</button>`:''}${more}`;
   if(issueClarifying(i.id))return `<button type="button" class="issue-act" data-open-issue="${escapeHTML(i.id)}" data-dtab="clarify">查看分析</button>${more}`;
   if(clarificationNeedsConfirm(i))return `<button type="button" class="issue-act primary" data-open-issue="${escapeHTML(i.id)}" data-dtab="clarify">确认结论</button>${more}`;
   if(stage.key==='waiting')return `<button type="button" class="issue-act primary" data-open-issue="${escapeHTML(i.id)}" data-dtab="sop">${run?.pauseRequested?'继续流程':'去确认'}</button>${more}`;

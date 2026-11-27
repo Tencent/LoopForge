@@ -195,7 +195,8 @@
   box-shadow: none;
 }
 .chat-shell .artifact-panel .artifact-row.is-selected {
-  background: var(--artifact-row-active);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  box-shadow: inset 3px 0 0 var(--accent);
 }
 .chat-shell .artifact-panel .artifact-row.is-selected::before {
   position: absolute;

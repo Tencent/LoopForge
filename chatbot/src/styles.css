@@ -2729,6 +2729,13 @@ a.project-entry {
 .execution-trace > summary .execution-summary-row {
   display: inline-flex;
   gap: 6px;
+  padding: 3px 10px 3px 6px;
+  border-radius: 8px;
+  transition: background-color 150ms ease, color 150ms ease;
+}
+.execution-trace > summary:hover .execution-summary-row {
+  background: var(--hover);
+  color: var(--text);
 }
 .execution-current {
   display: flex;
@@ -2755,9 +2762,11 @@ a.project-entry {
 .execution-body {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 6px;
   min-width: 0;
-  padding: 0 0 12px;
+  margin: 4px 0 12px 6px;
+  padding: 2px 0 4px 12px;
+  border-left: 1.5px solid var(--line);
 }
 /* A round of tool calls: one summary line, steps listed underneath. */
 .execution-group {
@@ -3799,11 +3808,16 @@ a.draft-title {
   color: var(--text);
 }
 .project-picker.is-unset {
-  padding: 0 9px;
+  padding: 0 10px;
   height: 26px;
-  border: 1px dashed color-mix(in srgb, var(--hui-accent, #7b61ff) 48%, transparent);
-  border-radius: 7px;
-  background: color-mix(in srgb, var(--hui-accent, #7b61ff) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--hui-accent, #7b61ff) 32%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--hui-accent, #7b61ff) 8%, var(--surface));
+  transition: background-color 150ms ease, border-color 150ms ease;
+}
+.project-picker.is-unset:hover {
+  border-color: color-mix(in srgb, var(--hui-accent, #7b61ff) 52%, transparent);
+  background: color-mix(in srgb, var(--hui-accent, #7b61ff) 13%, var(--surface));
 }
 .project-picker.is-unset span,
 .project-picker.is-unset svg {

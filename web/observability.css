@@ -366,10 +366,10 @@ html[data-theme="light"] .worker-log-line pre,html[data-theme="dark"] .worker-lo
 :is(#observabilityView,#metricsView) .obs-kgroups{display:grid;grid-template-columns:minmax(0,4fr) minmax(0,3fr);gap:14px}
 :is(#observabilityView,#metricsView) .obs-kgroups.is-loop{grid-template-columns:1fr}
 :is(#observabilityView,#metricsView) .obs-kgroups>.obs-kg:only-child{grid-column:1/-1}
-:is(#observabilityView,#metricsView) .obs-kg{padding:12px 14px 14px;border:1px solid var(--line);border-radius:var(--obs-r);background:var(--panel)}
-:is(#observabilityView,#metricsView) .obs-kg h4{display:flex;justify-content:space-between;margin:0 0 10px;color:var(--muted-2);font-size:11.5px;font-weight:600;letter-spacing:.02em}
-:is(#observabilityView,#metricsView) .obs-ks{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:0}
-:is(#observabilityView,#metricsView) .obs-kpi{position:relative;display:flex;flex-direction:column;gap:5px;min-width:0;padding:2px 14px;outline:none}
+:is(#observabilityView,#metricsView) .obs-kg{padding:14px 16px;border:1px solid var(--hui-border,var(--line));border-radius:12px;background:var(--hui-surface,var(--panel))}
+:is(#observabilityView,#metricsView) .obs-kg h4{display:flex;justify-content:space-between;margin:0 0 12px;color:var(--hui-muted,var(--muted-2));font-size:12px;font-weight:600;letter-spacing:.01em}
+:is(#observabilityView,#metricsView) .obs-ks{display:grid;grid-template-columns:repeat(auto-fit,minmax(168px,1fr));gap:12px 0}
+:is(#observabilityView,#metricsView) .obs-kpi{position:relative;display:flex;flex-direction:column;gap:5px;min-width:0;padding:2px 16px;outline:none}
 :is(#observabilityView,#metricsView) .obs-kpi:first-child{padding-left:0}
 :is(#observabilityView,#metricsView) .obs-kpi+.obs-kpi{border-left:1px solid var(--line)}
 :is(#observabilityView,#metricsView) .obs-kpi.has-tip{cursor:help}
@@ -393,7 +393,7 @@ html[data-theme="light"] .worker-log-line pre,html[data-theme="dark"] .worker-lo
 /* 卡片与图 */
 :is(#observabilityView,#metricsView) .obs-grid2{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:14px}
 :is(#observabilityView,#metricsView) .obs-grid2.is-wide-left{grid-template-columns:minmax(0,3fr) minmax(0,2fr)}
-.obs-card2{display:flex;flex-direction:column;gap:10px;min-width:0;padding:14px 16px;border:1px solid var(--line);border-radius:12px;background:var(--panel)}
+.obs-card2{display:flex;flex-direction:column;gap:12px;min-width:0;padding:16px 18px;border:1px solid var(--hui-border,var(--line));border-radius:12px;background:var(--hui-surface,var(--panel))}
 .obs-card-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
 .obs-card-heading{min-width:0}
 .obs-card-heading h3{margin:0;color:var(--text);font-size:13.5px;font-weight:650}
@@ -407,7 +407,7 @@ html[data-theme="light"] .worker-log-line pre,html[data-theme="dark"] .worker-lo
 .obs-chart.is-fallback svg{width:100%;height:auto}
 .obs-chart-skeleton{position:absolute;inset:8px 0;border-radius:8px;background:var(--panel-2);opacity:.55;animation:obsPulse 1.4s ease-in-out infinite}
 @keyframes obsPulse{50%{opacity:.25}}
-.obs-chart-empty{display:grid;place-items:center;height:100%;min-height:80px;color:var(--muted-2);font-size:12px}
+.obs-chart-empty{display:grid;place-items:center;height:auto;min-height:110px;padding:16px;color:var(--hui-tertiary,var(--muted-2));font-size:12.5px}
 .obs-tt b{display:block;margin-bottom:4px;font-weight:650}
 .obs-tt div{display:flex;justify-content:space-between;gap:16px;line-height:1.6}
 .obs-tt div span{color:var(--muted)}

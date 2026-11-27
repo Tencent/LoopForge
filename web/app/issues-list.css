@@ -66,17 +66,17 @@
   align-items: stretch;
   gap: 0;
   min-height: 0;
-  margin: 0 0 16px;
+  margin: 0 0 12px;
   padding: 0;
   border: 1px solid var(--hui-border);
-  border-radius: 13px;
+  border-radius: 12px;
   background: var(--hui-surface);
   box-shadow: none;
   overflow: hidden;
 }
-#issuesView .project-context-main { flex: 1 1 auto; min-width: 0; display: flex; align-items: center; gap: 12px; padding: 14px 18px; }
+#issuesView .project-context-main { flex: 1 1 auto; min-width: 0; display: flex; align-items: center; gap: 11px; padding: 10px 14px; }
 #issuesView .project-context-main > div { flex: 1; min-width: 0; }
-#issuesView .project-context-mark { flex: none; width: 38px; height: 38px; border-radius: 10px; box-shadow: none; color: #fff; font: 600 12px/1 var(--hui-sans); letter-spacing: .02em; }
+#issuesView .project-context-mark { flex: none; width: 34px; height: 34px; border-radius: 9px; box-shadow: none; color: #fff; font: 600 12px/1 var(--hui-sans); letter-spacing: .02em; }
 #issuesView .project-context-main small,
 #issuesView .project-context-main b,
 #issuesView .project-context-main p { display: block; max-width: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -300,23 +300,24 @@ html[data-theme="dark"] #issuesView .issue-title-cell .issue-title-tag.tone-dang
 #issuesView :is(.issue-repository-cell, .issue-workflow-cell) { color: var(--hui-secondary); font-size: 13px; }
 
 #issuesView .issue-priority {
-  height: auto;
+  height: 22px;
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  padding: 0;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
+  gap: 4px;
+  padding: 0 8px;
+  border: 1px solid var(--hui-border);
+  border-radius: 99px;
+  background: var(--hui-soft);
   color: var(--hui-secondary);
-  font: 400 13px/1 var(--hui-sans);
+  font: 500 11.5px/1 var(--hui-sans);
   opacity: 1;
   white-space: nowrap;
 }
-#issuesView .issue-priority .harness-icon { width: 14px; height: 14px; }
-#issuesView .issue-priority.urgent { color: var(--hui-error); }
-#issuesView .issue-priority.high { color: var(--hui-text); }
-#issuesView .issue-priority.low { color: var(--hui-tertiary); }
+#issuesView .issue-priority .harness-icon { width: 13px; height: 13px; }
+#issuesView .issue-priority.urgent { border-color: color-mix(in srgb, var(--hui-error) 28%, transparent); background: color-mix(in srgb, var(--hui-error) 10%, var(--hui-surface)); color: var(--hui-error); }
+#issuesView .issue-priority.high { border-color: color-mix(in srgb, var(--hui-warn) 28%, transparent); background: color-mix(in srgb, var(--hui-warn) 10%, var(--hui-surface)); color: var(--hui-warn); }
+#issuesView .issue-priority.medium { border-color: color-mix(in srgb, var(--hui-accent) 24%, transparent); background: color-mix(in srgb, var(--hui-accent) 8%, var(--hui-surface)); color: var(--hui-accent); }
+#issuesView .issue-priority.low { border-color: var(--hui-border); background: transparent; color: var(--hui-tertiary); }
 
 #issuesView .issue-stage-cell { overflow: hidden; }
 

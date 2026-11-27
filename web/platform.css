@@ -2309,7 +2309,7 @@ html[data-theme="light"] body{color-scheme:light}html[data-theme="light"] .platf
 .credential-tip:hover::after,.credential-tip:focus-within::after{opacity:1;transform:translate(0,-50%)}
 
 /* account row */
-#settingsView .personal-settings{display:grid;grid-template-columns:minmax(0,42rem);justify-content:center}
+#settingsView .personal-settings{display:grid;grid-template-columns:minmax(0,54rem);justify-content:center}
 #settingsView .personal-settings-return{justify-self:start;margin:0 0 12px -8px}
 #settingsView .personal-settings-return[hidden]{display:none}
 #settingsView .personal-settings-heading{align-items:center;gap:12px 20px;margin-bottom:28px}
