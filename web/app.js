@@ -967,6 +967,13 @@ async function boot(){
   state.data = Object.assign(state.data, shell);
   const savedProject=urlParams.get('projectId')||localStorage.getItem('agentflow.activeProject');
   state.projectFilter=(state.data.projects||[]).some(p=>p.id===savedProject)?savedProject:defaultProjectId(state.data.projects,state.currentUser?.id);
+  const linkedWorkflow=flowRouteId();
+  if(linkedWorkflow&&!openableWorkflow(linkedWorkflow)){
+    // An explicit ?projectId wins; otherwise follow the LOOP to its project.
+    const linkedProject=urlParams.get('projectId')?'':linkedWorkflowProjectId(linkedWorkflow);
+    if(linkedProject){state.projectFilter=linkedProject;localStorage.setItem('agentflow.activeProject',linkedProject)}
+    else missingWorkflowLinkToast();
+  }
   state.workflow = clone(restoreOpenWorkflow());
   state.workflowSaved = clone(state.workflow);
   state.workflowDirty = false;
@@ -1421,28 +1428,7 @@ function bind(){
   const issueDrawer=$('#issueDetailDrawer');
   if(issueDrawer&&issueDrawer.parentElement!==document.body)document.body.appendChild(issueDrawer);
   $$('[data-close-drawer]').forEach(el=>el.onclick=closeIssueDrawer);
-  $('#projectSwitcher').onchange=async e=>{
-    if(!await confirmAssetLeave()){e.target.value=state.projectFilter||'';return}
-    const frame=$('#chatNextFrame');
-    if(frame?.contentWindow)frame.contentWindow.postMessage({type:'agentflow-project-context',projectId:e.target.value},location.origin);
-    closeScheduleJobModal();
-    state.projectFilter=e.target.value;state.selectedIssue=null;
-    if(state.currentView==='aiSchedules')refreshAISchedules();
-    if(state.currentView==='runners')refreshRunners(true);
-    localStorage.setItem('agentflow.activeProject',state.projectFilter);
-    if($('#botsView')?.classList.contains('active'))loadBots();
-    if(state.currentView==='projectCredentials')loadProjectCredentialsPage();
-    resetListPages();
-    syncWorkflowToProject();
-    renderProjectSwitcher();renderIssues();renderSync();renderProjectAdmin();
-    renderSOPCatalog();renderAgents();renderAssets();renderMCPManagement();renderRuns();renderWorkflowMeta();
-    renderApprovals(true);
-    renderObsTabs();
-    if($('#dashboardView').classList.contains('active'))renderDashboard();
-    if($('#observabilityView').classList.contains('active'))refreshObs();
-    if($('#evolutionView')?.classList.contains('active')&&typeof renderEvolutionView==='function')renderEvolutionView();
-    if($('#sopsView').classList.contains('active'))refreshWorkflowMetrics();
-  };
+  $('#projectSwitcher').onchange=e=>selectProject(e.target.value);
   document.querySelectorAll('[data-scope-for]').forEach(bar=>{
     bar.querySelectorAll('[data-scope]').forEach(btn=>btn.onclick=()=>{
       const key=bar.dataset.scopeFor==='agent'?'agentScope':'sopScope';
@@ -2000,6 +1986,15 @@ async function applyAgentRoute(){
 }
 // Only LOOPs visible in the active project can be restored from the URL or localStorage.
 function openableWorkflow(id){return id?catalogWorkflows().find(w=>w.id===id)||null:null}
+// A #/flow/<id> link names one LOOP. When that LOOP is not visible in the
+// active project but belongs to another project the user can open, the link
+// should switch to that project instead of silently showing another LOOP.
+function linkedWorkflowProjectId(id){
+  if(!id||openableWorkflow(id))return '';
+  const wf=(state.data?.workflows||[]).find(w=>w.id===id&&!catalogGeneric(w));
+  return wf?.projectId&&(state.data?.projects||[]).some(p=>p.id===wf.projectId)?wf.projectId:'';
+}
+function missingWorkflowLinkToast(){toast(lfT('链接中的 LOOP 不存在，或不在你可访问的项目中','The linked LOOP does not exist or is not in a project you can access'),'warn')}
 function savedWorkflowId(){
   const id=state.workflow?.id||'';
   return id&&(state.data?.workflows||[]).some(w=>w.id===id)?id:'';
@@ -2015,13 +2010,51 @@ function rememberOpenWorkflow(){
   const next=flowViewHash();
   if(location.hash!==next)history.replaceState(null,'',next);
 }
+// Switches the active project like the project switcher does. Resolves false
+// when the user keeps unsaved asset edits instead.
+async function selectProject(projectId){
+  const select=$('#projectSwitcher');
+  if(!await confirmAssetLeave()){if(select)select.value=state.projectFilter||'';return false}
+  if(select)select.value=projectId;
+  const frame=$('#chatNextFrame');
+  if(frame?.contentWindow)frame.contentWindow.postMessage({type:'agentflow-project-context',projectId},location.origin);
+  closeScheduleJobModal();
+  state.projectFilter=projectId;state.selectedIssue=null;
+  if(state.currentView==='aiSchedules')refreshAISchedules();
+  if(state.currentView==='runners')refreshRunners(true);
+  localStorage.setItem('agentflow.activeProject',state.projectFilter);
+  if($('#botsView')?.classList.contains('active'))loadBots();
+  if(state.currentView==='projectCredentials')loadProjectCredentialsPage();
+  resetListPages();
+  syncWorkflowToProject();
+  renderProjectSwitcher();renderIssues();renderSync();renderProjectAdmin();
+  renderSOPCatalog();renderAgents();renderAssets();renderMCPManagement();renderRuns();renderWorkflowMeta();
+  renderApprovals(true);
+  renderObsTabs();
+  if($('#dashboardView').classList.contains('active'))renderDashboard();
+  if($('#observabilityView').classList.contains('active'))refreshObs();
+  if($('#evolutionView')?.classList.contains('active')&&typeof renderEvolutionView==='function')renderEvolutionView();
+  if($('#sopsView').classList.contains('active'))refreshWorkflowMetrics();
+  return true;
+}
 async function applyFlowRoute(){
   const id=flowRouteId();
   if(!id||state.workflow?.id===id)return;
-  const wf=openableWorkflow(id);
-  if(!wf){rememberOpenWorkflow();return}
+  const project=linkedWorkflowProjectId(id);
+  const wf=project?state.data.workflows.find(w=>w.id===id):openableWorkflow(id);
+  if(!wf){missingWorkflowLinkToast();rememberOpenWorkflow();return}
   if(state.workflowDirty&&!(await afConfirm({title:'未保存更改',message:'当前流程有未保存修改，切换将放弃这些修改。继续？',danger:true}))){rememberOpenWorkflow();return}
   if(flowRouteId()!==id)return;
+  if(project){
+    // Open the linked LOOP first so the project switch keeps it instead of
+    // falling back to that project's default LOOP.
+    const previous={workflow:state.workflow,saved:state.workflowSaved,dirty:state.workflowDirty};
+    state.workflow=clone(wf);state.workflowSaved=clone(wf);state.workflowDirty=false;
+    if(!(await selectProject(project))){
+      state.workflow=previous.workflow;state.workflowSaved=previous.saved;state.workflowDirty=previous.dirty;
+      rememberOpenWorkflow();return;
+    }
+  }
   state.workflow=clone(wf);
   state.workflowSaved=clone(wf);
   state.workflowDirty=false;
