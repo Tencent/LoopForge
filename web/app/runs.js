@@ -65,7 +65,10 @@ function mergeLiveRun(id,incoming,payload){
   const nodes={...(old?.nodes||{})};
   for(const [k,n] of Object.entries(incoming.nodes||{})){
     const prev=nodes[k]||{};
-    nodes[k]={...prev,...n,output:n.output||prev.output,error:n.error||prev.error,feedback:n.feedback||prev.feedback};
+    // Reset snapshots omit empty fields. Carry partial updates only within the same attempt.
+    const reset=(n.status==='pending'&&prev.status!=='pending')||
+      (n.attempt!=null&&prev.attempt!=null&&n.attempt!==prev.attempt);
+    nodes[k]=reset?n:{...prev,...n,output:n.output||prev.output,error:n.error||prev.error,feedback:n.feedback||prev.feedback};
   }
   return {...(old||{}),...incoming,pauseRequested:Boolean(incoming.pauseRequested),cancelRequested:Boolean(incoming.cancelRequested),workflowSnapshot:(old?.workflowSnapshot?.id?old.workflowSnapshot:incoming.workflowSnapshot),telemetry,nodes};
 }
