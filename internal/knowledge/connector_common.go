@@ -75,6 +75,13 @@ func nativeReadOnlyToolNames() []string {
 }
 
 func validateNativeBaseURL(raw, defaultURL, label string) (string, error) {
+	return validateNativeBaseURLWithPolicy(raw, defaultURL, label, false)
+}
+
+// validateNativeBaseURLWithPolicy validates a native connector base URL.
+// storedEndpoint marks an already-saved address (see ConnectorFactory): it
+// skips only the loopback/private opt-in check for IP literals.
+func validateNativeBaseURLWithPolicy(raw, defaultURL, label string, storedEndpoint bool) (string, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" && strings.TrimSpace(defaultURL) != "" {
 		raw = strings.TrimSpace(defaultURL)
@@ -108,7 +115,7 @@ func validateNativeBaseURL(raw, defaultURL, label string) (string, error) {
 	if s == "" {
 		return "", apperr.New(apperr.Invalid, label+"服务地址不能为空")
 	}
-	if err := validateConnectorEndpointIP(s, privateConnectorOriginAllowed(s), label); err != nil {
+	if err := validateConnectorEndpointIP(s, storedEndpoint || privateConnectorOriginAllowed(s), label); err != nil {
 		return "", err
 	}
 	return s, nil
@@ -210,6 +217,9 @@ func validateConnectorEndpointIP(rawURL string, allowLocalOrPrivate bool, label 
 	host := strings.Trim(u.Hostname(), "[]")
 	if ip := net.ParseIP(host); ip != nil {
 		if isBlockedConnectorIP(ip, allowLocalOrPrivate) {
+			if !isAlwaysBlockedIP(ip) {
+				return apperr.New(apperr.Invalid, label+"地址不允许访问受保护的网络网段；如为部署内可信服务，请让运维把该 origin 加入 "+privateConnectorOriginsEnv)
+			}
 			return apperr.New(apperr.Invalid, label+"地址不允许访问受保护的网络网段")
 		}
 	}

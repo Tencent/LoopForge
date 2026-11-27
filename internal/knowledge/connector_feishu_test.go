@@ -26,21 +26,21 @@ func TestFeishuFactoryValidateAndNew(t *testing.T) {
 		Extra:      map[string]string{"appId": " cli_123 "},
 	}, domain.KnowledgeConnectorSecret{
 		Headers: map[string]string{"appSecret": "sec-in-header"},
-	}, false)
+	}, false, false)
 	if err != nil || ep != feishuDefaultBaseURL || cfg.Extra["appId"] != "cli_123" || sec.Headers["appSecret"] != "sec-in-header" {
 		t.Fatalf("unexpected normalized feishu config: ep=%q cfg=%+v sec=%+v err=%v", ep, cfg, sec, err)
 	}
 
-	if _, _, _, err := f.ValidateAndNormalize("", domain.KnowledgeConnectorConfig{TimeoutSec: 301, Extra: map[string]string{"appId": "cli_1"}}, domain.KnowledgeConnectorSecret{Token: "sec"}, false); !isAppErrKind(err, apperr.Invalid) {
+	if _, _, _, err := f.ValidateAndNormalize("", domain.KnowledgeConnectorConfig{TimeoutSec: 301, Extra: map[string]string{"appId": "cli_1"}}, domain.KnowledgeConnectorSecret{Token: "sec"}, false, false); !isAppErrKind(err, apperr.Invalid) {
 		t.Fatalf("expected Invalid for timeout >300, got %v", err)
 	}
-	if _, _, _, err := f.ValidateAndNormalize("", domain.KnowledgeConnectorConfig{}, domain.KnowledgeConnectorSecret{Token: "sec"}, false); !isAppErrKind(err, apperr.Invalid) {
+	if _, _, _, err := f.ValidateAndNormalize("", domain.KnowledgeConnectorConfig{}, domain.KnowledgeConnectorSecret{Token: "sec"}, false, false); !isAppErrKind(err, apperr.Invalid) {
 		t.Fatalf("expected Invalid for missing appId, got %v", err)
 	}
-	if _, _, _, err := f.ValidateAndNormalize("", domain.KnowledgeConnectorConfig{Extra: map[string]string{"appId": "cli_1"}}, domain.KnowledgeConnectorSecret{}, false); !isAppErrKind(err, apperr.Invalid) {
+	if _, _, _, err := f.ValidateAndNormalize("", domain.KnowledgeConnectorConfig{Extra: map[string]string{"appId": "cli_1"}}, domain.KnowledgeConnectorSecret{}, false, false); !isAppErrKind(err, apperr.Invalid) {
 		t.Fatalf("expected Invalid for missing appSecret, got %v", err)
 	}
-	if _, _, _, err := f.ValidateAndNormalize("", domain.KnowledgeConnectorConfig{Extra: map[string]string{"appId": "cli_1"}}, domain.KnowledgeConnectorSecret{}, true); err != nil {
+	if _, _, _, err := f.ValidateAndNormalize("", domain.KnowledgeConnectorConfig{Extra: map[string]string{"appId": "cli_1"}}, domain.KnowledgeConnectorSecret{}, true, false); err != nil {
 		t.Fatalf("expected existing secret accepted, got %v", err)
 	}
 

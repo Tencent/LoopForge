@@ -443,7 +443,7 @@ func TestNotionConnectorHeadersBlocksAnd429Retry(t *testing.T) {
 
 	// 1. Blank endpoint defaults to https://api.notion.com.
 	f := newNotionFactory()
-	normEndpoint, _, _, err := f.ValidateAndNormalize("", domain.KnowledgeConnectorConfig{}, domain.KnowledgeConnectorSecret{Token: token}, false)
+	normEndpoint, _, _, err := f.ValidateAndNormalize("", domain.KnowledgeConnectorConfig{}, domain.KnowledgeConnectorSecret{Token: token}, false, false)
 	if err != nil || normEndpoint != notionDefaultBaseURL {
 		t.Fatalf("expected default notion endpoint %q, got %q err=%v", notionDefaultBaseURL, normEndpoint, err)
 	}

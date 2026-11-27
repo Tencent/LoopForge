@@ -27,7 +27,7 @@ func TestNotionFactoryValidateAndNew(t *testing.T) {
 		Headers:        map[string]string{" X-Trace ": " 1 ", "": "drop"},
 		DefaultSources: []string{" page-a ", "page-a", ""},
 		Extra:          map[string]string{" k ": " v ", "empty": "   "},
-	}, domain.KnowledgeConnectorSecret{Token: "Bearer ntn_secret_1"}, false)
+	}, domain.KnowledgeConnectorSecret{Token: "Bearer ntn_secret_1"}, false, false)
 	if err != nil {
 		t.Fatalf("expected valid default config, got %v", err)
 	}
@@ -39,10 +39,10 @@ func TestNotionFactoryValidateAndNew(t *testing.T) {
 	}
 
 	// Missing token allowed only when hasExistingSecret=true.
-	if _, _, _, err := f.ValidateAndNormalize("", domain.KnowledgeConnectorConfig{}, domain.KnowledgeConnectorSecret{}, false); !isAppErrKind(err, apperr.Invalid) {
+	if _, _, _, err := f.ValidateAndNormalize("", domain.KnowledgeConnectorConfig{}, domain.KnowledgeConnectorSecret{}, false, false); !isAppErrKind(err, apperr.Invalid) {
 		t.Fatalf("expected Invalid for missing token, got %v", err)
 	}
-	if _, _, _, err := f.ValidateAndNormalize("", domain.KnowledgeConnectorConfig{}, domain.KnowledgeConnectorSecret{}, true); err != nil {
+	if _, _, _, err := f.ValidateAndNormalize("", domain.KnowledgeConnectorConfig{}, domain.KnowledgeConnectorSecret{}, true, false); err != nil {
 		t.Fatalf("expected existing secret to be accepted, got %v", err)
 	}
 
@@ -56,12 +56,12 @@ func TestNotionFactoryValidateAndNew(t *testing.T) {
 		"http://100.100.100.200",
 	}
 	for _, raw := range badEndpoints {
-		if _, _, _, err := f.ValidateAndNormalize(raw, domain.KnowledgeConnectorConfig{}, domain.KnowledgeConnectorSecret{Token: "ntn_1"}, false); !isAppErrKind(err, apperr.Invalid) {
+		if _, _, _, err := f.ValidateAndNormalize(raw, domain.KnowledgeConnectorConfig{}, domain.KnowledgeConnectorSecret{Token: "ntn_1"}, false, false); !isAppErrKind(err, apperr.Invalid) {
 			t.Fatalf("expected Invalid for endpoint %q, got %v", raw, err)
 		}
 	}
 	for _, badTimeout := range []int{-1, 301} {
-		if _, _, _, err := f.ValidateAndNormalize("", domain.KnowledgeConnectorConfig{TimeoutSec: badTimeout}, domain.KnowledgeConnectorSecret{Token: "ntn_1"}, false); !isAppErrKind(err, apperr.Invalid) {
+		if _, _, _, err := f.ValidateAndNormalize("", domain.KnowledgeConnectorConfig{TimeoutSec: badTimeout}, domain.KnowledgeConnectorSecret{Token: "ntn_1"}, false, false); !isAppErrKind(err, apperr.Invalid) {
 			t.Fatalf("expected Invalid for timeout %d, got %v", badTimeout, err)
 		}
 	}

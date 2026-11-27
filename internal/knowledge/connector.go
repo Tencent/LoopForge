@@ -133,9 +133,17 @@ type Connector interface {
 // ConnectorFactory validates configuration and constructs runtime Connector
 // instances for one connector type. Adding a new backend requires implementing
 // ConnectorFactory + Connector and registering it on Registry.
+//
+// ValidateAndNormalize: hasExistingSecret reports that a sealed credential is
+// already stored and may be kept. storedEndpoint reports that endpoint is the
+// connector's already-saved address (an update that does not change it); the
+// factory then skips only the loopback/private opt-in check for IP literals so
+// connectors created under an earlier LOOPFORGE_KNOWLEDGE_INTERNAL_ORIGINS can
+// still be renamed or disabled. Always-blocked ranges stay rejected, and the
+// dial-time SSRF guard still blocks the address at check/run time.
 type ConnectorFactory interface {
 	Meta() domain.ConnectorTypeMeta
-	ValidateAndNormalize(endpoint string, cfg domain.KnowledgeConnectorConfig, secret domain.KnowledgeConnectorSecret, hasExistingSecret bool) (string, domain.KnowledgeConnectorConfig, domain.KnowledgeConnectorSecret, error)
+	ValidateAndNormalize(endpoint string, cfg domain.KnowledgeConnectorConfig, secret domain.KnowledgeConnectorSecret, hasExistingSecret, storedEndpoint bool) (string, domain.KnowledgeConnectorConfig, domain.KnowledgeConnectorSecret, error)
 	New(spec ConnectorSpec) (Connector, error)
 }
 

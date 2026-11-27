@@ -42,13 +42,13 @@ func TestWeKnoraValidateURLFactoryAndRedirect(t *testing.T) {
 		}
 	}
 
-	if _, _, _, err := f.ValidateAndNormalize("https://wk.example.com", domain.KnowledgeConnectorConfig{TimeoutSec: 301}, domain.KnowledgeConnectorSecret{Token: "k"}, false); !isAppErrKind(err, apperr.Invalid) {
+	if _, _, _, err := f.ValidateAndNormalize("https://wk.example.com", domain.KnowledgeConnectorConfig{TimeoutSec: 301}, domain.KnowledgeConnectorSecret{Token: "k"}, false, false); !isAppErrKind(err, apperr.Invalid) {
 		t.Fatalf("expected Invalid for timeout >300, got %v", err)
 	}
-	if _, _, _, err := f.ValidateAndNormalize("https://wk.example.com", domain.KnowledgeConnectorConfig{}, domain.KnowledgeConnectorSecret{}, false); !isAppErrKind(err, apperr.Invalid) {
+	if _, _, _, err := f.ValidateAndNormalize("https://wk.example.com", domain.KnowledgeConnectorConfig{}, domain.KnowledgeConnectorSecret{}, false, false); !isAppErrKind(err, apperr.Invalid) {
 		t.Fatalf("expected Invalid for missing key, got %v", err)
 	}
-	if _, _, _, err := f.ValidateAndNormalize("https://wk.example.com", domain.KnowledgeConnectorConfig{}, domain.KnowledgeConnectorSecret{}, true); err != nil {
+	if _, _, _, err := f.ValidateAndNormalize("https://wk.example.com", domain.KnowledgeConnectorConfig{}, domain.KnowledgeConnectorSecret{}, true, false); err != nil {
 		t.Fatalf("expected existing secret allowed, got %v", err)
 	}
 

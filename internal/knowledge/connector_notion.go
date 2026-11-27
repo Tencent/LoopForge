@@ -65,8 +65,8 @@ func (notionFactory) Meta() domain.ConnectorTypeMeta {
 	}
 }
 
-func (notionFactory) ValidateAndNormalize(endpoint string, cfg domain.KnowledgeConnectorConfig, secret domain.KnowledgeConnectorSecret, hasExistingSecret bool) (string, domain.KnowledgeConnectorConfig, domain.KnowledgeConnectorSecret, error) {
-	normalized, err := validateNativeBaseURL(endpoint, notionDefaultBaseURL, "Notion")
+func (notionFactory) ValidateAndNormalize(endpoint string, cfg domain.KnowledgeConnectorConfig, secret domain.KnowledgeConnectorSecret, hasExistingSecret, storedEndpoint bool) (string, domain.KnowledgeConnectorConfig, domain.KnowledgeConnectorSecret, error) {
+	normalized, err := validateNativeBaseURLWithPolicy(endpoint, notionDefaultBaseURL, "Notion", storedEndpoint)
 	if err != nil {
 		return "", cfg, secret, err
 	}

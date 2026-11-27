@@ -87,7 +87,7 @@ func (customPlugFactory) Meta() domain.ConnectorTypeMeta {
 	}
 }
 
-func (customPlugFactory) ValidateAndNormalize(endpoint string, cfg domain.KnowledgeConnectorConfig, secret domain.KnowledgeConnectorSecret, _ bool) (string, domain.KnowledgeConnectorConfig, domain.KnowledgeConnectorSecret, error) {
+func (customPlugFactory) ValidateAndNormalize(endpoint string, cfg domain.KnowledgeConnectorConfig, secret domain.KnowledgeConnectorSecret, _, _ bool) (string, domain.KnowledgeConnectorConfig, domain.KnowledgeConnectorSecret, error) {
 	return strings.TrimSpace(endpoint), cfg, secret, nil
 }
 

@@ -34,7 +34,7 @@ func TestPrivateConnectorOriginRequiresOperatorOptIn(t *testing.T) {
 	t.Setenv(privateConnectorOriginsEnv, "")
 	t.Setenv("LOOPFORGE_KNOWLEDGE_OAUTH_INSECURE", "1")
 	local := "http://127.0.0.1:27124"
-	if _, _, _, err := (mcpFactory{}).ValidateAndNormalize(local+"/mcp", domain.KnowledgeConnectorConfig{}, domain.KnowledgeConnectorSecret{}, false); !isAppErrKind(err, apperr.Invalid) {
+	if _, _, _, err := (mcpFactory{}).ValidateAndNormalize(local+"/mcp", domain.KnowledgeConnectorConfig{}, domain.KnowledgeConnectorSecret{}, false, false); !isAppErrKind(err, apperr.Invalid) {
 		t.Fatalf("expected MCP endpoint to require a private origin opt-in, got %v", err)
 	}
 	if _, err := validateNativeBaseURL(local, "", "Test"); !isAppErrKind(err, apperr.Invalid) {
@@ -42,7 +42,7 @@ func TestPrivateConnectorOriginRequiresOperatorOptIn(t *testing.T) {
 	}
 
 	allowConnectorTestOrigins(t, local, "https://notes.example.test")
-	if _, _, _, err := (mcpFactory{}).ValidateAndNormalize(local+"/mcp", domain.KnowledgeConnectorConfig{}, domain.KnowledgeConnectorSecret{}, false); err != nil {
+	if _, _, _, err := (mcpFactory{}).ValidateAndNormalize(local+"/mcp", domain.KnowledgeConnectorConfig{}, domain.KnowledgeConnectorSecret{}, false, false); err != nil {
 		t.Fatalf("explicitly allowed MCP origin rejected: %v", err)
 	}
 	if _, err := validateNativeBaseURL(local, "", "Test"); err != nil {

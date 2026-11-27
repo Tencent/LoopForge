@@ -96,7 +96,7 @@ func (mcpFactory) Meta() domain.ConnectorTypeMeta {
 	}
 }
 
-func (mcpFactory) ValidateAndNormalize(endpoint string, cfg domain.KnowledgeConnectorConfig, secret domain.KnowledgeConnectorSecret, _ bool) (string, domain.KnowledgeConnectorConfig, domain.KnowledgeConnectorSecret, error) {
+func (mcpFactory) ValidateAndNormalize(endpoint string, cfg domain.KnowledgeConnectorConfig, secret domain.KnowledgeConnectorSecret, _, storedEndpoint bool) (string, domain.KnowledgeConnectorConfig, domain.KnowledgeConnectorSecret, error) {
 	endpoint = strings.TrimSpace(endpoint)
 	if endpoint == "" {
 		return "", cfg, secret, apperr.New(apperr.Invalid, "MCP 服务地址不能为空")
@@ -113,7 +113,7 @@ func (mcpFactory) ValidateAndNormalize(endpoint string, cfg domain.KnowledgeConn
 	if u.User != nil {
 		return "", cfg, secret, apperr.New(apperr.Invalid, "MCP 服务地址不能内嵌账号密码")
 	}
-	if err := validateConnectorEndpointIP(endpoint, privateConnectorOriginAllowed(endpoint), "MCP "); err != nil {
+	if err := validateConnectorEndpointIP(endpoint, storedEndpoint || privateConnectorOriginAllowed(endpoint), "MCP "); err != nil {
 		return "", cfg, secret, err
 	}
 	if cfg.TimeoutSec < 0 || cfg.TimeoutSec > 300 {
