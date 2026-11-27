@@ -300,7 +300,7 @@ func (h *assistantHandlers) executeAssistantTask(ctx context.Context, user domai
 	if id := policy.Continue; id != "" {
 		if prev, ok := h.repo.AssistantSession(user.ID, id); ok && prev.Source == origin.Source &&
 			prev.TaskID == origin.TaskID && prev.ProjectID == task.ProjectID &&
-			h.canUseBoundExecutionTarget(prev.Execution(), task.ProjectID, user.ID) {
+			h.canUseBoundExecutionTarget(prev.Execution(), task.ProjectID, user.ID, true) {
 			pending = prev
 			pending.Model, pending.Executor, pending.ExecutionTarget = model, cliEngine, target
 			pending.Messages = append(append([]assistantMessage{}, prev.Messages...), prompt)

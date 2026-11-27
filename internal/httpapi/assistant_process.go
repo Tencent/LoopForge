@@ -54,7 +54,7 @@ func helperCLIExecution(ctx context.Context, root string, actorID int64, engine 
 	return bound.h.conversationExecutor(s, root), s.runnerLogin
 }
 
-func (h *assistantHandlers) conversationRunner(s *AgentToolSession, checkAccess bool) (domain.Runner, error) {
+func (h *assistantHandlers) conversationRunner(ctx context.Context, s *AgentToolSession, checkAccess bool) (domain.Runner, error) {
 	if h.runnerControls == nil {
 		return domain.Runner{}, errAssistantExecutionUnavailable
 	}
@@ -62,8 +62,11 @@ func (h *assistantHandlers) conversationRunner(s *AgentToolSession, checkAccess 
 	if !ok {
 		return domain.Runner{}, errAssistantExecutionUnavailable
 	}
-	if checkAccess && !h.canUseBoundRunner(runner, s.ProjectID, s.UserID) {
-		return domain.Runner{}, errAssistantRunnerAccessRevoked
+	if checkAccess {
+		requireShare := s.requireRunnerShare || assistantSessionOriginFrom(ctx).Source == domain.AssistantSourceScheduled
+		if !h.canUseBoundRunner(runner, s.ProjectID, s.UserID, requireShare) {
+			return domain.Runner{}, errAssistantRunnerAccessRevoked
+		}
 	}
 	if runner.Status != domain.RunnerStatusOnline {
 		return domain.Runner{}, errAssistantExecutionUnavailable
@@ -114,7 +117,7 @@ func (h *assistantHandlers) conversationExecutor(s *AgentToolSession, root strin
 		var projectCredentialEnv map[string]string
 		if s.RuntimeMode == domain.AssistantModeWorkspace {
 			if s.ExecutionRunnerID != "" {
-				if _, err := h.conversationRunner(s, true); err != nil {
+				if _, err := h.conversationRunner(ctx, s, true); err != nil {
 					return "", err
 				}
 			}
@@ -229,7 +232,7 @@ func (h *assistantHandlers) conversationExecutor(s *AgentToolSession, root strin
 			}
 			var response domain.RunnerWorkspaceResponse
 			for delay := 50 * time.Millisecond; ; delay *= 2 {
-				runner, runnerErr := h.conversationRunner(s, checkAccess)
+				runner, runnerErr := h.conversationRunner(callCtx, s, checkAccess)
 				if runnerErr != nil {
 					return preDispatchError(runnerErr)
 				}

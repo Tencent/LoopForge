@@ -120,6 +120,7 @@ export function useChat() {
   const [identity, setIdentity] = useState(null),
     [projects, setProjects] = useState([]),
     [sandboxes, setSandboxes] = useState([]),
+    [draftKnowledgeRefs,setDraftKnowledgeRefs]=useState([]),
     [sandboxProfileId, setSandboxProfileId] = useState(""),
     [sandboxBusy, setSandboxBusy] = useState(false),
     [loadedWorkspace, setLoadedWorkspace] = useState(null),
@@ -246,6 +247,7 @@ export function useChat() {
       draftExecutorPicked.current = false;
       setSelection((options) => ({ executor: id ? options.executor : accountDefaultsRef.current?.executor || storedExecutor(), model: null, effort: null }));
       setSandboxProfileId("");
+      setDraftKnowledgeRefs([]);
       currentId.current = id;
       setActiveId(id);
       if (id) setRevealId(id);
@@ -618,7 +620,7 @@ export function useChat() {
       }
       if (strategy === "new") newChat();
       if (id !== projectRef.current) {
-        setSandboxProfileId("");
+        setSandboxProfileId(""); setDraftKnowledgeRefs([]);
         setDraftIssueId("");
         if (platform()) platform().setIssue("");
         else { const url = new URL(location.href); url.searchParams.delete("issueId"); history.replaceState({}, "", url); }
@@ -635,7 +637,7 @@ export function useChat() {
     (id) => {
       newChat();
       if (id === projectRef.current) return;
-      setSandboxProfileId("");
+      setSandboxProfileId(""); setDraftKnowledgeRefs([]);
       setProjectId(id);
       syncProject(id);
     },
@@ -1180,6 +1182,7 @@ export function useChat() {
             id,
             projectId: draft.projectId,
             issueId: draft.issueId,
+            knowledgeRefs: draftKnowledgeRefs,
             sandboxProfileId,
             executionTarget: {pool: executionMachines.defaultRunnerId ? "runner" : "cloud", runnerId: executionMachines.defaultRunnerId || ""},
             ...chosen,
@@ -1652,6 +1655,14 @@ export function useChat() {
     workspaceExecutionError: workspace?.error || "",
     ...executionMachines,
     selectSandbox,
+    knowledgeRefs:activeId ? session?.knowledgeRefs || [] : draftKnowledgeRefs,
+    async saveKnowledgeRefs(refs){
+      const id=activeId;
+      if((id||"")!==(currentId.current||"") || projectId!==projectRef.current)throw new Error("会话已切换，请重新选择知识库");
+      if (!id){setDraftKnowledgeRefs(refs);return}
+      const saved=await write(sessionPath(id)+"/knowledge",{knowledgeRefs:refs},"PUT");
+      if(currentId.current===id){sessionRef.current=saved;setSession(saved)}
+    },
     models: executorModels,
     executor,
     executors: user ? availableExecutors : [],

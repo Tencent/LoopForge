@@ -95,6 +95,8 @@ export function collectArtifacts(session) {
         source: message.role === "assistant" ? "AI 生成" : "上传的文件",
         url: attachmentURL(attachment, session.id),
         messageIndex,
+        knowledgeReads:
+          message.role === "assistant" ? message.knowledgeReads || null : null,
       });
     }
     if (message.role !== "assistant") return;
