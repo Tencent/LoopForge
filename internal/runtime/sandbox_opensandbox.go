@@ -170,7 +170,7 @@ type openSandbox struct {
 
 // Official installs provide the same built-in execution image via
 // AGENTFLOW_ISOLATED_IMAGE. The fallback matches the published Compose pin.
-const defaultOpenSandboxImage = "ghcr.io/tencent/loopforge:0.4.2"
+const defaultOpenSandboxImage = "ghcr.io/tencent/loopforge:0.4.3"
 
 func (m *Manager) newOpenSandbox(backend *openSandboxBackend, id, workspace string, profile domain.SandboxProfile, requirements SandboxRequirements, dockerfile domain.DockerfileDefinition) (Sandbox, error) {
 	if err := validateOpenSandboxProfile(profile, dockerfile); err != nil {
