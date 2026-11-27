@@ -155,6 +155,10 @@ func (h *mcpHandlers) mcpImport(c *gin.Context) {
 }
 
 func respondMCPWriteError(c *gin.Context, err error) {
+	if errors.Is(err, repo.ErrMCPImportDuplicateID) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
 	if errors.Is(err, repo.ErrMCPServerChanged) {
 		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
 		return

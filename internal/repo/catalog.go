@@ -260,6 +260,10 @@ func mcpDefinitionRow(v *domain.MCPServerDefinition) mcpServerRow {
 
 var ErrMCPServerChanged = errors.New("MCP 已被创建或更改，请刷新后重试")
 
+// ErrMCPImportDuplicateID is returned when a batch import contains two entries
+// that resolve to the same stored row (identical or collation-equivalent IDs).
+var ErrMCPImportDuplicateID = errors.New("导入批次中存在重复的 MCP id，请检查 id 大小写后重试")
+
 // MCPServerChange carries the stored definition used to authorize the write.
 // An empty Previous means the ID must be unused.
 type MCPServerChange struct {
@@ -271,12 +275,18 @@ type MCPServerChange struct {
 // An import either saves every definition or leaves the catalog untouched.
 func (r *CatalogRepo) SaveMCPServers(changes ...MCPServerChange) ([]domain.MCPServerDefinition, error) {
 	saved := make([]domain.MCPServerDefinition, 0, len(changes))
+	// writtenIDs tracks the canonical row IDs written so far in this transaction.
+	// A later entry whose DB lookup resolves to an already-written row is a
+	// duplicate regardless of how the application-level IDs compare textually
+	// (e.g. collation-equivalent non-ASCII strings like "Straße" / "STRASSE").
+	writtenIDs := make(map[string]struct{}, len(changes))
 	err := r.DB.Transaction(func(tx *gorm.DB) error {
 		for _, change := range changes {
-			v, err := r.saveMCPServer(tx, change)
+			v, err := r.saveMCPServer(tx, change, writtenIDs)
 			if err != nil {
 				return err
 			}
+			writtenIDs[v.ID] = struct{}{}
 			saved = append(saved, v)
 		}
 		return nil
@@ -287,7 +297,7 @@ func (r *CatalogRepo) SaveMCPServers(changes ...MCPServerChange) ([]domain.MCPSe
 	return saved, nil
 }
 
-func (r *CatalogRepo) saveMCPServer(tx *gorm.DB, change MCPServerChange) (domain.MCPServerDefinition, error) {
+func (r *CatalogRepo) saveMCPServer(tx *gorm.DB, change MCPServerChange, writtenIDs map[string]struct{}) (domain.MCPServerDefinition, error) {
 	v := change.Definition
 	v.Scope = strings.TrimSpace(v.Scope)
 	var row mcpServerRow
@@ -300,6 +310,12 @@ func (r *CatalogRepo) saveMCPServer(tx *gorm.DB, change MCPServerChange) (domain
 	case err != nil:
 		return v, err
 	default:
+		// The DB found a row for this ID (possibly via a collation-equivalent
+		// match). If this transaction already wrote that row, the batch contains
+		// duplicate IDs that the application-level ToLower check could not catch.
+		if _, dup := writtenIDs[row.ID]; dup {
+			return v, ErrMCPImportDuplicateID
+		}
 		var current domain.MCPServerDefinition
 		if err := json.Unmarshal(row.Payload, &current); err != nil {
 			return v, err
