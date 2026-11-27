@@ -6,8 +6,9 @@ import (
 	"testing"
 )
 
-// The operator's note reaches the node once: the retried node's feedback
-// already carries it, so the human-context section must not repeat it.
+// The operator's note reaches the node once, in the human-context section:
+// the copy composeHumanFeedback folded into the retried node's feedback is
+// dropped when the prompt is rendered.
 func TestHumanContextReachesTheNodeOnce(t *testing.T) {
 	t.Parallel()
 	wf := domain.WorkflowDefinition{Edges: []domain.WorkflowEdge{{Source: "source", Target: "report"}}}
@@ -26,16 +27,28 @@ func TestHumanContextReachesTheNodeOnce(t *testing.T) {
 	if got := applyPromptPlaceholders(nil, wf, node, role, run); strings.Count(got, note) != 1 || !strings.Contains(got, "## 人工补充上下文") {
 		t.Fatalf("human context must reach a node without feedback: %s", got)
 	}
-	// Notes accumulate with "---"; only the chunks the prompt lacks are added.
+	// Notes accumulate with "---"; each of them reaches the node once.
 	older, newer := "第一轮的补充", "第二轮的补充"
 	run.HumanContext = older + "\n\n---\n" + newer
 	run.Nodes = map[string]*domain.NodeRun{"report": {Feedback: composeHumanFeedback("", newer)}}
 	got := applyPromptPlaceholders(nil, wf, node, role, run)
 	if strings.Count(got, newer) != 1 || !strings.Contains(got, older) {
-		t.Fatalf("only missing chunks must be appended: %s", got)
+		t.Fatalf("every accumulated note must appear once: %s", got)
+	}
+	// A note whose text also appears elsewhere in the prompt, such as the run
+	// input, still reaches the node as an operator note.
+	run.Input = "整理数据，" + note
+	run.HumanContext = note
+	run.Nodes = map[string]*domain.NodeRun{"report": {Feedback: composeHumanFeedback("补充信息，重跑当前节点", note)}}
+	got = applyPromptPlaceholders(nil, wf, node, role, run)
+	if strings.Count(got, note) != 2 || !strings.Contains(got, "## 人工补充上下文") || !strings.Contains(got, "补充信息，重跑当前节点") {
+		t.Fatalf("an operator note repeated in the input must keep its section: %s", got)
 	}
 }
 
+// A role node's brief comes from the role prompt alone: the node's taskPrompt
+// (an approval node's 「需要确认什么」) never reaches it, while the run input
+// and upstream output always do, exactly once.
 func TestRunContextReachesRolesAndNodeTaskPromptDoesNot(t *testing.T) {
 	t.Parallel()
 	wf := domain.WorkflowDefinition{Edges: []domain.WorkflowEdge{{Source: "source", Target: "report"}}}

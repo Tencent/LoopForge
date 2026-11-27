@@ -9,6 +9,14 @@ import (
 
 const maxHumanContextBytes = 8000
 
+const (
+	// humanContextLabel prefixes the operator note composeHumanFeedback folds
+	// into a node's feedback.
+	humanContextLabel = "人工补充上下文：\n"
+	// humanContextSeparator joins successive notes in Run.HumanContext.
+	humanContextSeparator = "\n\n---\n"
+)
+
 func composeHumanFeedback(reason, context string) string {
 	reason = strings.TrimSpace(reason)
 	context = strings.TrimSpace(context)
@@ -19,10 +27,34 @@ func composeHumanFeedback(reason, context string) string {
 	case context == "":
 		return reason
 	case reason == "":
-		return "人工补充上下文：\n" + context
+		return humanContextLabel + context
 	default:
-		return reason + "\n\n人工补充上下文：\n" + context
+		return reason + "\n\n" + humanContextLabel + context
 	}
+}
+
+// feedbackWithoutHumanContext drops the operator notes recordHumanContext
+// folded into a node's feedback when the prompt renders Run.HumanContext as its
+// own section, so the agent reads each note once. Text the notes do not cover,
+// such as the retry reason, stays.
+func feedbackWithoutHumanContext(feedback, humanContext string) string {
+	humanContext = strings.TrimSpace(humanContext)
+	if feedback == "" || humanContext == "" {
+		return feedback
+	}
+	stripped := feedback
+	for _, note := range append([]string{humanContext}, strings.Split(humanContext, humanContextSeparator)...) {
+		if note = strings.TrimSpace(note); note == "" {
+			continue
+		}
+		block := humanContextLabel + note
+		stripped = strings.ReplaceAll(stripped, "\n\n"+block, "")
+		stripped = strings.ReplaceAll(stripped, block, "")
+	}
+	if stripped == feedback {
+		return feedback
+	}
+	return strings.TrimSpace(stripped)
 }
 
 func recordHumanContext(r *domain.Run, nodeID, reason, context string) string {
@@ -35,7 +67,7 @@ func recordHumanContext(r *domain.Run, nodeID, reason, context string) string {
 		ctx = ctx[:maxHumanContextBytes]
 	}
 	if prev := strings.TrimSpace(r.HumanContext); prev != "" && prev != ctx {
-		r.HumanContext = prev + "\n\n---\n" + ctx
+		r.HumanContext = prev + humanContextSeparator + ctx
 	} else {
 		r.HumanContext = ctx
 	}
