@@ -77,16 +77,19 @@ func ancestors(wf domain.WorkflowDefinition, start string) map[string]bool {
 }
 
 func descendants(wf domain.WorkflowDefinition, start string) map[string]bool {
+	outgoing := map[string][]string{}
+	for _, edge := range wf.Edges {
+		outgoing[edge.Source] = append(outgoing[edge.Source], edge.Target)
+	}
 	out := map[string]bool{}
-	changed := true
-	for changed {
-		changed = false
-		for _, e := range wf.Edges {
-			if e.Source == start || out[e.Source] {
-				if !out[e.Target] {
-					out[e.Target] = true
-					changed = true
-				}
+	queue := []string{start}
+	for len(queue) > 0 {
+		source := queue[0]
+		queue = queue[1:]
+		for _, target := range outgoing[source] {
+			if !out[target] {
+				out[target] = true
+				queue = append(queue, target)
 			}
 		}
 	}
@@ -94,21 +97,25 @@ func descendants(wf domain.WorkflowDefinition, start string) map[string]bool {
 }
 
 func replayUpstreamSucceeded(run domain.Run, nodeID string) bool {
+	incoming := map[string][]string{}
+	for _, edge := range run.WorkflowSnapshot.Edges {
+		incoming[edge.Target] = append(incoming[edge.Target], edge.Source)
+	}
 	seen := map[string]bool{nodeID: true}
 	queue := []string{nodeID}
 	for len(queue) > 0 {
 		target := queue[0]
 		queue = queue[1:]
-		for _, edge := range run.WorkflowSnapshot.Edges {
-			if edge.Target != target || seen[edge.Source] {
+		for _, source := range incoming[target] {
+			if seen[source] {
 				continue
 			}
-			upstream := run.Nodes[edge.Source]
+			upstream := run.Nodes[source]
 			if upstream == nil || upstream.Status != "succeeded" {
 				return false
 			}
-			seen[edge.Source] = true
-			queue = append(queue, edge.Source)
+			seen[source] = true
+			queue = append(queue, source)
 		}
 	}
 	return true
