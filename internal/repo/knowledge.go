@@ -1,8 +1,10 @@
 package repo
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"strings"
 	"time"
 
@@ -12,152 +14,263 @@ import (
 	"gorm.io/gorm/clause"
 )
 
-const knowledgeSettingsID = "default"
-
-// KnowledgeRepo owns the upstream knowledge base connection and the review
-// queue of distilled documents waiting to be written back.
+// KnowledgeRepo owns user-isolated knowledge connector configurations.
 type KnowledgeRepo struct {
 	*deps
 }
 
-// KnowledgeSettings returns the stored settings including the upstream token.
-// Callers that render API responses must use Public().
-func (r *KnowledgeRepo) KnowledgeSettings() domain.KnowledgeSettings {
-	var row knowledgeSettingsRow
-	if err := r.DB.Where("id = ?", knowledgeSettingsID).Take(&row).Error; err != nil {
-		return domain.KnowledgeSettings{}
+// ListKnowledgeConnectors returns all connectors owned by ownerUserID,
+// ordered from oldest to newest.
+func (r *KnowledgeRepo) ListKnowledgeConnectors(ownerUserID int64) []domain.KnowledgeConnector {
+	var rows []knowledgeConnectorRow
+	if err := r.DB.Where("owner_user_id = ?", ownerUserID).Order("created_at ASC, id ASC").Find(&rows).Error; err != nil {
+		return nil
 	}
-	var out domain.KnowledgeSettings
-	_ = json.Unmarshal(row.Payload, &out)
-	out.Token = ""
-	if row.Token != nil {
-		out.Token = *row.Token
-	}
-	out.TokenConfigured = strings.TrimSpace(out.Token) != ""
-	if row.Updated != nil {
-		out.UpdatedAt = *row.Updated
-	}
-	return out
-}
-
-func (r *KnowledgeRepo) PutKnowledgeSettings(settings domain.KnowledgeSettings) error {
-	now := time.Now().UTC()
-	token := strings.TrimSpace(settings.Token)
-	settings.Token = ""
-	settings.TokenConfigured = false
-	settings.UpdatedAt = now
-	payload, err := json.Marshal(settings)
-	if err != nil {
-		return err
-	}
-	row := knowledgeSettingsRow{ID: knowledgeSettingsID, Payload: payload, Updated: &now}
-	if token != "" {
-		row.Token = &token
-	}
-	return r.DB.Clauses(clause.OnConflict{
-		Columns:   []clause.Column{{Name: "id"}},
-		DoUpdates: clause.AssignmentColumns([]string{"payload", "token", "updated_at"}),
-	}).Create(&row).Error
-}
-
-// KnowledgeSubmissions lists submissions newest first. Empty filters match
-// everything; content is omitted to keep list payloads small.
-func (r *KnowledgeRepo) KnowledgeSubmissions(projectID, status string, limit int) []domain.KnowledgeSubmission {
-	out := make([]domain.KnowledgeSubmission, 0)
-	if limit <= 0 || limit > 500 {
-		limit = 200
-	}
-	q := r.DB.Model(&knowledgeSubmissionRow{})
-	if projectID = strings.TrimSpace(projectID); projectID != "" {
-		q = q.Where("project_id = ?", projectID)
-	}
-	if status = strings.TrimSpace(status); status != "" {
-		q = q.Where("status = ?", status)
-	}
-	var rows []knowledgeSubmissionRow
-	if err := q.Order("updated_at DESC").Limit(limit).Find(&rows).Error; err != nil {
-		return out
-	}
+	out := make([]domain.KnowledgeConnector, 0, len(rows))
 	for _, row := range rows {
-		item := knowledgeSubmissionFromRow(row)
-		item.Content = ""
-		out = append(out, item)
+		out = append(out, knowledgeConnectorFromRow(row))
 	}
 	return out
 }
 
-func (r *KnowledgeRepo) KnowledgeSubmission(id string) (domain.KnowledgeSubmission, bool) {
-	var row knowledgeSubmissionRow
-	if err := r.DB.Where("id = ?", strings.TrimSpace(id)).Take(&row).Error; err != nil {
-		return domain.KnowledgeSubmission{}, false
+// GetKnowledgeConnector returns the connector identified by id only if it belongs
+// to ownerUserID.
+func (r *KnowledgeRepo) GetKnowledgeConnector(ownerUserID int64, id string) (domain.KnowledgeConnector, bool) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return domain.KnowledgeConnector{}, false
 	}
-	return knowledgeSubmissionFromRow(row), true
+	var row knowledgeConnectorRow
+	if err := r.DB.Where("id = ? AND owner_user_id = ?", id, ownerUserID).Take(&row).Error; err != nil {
+		return domain.KnowledgeConnector{}, false
+	}
+	return knowledgeConnectorFromRow(row), true
 }
 
-// KnowledgeSubmissionIDsByArtifact maps artifact ids to the submission that
-// was created from them, so candidates can show "already queued".
-func (r *KnowledgeRepo) KnowledgeSubmissionIDsByArtifact(artifactIDs []string) map[string]string {
-	out := map[string]string{}
-	if len(artifactIDs) == 0 {
-		return out
+// PutKnowledgeConnector creates or updates a connector under conn.OwnerUserID.
+// If another user already owns a connector with conn.ID, PutKnowledgeConnector
+// refuses the write to prevent cross-user hijacking.
+func (r *KnowledgeRepo) PutKnowledgeConnector(conn domain.KnowledgeConnector) error {
+	conn.ID = strings.TrimSpace(conn.ID)
+	if conn.ID == "" {
+		return errors.New("knowledge connector id is required")
 	}
-	var rows []knowledgeSubmissionRow
-	if err := r.DB.Select("id", "artifact_id").Where("artifact_id IN ?", artifactIDs).Find(&rows).Error; err != nil {
-		return out
-	}
-	for _, row := range rows {
-		out[row.ArtifactID] = row.ID
-	}
-	return out
+	return r.DB.Transaction(func(tx *gorm.DB) error {
+		query := tx
+		if query.Dialector.Name() != "sqlite" {
+			query = query.Clauses(clause.Locking{Strength: "UPDATE"})
+		}
+		var existing knowledgeConnectorRow
+		err := query.Where("id = ?", conn.ID).Take(&existing).Error
+		switch {
+		case err == nil:
+			if existing.OwnerUserID != conn.OwnerUserID {
+				return errors.New("knowledge connector id belongs to another user")
+			}
+			now := time.Now().UTC()
+			createdAt := now
+			if existing.CreatedAt != nil && !existing.CreatedAt.IsZero() {
+				createdAt = *existing.CreatedAt
+			}
+			cfgBytes, err := marshalConnectorConfig(conn.Config)
+			if err != nil {
+				return err
+			}
+			secret := strings.TrimSpace(conn.SecretEnc)
+			var secretPtr *string
+			if secret != "" {
+				secretPtr = &secret
+			}
+			updates := map[string]any{
+				"name":        strings.TrimSpace(conn.Name),
+				"type":        strings.TrimSpace(conn.Type),
+				"endpoint":    strings.TrimSpace(conn.Endpoint),
+				"config_json": cfgBytes,
+				"secret_enc":  secretPtr,
+				"enabled":     conn.Enabled,
+				"updated_at":  &now,
+				"created_at":  &createdAt,
+			}
+			return tx.Model(&knowledgeConnectorRow{}).Where("id = ? AND owner_user_id = ?", conn.ID, conn.OwnerUserID).Updates(updates).Error
+
+		case errors.Is(err, gorm.ErrRecordNotFound):
+			now := time.Now().UTC()
+			createdAt := now
+			if !conn.CreatedAt.IsZero() {
+				createdAt = conn.CreatedAt.UTC()
+			}
+			cfgBytes, err := marshalConnectorConfig(conn.Config)
+			if err != nil {
+				return err
+			}
+			secret := strings.TrimSpace(conn.SecretEnc)
+			var secretPtr *string
+			if secret != "" {
+				secretPtr = &secret
+			}
+			row := knowledgeConnectorRow{
+				ID:          conn.ID,
+				OwnerUserID: conn.OwnerUserID,
+				Name:        strings.TrimSpace(conn.Name),
+				Type:        strings.TrimSpace(conn.Type),
+				Endpoint:    strings.TrimSpace(conn.Endpoint),
+				ConfigJSON:  cfgBytes,
+				SecretEnc:   secretPtr,
+				Enabled:     conn.Enabled,
+				CreatedAt:   &createdAt,
+				UpdatedAt:   &now,
+			}
+			return tx.Create(&row).Error
+
+		default:
+			return err
+		}
+	})
 }
 
-func (r *KnowledgeRepo) PutKnowledgeSubmission(item domain.KnowledgeSubmission) error {
-	if strings.TrimSpace(item.ID) == "" {
-		return errors.New("knowledge submission id is required")
+// UpdateKnowledgeConnectorSecret compare-and-swaps the sealed credential of one
+// connector. The caller passes the ciphertext it based its change on, so a
+// concurrent refresh/authorization is never silently overwritten, and only
+// secret_enc/updated_at are touched (name, endpoint, config stay untouched).
+func (r *KnowledgeRepo) UpdateKnowledgeConnectorSecret(ctx context.Context, ownerUserID int64, id, expectedSecretEnc, secretEnc string) (bool, error) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return false, errors.New("knowledge connector id is required")
 	}
 	now := time.Now().UTC()
-	if item.CreatedAt.IsZero() {
-		item.CreatedAt = now
+	secret := strings.TrimSpace(secretEnc)
+	var secretPtr *string
+	if secret != "" {
+		secretPtr = &secret
 	}
-	item.UpdatedAt = now
-	if item.Status == "" {
-		item.Status = domain.KnowledgeSubmissionPending
-	}
-	payload, err := json.Marshal(item)
-	if err != nil {
-		return err
-	}
-	created := item.CreatedAt
-	row := knowledgeSubmissionRow{
-		ID: item.ID, ProjectID: item.ProjectID, RunID: item.RunID, ArtifactID: item.ArtifactID,
-		Status: item.Status, Payload: payload, Created: &created, Updated: &now,
-	}
-	return r.DB.Clauses(clause.OnConflict{
-		Columns:   []clause.Column{{Name: "id"}},
-		DoUpdates: clause.AssignmentColumns([]string{"project_id", "run_id", "artifact_id", "status", "payload", "updated_at"}),
-	}).Create(&row).Error
-}
-
-func (r *KnowledgeRepo) DeleteKnowledgeSubmission(id string) error {
-	res := r.DB.Where("id = ?", strings.TrimSpace(id)).Delete(&knowledgeSubmissionRow{})
+	res := r.DB.WithContext(ctx).
+		Model(&knowledgeConnectorRow{}).
+		Where("id = ? AND owner_user_id = ? AND COALESCE(secret_enc, '') = ?", id, ownerUserID, strings.TrimSpace(expectedSecretEnc)).
+		Updates(map[string]any{"secret_enc": secretPtr, "updated_at": &now})
 	if res.Error != nil {
-		return res.Error
+		return false, res.Error
 	}
-	if res.RowsAffected == 0 {
-		return gorm.ErrRecordNotFound
-	}
-	return nil
+	return res.RowsAffected == 1, nil
 }
 
-func knowledgeSubmissionFromRow(row knowledgeSubmissionRow) domain.KnowledgeSubmission {
-	var out domain.KnowledgeSubmission
-	_ = json.Unmarshal(row.Payload, &out)
-	out.ID, out.ProjectID, out.RunID, out.ArtifactID, out.Status = row.ID, row.ProjectID, row.RunID, row.ArtifactID, row.Status
-	if row.Created != nil {
-		out.CreatedAt = *row.Created
+// UpdateKnowledgeConnectorConfig compare-and-swaps only config_json. The
+// comparison is structural (decoded config), so JSON storage normalization does
+// not produce false mismatches; name/endpoint/secret are never written.
+func (r *KnowledgeRepo) UpdateKnowledgeConnectorConfig(ctx context.Context, ownerUserID int64, id, expectedConfigJSON, configJSON string) (bool, error) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return false, errors.New("knowledge connector id is required")
 	}
-	if row.Updated != nil {
-		out.UpdatedAt = *row.Updated
+	var updated bool
+	err := r.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		query := tx.WithContext(ctx)
+		if query.Dialector.Name() != "sqlite" {
+			query = query.Clauses(clause.Locking{Strength: "UPDATE"})
+		}
+		var row knowledgeConnectorRow
+		err := query.Where("id = ? AND owner_user_id = ?", id, ownerUserID).Take(&row).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if !connectorConfigEqual(row.ConfigJSON, expectedConfigJSON) {
+			return nil
+		}
+		if strings.TrimSpace(configJSON) == "" {
+			configJSON = "{}"
+		}
+		now := time.Now().UTC()
+		res := tx.Model(&knowledgeConnectorRow{}).
+			Where("id = ? AND owner_user_id = ?", id, ownerUserID).
+			Updates(map[string]any{"config_json": []byte(configJSON), "updated_at": &now})
+		if res.Error != nil {
+			return res.Error
+		}
+		updated = true
+		return nil
+	})
+	return updated, err
+}
+
+func connectorConfigEqual(stored []byte, expectedJSON string) bool {
+	var storedCfg, expectedCfg domain.KnowledgeConnectorConfig
+	if len(stored) > 0 && string(stored) != "null" {
+		if json.Unmarshal(stored, &storedCfg) != nil {
+			return false
+		}
+	}
+	if strings.TrimSpace(expectedJSON) == "" {
+		expectedJSON = "{}"
+	}
+	if json.Unmarshal([]byte(expectedJSON), &expectedCfg) != nil {
+		return false
+	}
+	normalizeConnectorConfig(&storedCfg)
+	normalizeConnectorConfig(&expectedCfg)
+	return reflect.DeepEqual(storedCfg, expectedCfg)
+}
+
+// normalizeConnectorConfig makes nil and empty collections compare equal; they
+// are the same configuration semantically and JSON round-trips differ.
+func normalizeConnectorConfig(cfg *domain.KnowledgeConnectorConfig) {
+	if len(cfg.Headers) == 0 {
+		cfg.Headers = nil
+	}
+	if len(cfg.DefaultSources) == 0 {
+		cfg.DefaultSources = nil
+	}
+	if len(cfg.AllowedTools) == 0 {
+		cfg.AllowedTools = nil
+	}
+	if len(cfg.Extra) == 0 {
+		cfg.Extra = nil
+	}
+}
+
+// DeleteKnowledgeConnector deletes id only when owned by ownerUserID.
+func (r *KnowledgeRepo) DeleteKnowledgeConnector(ownerUserID int64, id string) (bool, error) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return false, nil
+	}
+	res := r.DB.Where("id = ? AND owner_user_id = ?", id, ownerUserID).Delete(&knowledgeConnectorRow{})
+	if res.Error != nil {
+		return false, res.Error
+	}
+	return res.RowsAffected > 0, nil
+}
+
+func marshalConnectorConfig(cfg domain.KnowledgeConnectorConfig) ([]byte, error) {
+	return json.Marshal(cfg)
+}
+
+func knowledgeConnectorFromRow(row knowledgeConnectorRow) domain.KnowledgeConnector {
+	var cfg domain.KnowledgeConnectorConfig
+	if len(row.ConfigJSON) > 0 && string(row.ConfigJSON) != "null" {
+		_ = json.Unmarshal(row.ConfigJSON, &cfg)
+	}
+	secretEnc := ""
+	if row.SecretEnc != nil {
+		secretEnc = strings.TrimSpace(*row.SecretEnc)
+	}
+	out := domain.KnowledgeConnector{
+		ID:               row.ID,
+		OwnerUserID:      row.OwnerUserID,
+		Name:             row.Name,
+		Type:             row.Type,
+		Endpoint:         row.Endpoint,
+		Config:           cfg,
+		SecretEnc:        secretEnc,
+		SecretConfigured: secretEnc != "",
+		Enabled:          row.Enabled,
+	}
+	if row.CreatedAt != nil {
+		out.CreatedAt = *row.CreatedAt
+	}
+	if row.UpdatedAt != nil {
+		out.UpdatedAt = *row.UpdatedAt
 	}
 	return out
 }

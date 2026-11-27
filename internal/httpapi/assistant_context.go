@@ -53,7 +53,7 @@ func (h *assistantHandlers) sessionIssue(c *gin.Context) {
 		c.JSON(409, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(200, saved)
+	c.JSON(200, sanitizeAssistantSessionForViewer(saved, user.ID))
 }
 func (h *assistantHandlers) issueConversations(c *gin.Context) {
 	user, ok := h.requestUser(c.Request, true)

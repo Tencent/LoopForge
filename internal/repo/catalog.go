@@ -673,6 +673,9 @@ func (r *CatalogRepo) putWorkflow(v domain.WorkflowDefinition, publishing bool) 
 	if err := domain.ValidateWorkflowPreparation(v); err != nil {
 		return err
 	}
+	if err := domain.ValidateWorkflowKnowledge(v); err != nil {
+		return err
+	}
 	if err := domain.ValidateWorkflowMetricStages(v); err != nil {
 		return err
 	}
