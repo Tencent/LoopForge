@@ -64,6 +64,12 @@ func upsert(db *gorm.DB, table string, values map[string]any) error {
 	}
 	sort.Strings(cols)
 	cl := clause.OnConflict{DoUpdates: clause.AssignmentColumns(cols)}
+	if db.Dialector.Name() == dialectPostgres {
+		// Postgres requires a conflict target for DO UPDATE, and gorm's
+		// AutoMigrate names the primary key constraint of every table
+		// "<table>_pkey", so the target can be derived from the table name.
+		cl.OnConstraint = table + "_pkey"
+	}
 	if err := db.Table(table).Clauses(cl).Create(values).Error; err != nil {
 		return fmt.Errorf("%s write: %w", table, err)
 	}
@@ -73,6 +79,11 @@ func upsert(db *gorm.DB, table string, values map[string]any) error {
 // upsertColumns inserts a row and updates only the given columns on conflict.
 func upsertColumns(db *gorm.DB, table string, values map[string]any, updateCols []string) error {
 	cl := clause.OnConflict{DoUpdates: clause.AssignmentColumns(updateCols)}
+	if db.Dialector.Name() == dialectPostgres {
+		// See upsert: Postgres needs the conflict target, the primary key
+		// constraint carries the table's default name.
+		cl.OnConstraint = table + "_pkey"
+	}
 	if err := db.Table(table).Clauses(cl).Create(values).Error; err != nil {
 		return fmt.Errorf("%s write: %w", table, err)
 	}
@@ -83,6 +94,10 @@ func upsertColumns(db *gorm.DB, table string, values map[string]any, updateCols 
 // OnConflict{DoNothing} renders an empty ON DUPLICATE KEY UPDATE clause on
 // MySQL, so the dialect-specific statement is built here. Table and column
 // names are compile-time literals; values are always bound as parameters.
+//
+// Postgres has no INSERT IGNORE. ON CONFLICT DO NOTHING without a conflict
+// target is its equivalent: the row is skipped on a conflict with any unique
+// constraint, which is what INSERT IGNORE does.
 func insertIgnore(db *gorm.DB, table string, values map[string]any) (bool, error) {
 	names := make([]string, 0, len(values))
 	for name := range values {
@@ -92,16 +107,26 @@ func insertIgnore(db *gorm.DB, table string, values map[string]any) (bool, error
 	cols := make([]string, len(names))
 	placeholders := make([]string, len(names))
 	args := make([]any, 0, len(names))
+	quote := "`"
+	if db.Dialector.Name() == dialectPostgres {
+		quote = `"`
+	}
 	for i, name := range names {
-		cols[i] = "`" + name + "`"
+		cols[i] = quote + name + quote
 		placeholders[i] = "?"
 		args = append(args, values[name])
 	}
 	verb := "INSERT OR IGNORE"
-	if db.Dialector.Name() == "mysql" {
+	switch db.Dialector.Name() {
+	case dialectMySQL:
 		verb = "INSERT IGNORE"
+	case dialectPostgres:
+		verb = "INSERT"
 	}
 	stmt := fmt.Sprintf("%s INTO %s (%s) VALUES (%s)", verb, table, strings.Join(cols, ","), strings.Join(placeholders, ","))
+	if db.Dialector.Name() == dialectPostgres {
+		stmt += " ON CONFLICT DO NOTHING"
+	}
 	res := db.Exec(stmt, args...)
 	return res.RowsAffected > 0, res.Error
 }

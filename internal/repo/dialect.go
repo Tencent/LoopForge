@@ -280,6 +280,25 @@ func (d *deps) likeOperator() string {
 	return "LIKE"
 }
 
+// payloadContainsExpr returns an expression that is true when the payload
+// column's text contains the bound needle.
+//
+// MySQL's INSTR is case-insensitive under the utf8mb4_unicode_ci collation.
+// Postgres has no INSTR, and its CAST(payload AS CHAR) is bpchar(1) — only
+// the first character — so the Postgres branch searches the lowercased jsonb
+// text instead. jsonb's text form is normalized (the keys are reordered and
+// the whitespace is dropped), which does not affect a substring search.
+func payloadContainsExpr(db *gorm.DB) string {
+	switch db.Dialector.Name() {
+	case dialectPostgres:
+		return "strpos(lower(payload::text), lower(?)) > 0"
+	case dialectMySQL:
+		return "INSTR(CAST(payload AS CHAR), ?) > 0"
+	default:
+		return "instr(CAST(payload AS TEXT), ?) > 0"
+	}
+}
+
 // nowMillisLiteral returns the current timestamp in milliseconds.
 //
 // MySQL's UTC_TIMESTAMP(3) is the wall clock at the moment the statement runs.

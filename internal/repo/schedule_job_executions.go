@@ -253,11 +253,15 @@ func (r *CatalogRepo) ScheduleJobExecutionPage(q ScheduleJobExecutionPageQuery) 
 	// job keeps at most MaxScheduleJobExecutionsPerJob rows, so the candidates
 	// stay bounded.
 	cast := "LOWER(CAST(payload AS TEXT))"
-	if r.DB.Dialector.Name() == "mysql" {
+	if r.DB.Dialector.Name() == dialectMySQL {
 		cast = "LOWER(CAST(payload AS CHAR))"
 	}
+	contains := "INSTR(" + cast + ", ?) > 0"
+	if r.DB.Dialector.Name() == dialectPostgres {
+		contains = payloadContainsExpr(r.DB)
+	}
 	var rows []scheduleJobExecutionRow
-	if err := db.Where("INSTR("+cast+", ?) > 0", search).Order("started_at DESC").Order("id DESC").Find(&rows).Error; err != nil {
+	if err := db.Where(contains, search).Order("started_at DESC").Order("id DESC").Find(&rows).Error; err != nil {
 		return out, 0
 	}
 	for _, e := range decode(rows) {

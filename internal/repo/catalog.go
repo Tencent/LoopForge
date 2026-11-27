@@ -77,7 +77,17 @@ func (r *CatalogRepo) writeEvolutionAsset(tx *gorm.DB, kind, id, content string,
 	} else {
 		return errors.New("unsupported evolution asset")
 	}
-	result := tx.Table(table).Where("id = ? AND CAST(payload AS CHAR) = CAST(? AS CHAR)", id, string(original)).Updates(map[string]any{"payload": payload, "updated_at": timePtr(now)})
+	// Postgres' CAST(x AS CHAR) is bpchar(1) — only the first character — so
+	// the optimistic-concurrency guard would degenerate into an almost always
+	// true comparison and silently drop concurrent updates. jsonb also
+	// normalizes its text form (the keys are reordered, the whitespace is
+	// dropped), so the text comparison does not hold either. jsonb equality
+	// compares the documents themselves.
+	where := "id = ? AND CAST(payload AS CHAR) = CAST(? AS CHAR)"
+	if tx.Dialector.Name() == dialectPostgres {
+		where = "id = ? AND payload = ?::jsonb"
+	}
+	result := tx.Table(table).Where(where, id, string(original)).Updates(map[string]any{"payload": payload, "updated_at": timePtr(now)})
 	if result.Error != nil {
 		return result.Error
 	}
