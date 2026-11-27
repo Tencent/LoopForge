@@ -913,6 +913,10 @@ git commit -m "feat(db): JSON 调用点增加 Postgres 分支
 - Modify: `internal/repo/catalog.go:80`（`CAST(payload AS CHAR)` 等值比较）
 - Modify: `internal/repo/run_evals.go:120`（`LIMIT 18446744073709551615`）
 - Modify: `internal/repo/rooms.go:114`（`CAST(payload AS CHAR)`）
+- Modify: `internal/repo/assistant_cli_notice.go:100-105`（`INSTR(CAST(payload AS CHAR), ?)`）
+- Modify: `internal/repo/schedule_job_executions.go:256-260`（`INSTR(LOWER(CAST(payload AS CHAR)), ?)`）
+- Modify: `internal/repo/payload_mentions.go:22-24`（`INSTR(CAST(payload AS CHAR), ?)`）
+- Modify: `internal/repo/dialect.go`（新增 `payloadContainsExpr` 助手）
 - Test: `internal/repo/postgres_mysqlisms_test.go`（集成测试）
 
 **Interfaces:**
@@ -935,6 +939,8 @@ git commit -m "feat(db): JSON 调用点增加 Postgres 分支
 | `catalog.go:481` | `CONVERT(? USING utf8mb4) COLLATE utf8mb4_unicode_ci = ?` | Postgres 直接 `? = ?`（Postgres 区分大小写，与 ID 语义一致） |
 | `run_evals.go:120` | `LIMIT 18446744073709551615 OFFSET ?` | `LIMIT ? OFFSET ?` 传 `math.MaxInt64`（PG 不接受 2^64-1） |
 | `rooms.go:114` | `CAST(payload AS CHAR)` | `payload::text` |
+| `assistant_cli_notice.go:105`、`payload_mentions.go:23` | `INSTR(CAST(payload AS CHAR), ?) > 0` | Postgres 没有 `INSTR`，而 `CAST(payload AS CHAR)` 是 `bpchar(1)`（只剩首字符），子串搜索会永远落空 → `strpos(lower(payload::text), lower(?)) > 0`（MySQL 的 `utf8mb4_unicode_ci` 让 `INSTR` 不区分大小写，所以两边都 `lower`） |
+| `schedule_job_executions.go:257` | `INSTR(LOWER(CAST(payload AS CHAR)), ?) > 0` | 同上：`strpos(lower(payload::text), lower(?)) > 0` |
 
 `insertIgnore` 的 Postgres 写法：
 
@@ -1016,6 +1022,70 @@ func upsert(db *gorm.DB, table string, values map[string]any) error {
 	}
 	result := tx.Table(table).Where(where, args...).Updates(map[string]any{"payload": payload, "updated_at": timePtr(now)})
 ```
+
+三处「payload 文本里是否包含某个子串」的 Postgres 写法（`assistant_cli_notice.go`、`schedule_job_executions.go`、`payload_mentions.go`）共用一个助手，加在 `internal/repo/dialect.go`：
+
+```go
+// payloadContainsExpr returns an expression that is true when the payload
+// column's text contains the bound needle.
+//
+// MySQL's INSTR is case-insensitive under the utf8mb4_unicode_ci collation.
+// Postgres has no INSTR, and its CAST(payload AS CHAR) is bpchar(1) — only
+// the first character — so the Postgres branch searches the lowercased jsonb
+// text instead.
+func payloadContainsExpr(db *gorm.DB) string {
+	switch db.Dialector.Name() {
+	case dialectPostgres:
+		return "strpos(lower(payload::text), lower(?)) > 0"
+	case dialectMySQL:
+		return "INSTR(CAST(payload AS CHAR), ?) > 0"
+	default:
+		return "instr(CAST(payload AS TEXT), ?) > 0"
+	}
+}
+```
+
+三个调用点各自插入 Postgres 分支，**MySQL/sqlite 的字符串保持原样**：
+
+`assistant_cli_notice.go` 的 `wherePayloadHas`：
+
+```go
+	expr := "instr(CAST(payload AS TEXT), ?) > 0"
+	if db.Dialector.Name() == dialectMySQL {
+		expr = "INSTR(CAST(payload AS CHAR), ?) > 0"
+	}
+	if db.Dialector.Name() == dialectPostgres {
+		expr = payloadContainsExpr(db)
+	}
+```
+
+`payload_mentions.go` 的 `payloadMentions`：
+
+```go
+	has := "instr(CAST(payload AS TEXT), ?) > 0"
+	if db.Dialector.Name() == dialectMySQL {
+		has = "INSTR(CAST(payload AS CHAR), ?) > 0"
+	}
+	if db.Dialector.Name() == dialectPostgres {
+		has = payloadContainsExpr(db)
+	}
+```
+
+`schedule_job_executions.go` 的搜索（它的 MySQL 形态多一层 `LOWER`，所以这里只换 Postgres 分支）：
+
+```go
+	cast := "LOWER(CAST(payload AS TEXT))"
+	if r.DB.Dialector.Name() == dialectMySQL {
+		cast = "LOWER(CAST(payload AS CHAR))"
+	}
+	contains := "INSTR(" + cast + ", ?) > 0"
+	if r.DB.Dialector.Name() == dialectPostgres {
+		contains = payloadContainsExpr(r.DB)
+	}
+	if err := db.Where(contains, search).Order("started_at DESC").Order("id DESC").Find(&rows).Error; err != nil {
+```
+
+注意 `payload::text` 是 jsonb 的规范化文本表示（键序、空白被重排），子串搜索不受影响；但 `payload_mentions.go` 找的是**完整 ID**，`schedule_job_executions.go` 找的是失败文案，`assistant_cli_notice.go` 找的是错误文案——三者的 needle 都不是 jsonb 结构的一部分，文本规范化不会让它们漏匹配。集成测试要为这三处各写一条用例（Postgres 下能命中、needle 不存在时不命中）。
 
 `integration_lock.go` 的 Postgres 写法：
 
@@ -1182,7 +1252,7 @@ Expected: FAIL（`INSERT IGNORE` 在 Postgres 上是语法错误；`upsert` 缺�
 
 - [ ] **Step 4: 实现改写**
 
-按上表逐处改写 9 个文件。
+按上表逐处改写 13 个文件。
 
 - [ ] **Step 5: 编译 + 既有测试**
 
