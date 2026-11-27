@@ -18,14 +18,23 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/mcpserver"
 )
 
 // Only a confirmed preparation failure carries this marker. A lost start RPC
 // response may hide a running CLI and must never be treated as safe to restart.
 var ErrConversationNotStarted = errors.New("conversation process was not started")
+
+// ConversationWorkspaceSetupError marks a failure specific to preparing
+// or launching the workspace used by a conversation.
+type ConversationWorkspaceSetupError struct{ Cause error }
+
+func (e *ConversationWorkspaceSetupError) Error() string { return e.Cause.Error() }
+func (e *ConversationWorkspaceSetupError) Unwrap() error { return e.Cause }
 
 // ConversationProcessRequest travels only over the authenticated runner
 // control connection. Keys and process input never enter durable task rows.
@@ -42,6 +51,8 @@ type ConversationProcessRequest struct {
 	After      int64                `json:"after,omitempty"`
 	Gateway    string               `json:"gateway,omitempty"`
 	Token      string               `json:"token,omitempty"`
+
+	ReportVersion bool `json:"reportVersion,omitempty"`
 }
 
 type ConversationFile struct {
@@ -61,6 +72,8 @@ type ConversationCommand struct {
 	AgentCLI           AgentCLIOptions
 	Credentials        RunCredentials
 	Interactive        bool
+
+	ProjectCredentialEnv map[string]string `json:"projectCredentialEnv,omitempty"`
 }
 
 func ConversationCommandFor(command CommandSpec, credentials RunCredentials) *ConversationCommand {
@@ -68,16 +81,23 @@ func ConversationCommandFor(command CommandSpec, credentials RunCredentials) *Co
 }
 
 type ConversationProcessResult struct {
-	Root       string                  `json:"root,omitempty"`
-	ID         string                  `json:"id,omitempty"`
-	Events     []domain.TelemetryEvent `json:"events,omitempty"`
-	Sequence   int64                   `json:"sequence,omitempty"`
-	Done       bool                    `json:"done,omitempty"`
-	Error      string                  `json:"error,omitempty"`
-	NotStarted bool                    `json:"notStarted,omitempty"`
+	Root             string                  `json:"root,omitempty"`
+	WorkingDir       string                  `json:"workingDir,omitempty"`
+	PromptInputFiles bool                    `json:"promptInputFiles,omitempty"`
+	ID               string                  `json:"id,omitempty"`
+	Events           []domain.TelemetryEvent `json:"events,omitempty"`
+	Sequence         int64                   `json:"sequence,omitempty"`
+	Done             bool                    `json:"done,omitempty"`
+	Error            string                  `json:"error,omitempty"`
+	ErrorCode        string                  `json:"errorCode,omitempty"`
+	NotStarted       bool                    `json:"notStarted,omitempty"`
+	CLIVersion       string                  `json:"cliVersion,omitempty"`
+	VersionSource    string                  `json:"versionSource,omitempty"`
 	// GitScrubbed names the Git credentials the agent wrote by hand that were
 	// removed when a workspace CLI finished; it never holds their values.
 	GitScrubbed []string `json:"gitScrubbed,omitempty"`
+	// Only conversation-relative paths are sent back to the platform.
+	RemovedSkillLinks []string `json:"removedSkillLinks,omitempty"`
 }
 
 type ConversationSandboxFactory func(context.Context, string) (Sandbox, func(), error)
@@ -139,20 +159,28 @@ func (p *ConversationProcessPool) lockAssets(ctx context.Context, root string) (
 }
 
 type conversationProcess struct {
-	mu         sync.Mutex
-	cancel     context.CancelFunc
-	input      *os.File
-	events     []domain.TelemetryEvent
-	base       int64
-	done       bool
-	err        string
-	wake       chan struct{}
-	lastPoll   time.Time
-	closeRelay func()
-	finished   chan struct{}
-	root       string
-	bytes      int
-	notStarted bool
+	mu              sync.Mutex
+	cancel          context.CancelFunc
+	input           *os.File
+	codeBuddyStream *codeBuddyBackgroundStream
+	events          []domain.TelemetryEvent
+	base            int64
+	done            bool
+	err             string
+	errorCode       string
+	wake            chan struct{}
+	lastPoll        time.Time
+	closeRelay      func()
+	finished        chan struct{}
+	root            string
+	bytes           int
+	notStarted      bool
+	cliVersion      string
+	versionSource   string
+	// workspace replaces <root>/ws in stdin under seatbelt, which has no mount
+	// namespace to map that path onto the run workspace.
+	workspace     string
+	stdinProvider string
 	// gitScrubbed is set with done, under mu.
 	gitScrubbed []string
 }
@@ -167,6 +195,7 @@ func (p *ConversationProcessPool) Handle(ctx context.Context, root, workspace st
 	if req.Operation == "start" {
 		return p.start(ctx, root, workspace, sandbox, req, forward, factories...)
 	}
+	var removedSkillLinks []string
 	if req.Operation == "prepare" || req.Operation == "sync" || req.Operation == "resetAssets" || req.Operation == "discard" {
 		// Serialize asset writes with reservation of a new process. Checking
 		// roots and releasing the fence before a write allows start to race it.
@@ -181,7 +210,12 @@ func (p *ConversationProcessPool) Handle(ctx context.Context, root, workspace st
 		if active {
 			return ConversationProcessResult{}, fmt.Errorf("会话原生进程仍在运行，不能替换资产或启动新进程")
 		}
-		if err = ValidateConversationRoot(root); err != nil {
+		if req.Operation == "prepare" {
+			removedSkillLinks, err = RemoveConversationSkillLinks(root)
+		} else {
+			err = ValidateConversationRoot(root)
+		}
+		if err != nil {
 			return ConversationProcessResult{}, err
 		}
 		if req.Operation == "discard" {
@@ -190,15 +224,14 @@ func (p *ConversationProcessPool) Handle(ctx context.Context, root, workspace st
 			}
 			return ConversationProcessResult{}, os.RemoveAll(root)
 		}
-		if err = os.MkdirAll(filepath.Join(root, "home", "tmp"), 0700); err != nil {
-			return ConversationProcessResult{}, err
-		}
-		if err = os.MkdirAll(filepath.Join(root, "ws"), 0700); err != nil {
-			return ConversationProcessResult{}, err
+		for _, dir := range []string{"home/tmp", "ws"} {
+			if err = os.MkdirAll(filepath.Join(root, dir), 0700); err != nil {
+				return ConversationProcessResult{}, NewConversationStateError("创建会话目录", dir, err)
+			}
 		}
 	}
 	if req.Operation == "prepare" {
-		return ConversationProcessResult{Root: root}, nil
+		return ConversationProcessResult{Root: root, PromptInputFiles: true, RemovedSkillLinks: removedSkillLinks}, nil
 	}
 	if req.Operation == "resetAssets" {
 		for _, dir := range conversationAssetTrees {
@@ -267,8 +300,12 @@ func (p *ConversationProcessPool) Handle(ctx context.Context, root, workspace st
 	switch req.Operation {
 	case "write":
 		proc.mu.Lock()
-		input := proc.input
+		input, workspace := proc.input, proc.workspace
+		background := proc.codeBuddyStream
 		proc.mu.Unlock()
+		if background != nil && (req.EOF || background.isDrained()) {
+			return ConversationProcessResult{}, nil
+		}
 		if input == nil {
 			return ConversationProcessResult{}, fmt.Errorf("process has no stdin")
 		}
@@ -279,8 +316,18 @@ func (p *ConversationProcessPool) Handle(ctx context.Context, root, workspace st
 		defer stopWrite()
 		if req.EOF {
 			err = input.Close()
+			// A short-lived CLI can exit before the client relays its final EOF.
+			if errors.Is(err, os.ErrClosed) || errors.Is(err, io.ErrClosedPipe) {
+				err = nil
+			}
 		} else {
-			_, err = io.WriteString(input, conversationRemap(req.Data, req.SourceRoot, root))
+			data := remapConversationStdin(req.Data, req.SourceRoot, root, workspace, proc.stdinProvider)
+			_, err = io.WriteString(input, data)
+			if err != nil && background != nil && background.isDrained() {
+				// A terminal error can race the first prompt write. The
+				// caller needs the buffered error frame to recover.
+				err = nil
+			}
 		}
 		return ConversationProcessResult{}, err
 	case "stop":
@@ -328,7 +375,11 @@ func (p *ConversationProcessPool) Handle(ctx context.Context, root, workspace st
 		proc.events = proc.events[ack:]
 		proc.base = req.After
 		n := min(len(proc.events), 256)
-		result := ConversationProcessResult{ID: req.ID, Events: append([]domain.TelemetryEvent(nil), proc.events[:n]...), Sequence: proc.base + int64(n), Done: proc.done && n == len(proc.events), Error: proc.err, NotStarted: proc.notStarted}
+		result := ConversationProcessResult{
+			ID: req.ID, Events: append([]domain.TelemetryEvent(nil), proc.events[:n]...), Sequence: proc.base + int64(n),
+			Done: proc.done && n == len(proc.events), Error: proc.err, ErrorCode: proc.errorCode, NotStarted: proc.notStarted,
+			CLIVersion: proc.cliVersion, VersionSource: proc.versionSource,
+		}
 		if result.Done {
 			result.GitScrubbed = append([]string(nil), proc.gitScrubbed...)
 		}
@@ -350,6 +401,23 @@ func conversationAssetPath(root, target string) error {
 		}
 	}
 	return nil
+}
+
+// ConversationTerminalResultDrain gives a CLI time to flush its output and
+// session journal after its protocol result, before the process is stopped.
+const ConversationTerminalResultDrain = 2500 * time.Millisecond
+
+// conversationStdoutTerminal reports a Claude-style stream-json result frame,
+// which Cursor, CodeBuddy and the other agent CLIs emit when the turn is over.
+func conversationStdoutTerminal(line string) bool {
+	line = strings.TrimSpace(line)
+	if line == "" || line[0] != '{' {
+		return false
+	}
+	var event struct {
+		Type string `json:"type"`
+	}
+	return json.Unmarshal([]byte(line), &event) == nil && event.Type == "result"
 }
 
 // IDs are generated before dispatch, so cancellation can address a start whose
@@ -408,7 +476,7 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 		return ConversationProcessResult{}, err
 	}
 	procCtx, cancel := context.WithCancel(ctx)
-	proc := &conversationProcess{cancel: cancel, wake: make(chan struct{}, 1), finished: make(chan struct{}), root: root, lastPoll: time.Now()}
+	proc := &conversationProcess{cancel: cancel, wake: make(chan struct{}, 1), finished: make(chan struct{}), root: root, lastPoll: time.Now(), stdinProvider: req.Command.Provider}
 	p.mu.Lock()
 	// Expiry and reservation share the same lock as stop's expired-ID reply.
 	// A start paused across its deadline must not register after stop said Done.
@@ -435,8 +503,20 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 	var release func()
 	var stdin io.Closer
 	var cleanupLogin func() error
+	var background *codeBuddyBackgroundStream
+	// Set once a terminal result line has been followed by the drain window
+	// and this process is stopped so a lingering CLI cannot pin the turn.
+	var stopAfterTerminalResult atomic.Bool
 	finish := func(runErr error, notStarted bool) {
 		cancel()
+		var backgroundWarning domain.TelemetryEvent
+		if background != nil {
+			background.stop()
+			backgroundWarning = background.timeoutEvent()
+		}
+		if req.SourceRoot != "" && req.SourceRoot != root {
+			_ = os.RemoveAll(filepath.Join(root, conversationPromptInputDir))
+		}
 		// Cancellation can skip the shell EXIT trap. Clean ephemeral ZCode
 		// credentials before publishing completion or releasing this root.
 		credentialCleanupErr := cleanupConversationCredentialFiles(root, req.Command.Provider)
@@ -460,14 +540,31 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 		if proc.input != nil {
 			_ = proc.input.Close()
 		}
+		if backgroundWarning.Name != "" {
+			proc.events = append(proc.events, backgroundWarning)
+			proc.bytes += len(backgroundWarning.Message)
+		}
 		if credentialCleanupErr != nil {
 			proc.err = "清理 CLI 临时凭证失败"
 			proc.notStarted = notStarted
 		}
 		proc.gitScrubbed = gitScrubbed
+		// The process was stopped because its protocol already emitted a
+		// terminal result. The kill is not a failed turn; the result line is.
+		if runErr != nil && stopAfterTerminalResult.Load() {
+			runErr = nil
+			notStarted = false
+		}
 		if runErr != nil && proc.err == "" {
 			proc.err = runErr.Error()
 			proc.notStarted = notStarted
+		}
+		if proc.notStarted {
+			proc.errorCode = domain.WorkspaceErrorConversationProcess
+			var workspaceErr *ConversationWorkspaceSetupError
+			if errors.As(runErr, &workspaceErr) {
+				proc.errorCode = domain.WorkspaceErrorConversationSetup
+			}
 		}
 		proc.done = true
 		proc.mu.Unlock()
@@ -502,18 +599,18 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 	}
 	for _, dir := range []string{"home/tmp", "ws"} {
 		if err = os.MkdirAll(filepath.Join(root, dir), 0700); err != nil {
-			return ConversationProcessResult{}, err
+			return ConversationProcessResult{}, NewConversationStateError("创建会话目录", dir, err)
 		}
 	}
 	if spec != nil {
 		profile := spec.Profile
 		if profile.Driver == domain.SandboxDriverNative {
 			if profile.Driver, err = domain.ResolveSandboxDriver(profile.Driver, goruntime.GOOS); err != nil {
-				return ConversationProcessResult{}, err
+				return ConversationProcessResult{}, &ConversationWorkspaceSetupError{Cause: err}
 			}
 		}
 		if profile.Driver != domain.SandboxDriverDocker && profile.Driver != domain.SandboxDriverBwrap && profile.Driver != domain.SandboxDriverSeatbelt {
-			return ConversationProcessResult{}, fmt.Errorf("对话工作区只支持 Docker 或 native 沙箱")
+			return ConversationProcessResult{}, &ConversationWorkspaceSetupError{Cause: errors.New("对话工作区只支持 Docker 或 native 沙箱")}
 		}
 		resolved := *spec
 		resolved.Profile = profile
@@ -525,16 +622,13 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 			if spec.Dockerfile != nil {
 				resources.Dockerfile = *spec.Dockerfile
 			}
-			if spec.Environment != nil {
-				resources.Environment = *spec.Environment
-			}
 			sb, err = OpenRemoteSandbox(procCtx, "conversation-"+id, workspace, spec.Profile, SandboxRequirements{ConversationRoot: root}, resources)
 			if sb != nil {
 				release = func() { _ = sb.Close(context.Background()) }
 			}
 		}
 		if err != nil {
-			return ConversationProcessResult{}, err
+			return ConversationProcessResult{}, &ConversationWorkspaceSetupError{Cause: err}
 		}
 	} else if len(factories) > 0 && factories[0] != nil {
 		sb, release, err = factories[0](procCtx, root)
@@ -551,8 +645,15 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 		env[key] = conversationRemap(value, req.SourceRoot, root)
 	}
 	command = WithCommandEnvironment(command, env)
+	if len(req.Command.ProjectCredentialEnv) > 0 {
+		if spec == nil {
+			return ConversationProcessResult{}, fmt.Errorf("项目凭据只能在项目工作区中使用")
+		}
+		procCtx = WithProjectCredentialEnv(procCtx, req.Command.ProjectCredentialEnv)
+	}
 	command = command.WithPrivateHomeDir(filepath.Join(root, "home"))
 	command.AgentCLI.SystemPromptFile = conversationRemap(command.AgentCLI.SystemPromptFile, req.SourceRoot, root)
+	command.AgentCLI.PromptFile = conversationRemap(command.AgentCLI.PromptFile, req.SourceRoot, root)
 	command.WorkingDir = filepath.Join(root, "ws")
 	if spec != nil && spec.Profile.Driver == domain.SandboxDriverSeatbelt {
 		// macOS seatbelt has no mount namespace to map <root>/ws onto the run
@@ -562,6 +663,11 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 			command.WorkingDir = sb.Workspace()
 		case strings.TrimSpace(workspace) != "":
 			command.WorkingDir = workspace
+		}
+		if command.WorkingDir != filepath.Join(root, "ws") {
+			proc.mu.Lock()
+			proc.workspace = command.WorkingDir
+			proc.mu.Unlock()
 		}
 	}
 	command.OwnProcessGroup = true
@@ -604,7 +710,7 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 	if spec != nil {
 		binary, err := ensureConversationCLI(procCtx, sb, command.Provider, filepath.Join(root, "home"))
 		if err != nil {
-			return ConversationProcessResult{}, err
+			return ConversationProcessResult{}, &ConversationWorkspaceSetupError{Cause: err}
 		}
 		command.Argv[0] = binary
 	}
@@ -615,6 +721,7 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 		}
 		command.Argv[0] = binary
 	}
+	cliBinary := command.Argv[0]
 	bindSandbox := sb
 	bindWorkspace := filepath.Join(root, "ws")
 	if bindSandbox == nil {
@@ -643,7 +750,8 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 		}
 	}
 	nativeArgv := append([]string(nil), command.Argv...)
-	command, err = bindCommand(bindSandbox, bindWorkspace, command, req.Command.Credentials)
+	command = withBwrapManagedCLI(command, sandboxDriver(bindSandbox))
+	command, err = bindCommand(procCtx, bindSandbox, bindWorkspace, command, req.Command.Credentials)
 	if err != nil {
 		return ConversationProcessResult{}, err
 	}
@@ -657,8 +765,16 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 		if err != nil {
 			return ConversationProcessResult{}, err
 		}
+		// The API relays one user frame. CodeBuddy needs this pipe to stay
+		// open through asynchronous Agents even after that frame reaches EOF.
+		if spec != nil && command.Provider == "codebuddy" &&
+			valueAfter(nativeArgv, "--input-format") == "stream-json" &&
+			valueAfter(nativeArgv, "--output-format") == "stream-json" {
+			background = newCodeBuddyBackgroundStream(writer)
+		}
 		proc.mu.Lock()
 		proc.input = writer
+		proc.codeBuddyStream = background
 		proc.mu.Unlock()
 		stdin = input
 		command.Stdin = input
@@ -692,6 +808,22 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 				}
 			}
 		}()
+		// Hook interpreters and browser helpers can keep the CLI alive after
+		// it has already emitted its terminal result. Same drain as
+		// ExecutorRunner: let the trailing output land, then stop the process
+		// so the turn can be marked finished and a queued follow-up can send.
+		// For CodeBuddy background work, wait for stdin to close before draining.
+		terminalResult := make(chan struct{})
+		if background != nil {
+			terminalResult = background.drained
+		}
+		var terminalOnce sync.Once
+		go func() {
+			if waitForProcessTerminalDrain(procCtx, terminalResult, watchDone) {
+				stopAfterTerminalResult.Store(true)
+				cancel()
+			}
+		}()
 		sink := func(ev domain.TelemetryEvent) {
 			if ev.Name != "process.stdout" && ev.Name != "process.stderr" {
 				return
@@ -705,10 +837,30 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 				cancel()
 			}
 			proc.mu.Unlock()
+			if ev.Name == "process.stdout" {
+				if background != nil {
+					background.observeStdout(ev.Message)
+				} else if conversationStdoutTerminal(ev.Message) {
+					terminalOnce.Do(func() { close(terminalResult) })
+				}
+			}
 			select {
 			case proc.wake <- struct{}{}:
 			default:
 			}
+		}
+		if req.ReportVersion {
+			defer ObserveCLIVersion(procCtx, sb, command.Provider, cliBinary, func(version, source string) {
+				proc.mu.Lock()
+				if !proc.done {
+					proc.cliVersion, proc.versionSource = version, source
+				}
+				proc.mu.Unlock()
+				select {
+				case proc.wake <- struct{}{}:
+				default:
+				}
+			})()
 		}
 		if sb != nil {
 			_, runErr = WithSandboxCredentials(sb, req.Command.Credentials).Exec(procCtx, command, sink)
@@ -716,7 +868,7 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 			_, runErr = ExecuteLocalCommand(procCtx, filepath.Join(root, "ws"), command, req.Command.Credentials, sink)
 		}
 	}()
-	return ConversationProcessResult{Root: root, ID: id}, nil
+	return ConversationProcessResult{Root: root, WorkingDir: command.WorkingDir, ID: id}, nil
 }
 
 // scrubConversationGitSecrets cleans the HOMEs a workspace CLI used (the
@@ -804,6 +956,19 @@ func startConversationRelay(ctx context.Context, token string, forward Conversat
 			http.Error(w, "invalid request", 400)
 			return
 		}
+		if mcpserver.AcceptsEventStream(r) {
+			var request struct {
+				Method string          `json:"method"`
+				ID     json.RawMessage `json:"id"`
+			}
+			if json.Unmarshal(data, &request) == nil && request.Method == "tools/call" &&
+				len(request.ID) > 0 && string(request.ID) != "null" {
+				mcpserver.WriteToolResponse(w, r, request.ID, func() (json.RawMessage, error) {
+					return forward(r.Context(), token, data)
+				})
+				return
+			}
+		}
 		result, err := forward(r.Context(), token, data)
 		if err != nil {
 			http.Error(w, "gateway unavailable", 502)
@@ -825,7 +990,7 @@ func startConversationRelay(ctx context.Context, token string, forward Conversat
 		if err != nil {
 			stopContext()
 			stop()
-			return "", nil, err
+			return "", nil, &ConversationWorkspaceSetupError{Cause: err}
 		}
 	}
 	return "http://" + net.JoinHostPort(host, fmt.Sprint(listener.Addr().(*net.TCPAddr).Port)), func() { stopContext(); stop() }, nil
@@ -879,4 +1044,23 @@ func conversationRemap(value, source, target string) string {
 		return value
 	}
 	return strings.ReplaceAll(value, source, target)
+}
+
+// ConversationStdinPath returns the bytes a path occupies inside the CLI's
+// stdin stream. Codex app-server frames use JSON strings, so paths must be
+// remapped in their encoded form even when a frame spans multiple writes.
+func ConversationStdinPath(path, provider string) string {
+	if provider != "codex" {
+		return path
+	}
+	raw, _ := json.Marshal(path)
+	return string(raw[1 : len(raw)-1])
+}
+
+func remapConversationStdin(data, source, root, workspace, provider string) string {
+	data = conversationRemap(data, ConversationStdinPath(source, provider), ConversationStdinPath(root, provider))
+	if workspace != "" {
+		data = conversationRemap(data, ConversationStdinPath(filepath.Join(root, "ws"), provider), ConversationStdinPath(workspace, provider))
+	}
+	return data
 }

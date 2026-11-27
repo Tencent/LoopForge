@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"agentflow/internal/config"
+	"agentflow/internal/credcrypt"
 	"agentflow/internal/engine"
 	"agentflow/internal/httpapi"
 	"agentflow/internal/managedcli"
@@ -92,9 +93,10 @@ func main() {
 	mysqlDSN := flag.String("mysql-dsn", "", "MySQL DSN; overrides AGENTFLOW_MYSQL_DSN. MySQL is the only data source.")
 	roleFlag := flag.String("role", "", "process role: api, worker, or all (default all)")
 	cliAction := flag.String("cli-action", "", "local managed CLI administration: status, update, or rollback; exits without starting services")
-	cliProvider := flag.String("cli-provider", "", "provider for CLI rollback: codex, codebuddy, or claude-code")
+	cliProvider := flag.String("cli-provider", "", "managed CLI provider to roll back")
 	cliTimeout := flag.Duration("cli-timeout", 80*time.Minute, "total managed CLI operation timeout")
 	browserImage := flag.Bool("browser-image", false, "build or pull the agent browser sidecar image, print its name and exit")
+	credentialAction := flag.String("credential-action", "", "Bot credential administration: status or reencrypt; exits without starting services")
 	flag.Parse()
 	loadDotEnv()
 	if *browserImage {
@@ -107,7 +109,7 @@ func main() {
 		fmt.Println(image)
 		return
 	}
-	if os.Getenv("AGENTFLOW_SESSION_SECRET") == "" && *cliAction == "" {
+	if os.Getenv("AGENTFLOW_SESSION_SECRET") == "" && *cliAction == "" && *credentialAction == "" {
 		log.Fatal("AGENTFLOW_SESSION_SECRET is required; generate with openssl rand -hex 32")
 	}
 	if os.Getenv("AGENTFLOW_AUTH_REQUIRED") == "" {
@@ -133,13 +135,31 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	if err := runtime.SetRepositoryCacheRoot(root); err != nil {
+		log.Printf("repository cache disabled: %v", err)
+	}
 	s, err := repo.Open(strings.TrimSpace(*mysqlDSN))
 	if err != nil {
 		log.Fatal(err)
 	}
+	keyring, err := credcrypt.FromEnv()
+	if err != nil {
+		log.Fatal(err)
+	}
+	s.SetCredentialKeyring(keyring)
+	if *credentialAction != "" {
+		if err := runCredentialAction(s, *credentialAction, os.Stdout); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
+	if keyring == nil {
+		log.Printf("%s is not set: stored plaintext Bot secrets stay readable, saving a new secret returns credential_key_missing", credcrypt.EnvKeys)
+	} else {
+		log.Printf("bot credential keyring current_kid=%s", keyring.CurrentKID())
+	}
 	log.Printf("storage driver=%v database=%v role=%s", s.StorageInfo()["driver"], s.StorageInfo()["database"], role)
 	e := engine.New(s, runtime.NewManagerWithLimit(root, *workerConcurrency))
-	runtime.PrebuildIsolatedImage()
 	host, _ := os.Hostname()
 	instanceID := strings.TrimSpace(os.Getenv("AGENTFLOW_INSTANCE_ID"))
 	if instanceID == "" {
@@ -198,6 +218,7 @@ func main() {
 	readyStatus := "serving"
 	switch role {
 	case "worker":
+		httpapi.ConfigureWorkerSOPHelpers(s, e)
 		e.ConfigureControl(engine.ControlConfig{Role: role, URL: endpoints.ControlURL, Token: endpoints.ControlToken, APIURL: endpoints.APIBase})
 		e.StartInstanceHeartbeat(claimCtx)
 		srv = &http.Server{Addr: endpoints.ListenAddr, Handler: workerHandler(e), ReadHeaderTimeout: 10 * time.Second}
@@ -375,6 +396,7 @@ func workerHandler(e *engine.Engine) http.Handler {
 		_, _ = fmt.Fprintf(w, `{"status":"ok","role":"worker","activeRuns":%d}`, e.ActiveRunCount())
 	})
 	mux.HandleFunc("POST /internal/runs/{id}/interrupt", e.HandleRunInterrupt)
+	mux.HandleFunc("POST /internal/runs/promote", e.HandleQueuedRunPromotion)
 	mux.HandleFunc("POST /internal/workspace-checkpoint", e.HandleWorkspaceCheckpoint)
 	return mux
 }

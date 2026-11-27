@@ -24,11 +24,11 @@ func TestInterruptedExecutionKeepsItsConversation(t *testing.T) {
 	}
 	svc := New(st, tracker.NewService(), nil)
 	opened, release, done := make(chan struct{}), make(chan struct{}), make(chan struct{})
-	svc.SetAssistantSessionPrep(func(job domain.ScheduleJob, report func(string)) (string, string, error) {
+	svc.SetAssistantSessionPrep(func(job domain.ScheduleJob, report func(string)) (AssistantRunResult, error) {
 		report("chat-live")
 		close(opened)
 		<-release
-		return "", "chat-live", nil
+		return AssistantRunResult{SessionID: "chat-live"}, nil
 	})
 	claimed, err := svc.claim("job")
 	if err != nil {
@@ -82,4 +82,42 @@ func TestInterruptedExecutionKeepsItsConversation(t *testing.T) {
 	}
 	close(release)
 	<-done
+}
+
+func TestStartNowReturnsOpenedSessionWhileStillRunning(t *testing.T) {
+	st, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(st.Close)
+	job := domain.ScheduleJob{ID: "job-live", Name: "巡检", ProjectID: "platform", SkipDispatch: true, AssistantPrompt: "p", Enabled: true, IntervalSec: 3600}
+	if err := st.PutScheduleJob(job); err != nil {
+		t.Fatal(err)
+	}
+	svc := New(st, tracker.NewService(), nil)
+	release := make(chan struct{})
+	svc.SetAssistantSessionPrep(func(job domain.ScheduleJob, report func(string)) (AssistantRunResult, error) {
+		report("chat-immediate")
+		<-release
+		return AssistantRunResult{SessionID: "chat-immediate", Message: "ok"}, nil
+	})
+	got, err := svc.StartNow(job.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.LastStatus != "running" || got.LastSessionID != "chat-immediate" {
+		t.Fatalf("StartNow = status %q session %q, want running/chat-immediate", got.LastStatus, got.LastSessionID)
+	}
+	close(release)
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		current, _ := st.ScheduleJob(job.ID)
+		if current.LastStatus == "success" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("job did not finish: %+v", current)
+		}
+		time.Sleep(15 * time.Millisecond)
+	}
 }

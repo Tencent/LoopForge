@@ -155,6 +155,9 @@ func codexLoginModels(send *json.Encoder, scanner *bufio.Scanner) []domain.CLIMo
 		Data []struct {
 			Model       string `json:"model"`
 			DisplayName string `json:"displayName"`
+			Efforts     *[]struct {
+				Value string `json:"reasoningEffort"`
+			} `json:"supportedReasoningEfforts"`
 		} `json:"data"`
 	}
 	if json.Unmarshal(codexLoginResult(scanner, 3), &result) != nil || result.Data == nil {
@@ -163,7 +166,15 @@ func codexLoginModels(send *json.Encoder, scanner *bufio.Scanner) []domain.CLIMo
 	models := make([]domain.CLIModel, 0, len(result.Data))
 	for _, item := range result.Data {
 		if id := strings.TrimSpace(item.Model); id != "" {
-			models = append(models, domain.CLIModel{ID: id, Name: item.DisplayName})
+			model := domain.CLIModel{ID: id, Name: item.DisplayName}
+			if item.Efforts != nil {
+				levels := make([]string, 0, len(*item.Efforts))
+				for _, level := range *item.Efforts {
+					levels = append(levels, level.Value)
+				}
+				model.DiscoveredReasoningEfforts = &levels
+			}
+			models = append(models, model)
 		}
 	}
 	return models
@@ -198,8 +209,10 @@ func claudeLoginModels(send *json.Encoder, scanner *bufio.Scanner) []domain.CLIM
 				Subtype   string `json:"subtype"`
 				Response  struct {
 					Models []struct {
-						Value       string `json:"value"`
-						DisplayName string `json:"displayName"`
+						Value          string    `json:"value"`
+						DisplayName    string    `json:"displayName"`
+						SupportsEffort *bool     `json:"supportsEffort"`
+						EffortLevels   *[]string `json:"supportedEffortLevels"`
 					} `json:"models"`
 				} `json:"response"`
 			} `json:"response"`
@@ -213,7 +226,11 @@ func claudeLoginModels(send *json.Encoder, scanner *bufio.Scanner) []domain.CLIM
 		models := make([]domain.CLIModel, 0, len(message.Response.Response.Models))
 		for _, item := range message.Response.Response.Models {
 			if id := strings.TrimSpace(item.Value); id != "" {
-				models = append(models, domain.CLIModel{ID: id, Name: item.DisplayName})
+				levels := item.EffortLevels
+				if item.SupportsEffort != nil && !*item.SupportsEffort {
+					levels = &[]string{}
+				}
+				models = append(models, domain.CLIModel{ID: id, Name: item.DisplayName, DiscoveredReasoningEfforts: levels})
 			}
 		}
 		return models

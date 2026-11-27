@@ -5,8 +5,55 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 )
+
+func TestDeepSeekOversizedPromptReachesCLIOnStdin(t *testing.T) {
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "dsh")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\nexec cat > \"$0.stdin\"\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+
+	const system = "Follow the project instructions."
+	prompt := strings.Repeat("长对话", 24_000) + "\nend"
+	for _, tc := range []struct {
+		name   string
+		resume string
+		want   string
+	}{
+		{name: "fresh", want: "<system_instructions>\n" + system + "\n</system_instructions>\n\n" + prompt},
+		{name: "resume", resume: "native-session", want: prompt},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			command := AgentCLICommand(AgentCLIDeepSeek, AgentCLICommandOptions{
+				Binary: bin, Chat: true, Resume: tc.resume, SystemPrompt: system, Prompt: prompt,
+			})
+			if _, err := ExecuteLocalCommand(t.Context(), dir, command, RunCredentials{}, nil); err != nil {
+				t.Fatalf("DeepSeek failed to start: %v", err)
+			}
+			got, err := os.ReadFile(bin + ".stdin")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(got) != tc.want {
+				t.Fatalf("DeepSeek received %d bytes on stdin, want %d", len(got), len(tc.want))
+			}
+			if !ConversationCommandFor(command, RunCredentials{}).Interactive {
+				t.Fatal("conversation execution must forward stdin")
+			}
+		})
+	}
+}
+
+func TestDeepSeekShortPromptUsesPositionalArgument(t *testing.T) {
+	prompt := strings.Repeat("x", maxArgvPromptBytes)
+	command := AgentCLICommand(AgentCLIDeepSeek, AgentCLICommandOptions{Chat: true, Prompt: prompt})
+	if command.Stdin != nil || command.Argv[len(command.Argv)-1] != prompt {
+		t.Fatal("a prompt within the byte limit should remain a positional argument")
+	}
+}
 
 func TestAgentCLIPiAPI(t *testing.T) {
 	for protocol, want := range map[string]string{
@@ -103,5 +150,35 @@ func TestApplyDeepSeekCredentialSetsTurnEffort(t *testing.T) {
 		if selection.ID != "agent-default-model" || selection.Config["provider"] != tc.provider || selection.Config["reasoningEffort"] != tc.want {
 			t.Errorf("base %q and effort %q: wrong model selection in %s", tc.baseURL, tc.effort, data)
 		}
+	}
+}
+
+func TestDeepSeekHarnessZhipuFlashOutputLimit(t *testing.T) {
+	for _, tc := range []struct {
+		name, baseURL, model, protocol string
+		limit                          bool
+	}{
+		{"Zhipu Flash", "https://open.bigmodel.cn/api/paas/v4/", "glm-4-flash-250414", AgentCLIProtocolChat, true},
+		{"another model", "https://open.bigmodel.cn/api/paas/v4", "glm-4.7-flash", AgentCLIProtocolChat, false},
+		{"custom gateway", "https://open.bigmodel.cn.example.com/v1", "glm-4-flash-250414", AgentCLIProtocolChat, false},
+		{"different protocol", "https://open.bigmodel.cn/api/anthropic", "glm-4-flash-250414", AgentCLIProtocolMessages, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			_, _, err := ApplyAgentCLICredential(AgentCLIDeepSeek, ProviderCredential{
+				APIKey: "fixture", BaseURL: tc.baseURL, Protocol: tc.protocol,
+			}, AgentCLIOptions{Model: tc.model}, HostAgentCLIHome(home), "/home",
+				[]string{"dsh", "--profile", "headless", "--json", "fixture"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			patch, err := os.ReadFile(filepath.Join(home, ".dsh", "agentflow-model.json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := strings.Contains(string(patch), `"maxTokens": 16384`); got != tc.limit {
+				t.Fatalf("model patch has output limit=%v, want %v", got, tc.limit)
+			}
+		})
 	}
 }

@@ -9,11 +9,9 @@ import (
 	"time"
 )
 
-// Gongfeng MCP often returns http://git.example.com/.../merge_requests/N. Accept
-// either scheme and store the canonical https URL.
-var githubPRURL = regexp.MustCompile(`https?://github\.com/([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)/pull/(\d+)`)
-
-var gongfengMRURL = regexp.MustCompile(`https?://git\.example\.com/([^\s"'<>#]+)/merge_requests/(\d+)`)
+// Find review links in the order they are cited. We validate their host and
+// project below before treating any link in free text as delivery evidence.
+var hostedReviewURL = regexp.MustCompile(`https?://([^/\s"'<>#]+)/([^\s"'<>#]+)/(pull|merge_requests)/(\d+)`)
 
 var githubPRLink = regexp.MustCompile(`^https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/pull/\d+/?$`)
 
@@ -36,6 +34,14 @@ var (
 	externalPathPart = regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)
 )
 
+func externalMRHostScope(host string) (string, bool) {
+	if strings.HasPrefix(host, "[") {
+		normalized, err := HTTPSHostScope("https://" + host)
+		return normalized, err == nil
+	}
+	return host, host != "github.com" && externalMRHost.MatchString(host)
+}
+
 // ExternalMRProject splits a ghe: or gitlab: MR project key into its
 // platform, host and repository path.
 func ExternalMRProject(project string) (platform, host, path string, ok bool) {
@@ -49,7 +55,8 @@ func ExternalMRProject(project string) (platform, host, path string, ok bool) {
 		return "", "", "", false
 	}
 	host, path, found := strings.Cut(rest, "/")
-	if !found || !externalMRHost.MatchString(host) || host == "github.com" {
+	host, validHost := externalMRHostScope(host)
+	if !found || !validHost {
 		return "", "", "", false
 	}
 	parts := strings.Split(path, "/")
@@ -81,7 +88,10 @@ func ParseDeliveryMRURL(text string) (project string, iid int, url string, ok bo
 	if err != nil || u.Scheme != "https" || u.User != nil || u.RawPath != "" {
 		return "", 0, "", false
 	}
-	host := strings.TrimSuffix(strings.ToLower(u.Host), ":443")
+	host, validHost := externalMRHostScope(strings.TrimSuffix(strings.ToLower(u.Host), ":443"))
+	if !validHost {
+		return "", 0, "", false
+	}
 	if match := externalPRPath.FindStringSubmatch(u.Path); match != nil {
 		project = MRProjectGHE + host + "/" + match[1]
 		iid, _ = strconv.Atoi(match[2])
@@ -113,18 +123,21 @@ func ParseGongfengMR(text string) (project string, iid int, url string, ok bool)
 
 // ParseGongfengMRs extracts unique Gongfeng merge request URLs in appearance order.
 func ParseGongfengMRs(text string) []GongfengMRRef {
-	for _, match := range githubPRURL.FindAllStringSubmatch(text, -1) {
-		text = strings.ReplaceAll(text, match[0], "https://git.example.com/github:"+match[1]+"/merge_requests/"+match[2])
-	}
-	matches := gongfengMRURL.FindAllStringSubmatch(text, -1)
-	if len(matches) == 0 {
-		return nil
-	}
-	out := make([]GongfengMRRef, 0, len(matches))
+	var out []GongfengMRRef
 	seen := map[string]struct{}{}
-	for _, match := range matches {
-		project := strings.TrimSuffix(strings.TrimSuffix(match[1], "/"), "/-")
-		iid, _ := strconv.Atoi(match[2])
+	for _, match := range hostedReviewURL.FindAllStringSubmatch(text, -1) {
+		host, path, kind := match[1], match[2], match[3]
+		var project string
+		if kind == "pull" && strings.EqualFold(host, "github.com") && githubRepositoryPath.MatchString(path) {
+			project = "github:" + path
+		} else if kind == "merge_requests" && IsGongfengHost(host) {
+			path = strings.TrimSuffix(strings.TrimSuffix(path, "/"), "/-")
+			project = normalizeGongfengProjectPath(path)
+			if project == "" && IsSafeGongfengProjectID(path) {
+				project = path
+			}
+		}
+		iid, _ := strconv.Atoi(match[4])
 		if project == "" || iid <= 0 {
 			continue
 		}

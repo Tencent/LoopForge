@@ -70,6 +70,7 @@ test('Claude Code, Codex and Antigravity offer account login and API Key rows ex
   `);
   const choices = [...app.document.querySelectorAll('[data-runner-auth]')];
   assert.deepEqual(choices.map(select => select.dataset.runnerAuth), ['runner-cb|codex', 'runner-cb|claude-code', 'runner-cb|agy']);
+  assert.equal(app.document.querySelector('.runner-runtime-icon.agy img')?.getAttribute('src'), '/images/credentials/antigravity.svg');
   for (const select of choices) {
     assert.deepEqual([...select.options].map(option => option.textContent), ['账号登录', 'API Key']);
   }
@@ -128,20 +129,24 @@ test('Runner update checks first and applies after the user chooses to update', 
   assert.equal(app.router.calls.filter(c => c.method === 'POST' && c.path.endsWith('/maintenance')).length, 1);
 });
 
-test('CLI model editor uses the selected auth source and saves the personal catalog', async t => {
+test('CLI model editor keeps machine account and personal API Key catalogs independent', async t => {
   const app = await loadApp();
   t.after(app.close);
   const model = {id:'gateway/model',name:'Personal model'};
-  renderCodeBuddyRow(app, { codeBuddyApiKeyConfigured: true, codeBuddyModels: [model] });
+  renderCodeBuddyRow(app, {
+    codeBuddyApiKeyConfigured: true, codeBuddyModels: [model], codexApiKeyConfigured: true, codexModels: [model],
+  });
+  app.evaluate('state.runners[0].canUseInProject=true');
   app.router.post('/api/runners/runner-cb/models/probe', {
     source:'runner', models:[{id:'codex/account-model',name:'Account model'}],
   });
   app.router.post('/api/users/1/cli-models/probe', {
     source:'official', models:[model,{id:'another-model',name:'Another model'}],
   });
-  app.router.put('/api/users/1/credentials', ({body}) => ({
-    id:1, codeBuddyApiKeyConfigured:true, codeBuddyModels:[model], ...body,
-  }));
+  app.router.put('/api/runners/runner-cb/models', ({body}) => {
+    const {canUseInProject, ...runner} = app.evaluate('state.runners[0]');
+    return {...runner, loginModels:{[body.provider]:body.models}};
+  });
   const show = provider => {
     app.document.querySelector(`[data-runner-runtime-menu="runner-cb|${provider}"]`).click();
     [...app.document.querySelectorAll('.runner-runtime-menu button')].find(b => b.textContent.trim()==='模型列表').click();
@@ -149,7 +154,8 @@ test('CLI model editor uses the selected auth source and saves the personal cata
   const picker = action => app.document.querySelector(`.runner-model-editor [data-catalog-act="${action}"]`);
   const modelIDs = () => [...app.document.querySelectorAll('.runner-model-editor [data-catalog-field="id"]')].map(input => input.value);
   show('codex');
-  assert.match(app.document.querySelector('#confirmMessage').textContent, /个人配置共用.*机器的账号登录/);
+  assert.match(app.document.querySelector('#confirmMessage').textContent, /这台机器的账号登录/);
+  assert.deepEqual(modelIDs(), []);
   picker('probe').click();
   await settle();
   assert.deepEqual(app.router.calls.find(c => c.path.endsWith('/models/probe')).body, {provider:'codex'});
@@ -158,9 +164,16 @@ test('CLI model editor uses the selected auth source and saves the personal cata
   app.document.querySelector('#confirmOkBtn').click();
   await settle();
   const saved = {id:'codex/account-model',name:'Account model'};
-  assert.deepEqual(app.router.calls.find(c => c.method==='PUT').body, {codexApiKey:'',codexModels:[saved]});
+  assert.deepEqual(app.router.calls.find(c => c.method==='PUT'&&c.path.endsWith('/models')).body, {provider:'codex',models:[saved]});
+  assert.equal(app.router.calls.some(c => c.method==='PUT'&&c.path.endsWith('/credentials')), false);
+  assert.equal(app.evaluate('state.runners[0].canUseInProject'), true);
   show('codex');
   assert.deepEqual(modelIDs(), [saved.id]);
+  app.document.querySelector('#confirmCancelBtn').click();
+
+  app.evaluate("state.runners[0].runtimes[1].authMode='personal';renderRunnersView()");
+  show('codex');
+  assert.deepEqual(modelIDs(), [model.id]);
   app.document.querySelector('#confirmCancelBtn').click();
 
   show('codebuddy');

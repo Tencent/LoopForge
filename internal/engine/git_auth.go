@@ -23,6 +23,10 @@ type gitIdentity struct {
 	email string
 }
 
+func (e *Engine) withSSHKnownHosts(ctx context.Context) context.Context {
+	return gitwork.WithSSHKnownHostsLookup(ctx, e.repo.PlatformSSHKnownHosts)
+}
+
 func withRepositoryGit(ctx context.Context, repository domain.RepositoryContext) context.Context {
 	if repository.Provider == domain.RepositoryProviderSSH || gitwork.IsSSHReference(repository.CloneURL) {
 		return gitwork.WithSSHRemote(ctx, repository.CloneURL)
@@ -49,7 +53,7 @@ func sshRepositoryURLs(repositories []domain.RepositoryContext) []string {
 }
 
 func cloneRemoteForGit(ctx context.Context, remote string) string {
-	// The command-scoped credential helper authenticates HTTPS. Keep tokens
+	// The command-scoped credential helper authenticates HTTP(S). Keep tokens
 	// out of clone arguments and the origin URL written by Git.
 	return remote
 }
@@ -120,10 +124,10 @@ var (
 	gitAuthFailure    = regexp.MustCompile(`(?i)could not read Username|Authentication failed|HTTP Basic: Access denied|requested URL returned error: 40[13]|Invalid username or password`)
 )
 
-const gitTokenFixHint = "请责任人到「个人配置 → Git 访问令牌」为仓库的准确主机配置 HTTPS 令牌，并填写该平台要求的用户名、确认仓库权限，然后重试本节点"
+const gitTokenFixHint = "请责任人到「个人配置 → Git 访问令牌」为仓库的协议、主机和端口配置令牌，并填写该平台要求的用户名、确认仓库权限，然后重试本节点"
 
 // explainGitAuthFailure says what to fix when git rejects the clone or push.
-// SOP runs use the responsible user's Git Token, which git's own
+// LOOP runs use the responsible user's Git Token, which git's own
 // "could not read Username" never mentions. The raw error stays appended.
 func explainGitAuthFailure(err error, tokenConfigured bool) error {
 	if err == nil {

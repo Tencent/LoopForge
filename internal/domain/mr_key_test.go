@@ -42,6 +42,8 @@ func TestParseDeliveryMRURL(t *testing.T) {
 		{"https://gitlab.example.org:8443/g/r/-/merge_requests/1", "gitlab:gitlab.example.org:8443/g/r", "https://gitlab.example.org:8443/g/r/-/merge_requests/1", 1},
 		{"https://forge.example.org/team/app/pulls/7", "forge:https://forge.example.org/team/app", "https://forge.example.org/team/app/pulls/7", 7},
 		{"https://forge.example.org/code/team/app/pulls/8", "forge:https://forge.example.org/code/team/app", "https://forge.example.org/code/team/app/pulls/8", 8},
+		{"https://[FD00:0:0::2]:8443/g/sub/r/-/merge_requests/2", "gitlab:[fd00::2]:8443/g/sub/r", "https://[fd00::2]:8443/g/sub/r/-/merge_requests/2", 2},
+		{"https://[fd00::2]:443/g/r/-/merge_requests/3", "gitlab:[fd00::2]/g/r", "https://[fd00::2]/g/r/-/merge_requests/3", 3},
 	}
 	for _, tc := range cases {
 		project, iid, url, ok := ParseDeliveryMRURL(tc.in)
@@ -61,6 +63,8 @@ func TestParseDeliveryMRURL(t *testing.T) {
 		"https://gitlab.example.org/g/../r/-/merge_requests/1",
 		"https://gitlab.example.org/g%2Fr/-/merge_requests/1",
 		"https://localhost/g/r/-/merge_requests/1",
+		"https://[::ffff:10.0.0.1]/g/r/-/merge_requests/1",
+		"https://[fd00::2]:65536/g/r/-/merge_requests/1",
 		"https://github.com/g/r/-/merge_requests/1",
 	} {
 		if project, iid, _, ok := ParseDeliveryMRURL(in); ok {

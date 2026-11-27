@@ -25,7 +25,7 @@ func TestProviderCredentialBindingIsolation(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			bound, err := bindCommand(sb, workspace, command, creds)
+			bound, err := bindCommand(t.Context(), sb, workspace, command, creds)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -66,13 +66,13 @@ func TestProviderCredentialBindingIsolation(t *testing.T) {
 				t.Fatalf("subprocess environment failed: %v", err)
 			}
 			// Without a responsible user's key, no host credential may be reused.
-			_, err = bindCommand(sb, workspace, command, RunCredentials{})
+			_, err = bindCommand(t.Context(), sb, workspace, command, RunCredentials{})
 			if err == nil || !strings.Contains(err.Error(), "未配置") {
 				t.Fatal("missing user key must fail before any CLI can reuse host login")
 			}
 		})
 	}
-	plain, err := bindCommand(&localSandbox{workspace: t.TempDir()}, t.TempDir(), CommandSpec{Argv: []string{"true"}}, creds)
+	plain, err := bindCommand(t.Context(), &localSandbox{workspace: t.TempDir()}, t.TempDir(), CommandSpec{Argv: []string{"true"}}, creds)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,5 +84,21 @@ func TestProviderCredentialBindingIsolation(t *testing.T) {
 	redacted := compactCommand([]string{"docker", "exec", "-e", "CODEX_API_KEY=codex-user-secret", "-e", "ANTHROPIC_API_KEY=claude-user-secret"})
 	if strings.Contains(redacted, "user-secret") {
 		t.Fatal("process telemetry leaked provider credentials")
+	}
+}
+
+func TestClaudeCodeEndpointOnlyDisablesToolSearchForDeepSeek(t *testing.T) {
+	for _, tt := range []struct {
+		baseURL, wantURL, wantToolSearch, wantDisableBetas string
+	}{
+		{" https://api.deepseek.com/anthropic ", "https://api.deepseek.com/anthropic", "false", "1"},
+		{"", "https://api.anthropic.com", "auto", ""},
+		{"https://api.deepseek.com.example.org/anthropic", "https://api.deepseek.com.example.org/anthropic", "auto", ""},
+	} {
+		env := map[string]string{"ENABLE_TOOL_SEARCH": "auto"}
+		BindClaudeCodeEndpoint(env, tt.baseURL)
+		if env["ANTHROPIC_BASE_URL"] != tt.wantURL || env["ENABLE_TOOL_SEARCH"] != tt.wantToolSearch || env["CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS"] != tt.wantDisableBetas {
+			t.Errorf("base URL %q configured incorrectly: %v", tt.baseURL, env)
+		}
 	}
 }

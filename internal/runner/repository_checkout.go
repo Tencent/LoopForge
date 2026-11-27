@@ -20,6 +20,29 @@ func checkoutRepositoryForPreparation(ctx context.Context, workspace string, rep
 	if repository.CreateNewWorkBranch && repository.RequireExistingWorkBranch {
 		return fmt.Errorf("工作分支不能既继续已有分支又新建")
 	}
+	if repository.PreserveCheckout {
+		if !gitwork.HasWorkspaceExecutor(ctx) {
+			return fmt.Errorf("shared checkout preparation requires the LOOP sandbox")
+		}
+		existing, err := gitwork.ExistingSOPCheckout(ctx, workspace, repository.CloneURL)
+		if err != nil {
+			return err
+		}
+		if existing && !repository.RequireExistingWorkBranch {
+			if err := runtime.RestoreLegacyProjectAgentConfig(ctx, workspace); err != nil {
+				return err
+			}
+			if repository.CreateNewWorkBranch {
+				repoCtx := repositoryGitContext(ctx, *repository)
+				if _, created := gitwork.RevParse(repoCtx, workspace, "refs/heads/"+repository.WorkBranch); !created {
+					if err := gitwork.RequireNewRemoteWorkBranch(repoCtx, workspace, repository.WorkBranch); err != nil {
+						return err
+					}
+				}
+			}
+			return gitwork.ContinueSOPCheckout(ctx, workspace, repository.WorkBranch)
+		}
+	}
 	info, err := os.Lstat(filepath.Join(workspace, ".git"))
 	if os.IsNotExist(err) {
 		return cloneRepository(ctx, workspace, repository)

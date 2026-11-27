@@ -1,9 +1,14 @@
 package runner
 
 import (
+	"bytes"
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
 	"encoding/json"
+	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -16,7 +21,70 @@ import (
 	flowruntime "agentflow/internal/runtime"
 
 	"github.com/gorilla/websocket"
+	"golang.org/x/crypto/ssh"
 )
+
+func TestClaimSSHKnownHostsFitsAfterLegacyPayload(t *testing.T) {
+	response := struct {
+		Task domain.RunnerTask `json:"task"`
+	}{Task: domain.RunnerTask{ID: "large-ssh-task"}}
+	empty, err := json.Marshal(response)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Task.Prompt = strings.Repeat("x", (8<<20)-len(empty)-32)
+	const pin = "[gitlab.example.org]:2222 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl\n"
+	response.Task.GitSSHKnownHosts = &domain.GitSSHKnownHosts{Entries: pin}
+	body, err := json.Marshal(response)
+	if err != nil || len(body) <= 8<<20 {
+		t.Fatalf("claim response is %d bytes: %v", len(body), err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req ClaimRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || !req.SupportsGitSSHKnownHosts || !req.SupportsDockerSandboxLimits {
+			t.Errorf("claim did not advertise SSH host pin and Docker limit support: %v", err)
+		}
+		if r.Header.Get(domain.RunnerPrivilegedSandboxHeader) != "1" {
+			t.Error("claim did not advertise privileged sandbox setting support")
+		}
+		_, _ = w.Write(body)
+	}))
+	defer server.Close()
+	task, claimed, err := NewClient(server.URL).Claim(t.Context(), ClaimRequest{AvailableRuntimes: []string{"mock"}})
+	if err != nil || !claimed || task.GitSSHKnownHosts == nil || task.GitSSHKnownHosts.Entries != pin {
+		t.Fatalf("claim did not decode the extended response, claimed = %v, err = %v", claimed, err)
+	}
+}
+
+func TestClaimDecodesSkillFilesAtUploadLimits(t *testing.T) {
+	files := map[string][]byte{}
+	for remaining, i := domain.SkillTotalMaxBytes, 0; remaining > 0; i++ {
+		size := min(remaining, domain.SkillFileMaxBytes)
+		files[fmt.Sprintf("assets/%d.bin", i)] = bytes.Repeat([]byte{byte(i + 1)}, int(size))
+		remaining -= size
+	}
+	response := struct {
+		Task domain.RunnerTask `json:"task"`
+	}{Task: domain.RunnerTask{ID: "large-skill-task", Invocation: &domain.RunnerInvocation{
+		Assets: domain.AgentAssetBundle{SkillFiles: map[string]map[string][]byte{"big-skill": files}},
+	}}}
+	body, err := json.Marshal(response)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(body)
+	}))
+	defer server.Close()
+	task, claimed, err := NewClient(server.URL).Claim(t.Context(), ClaimRequest{AvailableRuntimes: []string{"mock"}})
+	if err != nil || !claimed || task.Invocation == nil {
+		t.Fatalf("claim with %d bytes of skill files failed, claimed = %v, err = %v", domain.SkillTotalMaxBytes, claimed, err)
+	}
+	got := task.Invocation.Assets.SkillFiles["big-skill"]
+	if len(got) != len(files) || !bytes.Equal(got["assets/0.bin"], files["assets/0.bin"]) {
+		t.Fatalf("claim decoded %d skill files, want %d", len(got), len(files))
+	}
+}
 
 func TestPreviewArchiveSuccessAndFailures(t *testing.T) {
 	var uploaded []byte
@@ -81,6 +149,18 @@ func TestClientOpenControlWebSocketBranches(t *testing.T) {
 				http.Error(w, "unauthorized", http.StatusUnauthorized)
 				return
 			}
+			if r.Header.Get(domain.RunnerSSHHostKeyProbeHeader) != "1" {
+				http.Error(w, "missing SSH host key probe support", http.StatusBadRequest)
+				return
+			}
+			if r.Header.Get(domain.RunnerDockerSandboxLimitsHeader) != "1" {
+				http.Error(w, "missing Docker sandbox limit support", http.StatusBadRequest)
+				return
+			}
+			if r.Header.Get(domain.RunnerPrivilegedSandboxHeader) != "1" {
+				http.Error(w, "missing privileged sandbox setting support", http.StatusBadRequest)
+				return
+			}
 			conn, err := upgrader.Upgrade(w, r, nil)
 			if err == nil {
 				_ = conn.Close()
@@ -105,6 +185,57 @@ func TestClientOpenControlWebSocketBranches(t *testing.T) {
 	}
 	if _, err := NewClient("://bad").OpenControl(context.Background()); err == nil {
 		t.Fatal("invalid URL accepted")
+	}
+}
+
+func TestRunnerProbesSSHHostBeforeAuthentication(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	_, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signer, err := ssh.NewSignerFromKey(privateKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	authenticated := false
+	config := &ssh.ServerConfig{
+		NoClientAuth: true,
+		NoClientAuthCallback: func(ssh.ConnMetadata) (*ssh.Permissions, error) {
+			authenticated = true
+			return nil, nil
+		},
+	}
+	config.AddHostKey(signer)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		raw, err := listener.Accept()
+		if err != nil {
+			return
+		}
+		defer raw.Close()
+		_ = raw.SetDeadline(time.Now().Add(5 * time.Second))
+		if conn, _, _, err := ssh.NewServerConn(raw, config); err == nil {
+			_ = conn.Close()
+		}
+	}()
+	d := &Daemon{}
+	response := d.readRunnerWorkspace(t.Context(), domain.RunnerWorkspaceRequest{
+		Operation: domain.RunnerWorkspaceOperationSSHHostKeyProbe, SSHHostKeyAddress: listener.Addr().String(),
+	})
+	var observed string
+	if response.Status != http.StatusOK || json.Unmarshal(response.Payload, &observed) != nil ||
+		observed != strings.TrimSpace(string(ssh.MarshalAuthorizedKey(signer.PublicKey()))) {
+		t.Fatalf("SSH host key probe = %+v", response)
+	}
+	<-done
+	if authenticated {
+		t.Fatal("SSH host key probe attempted to log in")
 	}
 }
 

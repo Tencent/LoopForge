@@ -1,4 +1,4 @@
-// SOP proposals and AI assistant preferences against a real MySQL platform.
+// LOOP proposals and AI assistant preferences against a real MySQL platform.
 import {test, before, after} from 'node:test';
 import assert from 'node:assert/strict';
 import {api, get, post, put, del, track, cleanup, ensureProject} from '../lib/api.mjs';
@@ -10,10 +10,10 @@ after(cleanup);
 function proposalSession(draft) {
   return {
     projectId: cfg.projectId,
-    title: 'SOP proposal',
+    title: 'LOOP proposal',
     messages: [
       {role: 'user', content: '做一个积分排行榜'},
-      {role: 'assistant', content: JSON.stringify({message: '建议走 SOP', drafts: [draft]})},
+      {role: 'assistant', content: JSON.stringify({message: '建议走 LOOP', drafts: [draft]})},
     ],
   };
 }
@@ -21,7 +21,7 @@ function proposalSession(draft) {
 const startProposal = {
   tool: 'issues_dispatch',
   path: {id: 'issue-1'},
-  proposal: {reason: '整件需求走 SOP', timing: 'start'},
+  proposal: {reason: '整件需求走 LOOP', timing: 'start'},
 };
 
 test('assistant preferences persist and reject an oversized rule', async () => {
@@ -56,7 +56,7 @@ test('declining a start proposal returns one follow-up and then stays closed', a
     draftIndex: 0,
     decision: 'declined',
   });
-  assert.equal(declined.followUp.text, '不走 SOP，这件事由你直接完成。');
+  assert.equal(declined.followUp.text, '不走 LOOP，这件事由你直接完成。');
   assert.equal(JSON.parse(declined.session.messages[1].content).drafts[0].decision, 'declined');
   await api('POST', `/api/assistant/sessions/${id}/proposals`, {
     messageIndex: 1,

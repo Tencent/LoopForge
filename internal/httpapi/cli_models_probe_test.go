@@ -45,10 +45,31 @@ func TestProbeCLIModelsUsesOfficialEndpointWithoutBaseURL(t *testing.T) {
 			c.Params = gin.Params{{Key: "id", Value: strconv.FormatInt(owner.ID, 10)}}
 			handlers.probeCLIModels(c)
 			if !called || w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"source":"official"`) ||
-				!strings.Contains(w.Body.String(), `"id":"official-model"`) {
+				!strings.Contains(w.Body.String(), `"id":"official-model"`) || !strings.Contains(w.Body.String(), `"connected":true`) {
 				t.Fatalf("result %d %s", w.Code, w.Body.String())
 			}
 		})
+	}
+}
+
+func TestProbeCodeBuddyIOAModelsReportsMissingCLI(t *testing.T) {
+	h, owner := workbenchFixture(t)
+	bin := t.TempDir()
+	t.Setenv("PATH", bin)
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("AGENTFLOW_CODEBUDDY_BIN", "")
+	t.Setenv("AGENTFLOW_MANAGED_CLI_ROOT", "")
+	t.Setenv("AGENTFLOW_RUNTIME_CLI_DIR", t.TempDir())
+	original := assistantCLIGlobalDirs
+	assistantCLIGlobalDirs = []string{bin}
+	t.Cleanup(func() { assistantCLIGlobalDirs = original })
+
+	payload := bytes.NewBufferString(`{"engine":"codebuddy","environment":"ioa"}`)
+	c, w := workbenchContext(owner, http.MethodPost, "/", payload)
+	c.Params = gin.Params{{Key: "id", Value: strconv.FormatInt(owner.ID, 10)}}
+	(&usersHandlers{deps: h.deps}).probeCLIModels(c)
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "没有安装") {
+		t.Fatalf("missing CodeBuddy CLI: %d %s", w.Code, w.Body.String())
 	}
 }
 
@@ -70,8 +91,61 @@ func TestDiscoverGeminiModelsKeepsGenerativeIDs(t *testing.T) {
 	}
 }
 
+func TestAntigravityCatalogFollowsCredentialSource(t *testing.T) {
+	ctx := context.Background()
+	user := domain.User{AgentCLICredentials: map[string]domain.AgentCLICredential{
+		"agy": {APIKey: "fixture-key", Protocol: domain.AgentCLIProtocolGemini},
+	}}
+	builtin, _ := assistantEngineModels(ctx, user, nil)
+	for id, efforts := range map[string][]string{
+		"gemini-4-neon-high":     {"low", "medium", "high", "xhigh"},
+		"gemini-4-carbon-medium": {"low", "medium", "high"},
+		"gemini-4-argon-medium":  {"low", "medium", "high"},
+		"gemini-4-hydrogen-high": {"low", "medium", "high", "xhigh"},
+	} {
+		var found []string
+		for _, model := range builtin {
+			if model.ID == "agy:"+id {
+				found = model.Efforts
+				break
+			}
+		}
+		if !reflect.DeepEqual(found, efforts) {
+			t.Errorf("built-in %s efforts = %v, want %v", id, found, efforts)
+		}
+	}
+
+	service := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/v1beta/models" && r.Header.Get("x-goog-api-key") == "fixture-key":
+			_, _ = io.WriteString(w, `{"models":[{"name":"models/gemini-gateway","displayName":"Gateway Gemini","supportedGenerationMethods":["generateContent"]}]}`)
+		case (r.URL.Path == "/models" || r.URL.Path == "/v1/models") && r.Header.Get("Authorization") == "Bearer fixture-key":
+			_, _ = io.WriteString(w, `{"data":[]}`)
+		default:
+			t.Errorf("unexpected Gemini catalog request: %s", r.URL.Path)
+		}
+	}))
+	t.Cleanup(service.Close)
+	cred := user.AgentCLICredentials["agy"]
+	cred.BaseURL = service.URL
+	user.AgentCLICredentials["agy"] = cred
+	custom, _ := assistantEngineModels(ctx, user, nil)
+	if len(custom) != 1 || custom[0].ID != "agy:gemini-gateway" {
+		t.Fatalf("custom endpoint models = %+v", custom)
+	}
+	cred.Protocol = domain.AgentCLIProtocolChat
+	user.AgentCLICredentials["agy"] = cred
+	if fallback, _ := assistantEngineModels(ctx, user, nil); len(fallback) != 0 {
+		t.Fatalf("an unavailable gateway offered native models: %+v", fallback)
+	}
+}
+
 func TestCursorModelFamiliesFoldGemini4(t *testing.T) {
 	output := `
+gemini-4-neon-low - Gemini 4 Neon Low
+gemini-4-neon-medium - Gemini 4 Neon Medium
+gemini-4-neon-high - Gemini 4 Neon High
+gemini-4-neon-xhigh - Gemini 4 Neon Extra High
 gemini-4-carbon-low - Gemini 4 Carbon Low
 gemini-4-carbon-medium - Gemini 4 Carbon Medium
 gemini-4-carbon-high - Gemini 4 Carbon High
@@ -85,6 +159,7 @@ gemini-4-argon-high - Gemini 4 Argon High
 `
 	got := cursorModelFamilies(parseCursorModels(output))
 	want := []domain.CLIModel{
+		{ID: "gemini-4-neon", Name: "Gemini 4 Neon"},
 		{ID: "gemini-4-carbon", Name: "Gemini 4 Carbon"},
 		{ID: "gemini-4-hydrogen", Name: "Gemini 4 Hydrogen"},
 		{ID: "gemini-4-argon", Name: "Gemini 4 Argon"},

@@ -20,11 +20,15 @@ import (
 
 // platformAdminWrite admits a platform administrator's change: an API token,
 // or a same-origin browser request (the session cookie alone is not enough).
-func (h *usersHandlers) platformAdminWrite(c *gin.Context) bool {
-	if !h.isPlatformAdmin(c.Request) {
+func (d deps) platformAdminWrite(c *gin.Context) bool {
+	if !d.isPlatformAdmin(c.Request) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "只有平台管理员可以执行该操作"})
 		return false
 	}
+	return requireWriteOrigin(c)
+}
+
+func requireWriteOrigin(c *gin.Context) bool {
 	if _, bearer := bearerToken(c.Request); bearer {
 		return true
 	}
@@ -208,7 +212,7 @@ func (h *usersHandlers) platformCodeBuddyKey(c *gin.Context) {
 			apiKey = key.APIKey
 		}
 		refreshCLIModels(c.Request.Context(), environment, apiKey)
-		catalog := loadAssistantModels(c.Request.Context(), environment).Models
+		catalog := loadAssistantModels(environment, apiKey).Models
 		c.JSON(http.StatusOK, platformCodeBuddyKeyResponse{PlatformCodeBuddyKeyStatus: status, Catalog: catalog})
 	case http.MethodPut:
 		h.savePlatformCodeBuddyKey(c)

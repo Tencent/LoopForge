@@ -40,12 +40,20 @@ const (
 
 type CodeBuddyCredential struct {
 	APIKey              string
+	BaseURL             string `json:",omitempty"`
 	InternetEnvironment string
 	// Sponsored is set when the responsible user has no key of their own and
 	// the platform's shared key is used; such runs are limited to
 	// SponsoredModels (the default first).
 	Sponsored       bool
 	SponsoredModels []string
+}
+
+func CodeBuddyUserCredential(user domain.User) CodeBuddyCredential {
+	return CodeBuddyCredential{
+		APIKey: user.CodeBuddyAPIKey, BaseURL: user.CodeBuddyBaseURL,
+		InternetEnvironment: user.CodeBuddyInternetEnvironment,
+	}
 }
 
 // RunCredentials lives only on the in-memory run sandbox handle. It is never
@@ -60,11 +68,11 @@ type RunCredentials struct {
 	// conversation workspace. It travels to the execution machine on the
 	// authenticated control connection only, in the start request of the CLI.
 	GitSSHHostKeys map[string]string `json:",omitempty"`
-	// GitHTTPHosts maps each HTTPS host the requester exposes to a workspace
+	// GitHTTPHosts maps each HTTP(S) endpoint the requester exposes to a workspace
 	// to its platform. It holds no tokens; the helper asks for them per host.
 	GitHTTPHosts map[string]string `json:",omitempty"`
 	// GitHTTPCredentials travels only on authenticated execution dispatches.
-	// SOP commands fetch a matching, exposed credential from an ephemeral relay.
+	// LOOP commands fetch a matching, exposed credential from an ephemeral relay.
 	GitHTTPCredentials map[string]domain.GitHTTPExecutionCredential `json:",omitempty"`
 	GitUserName        string
 	GitUserEmail       string
@@ -91,8 +99,12 @@ type InvocationOptions struct {
 	ResumeSessionID string
 	GateResultPath  string
 	Repositories    []domain.RepositoryContext
+	RunnerLogin     bool
 	// BrowserMCP is resolved on the executing host, never sent to a runner.
 	BrowserMCP *domain.MCPServerDefinition `json:"-"`
+	// DisableBrowser keeps restricted validation runs from gaining an
+	// automatically provisioned browser MCP after their assets were filtered.
+	DisableBrowser bool
 }
 
 // CommandSpec is the closed process-launch contract between providers/engine
@@ -124,12 +136,21 @@ type CommandSpec struct {
 	// Extra credentials (set by bindCommand) so process telemetry can redact
 	// them by origin instead of relying on naming conventions.
 	credentialEnvKeys []string
+	// Project values are set just before launching a sandbox command.
+	projectCredentialEnv map[string]string
 	// Stdin is forwarded by local, Docker and remote conversation execution.
 	Stdin       io.Reader
 	environment map[string]string
+	// codeBuddySOPInput is the first frame of a CodeBuddy SOP's stdin stream.
+	// The protocol observer opens and owns the pipe on the executing machine.
+	codeBuddySOPInput []byte
+	// observeOutput receives raw bytes before process telemetry splits lines.
+	observeOutput func(stream string, data []byte)
 	// privateBinds are host directories bwrap binds into this one process
 	// only (for example a terminal's own SSH agent).
 	privateBinds []string
+	// Only the selected managed installation is exposed beneath bwrap's /tmp.
+	managedCLIInstall string
 	// Conversation preparation binds credentials before acknowledging start.
 	bindingsPrepared bool
 	// Runner-owned authentication state never enters serialized invocations.

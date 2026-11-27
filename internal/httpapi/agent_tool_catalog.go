@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"agentflow/internal/knowledge"
 	"context"
 	"encoding/json"
 	"errors"
@@ -271,7 +272,7 @@ func tapdInnerToolAllowed(mode AgentToolMode, name string) bool {
 
 func (h *agentToolGateway) buildCatalog(ctx context.Context, session *AgentToolSession) []agentToolDescriptor {
 	if session != nil && session.RuntimeMode == domain.AssistantModeWorkspace {
-		out := workspaceIntegrationCatalog(session)
+		out := append(workspaceIntegrationCatalog(session), h.knowledgeReferenceCatalog(ctx, session)...)
 		if session.Mode == AgentToolAssistant && h.workspaceHasForgejo(session.ProjectID) {
 			out = append(out, workspaceForgejoPRDescriptor())
 		}
@@ -305,6 +306,9 @@ func (h *agentToolGateway) buildCatalog(ctx context.Context, session *AgentToolS
 	if session == nil {
 		return nil
 	}
+	if session.sopDesigner() {
+		return sopDesignerCatalog(session)
+	}
 	session.mu.Lock()
 	if session.terminalOnly || session.Mode == AgentToolReport {
 		session.mu.Unlock()
@@ -315,9 +319,13 @@ func (h *agentToolGateway) buildCatalog(ctx context.Context, session *AgentToolS
 		session.mu.Unlock()
 		return out
 	}
+	clarifyRepos := len(session.clarifyRepos) > 0
 	session.mu.Unlock()
 
 	out := make([]agentToolDescriptor, 0, 16)
+	if session.Mode == AgentToolClarify && clarifyRepos {
+		out = append(out, clarifySourceTools...)
+	}
 	seen := map[string]bool{}
 	for _, server := range session.MCPServers {
 		kind := classifyClarifyMCP(server)
@@ -396,7 +404,7 @@ func (h *agentToolGateway) buildCatalog(ctx context.Context, session *AgentToolS
 			schema, _ := json.Marshal(platformToolInputSchema(op))
 			writePolicy := "平台写入工具（已授权直接执行）："
 			if session.ExecMode.ReviewWrites {
-				writePolicy = "平台写入工具（执行前独立 AI 审查，未批准时交给用户确认）："
+				writePolicy = "平台写入工具（执行前由独立 AI 审查并直接决定放行或拒绝，无需人工确认）："
 			}
 			out = append(out, agentToolDescriptor{
 				Name:         ns,
@@ -418,6 +426,7 @@ func (h *agentToolGateway) buildCatalog(ctx context.Context, session *AgentToolS
 	if len(mainBotWorkspaceTools(session)) > 0 {
 		out = append(out, h.workspaceOpenDescriptorFor(session))
 	}
+	out = append(out, h.knowledgeReferenceCatalog(ctx, session)...)
 	out = append(out, mainBotBrowserTools(session)...)
 	out = append(out, terminalToolDescriptors(session.Mode, session.ExecMode)...)
 	session.mu.Lock()
@@ -541,4 +550,78 @@ func mcpToolTextResult(text string, isError bool) map[string]any {
 		"content": []map[string]any{{"type": "text", "text": text}},
 		"isError": isError,
 	}
+}
+
+func (h *agentToolGateway) knowledgeReferenceCatalog(ctx context.Context, s *AgentToolSession) []agentToolDescriptor {
+	var out []agentToolDescriptor
+	if len(s.KnowledgeRefs) == 0 {
+		return out
+	}
+	exec := h.deps.executor()
+	if exec == nil {
+		return out
+	}
+	ctx, cancel := context.WithTimeout(ctx, knowledge.CallTimeout)
+	defer cancel()
+	for _, ref := range s.KnowledgeRefs {
+		if ctx.Err() != nil {
+			break
+		}
+		conn, tools, err := exec.ReferenceTools(ctx, s.UserID, ref)
+		if err != nil {
+			logAgentToolEvent("knowledge-catalog-err", "mode="+string(s.Mode), "connector="+ref.ConnectorID, "err="+truncateRunes(err.Error(), 160))
+			s.diagnostics().platform("knowledge.unavailable", ref.ConnectorID+"："+err.Error(), s.User)
+			continue
+		}
+		if len(tools) == 0 {
+			logAgentToolEvent("knowledge-catalog-empty", "mode="+string(s.Mode), "connector="+ref.ConnectorID, "type="+conn.Type)
+			s.diagnostics().platform("knowledge.empty_tools", ref.ConnectorID+"：未发现声明为只读（readOnlyHint）的工具", s.User)
+			continue
+		}
+		ns := knowledgeToolNamespace(ref.ConnectorID)
+		for _, tool := range tools {
+			out = append(out, agentToolDescriptor{
+				Name:         ns + "__" + tool.Name,
+				Kind:         "knowledge",
+				ServerID:     ref.ConnectorID,
+				UpstreamName: tool.Name,
+				InputSchema:  defaultToolSchema(tool.InputSchema),
+				OutputSchema: tool.OutputSchema,
+				Annotations:  tool.Annotations,
+				Description:  knowledgeToolDescription(conn.Name, conn.Type, conn.ID, tool.Name, tool.Description),
+			})
+		}
+	}
+	return out
+}
+
+// sopDesignerCatalog is the LOOP designer's whole tool set: the read-only
+// platform tools it needs to look up roles and LOOPs, the schema reader and the
+// terminal reply tool. External MCPs, workspace and browser tools are left
+// out, so a designer turn can only end in a workflows_save draft.
+func sopDesignerCatalog(session *AgentToolSession) []agentToolDescriptor {
+	session.mu.Lock()
+	terminalOnly := session.terminalOnly
+	session.mu.Unlock()
+	if terminalOnly {
+		return terminalToolDescriptors(session.Mode, session.ExecMode)
+	}
+	out := make([]agentToolDescriptor, 0, len(sopDesignerReadTools)+3)
+	for _, name := range sopDesignerReadTools {
+		op, ok := assistantPublicOperations[name]
+		if !ok || !op.ReadOnly {
+			continue
+		}
+		schema, _ := json.Marshal(platformToolInputSchema(op))
+		out = append(out, agentToolDescriptor{
+			Name:         namespaceAgentTool("agentflow", name),
+			Description:  op.Description + " (" + op.Method + " " + op.Path + ")",
+			InputSchema:  schema,
+			Kind:         "agentflow",
+			UpstreamName: name,
+		})
+	}
+	out = append(out, agentToolDescriptor{Name: "workbench_tool_schema", Description: "读取平台工具的准确参数契约。提交 workflows_save 草稿前先读取它的 schema；不要猜字段或参数包装。", InputSchema: json.RawMessage(`{"type":"object","properties":{"name":{"type":"string"}},"required":["name"],"additionalProperties":false}`), Kind: "workbench"})
+	out = append(out, terminalToolDescriptors(session.Mode, session.ExecMode)...)
+	return out
 }

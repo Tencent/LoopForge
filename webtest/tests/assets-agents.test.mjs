@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { loadApp, settle } from '../lib/load-app.mjs';
+import { chooseOption, loadApp, settle } from '../lib/load-app.mjs';
 
 test('asset catalog filters, opens, marks dirty, shares, saves, and deletes assets', async (t) => {
   const app = await loadApp();
@@ -36,44 +36,156 @@ test('asset catalog filters, opens, marks dirty, shares, saves, and deletes asse
   assert.equal(app.evaluate(`state.data.rules.some(x=>x.id==='rule-1')`), false);
 });
 
-test('asset forms save environment and sandbox-specific JSON fields', async (t) => {
+test('sandbox form saves Docker limits and privilege and clears them when omitted or disabled', async (t) => {
   const app = await loadApp();
   t.after(app.close);
-  app.router.put(/^\/api\/(environments|sandboxes)$/, (call) => ({ status: 200, body: call.body }));
-  app.evaluate(`state.assetType='environments';state.selectedAsset='__new__';renderAssets()`);
+  app.router.put(/^\/api\/sandboxes$/, (call) => ({ status: 200, body: call.body }));
+  app.evaluate(`
+    state.authRequired=true;
+    state.currentUser={...state.currentUser,isGuest:false,isPlatformAdmin:false};
+    state.assetType='sandboxes';
+    state.selectedAsset='__new__';
+    renderAssets();
+  `);
   let form = app.document.querySelector('#assetForm');
-  form.elements.id.value = 'env-new';
-  form.elements.name.value = 'Node tools';
-  form.elements.variables.value = '{"NODE_ENV":"test"}';
-  form.elements.pathEntries.value = ['bin', 'tools/bin'].join('\n');
-  form.elements.installScript.value = 'npm ci';
-  form.dispatchEvent(new app.window.Event('submit', { bubbles: true, cancelable: true }));
-  await settle(2);
-  const env = app.router.calls.find((c) => c.path === '/api/environments' && c.method === 'PUT').body;
-  assert.deepEqual(env.variables, { NODE_ENV: 'test' });
-  assert.deepEqual(env.pathEntries, ['bin', 'tools/bin']);
+  const readOnlyHelp = form.querySelector('.field-help[aria-label="容器根文件系统只读说明"]');
+  const dockerFields = form.elements.readOnlyRootFS.closest('[data-sandbox-drivers="docker"]');
+  const nativeFields = form.querySelector('[data-sandbox-drivers="native"]');
+  let advanced = dockerFields.querySelector('details.sandbox-advanced');
+  assert.deepEqual([...form.elements.driver.options].map((o) => [o.value, o.textContent]), [['docker', 'Docker'], ['native', '系统轻量隔离']]);
+  assert.equal(dockerFields.hidden, false, 'a new sandbox starts as docker');
+  assert.equal(nativeFields.hidden, true);
+  assert.equal(advanced.open, false);
+  assert.equal(advanced.querySelector('summary').textContent.trim(), '高级设置');
+  for (const name of ['cpuCores', 'memoryMiB', 'privileged']) {
+    assert.equal(form.elements[name].closest('details'), advanced);
+  }
+  assert.equal(form.elements.cpuCores.value, '');
+  assert.equal(form.elements.memoryMiB.value, '');
+  chooseOption(form.elements.driver, 'native');
+  assert.deepEqual([dockerFields.hidden, nativeFields.hidden], [true, false]);
+  assert.equal(form.elements.cpuCores.disabled, true);
+  assert.equal(form.elements.memoryMiB.disabled, true);
+  assert.equal(form.elements.privileged.disabled, true);
+  assert.match(nativeFields.textContent, /系统轻量隔离直接使用执行机器上已安装的语言和工具/);
+  assert.equal(form.elements.installScript, undefined);
+  chooseOption(form.elements.driver, 'docker');
+  assert.deepEqual([dockerFields.hidden, nativeFields.hidden], [false, true]);
+  assert.equal(form.elements.cpuCores.disabled, false);
+  assert.equal(form.elements.memoryMiB.disabled, false);
+  readOnlyHelp.click();
+  const tooltip = app.document.querySelector('#huiTooltip:not([hidden])');
+  assert.match(tooltip?.textContent ?? '', /缺少的 CLI 无法在容器内自动安装；工作区 \/workspace 仍可写/);
+  assert.equal(form.elements.readOnlyRootFS.checked, false);
+  advanced.querySelector('summary').click();
+  assert.equal(advanced.open, true);
+  assert.equal(form.elements.privileged.checked, false);
+  assert.equal(form.elements.privileged.disabled, false);
+  assert.equal(form.elements.privileged.closest('[data-sandbox-drivers]'), dockerFields);
+  form.querySelector('.field-help[aria-label="特权模式说明"]').click();
+  assert.match(app.document.querySelector('#huiTooltip:not([hidden])')?.textContent ?? '', /可能控制执行机器/);
+  assert.equal(app.router.calls.some((c) => c.path === '/api/sandboxes' && c.method === 'PUT'), false);
 
-  app.evaluate(`state.assetType='sandboxes';state.selectedAsset='__new__';state.assetDetailKey='';renderAssets()`);
-  form = app.document.querySelector('#assetForm');
   form.elements.id.value = 'sandbox-new';
   form.elements.name.value = 'Docker sandbox';
   form.elements.environment.value = '{"CI":"1"}';
+  form.elements.dockerfileContent.value = 'FROM node:22\nCOPY packages.txt /tmp/\n';
+  form.elements.dockerfileFiles.value = '{"packages.txt":"git"}';
+  form.elements.cpuCores.value = '1.25';
+  form.elements.memoryMiB.value = '1536';
+  form.elements.readOnlyRootFS.checked = true;
+  form.elements.privileged.checked = true;
   form.dispatchEvent(new app.window.Event('submit', { bubbles: true, cancelable: true }));
   await settle(2);
   const sandbox = app.router.calls.find((c) => c.path === '/api/sandboxes' && c.method === 'PUT').body;
-  assert.equal(sandbox.driver, 'local');
+  assert.equal(sandbox.driver, 'docker');
+  assert.deepEqual(sandbox.dockerfile, { content: 'FROM node:22\nCOPY packages.txt /tmp/\n', files: { 'packages.txt': 'git' } });
+  assert.equal(sandbox.install, undefined);
+  assert.equal(sandbox.readOnlyRootFS, true);
+  assert.equal(sandbox.privileged, true);
+  assert.equal(sandbox.cpuMillicores, 1250);
+  assert.equal(sandbox.memoryMiB, 1536);
   assert.deepEqual(sandbox.environment, { CI: '1' });
+
+  app.evaluate(`state.assetDetailKey='';renderAssets()`);
+  form = app.document.querySelector('#assetForm');
+  advanced = form.querySelector('details.sandbox-advanced');
+  assert.equal(advanced.open, false);
+  assert.equal(form.elements.privileged.checked, true);
+  assert.equal(form.elements.privileged.disabled, false);
+  assert.equal(form.elements.cpuCores.value, '1.25');
+  assert.equal(form.elements.memoryMiB.value, '1536');
+  form.elements.name.value = 'Docker sandbox renamed';
+  form.dispatchEvent(new app.window.Event('submit', { bubbles: true, cancelable: true }));
+  await settle(2);
+  const renamed = app.router.calls.filter((c) => c.path === '/api/sandboxes' && c.method === 'PUT').at(-1).body;
+  assert.equal(renamed.name, 'Docker sandbox renamed');
+  assert.equal(renamed.privileged, true);
+  assert.equal(renamed.cpuMillicores, 1250);
+  assert.equal(renamed.memoryMiB, 1536);
+
+  form.elements.cpuCores.value = '0.001';
+  const writesBeforeInvalid = app.router.calls.filter((c) => c.path === '/api/sandboxes' && c.method === 'PUT').length;
+  form.requestSubmit();
+  assert.equal(advanced.open, true, 'validation opens the section containing the invalid input');
+  assert.equal(app.router.calls.filter((c) => c.path === '/api/sandboxes' && c.method === 'PUT').length, writesBeforeInvalid);
+
+  form.elements.privileged.checked = false;
+  form.elements.cpuCores.value = '';
+  form.elements.memoryMiB.value = '';
+  form.dispatchEvent(new app.window.Event('submit', { bubbles: true, cancelable: true }));
+  await settle(2);
+  const cleared = app.router.calls.filter((c) => c.path === '/api/sandboxes' && c.method === 'PUT').at(-1).body;
+  assert.equal(cleared.privileged, false);
+  assert.equal(cleared.cpuMillicores, undefined);
+  assert.equal(cleared.memoryMiB, undefined);
+
+  app.evaluate(`state.selectedAsset='__new__';state.assetDetailKey='';renderAssets()`);
+  form = app.document.querySelector('#assetForm');
+  form.elements.cpuCores.value = '0.001';
+  form.elements.memoryMiB.value = '128';
+  form.elements.privileged.checked = true;
+  chooseOption(form.elements.driver, 'native');
+  assert.equal(form.querySelector('[data-sandbox-drivers="native"]').hidden, false);
+  form.elements.id.value = 'native-new';
+  form.elements.name.value = 'Node tools';
+  form.elements.environment.value = '{"JAVA_HOME":"/opt/jdk"}';
+  form.dispatchEvent(new app.window.Event('submit', { bubbles: true, cancelable: true }));
+  await settle(2);
+  const native = app.router.calls.filter((c) => c.path === '/api/sandboxes' && c.method === 'PUT').at(-1).body;
+  assert.equal(native.driver, 'native');
+  assert.deepEqual(native.environment, { JAVA_HOME: '/opt/jdk' });
+  assert.equal(native.install, undefined);
+  assert.equal(native.dockerfile, undefined);
+  assert.equal(native.cpuMillicores, undefined);
+  assert.equal(native.memoryMiB, undefined);
+  assert.equal(native.privileged, undefined);
+
+  app.evaluate(`
+    state.data.sandboxes.push({id:'shared-docker',name:'Shared Docker',projectId:'other-project',shared:true,driver:'docker',privileged:true});
+    state.selectedAsset='shared-docker';
+    renderAssets();
+  `);
+  form = app.document.querySelector('#assetForm');
+  assert.equal(form.elements.privileged.checked, true);
+  assert.equal(form.elements.privileged.disabled, true);
+  assert.equal(form.querySelector('button[type="submit"]'), null);
 });
 
 test('agent catalog search, presets, validation, persistence, clone, and delete update state', async (t) => {
   const app = await loadApp();
   t.after(app.close);
+  app.router.get('/api/executor-models', {
+    codebuddy: { configured: true, models: [{ id: 'cb-model', name: 'CB model' }] },
+    codex: { models: [] }, claude: { models: [] },
+  });
   app.evaluate(`afConfirm=async()=>true;afPrompt=async({defaultValue}={})=>defaultValue||'Developer copy'`);
-  app.evaluate(`switchView('agents');renderAgents();openAgentWizard()`);
+  app.evaluate(`switchView('agents');renderAgents();state.data.executors=[{id:'codebuddy',name:'CodeBuddy'}];openAgentWizard()`);
+  await settle();
   app.evaluate(`applyAgentPreset('developer')`);
   const form = app.document.querySelector('#agentForm');
-  form.elements.executorId.append(new app.window.Option('CodeBuddy', 'codebuddy'));
   form.elements.executorId.value = 'codebuddy';
+  form.elements.executorId.dispatchEvent(new app.window.Event('change', { bubbles: true }));
   assert.equal(form.elements.name.value, '研发工程师');
   assert.match(form.elements.id.value, /^role-/);
   app.evaluate(`setAgentCreateStep(3)`);
@@ -84,6 +196,7 @@ test('agent catalog search, presets, validation, persistence, clone, and delete 
   const created = app.router.calls.find((c) => c.path === '/api/agents' && c.method === 'PUT');
   assert.equal(created.body.name, '研发工程师');
   assert.equal(created.body.executorId, 'codebuddy');
+  assert.equal(created.body.model, 'cb-model');
   assert.ok(app.evaluate(`state.data.agents.some(a=>a.name==='研发工程师')`));
 
   app.router.post('/api/agents/agent-1/clone', { id: 'agent-copy', projectId: 'project-1', name: 'Developer copy' });
@@ -94,15 +207,15 @@ test('agent catalog search, presets, validation, persistence, clone, and delete 
   assert.equal(app.evaluate(`state.data.agents.some(a=>a.id==='agent-copy')`), false);
 });
 
-test('role model picker reloads the editor catalog and preserves a CLI change while loading', async (t) => {
+test('role editor refreshes configured CLIs and preserves an unavailable saved executor', async (t) => {
   const app = await loadApp();
   t.after(app.close);
   let complete;
   const delayed = new Promise(resolve => { complete = resolve; });
-  const catalog = (models) => ({
-    codebuddy: { models: [], efforts: [] },
+  const catalog = (models, configured = true) => ({
+    codebuddy: { configured: false, models: [{ id: 'builtin' }], efforts: [] },
     claude: { models: [], efforts: [] },
-    codex: { customModel: true, models, efforts: [] },
+    codex: { configured, customModel: true, models, efforts: [] },
   });
   app.router.get('/api/executor-models', () => delayed);
   app.evaluate(`
@@ -112,22 +225,127 @@ test('role model picker reloads the editor catalog and preserves a CLI change wh
     openAgentWizard();
   `);
   const f = app.document.querySelector('#agentForm');
-  f.elements.executorId.value = 'codex';
-  f.elements.executorId.dispatchEvent(new app.window.Event('change', { bubbles: true }));
+  const executor = f.elements.executorId;
+  const status = app.document.querySelector('#agentExecutorStatus');
+  const options = () => [...executor.options].map(option => [option.value, option.disabled]);
+  assert.equal(executor.disabled, true);
+  assert.deepEqual(options(), [['', false]]);
+  assert.equal(executor.selectedOptions[0].text, '检查配置中…');
+  assert.equal(status.hidden, true);
   complete(catalog([{ id: 'private/second', name: 'Second' }, { id: 'private/first', name: 'First' }]));
   await settle();
+  assert.deepEqual(options(), [['', false], ['codex', false]]);
+  assert.equal(status.hidden, true);
+  f.elements.executorId.value = 'codex';
+  f.elements.executorId.dispatchEvent(new app.window.Event('change', { bubbles: true }));
   const menu = () => [...app.document.querySelectorAll('#agentModelPicker [role=option]')];
-  assert.deepEqual(menu().map(row => row.dataset.id), ['', 'private/second', 'private/first', '__custom__']);
-  assert.equal(menu()[1].querySelector('.ai-model-name').textContent, 'Second');
+  assert.deepEqual(menu().map(row => row.dataset.id), ['private/second', 'private/first', '__custom__']);
+  assert.equal(menu()[0].querySelector('.ai-model-name').textContent, 'Second');
   assert.equal(f.elements.executorId.value, 'codex');
-  menu()[1].click();
   assert.equal(app.evaluate(`agentEffectiveModel($('#agentForm'))`), 'private/second');
 
   app.router.get('/api/executor-models', () => catalog([{ id: 'private/second', name: 'Renamed model' }]));
   app.evaluate(`openAgentWizard({id:'role-review',name:'Review',prompt:'Review changes',executorId:'codex',model:'private/second'})`);
   await settle();
-  assert.deepEqual(menu().map(row => row.dataset.id), ['', 'private/second', '__custom__']);
+  assert.deepEqual(menu().map(row => row.dataset.id), ['private/second', '__custom__']);
   assert.equal(app.document.querySelector('#agentModelPicker [data-model-label]').textContent, 'Renamed model');
+
+  let refresh;
+  app.router.get('/api/executor-models', () => new Promise(resolve => { refresh = resolve; }));
+  app.evaluate(`
+    const savedRole={...state.data.agents.find(role=>role.id==='agent-1'),prompt:'Review',executorId:'codex',model:'private/second',effort:'high'};
+    state.data.agents=[savedRole];openAgentWizard(savedRole)
+  `);
+  await settle();
+  assert.deepEqual(options(), [['', false], ['codex', true]]);
+  refresh(catalog([{ id: 'private/second', name: 'Second' }], false));
+  await settle();
+  assert.deepEqual(options(), [['', false], ['codex', true]]);
+  assert.match(executor.selectedOptions[0].text, /未配置/);
+  assert.equal(status.hidden, false);
+  assert.equal(status.textContent, '无可用执行器');
+  assert.equal(app.document.querySelector('#agentModelPicker [data-model-toggle]').disabled, true);
+  assert.equal(app.evaluate(`agentEffectiveModel($('#agentForm'))`), 'private/second');
+  app.router.put('/api/agents', call => ({ status: 200, body: call.body }));
+  await app.evaluate(`$('#agentForm').elements.name.value='Renamed';persistAgent($('#agentForm'))`);
+  const saved = app.router.calls.find(call => call.path === '/api/agents' && call.method === 'PUT').body;
+  assert.equal(saved.name, 'Renamed');
+  assert.equal(saved.executorId, 'codex');
+  assert.equal(saved.model, 'private/second');
+  assert.equal(saved.effort, 'high');
+
+  app.router.get('/api/executor-models', catalog([{ id: 'private/second' }], false));
+  app.evaluate(`state.data.assistantDefaults={executor:'codex',model:'private/second'};openAgentWizard()`);
+  await settle();
+  assert.deepEqual(options(), [['', false]]);
+  assert.equal(executor.value, '');
+  assert.equal(executor.disabled, true);
+  assert.equal(executor.selectedOptions[0].text, '无可用执行器');
+  assert.equal(status.hidden, false);
+  assert.equal(status.textContent, '运行时跟随责任人默认执行器');
+  assert.equal(app.evaluate(`agentEffectiveModel($('#agentForm'))`), '');
+  app.evaluate(`applyAgentPreset('developer');setAgentCreateStep(3)`);
+  assert.match(app.document.querySelector('#agentCreateReview').textContent, /跟随责任人默认执行器/);
+});
+
+test('a new role saves the first model from the refreshed catalog', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  const catalog = id => ({ codebuddy: { configured: true, models: [{ id }] }, codex: { models: [] }, claude: { models: [] } });
+  app.router.get('/api/executor-models', catalog('retired-model'));
+  app.router.put('/api/agents', call => ({ status: 200, body: call.body }));
+  app.evaluate(`
+    state.data.executors=[{id:"codebuddy",name:"CodeBuddy"}];
+    state.data.assistantDefaults={executor:"codebuddy"};
+    openAgentWizard();
+  `);
+  await settle();
+  const model = () => app.evaluate(`agentEffectiveModel($('#agentForm'))`);
+  assert.equal(model(), 'retired-model');
+  app.document.querySelector('#agentModal .modal-close').click();
+
+  let complete;
+  app.router.get('/api/executor-models', () => new Promise(resolve => { complete = resolve; }));
+  app.evaluate(`openAgentWizard(); applyAgentPreset('developer')`);
+  await settle();
+  assert.equal(model(), '');
+  await app.evaluate(`persistAgent($('#agentForm'))`);
+  assert.equal(app.router.calls.some(call => call.path === '/api/agents' && call.method === 'PUT'), false);
+  app.evaluate(`setAgentCreateStep(3)`);
+  complete(catalog('current-model'));
+  await settle();
+  assert.equal(model(), 'current-model');
+  assert.match(app.document.querySelector('#agentCreateReview').textContent, /current-model/);
+  await app.evaluate(`persistAgent($('#agentForm'))`);
+  assert.equal(app.router.calls.find(call => call.path === '/api/agents' && call.method === 'PUT').body.model, 'current-model');
+});
+
+test('new roles can use the personal default or follow the responsible user', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  app.router.get('/api/executor-models', {
+    codebuddy: {models: []}, claude: {models: []},
+    codex: {configured: true, models: [{id: 'preferred-role-model', name: 'Preferred role model'}]},
+  });
+  app.router.put('/api/agents', call => ({status: 200, body: call.body}));
+  app.evaluate(`
+    state.data.executors=[{id:"codex",name:"Codex"}];
+    state.data.assistantDefaults={executor:"codex",model:"preferred-role-model"};
+    openAgentWizard();
+  `);
+  await settle();
+  const form = app.document.querySelector('#agentForm');
+  assert.equal(form.elements.executorId.value, 'codex');
+  assert.equal(app.evaluate(`agentEffectiveModel($('#agentForm'))`), 'preferred-role-model');
+
+  form.elements.executorId.value = '';
+  form.elements.executorId.dispatchEvent(new app.window.Event('change', {bubbles: true}));
+  assert.equal(app.document.querySelector('#agentModelPicker [data-model-toggle]').disabled, true);
+  app.evaluate(`applyAgentPreset('developer');setAgentCreateStep(3)`);
+  await app.evaluate(`persistAgent($('#agentForm'))`);
+  const saved = app.router.calls.find(call => call.path === '/api/agents' && call.method === 'PUT');
+  assert.equal(saved.body.executorId, '');
+  assert.equal(saved.body.model, '');
 });
 
 test('role effort picker follows each model and resets an unsupported level on model changes', async (t) => {
@@ -136,7 +354,7 @@ test('role effort picker follows each model and resets an unsupported level on m
   const xhigh = { value:'xhigh', label:'超高 xhigh' };
   app.router.get('/api/executor-models', {
     codebuddy:{models:[],efforts:[]}, claude:{models:[],efforts:[]},
-    codex:{customModel:true,models:[{id:'reasoner',name:'Reasoner',efforts:[xhigh]}, {id:'plain',name:'Plain',efforts:[]}],efforts:[{value:'low',label:'低 low'},xhigh]},
+    codex:{configured:true,customModel:true,models:[{id:'reasoner',name:'Reasoner',efforts:[xhigh]}, {id:'plain',name:'Plain',efforts:[]}],efforts:[{value:'low',label:'低 low'},xhigh]},
   });
   app.evaluate(`
     state.data.executors=[{id:'codebuddy',name:'CodeBuddy'}, {id:'codex',name:'Codex'}];
@@ -162,7 +380,7 @@ test('a personal catalog does not rewrite an existing role effort during a name 
     openAgentWizard({id:'agent-1',name:'Developer',prompt:'Review',executorId:'codex',model:'reasoner',effort:'xhigh'});
   `);
   await settle();
-  loaded({codex:{customModel:true,models:[{id:'reasoner',name:'Reasoner',efforts:[]}],efforts:[]}});
+  loaded({codex:{configured:true,customModel:true,models:[{id:'reasoner',name:'Reasoner',efforts:[]}],efforts:[]}});
   await settle();
   const picker = app.document.querySelector('#agentEffortPicker');
   assert.deepEqual([...picker.querySelectorAll('[role=option]')].map(item=>item.dataset.id), ['']);
@@ -174,4 +392,95 @@ test('a personal catalog does not rewrite an existing role effort during a name 
   const saved = app.router.calls.find(call=>call.path==='/api/agents'&&call.method==='PUT').body;
   assert.equal(saved.name, 'Renamed');
   assert.equal(saved.effort, 'xhigh');
+});
+
+test('role editor checks executors against the current project default machine', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  app.router.get('/api/executor-models', (call) => ({
+    codebuddy: { configured: false, models: [] },
+    codex: { configured: call.search === '?projectId=project-1', models: [{ id: 'gpt-project' }], efforts: [] },
+    claude: { configured: false, models: [] },
+  }));
+  app.evaluate(`state.data.executors=[{id:'codebuddy',name:'CodeBuddy'},{id:'codex',name:'Codex'}]`);
+  app.evaluate(`state.projectFilter='project-1';switchView('agents');renderAgents();openAgentWizard()`);
+  await settle(3);
+  const requests = () => app.router.calls.filter((c) => c.path === '/api/executor-models').map((c) => c.search);
+  assert.deepEqual(requests(), ['?projectId=project-1']);
+  const options = () => [...app.document.querySelector('#agentForm').elements.executorId.options].map((o) => o.value);
+  assert.ok(options().includes('codex'), `project options: ${options()}`);
+
+  app.evaluate(`closeAgentWizard();state.projectFilter='';openAgentWizard()`);
+  await settle(3);
+  assert.deepEqual(requests(), ['?projectId=project-1', '']);
+  assert.equal(options().includes('codex'), false, 'the personal scope must not reuse the project catalog');
+});
+
+test('adding an artifact keeps unsaved loop and review settings of the role', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  app.router.get('/api/executor-models', { codebuddy: { configured: true, models: [{ id: 'cb-model', name: 'CB model' }] } });
+  app.evaluate(`switchView('agents')`);
+  await settle();
+  app.evaluate(`
+    state.data.executors=[{id:'codebuddy',name:'CodeBuddy'}];
+    const role={id:'role-gov',name:'Gov',projectId:state.projectFilter,prompt:'Fix it',executorId:'codebuddy',model:'cb-model',
+      loop:{enabled:false,maxIterations:3,exitCondition:'all_gates_pass',onExhausted:'fail'},artifactOutputs:[],verification:[]};
+    state.data.agents=[role];openAgentWizard(role);
+  `);
+  await settle();
+  const form = app.document.querySelector('#agentForm');
+  const set = (name, value) => {
+    const el = form.elements[name];
+    if (el.type === 'checkbox') el.checked = value; else el.value = value;
+    el.dispatchEvent(new app.window.Event('input', { bubbles: true }));
+    el.dispatchEvent(new app.window.Event('change', { bubbles: true }));
+  };
+  set('loopEnabled', true);
+  set('loopMaxIterations', '2');
+  set('loopOnExhausted', 'human');
+  set('loopFeedbackPrompt', 'only fix {{feedback}}');
+  set('interventionAfter', true);
+  app.document.querySelector('#agentAddArtifact').click();
+  await settle();
+  // The panel was re-rendered; the switches still show what was chosen.
+  assert.equal(form.elements.loopEnabled.checked, true);
+  assert.equal(form.elements.loopMaxIterations.value, '2');
+  assert.equal(form.elements.loopOnExhausted.value, 'human');
+  assert.equal(form.elements.loopFeedbackPrompt.value, 'only fix {{feedback}}');
+  assert.equal(form.elements.interventionAfter.checked, true);
+  form.querySelector('[data-artifact-row="0"] [data-ak="path"]').value = 'plan.md';
+  form.querySelector('[data-artifact-row="0"] [data-ak="path"]').dispatchEvent(new app.window.Event('input', { bubbles: true }));
+  app.router.put('/api/agents', (call) => ({ status: 200, body: call.body }));
+  await app.evaluate(`persistAgent($('#agentForm'))`);
+  const saved = app.router.calls.find((c) => c.path === '/api/agents' && c.method === 'PUT').body;
+  assert.equal(saved.loop.enabled, true);
+  assert.equal(saved.loop.maxIterations, 2);
+  assert.equal(saved.loop.onExhausted, 'human');
+  assert.equal(saved.loop.feedbackPrompt, 'only fix {{feedback}}');
+  assert.ok(saved.interventions.some((x) => x.stage === 'after_execution'));
+  assert.equal(saved.artifactOutputs[0].path, 'plan.md');
+});
+
+test('platform roles are read-only for project members and can be copied', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  app.router.get('/api/executor-models', { codebuddy: { configured: true, models: [{ id: 'cb-model', name: 'CB model' }] } });
+  app.evaluate(`switchView('agents')`);
+  await settle();
+  app.evaluate(`
+    state.currentUser={...(state.currentUser||{}),id:7,loginName:'member',isPlatformAdmin:false};
+    state.data.executors=[{id:'codebuddy',name:'CodeBuddy'}];
+    const role={id:'platform-role',name:'Platform',projectId:'',prompt:'shared',executorId:'codebuddy',model:'cb-model'};
+    state.data.agents=[role];openAgentWizard(role);
+  `);
+  await settle();
+  assert.equal(app.document.querySelector('#agentSave').hidden, true);
+  assert.equal(app.document.querySelector('#agentClone').hidden, false);
+  await app.evaluate(`persistAgent($('#agentForm'))`);
+  assert.equal(app.router.calls.some((c) => c.path === '/api/agents' && c.method === 'PUT'), false);
+  assert.equal(app.evaluate(`state.data.agents[0].projectId`), '');
+  app.evaluate(`state.currentUser.isPlatformAdmin=true;openAgentWizard(state.data.agents[0])`);
+  await settle();
+  assert.equal(app.document.querySelector('#agentSave').hidden, false);
 });

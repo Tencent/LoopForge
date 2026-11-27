@@ -8,9 +8,11 @@ import React, {
 } from "react";
 import { useChat } from "./useChat";
 import NativeApprovalPanel from "./NativeApprovalPanel";
+import { useNativeApprovals } from "./useNativeApprovals";
 import { AgentBrowserLinks } from "./agent-browser-links.js";
 import ActivityTrace, { ReplyTimeline } from "./ActivityTrace";
 import MessageInfo from "./MessageInfo";
+import MessageHistory from "./MessageHistory";
 import GenerationDiagnostics from "./GenerationDiagnostics";
 import { fullTime, messageSentAt, messageTimeLabel } from "./message-info.js";
 import {
@@ -22,6 +24,7 @@ import {
 } from "./activity";
 import {
   api,
+  write,
   attachmentURL,
   parseReply,
   collectArtifacts,
@@ -40,6 +43,11 @@ import {
   ArtifactPreview,
   ImageLightbox,
 } from "./RichContent";
+import KnowledgeSources from "./KnowledgeSources";
+import {
+  buildKnowledgeSummary,
+  formatTextForCopy,
+} from "./knowledge-citations.js";
 import { DraftCard } from "./SidePanel";
 import ArtifactPanel from "./ArtifactPanel";
 import { useWorkspaceChanges } from "./useWorkspaceChanges";
@@ -50,23 +58,27 @@ import { reconcileOperation, visibleSidebarArtifact } from "./platform.js";
 import { isGeneratedArtifact, shouldRevealArtifactPanel } from "./artifact-autoreveal.js";
 import { IconButton, Dialog, Menu, SelectMenu, CredentialAction } from "./ui";
 import { CLIInstallAction } from "./cli-install.jsx";
-import { credentialHint, openCredentialSettings } from "./credentials";
+import { openCredentialSettings } from "./credentials";
 import { groupSessionHistory, scheduledSession, sessionProjectName } from "./session-history.js";
 import { runSessionState, sessionReplyStatus, sessionTooltip, sidebarReplyStatus } from "./session-status.js";
 import { unreadReply, useReadReplies } from "./session-unread.js";
-import MentionPicker from "./MentionPicker";
+import ReferenceInput from "./ReferenceInput";
 import Participants, { Avatar, authorFor } from "./Participants";
 import IssueContext from "./IssueContext";
-import { mentionAt, insertMention } from "./mentions.js";
+import { insertMention } from "./mentions.js";
 import { elementTitle } from "./element-context.js";
 import HarnessIcon from "./HarnessIcon";
 import QueuedMessages from "./QueuedMessages";
 import "./message-queue.css";
 import ConversationStatusIcon from "./ConversationStatusIcon";
 import { SidebarSection } from "./SidebarPreview";
+import SlidingTabs from "./SlidingTabs";
 import {
   splitSidebarSections,
+  groupScheduledSessionsByTask,
+  summarizeSidebarTabBadges,
   PROJECT_PREVIEW_LIMIT,
+  SCHEDULED_TASK_PREVIEW_LIMIT,
   previewSessions,
 } from "./session-sections.js";
 import { useLocalConversations } from "./useLocalConversations.js";
@@ -75,11 +87,14 @@ import { usePanelPresence } from "./usePanelPresence";
 import HomeWelcome from "./HomeWelcome";
 import ModelPicker from "./ModelPicker";
 import ModelProviderIcon, { hasProviderLogo } from "./ModelProviderIcon";
-import PermissionPicker, { rememberApprovalMode, storedApprovalMode } from "./PermissionPicker";
-import { conversationEngine, engineBrand } from "./engines.js";
+import PermissionPicker, { normalizeApprovalMode } from "./PermissionPicker";
+import { useComposerOptions } from "./composer-preferences.js";
+import { EXECUTORS, conversationEngine, engineBrand } from "./engines.js";
 import { effortOptions } from "./effort.js";
 import QuickAccessWizard from "./QuickAccessWizard";
 import HarnessSelect from "./HarnessSelect";
+import "../../web/app/knowledge-refs.js";
+import "../../web/app/knowledge-refs.css";
 import SandboxPicker from "./SandboxPicker";
 import ExecutionMachinePicker from "./ExecutionMachinePicker";
 import { shouldRevealTitle, titleRevealTiming } from "./title-reveal.js";
@@ -96,6 +111,10 @@ const THEME_OPTIONS = [
   { value: "system", label: "跟随系统" },
 ];
 const environmentVisibilityKey = "agentflow.native-chat.environmentVisibility.v1";
+const sessionApprovalScope = ({ id, projectId }) => `approval.session:${JSON.stringify([id, projectId || ""])}`;
+const draftApprovalScope = (slot, projectId) =>
+  slot.startsWith("issue:") ? `approval.${JSON.stringify([slot, projectId])}` : `approval.${slot}`;
+const draftSnapshot = ({ text, attachments, references }) => JSON.stringify({ text, attachments, references });
 const sidebarWidthKey = "agentflow.sidebarWidth";
 const sidebarLayoutKey = "agentflow.sidebarLayoutVersion";
 const sidebarLayoutVersion = "grasp-reference-v3";
@@ -154,10 +173,10 @@ const homeStarters = [
     icon: "sparkles",
     tone: "blue",
     title: "快速接入",
-    description: "提供最低限度的鉴权与仓库，用默认角色与 SOP 立即开始。",
-    steps: ["鉴权", "仓库", "默认 SOP"],
+    description: "提供最低限度的鉴权与仓库，用默认角色与 LOOP 立即开始。",
+    steps: ["鉴权", "仓库", "默认 LOOP"],
   },
-  // New users asked how to hook up a test environment and how roles and SOPs
+  // New users asked how to hook up a test environment and how roles and LOOPs
   // work; these two cards start a guided conversation instead of dropping them
   // on a settings page.
   {
@@ -174,11 +193,11 @@ const homeStarters = [
     id: "sop",
     icon: "workflow",
     tone: "green",
-    title: "选用 SOP 与角色",
-    description: "了解产品、前端、后端三套交付 SOP 和其中的角色，按需求推荐一套。",
+    title: "选用 LOOP 与角色",
+    description: "了解产品、前端、后端三套交付 LOOP 和其中的角色，按需求推荐一套。",
     steps: ["产品", "前端", "后端"],
     prompt:
-      "我准备写需求了。平台内置的产品、前端、后端交付 SOP 分别适合什么场景、好在哪里、里面有哪些角色？请结合当前项目推荐一套，并告诉我怎么绑定和派发第一条需求。我的需求是：",
+      "我准备写需求了。平台内置的产品、前端、后端交付 LOOP 分别适合什么场景、好在哪里、里面有哪些角色？请结合当前项目推荐一套，并告诉我怎么绑定和派发第一条需求。我的需求是：",
   },
 ];
 
@@ -205,7 +224,17 @@ function MessageTime({ messages, index }) {
 function copiedReply(message, generation, live) {
   const steps = activityForReply(message, generation, live);
   const text = parseReply(message).message;
-  return hasTextSegments(steps) ? finalReply(text, steps) : text;
+  const reply = hasTextSegments(steps) ? finalReply(text, steps) : text;
+  if (message?.knowledgeReads?.length > 0) {
+    const narrationTexts = steps
+      .filter((s) => s.kind === "text" && s.text)
+      .map((s) => s.text);
+    return formatTextForCopy(reply, message.knowledgeReads, [
+      ...narrationTexts,
+      reply,
+    ]);
+  }
+  return reply;
 }
 function ReplyHeading({ message, steps }) {
   return (
@@ -224,6 +253,28 @@ function AssistantTurn({ message, steps, assets, projectId, sessionId, local, re
   const answer = hasTextSegments(steps)
     ? finalReply(reply.message, steps)
     : message;
+  const answerText = typeof answer === "string" ? answer : visibleText(answer);
+  const hasReads =
+    Array.isArray(message.knowledgeReads) && message.knowledgeReads.length > 0;
+  const knowledgeSummary = useMemo(() => {
+    if (!hasReads) return null;
+    const narrationTexts = steps
+      .filter((s) => s.kind === "text" && s.text)
+      .map((s) => s.text);
+    return buildKnowledgeSummary(message.knowledgeReads, [
+      ...narrationTexts,
+      answerText,
+    ]);
+  }, [hasReads, message.knowledgeReads, steps, answerText]);
+  const [highlightedCite, setHighlightedCite] = useState(null);
+  const sourcesRef = useRef(null);
+  const highlightTimer = useRef(null);
+  useEffect(() => () => window.clearTimeout(highlightTimer.current), []);
+  const handleCitationClick = useCallback((citeIndex) => {
+    setHighlightedCite(citeIndex);
+    window.clearTimeout(highlightTimer.current);
+    highlightTimer.current = window.setTimeout(() => setHighlightedCite(null), 2000);
+  }, []);
   return (
     <>
       {hasTextSegments(steps) ? (
@@ -231,13 +282,30 @@ function AssistantTurn({ message, steps, assets, projectId, sessionId, local, re
           steps={steps}
           startedAt={message.startedAt}
           finishedAt={message.createdAt}
+          knowledgeReads={message.knowledgeReads}
+          knowledgeSummary={knowledgeSummary}
+          onCitationClick={handleCitationClick}
         />
       ) : (
         <ReplyHeading message={message} steps={steps} />
       )}
       <div className="message-body">
-        <RichContent message={answer} assets={assets} projectId={projectId} />
+        <RichContent
+          message={answer}
+          assets={assets}
+          projectId={projectId}
+          knowledgeReads={message.knowledgeReads}
+          knowledgeSummary={knowledgeSummary}
+          onCitationClick={handleCitationClick}
+        />
       </div>
+      <KnowledgeSources
+        knowledgeReads={message.knowledgeReads}
+        text={answerText}
+        summary={knowledgeSummary}
+        highlightedIndex={highlightedCite}
+        containerRef={sourcesRef}
+      />
       {message.failure && message.generationId && !local ? (
         <GenerationDiagnostics sessionId={sessionId} generationId={message.generationId} failure={message.failure} onCLIInstall={onCLIInstall} readOnly={readOnly} />
       ) : message.unfinished ? (
@@ -248,7 +316,7 @@ function AssistantTurn({ message, steps, assets, projectId, sessionId, local, re
     </>
   );
 }
-function LiveMessage({ live, generation, finished = false, local = false, readOnly = false }) {
+function LiveMessage({ live, generation, finished = false, local = false, readOnly = false, hasKnowledgeRefs = false, approvals = [] }) {
   const steps = live.activity || [];
   const textual = hasTextSegments(steps);
   // A streamed paragraph followed by tool calls stays in the process above;
@@ -272,6 +340,9 @@ function LiveMessage({ live, generation, finished = false, local = false, readOn
           finishedAt={generation?.updatedAt}
           live={!finished}
           interrupted={finished}
+          citationsEnabled={hasKnowledgeRefs}
+          streaming={!finished}
+          approvals={approvals}
         />
       ) : (
         <div className="reply-heading">
@@ -281,10 +352,21 @@ function LiveMessage({ live, generation, finished = false, local = false, readOn
             finishedAt={generation?.updatedAt}
             live={!finished}
             interrupted={finished}
+            citationProps={{
+              citationsEnabled: hasKnowledgeRefs,
+              streaming: !finished,
+            }}
+            approvals={approvals}
           />
         </div>
       )}
-      {answer ? <RichContent message={answer} /> : null}
+      {answer ? (
+        <RichContent
+          message={answer}
+          citationsEnabled={hasKnowledgeRefs}
+          streaming={!finished}
+        />
+      ) : null}
       {!finished && !local && !readOnly && generation?.id ? <GenerationDiagnostics sessionId={generation.sessionId} generationId={generation.id} compact /> : null}
       {finished ? (
         <p className="reply-stopped">
@@ -300,13 +382,72 @@ function LiveMessage({ live, generation, finished = false, local = false, readOn
 function readIssueMention() {
   const params = new URLSearchParams(location.search);
   const issueId = params.get("mentionIssue") || "";
-  return issueId ? { issueId, projectId: params.get("projectId") || "" } : null;
+  const intent = params.get("mentionIntent") || "";
+  return issueId ? { issueId, projectId: params.get("projectId") || "", ...(intent ? { intent } : {}) } : null;
+}
+
+function RenameSessionDialog({ session, rename, onClose }) {
+  const [value, setValue] = useState(session.title || "");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const title = value.trim();
+
+  async function save(event) {
+    event.preventDefault();
+    if (!title || saving) return;
+    setSaving(true);
+    setError("");
+    try {
+      if (await rename(session.id, title)) onClose();
+      else setError("保存会话名称失败");
+    } catch (error) {
+      setError(error.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Dialog
+      title="重命名会话"
+      onClose={onClose}
+      footer={
+        <>
+          <button className="quiet-button" onClick={onClose}>取消</button>
+          <button className="primary-button" type="submit" form="rename-session" disabled={!title || saving}>
+            {saving ? "保存中…" : "保存"}
+          </button>
+        </>
+      }
+    >
+      <form id="rename-session" onSubmit={save} aria-busy={saving}>
+        <label className="field">
+          会话名称
+          <input
+            value={value}
+            readOnly={saving}
+            aria-invalid={!!error}
+            aria-describedby={error ? "rename-session-error" : undefined}
+            onChange={(event) => {
+              setValue(event.target.value);
+              setError("");
+            }}
+          />
+        </label>
+        {error ? <div id="rename-session-error" className="chat-error" role="alert">{error}</div> : null}
+      </form>
+    </Dialog>
+  );
 }
 
 export default function App() {
   const realChat = useChat();
   const chat = useLocalConversations(realChat);
+  // One poll feeds the cards, the reply status and the tool rows alike.
+  const approvals = useNativeApprovals(chat);
+  const waitingApproval = Boolean(chat.busy) && approvals.count > 0;
   const sessionTitle = chat.session?.displayTitle || chat.session?.title || "新对话";
+  const canRenameSession = !chat.readOnly && !chat.session?.shared;
   const titleReveal = useTitleReveal(
     chat.session?.id,
     sessionTitle,
@@ -342,20 +483,11 @@ export default function App() {
     [repositorySelections, setRepositorySelections] = useState({}),
     [uploading, setUploading] = useState(false),
     [runsRefresh, setRunsRefresh] = useState(0),
-    [approvalSelection, setApprovalSelection] = useState(null),
     [quickAccessOpen, setQuickAccessOpen] = useState(
       () => new URLSearchParams(location.search).get("quickAccess") === "1",
     ),
     [theme, setTheme] = useState(() => readThemePreference(localStorage)),
     [environmentVisibility, setEnvironmentVisibility] = useState(() => readJSON(environmentVisibilityKey, {}));
-  const approvalUserId = realChat.user?.isGuest ? null : realChat.user?.id ?? null;
-  const approval = approvalSelection?.userId === approvalUserId
-    ? approvalSelection.value
-    : storedApprovalMode(approvalUserId);
-  function setApproval(value) {
-    setApprovalSelection({ userId: approvalUserId, value });
-    rememberApprovalMode(approvalUserId, value);
-  }
   const environmentPreferenceOwner = String(chat.user?.id || "guest");
   const showEnvironmentPicker = environmentVisibility[environmentPreferenceOwner] === true;
   function changeEnvironmentVisibility(visible) {
@@ -364,27 +496,74 @@ export default function App() {
     try { localStorage.setItem(environmentVisibilityKey, JSON.stringify(next)); } catch {}
   }
   function startNewChat() {
+    setSidebarTab("personal");
     setIssueDraft(null);
     setIssueMention(null);
     chat.newChat();
   }
   const input = useRef(),
+    referenceInput = useRef(),
     sessionPress = useRef(null),
     sessionClickSuppressed = useRef(null),
-    mentionPicker = useRef(),
     projectPicker = useRef(null),
     headerProjectPicker = useRef(null),
     fileInput = useRef(),
     scroll = useRef(),
     follow = useRef(true),
     draftReady = useRef(null),
+    draftOrigin = useRef(null),
+    savingDraftApproval = useRef(null),
     previousArtifacts = useRef({ id: null, ids: new Set(), baselined: false }),
     dialogInput = useRef(),
     composerPreviews = useRef(new Map());
   // A requirement handed over by the workbench drafts in its own slot so the
   // project's unsent new-conversation draft and attachments stay untouched.
   const newDraftSlot = issueDraft && issueDraft.projectId === chat.projectId ? "issue:" + issueDraft.issueId : "new:" + chat.projectId;
-  const draftKey = `agentflow.native-chat.draft.${chat.user?.id || "guest"}.${chat.activeId || newDraftSlot}`;
+  const draftKeyPrefix = `agentflow.native-chat.draft.${chat.user?.id || "guest"}.`;
+  const draftKey = draftKeyPrefix + (chat.activeId || newDraftSlot);
+  const visibleDraft = useRef(null);
+  visibleDraft.current = { key: draftKey, text, attachments, references };
+  const approvalOwner = realChat.user?.isGuest ? "guest" : realChat.user?.id;
+  const { readOptions: readApproval, saveOptions: saveApproval } = useComposerOptions(approvalOwner);
+  const approvalScope = chat.activeId
+    ? chat.session?.id === chat.activeId && sessionApprovalScope(chat.session)
+    : draftApprovalScope(newDraftSlot, chat.projectId);
+  const approval = normalizeApprovalMode((approvalScope && readApproval(approvalScope).mode) || (!chat.activeId && chat.defaultApproval));
+  function setApproval(value) {
+    if (!approvalScope) return;
+    const mode = normalizeApprovalMode(value);
+    const saving = savingDraftApproval.current;
+    if (saving?.scope === approvalScope && saving.owner === approvalOwner &&
+        draftSnapshot(visibleDraft.current) === saving.snapshot) saving.mode = mode;
+    saveApproval(approvalScope, { mode });
+  }
+  function clearDraftApproval(scope, mode) {
+    if (readApproval(scope).mode === mode) saveApproval(scope, null);
+  }
+  function persistDraft(key, draft) {
+    try {
+      localStorage.setItem(key, JSON.stringify(draft));
+    } catch {
+      chat.setError("浏览器存储空间不足，草稿仍保留在当前页面。请移除较大的附件后重试。");
+    }
+  }
+  function clearDraftIfUnchanged(key, snapshot) {
+    const visible = visibleDraft.current;
+    const inComposer = visible.key === key && draftReady.current === key;
+    const stored = readJSON(key, null);
+    if ((inComposer && draftSnapshot(visible) !== snapshot) ||
+        (stored && draftSnapshot(stored) !== snapshot)) return false;
+    try { localStorage.removeItem(key); } catch {}
+    if (inComposer) {
+      draftOrigin.current = null;
+      setMention(null);
+      setText("");
+      setAttachments([]);
+      setReferences([]);
+      if (input.current) input.current.style.height = "";
+    }
+    return true;
+  }
   useEffect(() => {
     if (!chat.activeId) return;
     setIssueDraft(null);
@@ -444,15 +623,17 @@ export default function App() {
     [],
   );
   useEffect(() => setIssueContextOpen(false), [chat.activeId, chat.projectId]);
+  const historyReferences = useMemo(
+    () => chat.session?.messages?.flatMap((message) => message.references || []) || [],
+    [chat.session?.messages],
+  );
   const operationContext = {
     projects: chat.projects,
     projectId: chat.projectId,
     issueId: chat.issueId,
     runId: chat.session?.runId,
     onLinkIssue: chat.linkIssue,
-    references:
-      chat.session?.messages?.flatMap((message) => message.references || []) ||
-      [],
+    references: historyReferences,
     repositorySelections,
     onRepositorySelection: (id, ids, projectId) =>
       setRepositorySelections((old) => ({ ...old, [id]: { ids, projectId } })),
@@ -464,9 +645,14 @@ export default function App() {
     chat.projects.find((p) => p.id === chat.projectId)?.name ||
     (chat.projectId && (chat.session?.projectName || chat.projectId)) ||
     "个人对话";
+  const sessionLoading = !!chat.activeId && chat.session?.id !== chat.activeId;
+  const composerLoading = sessionLoading || chat.replyStatePending;
+  const hasComposerExecutor = !!chat.executor || chat.local;
+  const needsExecutor = chat.ready && chat.user && !chat.user.isGuest && !chat.readOnly &&
+    !hasComposerExecutor && !composerLoading && (chat.machinesReady || chat.machineError);
   const selectedModel = chat.models.find((m) => m.id === chat.model) || (!chat.local ? chat.modelDetails : null);
   const modelLabel =
-    selectedModel?.name?.replace(/^Claude-/, "").replace(/^GPT-/, "") || "模型";
+    (hasComposerExecutor && (selectedModel?.name || chat.model)?.replace(/^Claude-/, "").replace(/^GPT-/, "")) || "模型";
   // The CLI switch is only for a conversation that has not started. A reply
   // in flight, or one already saved, keeps that CLI; another CLI needs a new chat.
   const lockedExecutorId = chat.session
@@ -474,7 +660,7 @@ export default function App() {
       (chat.busy ? chat.executor : "")
     : "";
   const pinnedExecutor = lockedExecutorId
-    ? (chat.executors || []).find((item) => item.id === lockedExecutorId)
+    ? EXECUTORS.find((item) => item.id === lockedExecutorId)
     : undefined;
   const projectOptions = projectPickerOptions(
     chat.projects,
@@ -520,6 +706,14 @@ export default function App() {
       return;
     }
     if (starter.prompt) useStarter(starter.prompt);
+  }
+  function closeQuickAccess() {
+    setQuickAccessOpen(false);
+    if (window.parent !== window) return;
+    const url = new URL(location.href);
+    if (!url.searchParams.has("quickAccess")) return;
+    url.searchParams.delete("quickAccess");
+    history.replaceState(history.state, "", url);
   }
   useEffect(() => {
     const wide = sidebarViewport().matchMedia("(min-width:1001px)");
@@ -567,18 +761,15 @@ export default function App() {
     setText(value.text || "");
     setAttachments(value.attachments || []);
     setReferences(value.references || []);
+    draftOrigin.current = value.copiedFrom || null;
     draftReady.current = draftKey;
   }, [draftKey, chat.user?.id]);
   useEffect(() => {
     if (!chat.user || draftReady.current !== draftKey) return;
-    try {
-      localStorage.setItem(
-        draftKey,
-        JSON.stringify({ text, attachments, references }),
-      );
-    } catch {
-      chat.setError("浏览器存储空间不足，草稿仍保留在当前页面。请移除较大的附件后重试。");
-    }
+    persistDraft(draftKey, {
+      text, attachments, references,
+      ...(draftOrigin.current && { copiedFrom: draftOrigin.current }),
+    });
   }, [text, attachments, references, draftKey, chat.user?.id]);
   // A requirement handed over by the workbench ("创建并去对话澄清") opens a
   // new conversation with the requirement already @-mentioned. It waits for
@@ -587,15 +778,20 @@ export default function App() {
     const listener = (event) => {
       if (
         event.source !== window.parent ||
-        event.origin !== location.origin ||
-        event.data?.type !== "agentflow-chat-mention-issue"
+        event.origin !== location.origin
       ) return;
+      if (event.data?.type === "agentflow-chat-resume-quick-access") {
+        setQuickAccessOpen(true);
+        return;
+      }
+      if (event.data?.type !== "agentflow-chat-mention-issue") return;
       const issueId = String(event.data.issueId || "");
       const projectId = String(event.data.projectId || "");
+      const intent = String(event.data.intent || "");
       if (!issueId || !projectId) return;
       chat.startProjectDraft(projectId);
       setIssueDraft({ issueId, projectId });
-      setIssueMention({ issueId, projectId });
+      setIssueMention({ issueId, projectId, ...(intent ? { intent } : {}) });
     };
     window.addEventListener("message", listener);
     return () => window.removeEventListener("message", listener);
@@ -610,6 +806,7 @@ export default function App() {
       draftReady.current !== draftKey
     ) return;
     let current = true;
+    const focusBeforeHandoff = document.activeElement;
     api(`/api/issues/${encodeURIComponent(issueMention.issueId)}`)
       .then((data) => {
         if (!current) return;
@@ -622,12 +819,20 @@ export default function App() {
           projectId: issue.projectId,
         };
         const value = insertMention("", { start: 0, end: 0 }, ref);
-        setText(value.text);
+        const initialText = issueMention.intent === "clarify"
+          ? `${value.text}帮我澄清这个需求`
+          : value.text;
+        const initialCaret = initialText.length;
+        setText(initialText);
         setReferences([ref]);
         setMention(null);
+        const editor = input.current;
         requestAnimationFrame(() => {
-          input.current?.focus();
-          input.current?.setSelectionRange(value.caret, value.caret);
+          // Preserve the user’s focus if they interacted during the handoff.
+          if (draftReady.current !== draftKey || !editor?.isConnected || editor.value !== initialText) return;
+          if (document.activeElement !== focusBeforeHandoff) return;
+          editor.focus();
+          editor.setSelectionRange(initialCaret, initialCaret);
         });
       })
       .catch((e) => current && chat.setError(e.message))
@@ -636,6 +841,7 @@ export default function App() {
         setIssueMention(null);
         const url = new URL(location.href);
         url.searchParams.delete("mentionIssue");
+        url.searchParams.delete("mentionIntent");
         history.replaceState({}, "", url);
       });
     return () => {
@@ -700,6 +906,7 @@ export default function App() {
     if (follow.current && scroll.current)
       scroll.current.scrollTop = scroll.current.scrollHeight;
   }, [
+    chat.activeId,
     chat.session?.messages?.length,
     chat.live.answer,
     chat.live.thinking,
@@ -769,26 +976,71 @@ export default function App() {
     closeMenu();
   }
   async function submit() {
-    if (uploading) return;
+    if (!hasComposerExecutor || uploading || composerLoading || draftReady.current !== draftKey ||
+        (!chat.activeId && savingDraftApproval.current)) return;
     follow.current = true;
+    const snapshot = draftSnapshot({ text, attachments, references });
+    const draftApproval = chat.activeId ? null : { owner: approvalOwner, scope: approvalScope, mode: approval, snapshot };
+    const copiedFrom = draftOrigin.current;
+    if (draftApproval) savingDraftApproval.current = draftApproval;
+    let savedDraftKey, savedApprovalMode;
+    const onSessionCreated = draftApproval ? (saved) => {
+      savedDraftKey = draftKeyPrefix + saved.id;
+      savedApprovalMode = draftApproval.mode;
+      saveApproval(sessionApprovalScope(saved), { mode: savedApprovalMode });
+    } : undefined;
     const ok = await chat.send({
       text,
       attachments,
       references,
       approvalMode: approval,
+      onSessionCreated,
+      isDraftActive: draftApproval ? () => visibleDraft.current.key === draftKey &&
+        draftSnapshot(visibleDraft.current) === snapshot : undefined,
+    }).finally(() => {
+      if (savingDraftApproval.current === draftApproval) savingDraftApproval.current = null;
     });
+    const visible = visibleDraft.current;
     if (ok) {
-      setMention(null);
-      setText("");
-      setAttachments([]);
-      for (const a of attachments) releaseComposerPreview(a.id);
-      setReferences([]);
-      localStorage.removeItem(draftKey);
-      if (input.current) input.current.style.height = "";
-    } else {
-      // A failed first message may already have opened a new conversation,
-      // which loads that conversation's (empty) draft. Keep what was typed.
-      setText((current) => current || text);
+      const clearedDraft = clearDraftIfUnchanged(draftKey, snapshot);
+      if (clearedDraft && savedDraftKey) clearDraftApproval(draftApproval.scope, savedApprovalMode);
+      let clearedVisible = clearedDraft && visible.key === draftKey;
+      if (copiedFrom?.snapshot === snapshot && /^(new|issue):/.test(copiedFrom.slot)) {
+        const originKey = draftKeyPrefix + copiedFrom.slot;
+        if (clearDraftIfUnchanged(originKey, snapshot)) {
+          if (copiedFrom.approvalScope) clearDraftApproval(copiedFrom.approvalScope, copiedFrom.mode);
+          clearedVisible ||= visible.key === originKey;
+        }
+      }
+      if (!clearedDraft && copiedFrom) {
+        // A newer draft can share this slot. Retire the consumed copy's
+        // linkage while keeping the newer draft itself.
+        const origin = JSON.stringify(copiedFrom);
+        if (visible.key === draftKey && JSON.stringify(draftOrigin.current) === origin)
+          draftOrigin.current = null;
+        const stored = readJSON(draftKey, null);
+        if (stored && JSON.stringify(stored.copiedFrom) === origin) {
+          const { text, attachments, references } = stored;
+          persistDraft(draftKey, { text, attachments, references });
+        }
+      }
+      for (const attachment of attachments) {
+        if (clearedVisible || !visible.attachments.some((current) => current.id === attachment.id))
+          releaseComposerPreview(attachment.id);
+      }
+    } else if (visible.key === savedDraftKey && draftReady.current === savedDraftKey &&
+        !visible.text && !visible.attachments.length && !visible.references.length) {
+      // The session was saved but the first message was rejected. Keep its
+      // content in the visible conversation so the user can retry.
+      draftOrigin.current = {
+        slot: newDraftSlot,
+        approvalScope: draftApproval.scope,
+        mode: savedApprovalMode,
+        snapshot,
+      };
+      setText(text);
+      setAttachments(attachments);
+      setReferences(references);
     }
   }
   function editQueued(item) {
@@ -892,18 +1144,6 @@ export default function App() {
       setUploading(false);
     }
   }
-  function openReferences() {
-    const caret = input.current?.selectionStart ?? text.length;
-    setMention(
-      mentionAt(text, caret, references) || {
-        start: caret,
-        end: caret,
-        query: "",
-      },
-    );
-    closeMenu();
-    input.current?.focus();
-  }
   // addElementReference takes an element picked in the native preview: it
   // rides along as a reference chip, without a token in the text.
   function addElementReference(ref) {
@@ -914,27 +1154,103 @@ export default function App() {
     setReferences((old) => [...old, ref]);
     requestAnimationFrame(() => input.current?.focus());
   }
-  function addReference(ref) {
-    if (
-      references.length >= 12 &&
-      !references.some((x) => x.type === ref.type && x.id === ref.id)
-    ) {
-      chat.setError("每轮最多引用 12 个对象。");
-      return;
+  const [sidebarTab, setSidebarTab] = useState("personal");
+  const [scheduledGroupMode, setScheduledGroupMode] = useState("task");
+  const [collapsedTasks, setCollapsedTasks] = useState({});
+  const [expandedTasks, setExpandedTasks] = useState({});
+  const [scheduleJobs, setScheduleJobs] = useState([]);
+  const [runningScheduleId, setRunningScheduleId] = useState("");
+
+  const activeSessionSummary = useMemo(
+    () =>
+      chat.session ||
+      (chat.sessions || []).find((item) => item.id === chat.activeId) ||
+      null,
+    [chat.session, chat.sessions, chat.activeId],
+  );
+  const isViewingScheduled = Boolean(
+    chat.activeId && scheduledSession(activeSessionSummary),
+  );
+  const activeScheduleJob = useMemo(() => {
+    const taskId = String(activeSessionSummary?.taskId || "").trim();
+    if (!taskId) return null;
+    return scheduleJobs.find((job) => job.id === taskId) || null;
+  }, [activeSessionSummary?.taskId, scheduleJobs]);
+
+  useEffect(() => {
+    if (!chat.activeId) return;
+    if (scheduledSession(activeSessionSummary)) {
+      setSidebarTab("scheduled");
+    } else if (activeSessionSummary) {
+      setSidebarTab((current) => (current === "scheduled" ? "personal" : current));
     }
-    const value = insertMention(text, mention, ref);
-    setText(value.text);
-    setReferences((old) =>
-      old.some((x) => x.type === ref.type && x.id === ref.id)
-        ? old
-        : [...old, ref],
-    );
-    setMention(null);
-    requestAnimationFrame(() => {
-      input.current?.focus();
-      input.current?.setSelectionRange(value.caret, value.caret);
-    });
+  }, [chat.activeId, activeSessionSummary?.source, activeSessionSummary?.title]);
+
+  const loadScheduleJobs = useCallback(() => {
+    if (!chat.ready || chat.local) return;
+    let alive = true;
+    api("/api/schedule-jobs")
+      .then((list) => {
+        if (alive && Array.isArray(list)) setScheduleJobs(list);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [chat.ready, chat.local]);
+
+  useEffect(() => {
+    if (!chat.ready || chat.local) return;
+    if (sidebarTab !== "scheduled" && !isViewingScheduled) return;
+    return loadScheduleJobs();
+  }, [chat.ready, chat.local, sidebarTab, isViewingScheduled, loadScheduleJobs]);
+
+  async function runScheduledJobNow(jobId) {
+    if (!jobId || runningScheduleId) return;
+    setRunningScheduleId(jobId);
+    try {
+      const saved = await write(`/api/schedule-jobs/${encodeURIComponent(jobId)}/run`, {});
+      if (saved?.id) {
+        setScheduleJobs((list) =>
+          list.some((item) => item.id === saved.id)
+            ? list.map((item) => (item.id === saved.id ? saved : item))
+            : [saved, ...list],
+        );
+      }
+      await chat.refresh?.();
+      if (saved?.lastSessionId) {
+        setSidebarTab("scheduled");
+        chat.open(saved.lastSessionId);
+      }
+    } catch (err) {
+      chat.setError(err?.message || "立即执行定时任务失败");
+    } finally {
+      setRunningScheduleId("");
+    }
   }
+
+  const sidebarTabBadges = useMemo(
+    () =>
+      summarizeSidebarTabBadges(chat.sessions, {
+        activeId: chat.activeId,
+        archived,
+        mineOnly,
+        currentUserId: chat.user?.id,
+        readReplies,
+        activeGeneration: chat.generation,
+        activeBusy: chat.busy,
+      }),
+    [
+      chat.sessions,
+      chat.activeId,
+      archived,
+      mineOnly,
+      chat.user?.id,
+      readReplies,
+      chat.generation,
+      chat.busy,
+    ],
+  );
   const sidebarSections = splitSidebarSections(chat.sessions, chat.projects, {
     archived,
     mineOnly,
@@ -943,7 +1259,41 @@ export default function App() {
     pinned,
     activeId: chat.activeId,
     hideIdleRuns: true,
+    bucket: sidebarTab === "scheduled" ? "scheduled" : "personal",
   });
+  const scheduledTaskGroups = useMemo(
+    () =>
+      sidebarTab === "scheduled" && scheduledGroupMode === "task"
+        ? groupScheduledSessionsByTask(chat.sessions, chat.projects, {
+            jobs: scheduleJobs,
+            archived,
+            mineOnly,
+            currentUserId: chat.user?.id,
+            query,
+            pinned,
+            activeId: chat.activeId,
+            readReplies,
+            activeGeneration: chat.generation,
+            activeBusy: chat.busy,
+          })
+        : [],
+    [
+      sidebarTab,
+      scheduledGroupMode,
+      chat.sessions,
+      chat.projects,
+      scheduleJobs,
+      archived,
+      mineOnly,
+      chat.user?.id,
+      query,
+      pinned,
+      chat.activeId,
+      readReplies,
+      chat.generation,
+      chat.busy,
+    ],
+  );
   const searchGroups = groupSessionHistory(chat.sessions, chat.projects, {
     query,
     pinned,
@@ -1023,6 +1373,7 @@ export default function App() {
       sessionReplyStatus(s, s.id === chat.activeId ? {
         generation: chat.generation,
         busy: chat.busy,
+        approvalCount: approvals.count,
       } : undefined),
       unreadReply(s, { activeId: chat.activeId, read: readReplies }),
     );
@@ -1065,8 +1416,8 @@ export default function App() {
           if (innerWidth < 850) setSidebar(false);
         }}
       >
-        <span>{s.displayTitle || s.title || "新对话"}</span>
-        {scheduledSession(s) ? (
+        <span>{options.label || s.displayTitle || s.title || "新对话"}</span>
+        {!options.hideScheduledTag && scheduledSession(s) ? (
           <span className="session-project-tag session-source-tag" title="定时任务产生的会话">
             定时
           </span>
@@ -1110,16 +1461,18 @@ export default function App() {
             <HarnessIcon name="pin" size={15} />
             {pinned.includes(s.id) ? "取消置顶" : "置顶"}
           </button>
-          <button
-            role="menuitem"
-            onClick={() => {
-              setDialog({ type: "rename", session: s, value: s.title || "" });
-              closeMenu();
-            }}
-          >
-            <HarnessIcon name="edit" size={15} />
-            重命名
-          </button>
+          {!s.shared && !s.readOnly ? (
+            <button
+              role="menuitem"
+              onClick={() => {
+                setDialog({ type: "rename", session: s });
+                closeMenu();
+              }}
+            >
+              <HarnessIcon name="edit" size={15} />
+              重命名
+            </button>
+          ) : null}
           {!s.shared ? (
             <>
               <button
@@ -1202,10 +1555,16 @@ export default function App() {
                 status={sessionReplyStatus(chat.session, {
                   generation: chat.generation,
                   busy: chat.busy,
+                  approvalCount: approvals.count,
                 })}
               />
+              {waitingApproval ? (
+                <span className="conversation-status-chip" title="等待你批准外部写入">
+                  待审批
+                </span>
+              ) : null}
               <button
-                disabled={chat.readOnly}
+                disabled={!canRenameSession}
                 title={sessionTitle}
                 aria-label={sessionTitle}
                 className={titleReveal ? "title-typing" : undefined}
@@ -1221,7 +1580,6 @@ export default function App() {
                   setDialog({
                     type: "rename",
                     session: chat.session,
-                    value: chat.session.title,
                   })
                 }
               >
@@ -1238,14 +1596,13 @@ export default function App() {
                     ))
                   : sessionTitle}
               </button>
-              {!chat.readOnly ? (
+              {canRenameSession ? (
                 <IconButton
                   label="重命名会话"
                   onClick={() =>
                     setDialog({
                       type: "rename",
                       session: chat.session,
-                      value: chat.session.title,
                     })
                   }
                 >
@@ -1310,6 +1667,7 @@ export default function App() {
                   />
                 </div>
               ) : null}
+              {!chat.local && !chat.readOnly && chat.projectId && !chat.sandboxLocked ? <button className="context-pill knowledge-picker" type="button" title="关联我的知识库：会话回答时只读检索所选个人知识库连接器" aria-label="关联我的知识库" onClick={()=>window.editKnowledgeRefs(chat.projectId,chat.knowledgeRefs,chat.saveKnowledgeRefs)}><HarnessIcon name="layers" size={13} interactive={false} /><span>知识库{chat.knowledgeRefs?.length ? " · "+chat.knowledgeRefs.length : ""}</span><HarnessIcon name="chevron-down" size={12} interactive={false} /></button> : null}
               {showEnvironmentPicker ? <SandboxPicker chat={chat} onCreate={() => navigate("sandboxes", { action: "create", projectId: chat.projectId })} /> : null}
               <Participants session={chat.session} users={chat.users} />
             </>
@@ -1450,128 +1808,456 @@ export default function App() {
               ) : null}
             </div>
           </div>
+          <SlidingTabs
+            className="sidebar-bucket-tabs"
+            aria-label="会话来源分栏"
+          >
+            <button
+              type="button"
+              role="tab"
+              aria-selected={sidebarTab === "personal"}
+              className={`sidebar-bucket-tab ${sidebarTab === "personal" ? "active" : ""}`}
+              onClick={() => setSidebarTab("personal")}
+            >
+              <span>个人</span>
+              {sidebarTab !== "personal" && sidebarTabBadges.personal.unread > 0 ? (
+                <span
+                  className="sidebar-tab-dot"
+                  data-tone="unread"
+                  title={`${sidebarTabBadges.personal.unread} 条未读`}
+                  aria-label={`${sidebarTabBadges.personal.unread} 条未读`}
+                />
+              ) : null}
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={sidebarTab === "scheduled"}
+              className={`sidebar-bucket-tab ${sidebarTab === "scheduled" ? "active" : ""}`}
+              onClick={() => setSidebarTab("scheduled")}
+            >
+              <span>定时任务</span>
+              {sidebarTabBadges.scheduled.running > 0 ? (
+                <span
+                  className="sidebar-tab-dot"
+                  data-tone="running"
+                  title={`${sidebarTabBadges.scheduled.running} 个运行中`}
+                  aria-label={`${sidebarTabBadges.scheduled.running} 个运行中`}
+                />
+              ) : sidebarTabBadges.scheduled.failed > 0 ? (
+                <span
+                  className="sidebar-tab-dot"
+                  data-tone="failed"
+                  title={`${sidebarTabBadges.scheduled.failed} 个失败`}
+                  aria-label={`${sidebarTabBadges.scheduled.failed} 个失败`}
+                />
+              ) : sidebarTab !== "scheduled" && sidebarTabBadges.scheduled.unread > 0 ? (
+                <span
+                  className="sidebar-tab-dot"
+                  data-tone="unread"
+                  title={`${sidebarTabBadges.scheduled.unread} 条未读`}
+                  aria-label={`${sidebarTabBadges.scheduled.unread} 条未读`}
+                />
+              ) : null}
+            </button>
+          </SlidingTabs>
           <div className="session-list">
-            {archived ? <div className="section-label">已归档</div> : null}
-            {!archived && sidebarSections.pinnedSessions.length ? (
-              <SidebarSection
-                className="sidebar-pinned"
-                title="置顶"
-                icon="pin"
-                count={sidebarSections.pinnedSessions.length}
-                expanded={!!query || pinnedOpen}
-                onToggle={() => setPinnedOpen((open) => !open)}
-              >
-                {sidebarSections.pinnedSessions.map((session) =>
-                  renderSession(session, {
-                    projectName: sessionProjectName(
-                      session.projectId,
-                      chat.projects,
-                    ),
-                  }),
-                )}
-              </SidebarSection>
-            ) : null}
-            {sidebarSections.groups.length ? (
+            {sidebarTab === "scheduled" ? (
               <>
-                {sidebarSections.groups.map((group) => {
-                  const stored = collapsedProjects[group.projectId];
-                  const expanded =
-                    !!query ||
-                    (stored === undefined
-                      ? group.projectId === chat.projectId || !group.projectId
-                      : !stored);
-                  const showAll = !!query || !!expandedProjects[group.projectId];
-                  const sessions = showAll
-                    ? group.sessions
-                    : previewSessions(
-                        group.sessions,
-                        PROJECT_PREVIEW_LIMIT,
-                        chat.activeId,
-                      );
-                  const hidden = group.sessions.length - sessions.length;
-                  return (
-                    <SidebarSection
-                      key={group.projectId}
-                      title={group.name}
-                      icon={group.projectId ? "folder" : "user"}
-                      count={group.sessions.length}
-                      expanded={expanded}
-                      onToggle={() =>
-                        setCollapsedProjects((previous) => ({
-                          ...previous,
-                          [group.projectId]: expanded,
-                        }))
-                      }
+                <div className="sidebar-subbar">
+                  <div className="sidebar-mode-pills" role="group" aria-label="定时会话视图">
+                    <button
+                      type="button"
+                      className={scheduledGroupMode === "task" ? "active" : ""}
+                      onClick={() => setScheduledGroupMode("task")}
                     >
-                      {sessions.map((session) => renderSession(session))}
-                      {hidden > 0 ? (
-                        <button
-                          type="button"
-                          className="sidebar-more"
-                          onClick={() =>
-                            setExpandedProjects((previous) => ({
-                              ...previous,
-                              [group.projectId]: true,
-                            }))
-                          }
+                      按任务
+                    </button>
+                    <button
+                      type="button"
+                      className={scheduledGroupMode === "timeline" ? "active" : ""}
+                      onClick={() => setScheduledGroupMode("timeline")}
+                    >
+                      按项目
+                    </button>
+                  </div>
+                  <button
+                    type="button"
+                    className="sidebar-subbar-action"
+                    onClick={() =>
+                      navigate("aiSchedules", {
+                        projectId: chat.projectId,
+                        action: "create",
+                      })
+                    }
+                  >
+                    + 新建
+                  </button>
+                </div>
+                {scheduledGroupMode === "task" ? (
+                  scheduledTaskGroups.length ? (
+                    scheduledTaskGroups.map((group) => {
+                      const stored = collapsedTasks[group.key];
+                      const expanded =
+                        !!query ||
+                        (stored === undefined
+                          ? group.sessions.some((item) => item.id === chat.activeId) ||
+                            group.running ||
+                            scheduledTaskGroups.indexOf(group) < 3
+                          : !stored);
+                      const showAll = !!query || !!expandedTasks[group.key];
+                      const rows = showAll
+                        ? group.sessions
+                        : previewSessions(
+                            group.sessions,
+                            SCHEDULED_TASK_PREVIEW_LIMIT,
+                            chat.activeId,
+                          );
+                      const hidden = group.sessions.length - rows.length;
+                      return (
+                        <section
+                          key={group.key}
+                          className="sidebar-project-section"
+                          aria-label={`定时任务 ${group.title} 的会话`}
                         >
-                          展开其余 {hidden} 条
-                        </button>
-                      ) : null}
-                      {showAll && group.sessions.length > PROJECT_PREVIEW_LIMIT ? (
-                        <button
-                          type="button"
-                          className="sidebar-more"
-                          onClick={() =>
-                            setExpandedProjects((previous) => ({
-                              ...previous,
-                              [group.projectId]: false,
-                            }))
-                          }
-                        >
-                          收起
-                        </button>
-                      ) : null}
-                    </SidebarSection>
-                  );
-                })}
+                          <div className="sidebar-task-head">
+                            <button
+                              type="button"
+                              className="sidebar-task-toggle"
+                              aria-expanded={expanded}
+                              onClick={() =>
+                                setCollapsedTasks((prev) => ({
+                                  ...prev,
+                                  [group.key]: expanded,
+                                }))
+                              }
+                            >
+                              <HarnessIcon
+                                name={expanded ? "chevron-down" : "chevron-right"}
+                                size={12}
+                              />
+                              <span title={`${group.title} · ${group.projectName}`}>
+                                {group.title}
+                              </span>
+                              {group.fixedSession ? (
+                                <span className="session-project-tag">同会话</span>
+                              ) : null}
+                            </button>
+                            <div className="sidebar-task-actions">
+                              {group.taskId ? (
+                                <>
+                                  <button
+                                    type="button"
+                                    className="sidebar-task-quick is-run"
+                                    title="立即执行一次"
+                                    aria-label={`立即执行 ${group.title}`}
+                                    disabled={runningScheduleId === group.taskId}
+                                    onClick={() => runScheduledJobNow(group.taskId)}
+                                  >
+                                    <HarnessIcon
+                                      name={runningScheduleId === group.taskId ? "arc-spinner" : "play"}
+                                      size={12}
+                                      motion={runningScheduleId === group.taskId ? "busy" : "idle"}
+                                    />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="sidebar-task-quick"
+                                    title="任务设置"
+                                    aria-label={`打开 ${group.title} 设置`}
+                                    onClick={() =>
+                                      navigate("aiSchedules", {
+                                        projectId: group.projectId || chat.projectId,
+                                        action: "edit",
+                                        jobId: group.taskId,
+                                      })
+                                    }
+                                  >
+                                    <HarnessIcon name="edit" size={12} />
+                                  </button>
+                                </>
+                              ) : null}
+                              {group.running ? (
+                                <span className="sidebar-tab-dot" data-tone="running" title="运行中" />
+                              ) : group.failed ? (
+                                <span className="sidebar-tab-dot" data-tone="failed" title="执行失败" />
+                              ) : group.unread > 0 ? (
+                                <span className="sidebar-tab-dot" data-tone="unread" title={`${group.unread} 条未读`} />
+                              ) : null}
+                              <span className="sidebar-task-count">{group.sessions.length}</span>
+                            </div>
+                          </div>
+                          <div
+                            className={`sidebar-section-collapse ${expanded ? "is-open" : ""}`}
+                            aria-hidden={!expanded || undefined}
+                            inert={!expanded}
+                          >
+                            <div className="sidebar-section-items">
+                              {rows.map((session) =>
+                                renderSession(session, { hideScheduledTag: true }),
+                              )}
+                              {hidden > 0 ? (
+                                <button
+                                  type="button"
+                                  className="sidebar-more"
+                                  onClick={() =>
+                                    setExpandedTasks((prev) => ({
+                                      ...prev,
+                                      [group.key]: true,
+                                    }))
+                                  }
+                                >
+                                  展开其余 {hidden} 条
+                                </button>
+                              ) : null}
+                              {showAll && group.sessions.length > SCHEDULED_TASK_PREVIEW_LIMIT ? (
+                                <button
+                                  type="button"
+                                  className="sidebar-more"
+                                  onClick={() =>
+                                    setExpandedTasks((prev) => ({
+                                      ...prev,
+                                      [group.key]: false,
+                                    }))
+                                  }
+                                >
+                                  收起
+                                </button>
+                              ) : null}
+                            </div>
+                          </div>
+                        </section>
+                      );
+                    })
+                  ) : (
+                    <div className="empty-session-list">
+                      <p className="end-label">
+                        {chat.ready ? "还没有定时任务会话" : "正在连接…"}
+                      </p>
+                    </div>
+                  )
+                ) : (
+                  <>
+                    {sidebarSections.groups.length ? (
+                      sidebarSections.groups.map((group) => {
+                        const stored = collapsedProjects[`sched:${group.projectId}`];
+                        const expanded = !!query || stored !== true;
+                        return (
+                          <SidebarSection
+                            key={`sched-${group.projectId}`}
+                            title={group.name}
+                            icon={group.projectId ? "folder" : "clock"}
+                            count={group.sessions.length}
+                            expanded={expanded}
+                            onToggle={() =>
+                              setCollapsedProjects((previous) => ({
+                                ...previous,
+                                [`sched:${group.projectId}`]: expanded,
+                              }))
+                            }
+                          >
+                            {group.sessions.map((session) =>
+                              renderSession(session, { hideScheduledTag: true }),
+                            )}
+                          </SidebarSection>
+                        );
+                      })
+                    ) : (
+                      <div className="empty-session-list">
+                        <p className="end-label">
+                          {chat.ready ? "还没有定时任务会话" : "正在连接…"}
+                        </p>
+                      </div>
+                    )}
+                  </>
+                )}
               </>
-            ) : null}
-            {!sidebarSections.pinnedSessions.length &&
-            !sidebarSections.groups.length ? (
-              <div className="empty-session-list">
-                <p className="end-label">
-                  {chat.ready
-                    ? archived
-                      ? "还没有归档会话"
-                      : mineOnly
-                        ? "还没有你参与的会话"
-                        : "还没有会话"
-                    : "正在连接…"}
-                </p>
-              </div>
-            ) : null}
+            ) : (
+              <>
+                {archived ? <div className="section-label">已归档</div> : null}
+                {!archived && sidebarSections.pinnedSessions.length ? (
+                  <SidebarSection
+                    className="sidebar-pinned"
+                    title="置顶"
+                    icon="pin"
+                    count={sidebarSections.pinnedSessions.length}
+                    expanded={!!query || pinnedOpen}
+                    onToggle={() => setPinnedOpen((open) => !open)}
+                  >
+                    {sidebarSections.pinnedSessions.map((session) =>
+                      renderSession(session, {
+                        projectName: sessionProjectName(
+                          session.projectId,
+                          chat.projects,
+                        ),
+                      }),
+                    )}
+                  </SidebarSection>
+                ) : null}
+                {sidebarSections.groups.length ? (
+                  <>
+                    {sidebarSections.groups.map((group) => {
+                      const stored = collapsedProjects[group.projectId];
+                      const expanded =
+                        !!query ||
+                        (stored === undefined
+                          ? group.projectId === chat.projectId || !group.projectId
+                          : !stored);
+                      const showAll = !!query || !!expandedProjects[group.projectId];
+                      const sessions = showAll
+                        ? group.sessions
+                        : previewSessions(
+                            group.sessions,
+                            PROJECT_PREVIEW_LIMIT,
+                            chat.activeId,
+                          );
+                      const hidden = group.sessions.length - sessions.length;
+                      return (
+                        <SidebarSection
+                          key={group.projectId}
+                          title={group.name}
+                          icon={group.projectId ? "folder" : "user"}
+                          count={group.sessions.length}
+                          expanded={expanded}
+                          onToggle={() =>
+                            setCollapsedProjects((previous) => ({
+                              ...previous,
+                              [group.projectId]: expanded,
+                            }))
+                          }
+                        >
+                          {sessions.map((session) => renderSession(session))}
+                          {hidden > 0 ? (
+                            <button
+                              type="button"
+                              className="sidebar-more"
+                              onClick={() =>
+                                setExpandedProjects((previous) => ({
+                                  ...previous,
+                                  [group.projectId]: true,
+                                }))
+                              }
+                            >
+                              展开其余 {hidden} 条
+                            </button>
+                          ) : null}
+                          {showAll && group.sessions.length > PROJECT_PREVIEW_LIMIT ? (
+                            <button
+                              type="button"
+                              className="sidebar-more"
+                              onClick={() =>
+                                setExpandedProjects((previous) => ({
+                                  ...previous,
+                                  [group.projectId]: false,
+                                }))
+                              }
+                            >
+                              收起
+                            </button>
+                          ) : null}
+                        </SidebarSection>
+                      );
+                    })}
+                  </>
+                ) : null}
+                {!sidebarSections.pinnedSessions.length &&
+                !sidebarSections.groups.length ? (
+                  <div className="empty-session-list">
+                    <p className="end-label">
+                      {chat.ready
+                        ? archived
+                          ? "还没有归档会话"
+                          : mineOnly
+                            ? "还没有你参与的会话"
+                            : "还没有会话"
+                        : "正在连接…"}
+                    </p>
+                  </div>
+                ) : null}
+              </>
+            )}
           </div>
+          {sidebarTab === "scheduled" ? (
+            <div className="sidebar-bucket-footer">
+              <span>{scheduleJobs.filter((j) => j.skipDispatch && j.enabled).length} 个任务启用中</span>
+              <button
+                type="button"
+                onClick={() => navigate("aiSchedules", { projectId: chat.projectId })}
+              >
+                管理定时任务 ↗
+              </button>
+            </div>
+          ) : null}
         </aside>
       ) : null}
       <main
         className={`conversation-main ${!chat.activeId ? "empty-conversation" : ""}`}
       >
-        {chat.activeId ? (
-          <div
-            className="message-scroll"
-            ref={scroll}
-            onScroll={(e) => {
-              const el = e.currentTarget;
-              follow.current =
-                el.scrollHeight - el.scrollTop - el.clientHeight < 110;
-            }}
-          >
-            <div className="message-column">
-              {!chat.session && !chat.error ? (
-                <div className="loading-session">正在恢复对话…</div>
+        {isViewingScheduled && activeSessionSummary?.taskId ? (
+          <div className="scheduled-context-banner" role="region" aria-label="定时任务信息">
+            <div className="scheduled-context-meta">
+              <HarnessIcon name="clock" size={14} />
+              <b>{activeScheduleJob?.name || activeSessionSummary.title || "AI 定时任务"}</b>
+              {activeScheduleJob?.cron || activeScheduleJob?.intervalSec ? (
+                <span>
+                  · {activeScheduleJob.cron || `每 ${Math.max(1, Math.round((activeScheduleJob.intervalSec || 3600) / 60))} 分钟`}
+                </span>
               ) : null}
-              {messages.map((message, index) =>
+              {activeScheduleJob?.sessionMode === "fixed" ? <span>· 固定同一会话</span> : null}
+            </div>
+            <div className="scheduled-context-actions">
+              <button
+                type="button"
+                className="scheduled-action-btn"
+                disabled={runningScheduleId === activeSessionSummary.taskId || activeScheduleJob?.lastStatus === "running"}
+                onClick={() => runScheduledJobNow(activeSessionSummary.taskId)}
+              >
+                <HarnessIcon
+                  name={runningScheduleId === activeSessionSummary.taskId ? "arc-spinner" : "play"}
+                  size={12}
+                  motion={runningScheduleId === activeSessionSummary.taskId ? "busy" : "idle"}
+                />
+                {runningScheduleId === activeSessionSummary.taskId || activeScheduleJob?.lastStatus === "running"
+                  ? "执行中…"
+                  : "立即再跑一次"}
+              </button>
+              <button
+                type="button"
+                className="scheduled-action-btn"
+                onClick={() =>
+                  navigate("aiSchedules", {
+                    projectId: activeSessionSummary.projectId || chat.projectId,
+                    action: "edit",
+                    jobId: activeSessionSummary.taskId,
+                  })
+                }
+              >
+                任务设置
+              </button>
+              <button
+                type="button"
+                className="scheduled-action-btn"
+                onClick={() =>
+                  navigate("aiSchedules", {
+                    projectId: activeSessionSummary.projectId || chat.projectId,
+                    action: "executions",
+                    jobId: activeSessionSummary.taskId,
+                  })
+                }
+              >
+                执行记录 ↗
+              </button>
+            </div>
+          </div>
+        ) : null}
+        {chat.activeId ? (
+          <MessageHistory
+            key={chat.activeId}
+            messages={messages}
+            scroll={scroll}
+            follow={follow}
+            loading={!chat.session && !chat.error}
+            renderMessage={(message, index) =>
                 isProposalTimeout(message, messages[index - 1]) ? null : confirmationCaption(message, messages[index - 1]) ? (
                   <div
                     key={index}
@@ -1724,18 +2410,19 @@ export default function App() {
                             )}
                             label="复制回复"
                           />
-                          <MessageInfo message={message} />
+                          <MessageInfo message={message} sessionExecutor={chat.session?.executor} />
                           {!chat.local && !chat.readOnly && message.generationId && !message.failure ? <GenerationDiagnostics sessionId={chat.session.id} generationId={message.generationId} compact /> : null}
                         </div>
                       </>
                     ) : null}
                   </article>
-                ),
-              )}
+                )
+            }
+          >
               {/* The live reply belongs right under its question. Alerts stay
                   last, so a finished reply does not jump above them. */}
               {chat.busy ? (
-                <LiveMessage live={chat.live} generation={chat.generation} local={chat.local} readOnly={chat.readOnly} />
+                <LiveMessage live={chat.live} generation={chat.generation} local={chat.local} readOnly={chat.readOnly} hasKnowledgeRefs={Boolean(chat.knowledgeRefs?.length || chat.session?.knowledgeRestricted)} approvals={approvals.items} />
               ) : chat.generation &&
                 !generationStored(messages, chat.generation) &&
                 !["completed", "running"].includes(chat.generation.status) &&
@@ -1747,9 +2434,10 @@ export default function App() {
                   finished
                   local={chat.local}
                   readOnly={chat.readOnly}
+                  hasKnowledgeRefs={Boolean(chat.knowledgeRefs?.length || chat.session?.knowledgeRestricted)}
                 />
               ) : null}
-              <NativeApprovalPanel chat={chat} onChange={() => {
+              <NativeApprovalPanel approvals={approvals} onChange={() => {
                 if (follow.current && scroll.current)
                   scroll.current.scrollTop = scroll.current.scrollHeight;
               }} />
@@ -1766,7 +2454,7 @@ export default function App() {
                     kind: "run",
                     id: run.id,
                     runId: run.id,
-                    name: run.workflowSnapshot?.name || "SOP 运行",
+                    name: run.workflowSnapshot?.name || "LOOP 运行",
                     nodeId,
                   })
                 }
@@ -1779,8 +2467,7 @@ export default function App() {
                     ?.focus();
                 }}
               />
-            </div>
-          </div>
+          </MessageHistory>
         ) : (
           <HomeWelcome />
         )}
@@ -1796,29 +2483,28 @@ export default function App() {
                 </IconButton>
               </div>
             ) : null}
-            {chat.ready &&
-            !chat.local &&
-            chat.user &&
-            !chat.user.isGuest &&
-            !chat.user.codeBuddyApiKeyConfigured &&
-            !chat.sponsoredModel &&
-            chat.executor === "codebuddy" &&
-            !chat.readOnly &&
-            credentialHint(chat.error)?.field !== "codeBuddyApiKey" ? (
+            {chat.missingServerCLI && !chat.busy && !chat.error && !chat.readOnly ? (
+              <div className="runtime-cli-notice" role="status">
+                <HarnessIcon name="terminal" size={16} aria-hidden="true" />
+                <span>{chat.missingServerCLI.name} 未安装在平台服务器上。{chat.missingServerCLI.serverInstallable ? "" : "请联系管理员安装。"}</span>
+                {chat.missingServerCLI.serverInstallable ? (
+                  <CLIInstallAction
+                    key={chat.missingServerCLI.id}
+                    executor={{ engine: chat.missingServerCLI.id, label: chat.missingServerCLI.name }}
+                    onResult={() => chat.refreshCredentials()}
+                  />
+                ) : null}
+              </div>
+            ) : null}
+            {needsExecutor ? (
               <div className="credential-notice" role="status">
-                <HarnessIcon name="key" size={15} aria-hidden="true" />
-                <span>
-                  当前执行器 CodeBuddy 需要先配置 CodeBuddy API Key。
-                  {chat.user.codexApiKeyConfigured ||
-                  chat.user.claudeCodeApiKeyConfigured
-                    ? "你已配置 Codex / Claude Code Key，也可以在输入框下方把执行器切换过去。"
-                    : ""}
-                </span>
+                <HarnessIcon name="terminal" size={16} aria-hidden="true" />
+                <span>添加一个执行器即可开始对话</span>
                 <button
                   type="button"
-                  onClick={() => openCredentialSettings("codeBuddyApiKey")}
+                  onClick={() => openCredentialSettings("executors")}
                 >
-                  去配置
+                  新增执行器
                 </button>
               </div>
             ) : null}
@@ -1847,7 +2533,7 @@ export default function App() {
                     <button
                       ref={projectPicker}
                       className={`context-pill project-picker${chat.projectId ? "" : " is-unset"}`}
-                      title="对话所属的项目：需求、仓库、角色和 SOP 都按项目区分"
+                      title="对话所属的项目：需求、仓库、角色和 LOOP 都按项目区分"
                       aria-label="选择项目"
                       aria-haspopup="listbox"
                       aria-expanded={menu?.type === "project"}
@@ -1881,7 +2567,8 @@ export default function App() {
                     />
                   </div>
                   {showEnvironmentPicker && chat.projectId ? <ChevronRightSmall /> : null}
-                  {showEnvironmentPicker ? <SandboxPicker chat={chat} onCreate={() => navigate("sandboxes", { action: "create", projectId: chat.projectId })} /> : null}
+                  {!chat.local && !chat.readOnly && chat.projectId && !chat.sandboxLocked ? <button className="context-pill knowledge-picker" type="button" title="关联我的知识库：会话回答时只读检索所选个人知识库连接器" aria-label="关联我的知识库" onClick={()=>window.editKnowledgeRefs(chat.projectId,chat.knowledgeRefs,chat.saveKnowledgeRefs)}><HarnessIcon name="layers" size={13} interactive={false} /><span>知识库{chat.knowledgeRefs?.length ? " · "+chat.knowledgeRefs.length : ""}</span><HarnessIcon name="chevron-down" size={12} interactive={false} /></button> : null}
+              {showEnvironmentPicker ? <SandboxPicker chat={chat} onCreate={() => navigate("sandboxes", { action: "create", projectId: chat.projectId })} /> : null}
                 </div>
                 ) : null}
                 <QueuedMessages
@@ -1896,22 +2583,7 @@ export default function App() {
                   onSendNow={chat.sendNow}
                 />
                 <div className="composer">
-                  <MentionPicker
-                    ref={mentionPicker}
-                    key={chat.projectId}
-                    projectId={chat.projectId}
-                    trigger={mention}
-                    editor={input}
-                    onSelect={addReference}
-                    onClose={() => setMention(null)}
-                    issueId={chat.issueId}
-                    canManageIssue={!!chat.projectId && !chat.busy && (!chat.activeId || !!chat.session) && !chat.session?.shared && !chat.readOnly}
-                    onManageIssue={() => {
-                      setMention(null);
-                      setIssueContextOpen(true);
-                    }}
-                  />
-                  {attachments.length || pendingAttachments.length || references.length ? (
+                  {attachments.length || pendingAttachments.length ? (
                     <div className="composer-attachments">
                       {pendingAttachments.map((a) => (
                         <span
@@ -1972,109 +2644,51 @@ export default function App() {
                           </span>
                         );
                       })}
-                      {references.map((ref) => (
-                        <span
-                          key={ref.type + ref.id}
-                          className={`composer-attachment-file${ref.type === "element" ? " is-element" : ""}`}
-                          title={ref.type === "element" ? elementTitle(ref) : undefined}
-                        >
-                          {ref.type === "element" ? (
-                            <HarnessIcon name="crosshair" size={13} />
-                          ) : (
-                            "@"
-                          )}
-                          {ref.name || ref.id}
-                          <button
-                            aria-label={`移除引用 ${ref.name || ref.id}`}
-                            onClick={() => {
-                              setReferences((old) =>
-                                old.filter(
-                                  (x) => x.id !== ref.id || x.type !== ref.type,
-                                ),
-                              );
-                              setText((old) =>
-                                old.replace(`@${ref.name || ref.id} `, ""),
-                              );
-                              setMention(null);
-                            }}
-                          >
-                            <HarnessIcon name="close" size={13} />
-                          </button>
-                        </span>
-                      ))}
                     </div>
                   ) : null}
-                  <textarea
-                    ref={input}
-                    aria-label="消息"
-                    rows={2}
-                    placeholder={
-                      chat.activeId
-                        ? "告诉我接下来想做点什么"
-                        : "聊聊你的想法，或交给我一件事"
-                    }
-                    value={text}
-                    aria-expanded={!!mention}
-                    onChange={(e) => {
-                      setText(e.target.value);
-                      setReferences((old) =>
-                        old.filter(
-                          (ref) =>
-                            !text.includes(`@${ref.name || ref.id}`) ||
-                            e.target.value.includes(`@${ref.name || ref.id}`),
-                        ),
-                      );
-                      setMention(
-                        e.nativeEvent.isComposing
-                          ? null
-                          : mentionAt(
-                              e.target.value,
-                              e.target.selectionStart,
-                              references,
-                            ),
-                      );
-                      e.target.style.height = "auto";
-                      e.target.style.height =
-                        Math.min(e.target.scrollHeight, 220) + "px";
+                  <ReferenceInput
+                    ref={referenceInput}
+                    editorRef={input}
+                    projectId={chat.projectId}
+                    text={text}
+                    references={references}
+                    mention={mention}
+                    onMentionChange={setMention}
+                    onChange={({ text: nextText, references: nextReferences }) => {
+                      setText(nextText);
+                      setReferences(nextReferences);
                     }}
-                    onCompositionEnd={(e) =>
-                      setMention(
-                        mentionAt(
-                          e.target.value,
-                          e.target.selectionStart,
-                          references,
-                        ),
-                      )
-                    }
-                    onClick={(e) =>
-                      setMention(
-                        mentionAt(
-                          e.target.value,
-                          e.target.selectionStart,
-                          references,
-                        ),
-                      )
-                    }
-                    onPaste={(e) => {
-                      const files = [...e.clipboardData.items]
-                        .filter((i) => i.kind === "file")
-                        .map((i) => i.getAsFile())
-                        .filter(Boolean);
-                      if (files.length) {
-                        e.preventDefault();
-                        void upload(files);
-                      }
+                    onError={(message) => chat.setError(message)}
+                    issueId={chat.issueId}
+                    canManageIssue={!!chat.projectId && !chat.busy && (!chat.activeId || !!chat.session) && !chat.session?.shared && !chat.readOnly}
+                    onManageIssue={() => {
+                      setMention(null);
+                      setIssueContextOpen(true);
                     }}
-                    onKeyDown={(e) => {
-                      if (mention && mentionPicker.current?.keyDown(e)) return;
-                      if (
-                        e.key === "Enter" &&
-                        !e.shiftKey &&
-                        !e.nativeEvent.isComposing
-                      ) {
-                        e.preventDefault();
-                        void submit();
-                      }
+                    textareaProps={{
+                      "aria-label": "消息",
+                      rows: 2,
+                      placeholder: chat.activeId ? "告诉我接下来想做点什么" : "聊聊你的想法，或交给我一件事",
+                      onInput: (e) => {
+                        e.target.style.height = "auto";
+                        e.target.style.height = Math.min(e.target.scrollHeight, 220) + "px";
+                      },
+                      onPaste: (e) => {
+                        const files = [...e.clipboardData.items]
+                          .filter((i) => i.kind === "file")
+                          .map((i) => i.getAsFile())
+                          .filter(Boolean);
+                        if (files.length) {
+                          e.preventDefault();
+                          void upload(files);
+                        }
+                      },
+                      onKeyDown: (e) => {
+                        if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+                          e.preventDefault();
+                          void submit();
+                        }
+                      },
                     }}
                   />
                   <footer className="composer-toolbar">
@@ -2106,7 +2720,10 @@ export default function App() {
                             <HarnessIcon name="paperclip" size={15} />
                             上传图片或文件
                           </button>
-                          <button role="menuitem" onClick={openReferences}>
+                          <button role="menuitem" onClick={() => {
+                            referenceInput.current?.openReferences();
+                            closeMenu();
+                          }}>
                             <HarnessIcon name="connector" size={15} />
                             引用项目资产
                           </button>
@@ -2130,9 +2747,10 @@ export default function App() {
                         e.target.value = "";
                       }}
                     />
-                    {chat.executors.length > 1 && !pinnedExecutor ? (
+                    {hasComposerExecutor && chat.executors.length > 0 && !pinnedExecutor && !chat.submitting ? (
                       <PermissionPicker
                         label="CLI"
+                        disabled={composerLoading}
                         options={chat.executors.map((executor) => {
                           const brand = engineBrand(executor.id);
                           return {
@@ -2152,7 +2770,8 @@ export default function App() {
                       />
                     ) : null}
                     <ModelPicker
-                      models={chat.models}
+                      models={hasComposerExecutor ? chat.models : []}
+                      disabled={composerLoading || !hasComposerExecutor}
                       value={chat.model}
                       label={modelLabel}
                       open={menu?.type === "model"}
@@ -2164,6 +2783,7 @@ export default function App() {
                     />
                     <PermissionPicker
                       label="思考强度"
+                      disabled={composerLoading || !hasComposerExecutor}
                       options={effortOptions(selectedModel)}
                       value={chat.effort}
                       onSelect={chat.setEffort}
@@ -2171,6 +2791,7 @@ export default function App() {
                       onOpenChange={(open) => setMenu(open ? { type: "effort" } : null)}
                     />
                     <PermissionPicker
+                      disabled={sessionLoading}
                       value={approval}
                       onSelect={setApproval}
                       open={menu?.type === "approval"}
@@ -2200,9 +2821,11 @@ export default function App() {
                         title={chat.busy ? "当前回复结束后自动发送" : undefined}
                         disabled={
                           !chat.ready ||
+                          !hasComposerExecutor ||
+                          !!chat.missingServerCLI ||
                           chat.submitting ||
                           chat.machineSaving ||
-                          (chat.activeId && chat.session?.id !== chat.activeId) ||
+                          composerLoading ||
                           (!text.trim() && !attachments.length) ||
                           uploading
                         }
@@ -2288,12 +2911,18 @@ export default function App() {
         }}
         hideTrigger
       />
-      {dialog ? (
+      {dialog?.type === "rename" ? (
+        <RenameSessionDialog
+          key={dialog.session.id}
+          session={dialog.session}
+          rename={chat.rename}
+          onClose={() => setDialog((current) => current === dialog ? null : current)}
+        />
+      ) : dialog ? (
         <Dialog
           title={
             {
               search: "搜索会话",
-              rename: "重命名会话",
               delete: "删除会话",
               edit: dialog.fork ? "创建分支" : "编辑消息",
               settings: "设置",
@@ -2302,7 +2931,7 @@ export default function App() {
           }
           onClose={closeDialog}
           footer={
-            ["rename", "edit", "delete"].includes(dialog.type) ? (
+            ["edit", "delete"].includes(dialog.type) ? (
               <>
                 <button className="quiet-button" onClick={closeDialog}>
                   取消
@@ -2317,14 +2946,6 @@ export default function App() {
                     if (dialog.type === "delete") {
                       await chat.remove(dialog.session.id);
                       closeDialog();
-                    } else if (dialog.type === "rename") {
-                      if (
-                        await chat.rename(
-                          dialog.session.id,
-                          dialog.value.trim(),
-                        )
-                      )
-                        closeDialog();
                     } else {
                       const stored = await chat.edit(
                         dialog.index,
@@ -2333,7 +2954,8 @@ export default function App() {
                       );
                       if (stored) {
                         closeDialog();
-                        await chat.regenerate(stored, approval);
+                        const mode = normalizeApprovalMode(readApproval(sessionApprovalScope(stored)).mode);
+                        await chat.regenerate(stored, mode);
                       }
                     }
                   }}
@@ -2341,11 +2963,9 @@ export default function App() {
                 >
                   {dialog.type === "delete"
                     ? "删除"
-                    : dialog.type === "rename"
-                      ? "保存"
-                      : dialog.fork
-                        ? "创建并继续"
-                        : "保存并重新生成"}
+                    : dialog.fork
+                      ? "创建并继续"
+                      : "保存并重新生成"}
                 </button>
               </>
             ) : dialog.type === "advanced" ? (
@@ -2398,29 +3018,10 @@ export default function App() {
                 ) : null}
               </div>
             </>
-          ) : dialog.type === "rename" ? (
-            <label className="field">
-              会话名称
-              <input
-                autoFocus
-                value={dialog.value}
-                onChange={(e) =>
-                  setDialog({ ...dialog, value: e.target.value })
-                }
-                onKeyDown={async (e) => {
-                  if (
-                    e.key === "Enter" &&
-                    dialog.value.trim() &&
-                    (await chat.rename(dialog.session.id, dialog.value.trim()))
-                  )
-                    closeDialog();
-                }}
-              />
-            </label>
           ) : dialog.type === "delete" ? (
             <p>
               删除“{dialog.session.title}”的聊天记录？本对话里还没提交 MR
-              的需求单会一并删除，已提交 MR 的需求和已保存的 SOP 会保留。
+              的需求单会一并删除，已提交 MR 的需求和已保存的 LOOP 会保留。
             </p>
           ) : dialog.type === "edit" ? (
             <>
@@ -2499,9 +3100,9 @@ export default function App() {
         defaultModel={chat.model}
         sponsoredModel={chat.sponsoredModel}
         sponsoredModels={chat.sponsoredModels}
-        onClose={() => setQuickAccessOpen(false)}
+        onClose={closeQuickAccess}
         onOpenView={(view) => navigate(view)}
-        onCredentialsSaved={chat.refreshUser}
+        onCredentialsSaved={chat.refreshCredentials}
         onCompleted={async (nextProjectId) => {
           await chat.refresh();
           if (nextProjectId) await chat.selectProject(nextProjectId);

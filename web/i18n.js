@@ -6,10 +6,83 @@
   const lang = root.dataset.lang === 'en' ? 'en' : 'zh';
   window.lfLang = () => lang;
   window.lfSetLang = next => {
-    localStorage.setItem('loopforge.lang', next === 'en' ? 'en' : 'zh');
-    location.reload();
+    const value = next === 'en' ? 'en' : 'zh';
+    const current = root.dataset.lang === 'en' ? 'en' : 'zh';
+    if (value === current || root.classList.contains('lang-leaving')) return;
+    try { localStorage.setItem('loopforge.lang', value); } catch { /* A blocked store keeps the previous language after reload. */ }
+    const groups = [...document.querySelectorAll('.lang-switch')];
+    for (const group of groups) {
+      group.querySelectorAll('[data-lang-value]').forEach(btn => {
+        const on = btn.dataset.langValue === value;
+        btn.classList.toggle('active', on);
+        btn.setAttribute('aria-checked', String(on));
+      });
+    }
+    const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (reduce) { location.reload(); return; }
+    try { sessionStorage.setItem('loopforge.lang.motion', 'in'); } catch { /* Fade-in is skipped when the flag cannot be stored. */ }
+    root.classList.add('lang-leaving');
+    let done = false;
+    const finish = () => { if (!done) { done = true; location.reload(); } };
+    const indicator = groups[0]?.querySelector(':scope > [data-sliding-indicator]');
+    if (indicator) {
+      indicator.addEventListener('transitionend', event => {
+        if (event.target === indicator && (event.propertyName === 'transform' || event.propertyName === 'width')) finish();
+      });
+    }
+    setTimeout(finish, 560);
   };
   window.lfT = (zh, en) => (lang === 'en' ? en : zh);
+
+  function bindLangSwitch() {
+    const current = root.dataset.lang === 'en' ? 'en' : 'zh';
+    document.querySelectorAll('.lang-switch').forEach(group => {
+      group.querySelectorAll('[data-lang-value]').forEach(btn => {
+        const on = btn.dataset.langValue === current;
+        btn.classList.toggle('active', on);
+        btn.setAttribute('aria-checked', String(on));
+        btn.tabIndex = on ? 0 : -1;
+        if (btn.dataset.langBound) return;
+        btn.dataset.langBound = '1';
+        btn.addEventListener('click', () => window.lfSetLang(btn.dataset.langValue));
+      });
+      if (!group.dataset.langKeys) {
+        group.dataset.langKeys = '1';
+        group.addEventListener('keydown', event => {
+          if (event.altKey || event.ctrlKey || event.metaKey || !['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+          const buttons = [...group.querySelectorAll('[data-lang-value]')];
+          if (!buttons.length) return;
+          event.preventDefault();
+          const index = Math.max(0, buttons.findIndex(btn => btn.classList.contains('active')));
+          const nextIndex = event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1 : (index + (event.key === 'ArrowRight' ? 1 : -1) + buttons.length) % buttons.length;
+          buttons[nextIndex].focus();
+          buttons[nextIndex].click();
+        });
+      }
+      window.AgentFlowSlidingTabs?.mount(group, { activeSelector: '.active', auto: true, compact: true, cacheKey: group.id || 'lang-switch' });
+    });
+  }
+  function finishLangEnter() {
+    if (!root.classList.contains('lang-enter')) return;
+    try { sessionStorage.removeItem('loopforge.lang.motion'); } catch { /* The flag only skips the splash on the next load. */ }
+    const shell = document.querySelector('.app-shell, .login-card');
+    const clear = () => root.classList.remove('lang-enter', 'lang-shown');
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      root.classList.add('lang-shown');
+      if (!shell) { clear(); return; }
+      shell.addEventListener('transitionend', event => {
+        if (event.target === shell && event.propertyName === 'opacity') clear();
+      });
+      setTimeout(clear, 700);
+    }));
+  }
+  function startLangMotion() {
+    bindLangSwitch();
+    finishLangEnter();
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', startLangMotion, { once: true });
+  else startLangMotion();
+
   if (lang !== 'en') return;
 
   const dict = window.LF_I18N_EN || {};
@@ -27,7 +100,7 @@
   const sentenceRE = sentences.length ? new RegExp(sentences.map(escape).join('|'), 'g') : null;
   const punct = [[/，/g, ', '], [/。/g, '. '], [/：/g, ': '], [/；/g, '; '], [/、/g, ', '], [/！/g, '! '], [/？/g, '? '], [/（/g, ' ('], [/）/g, ') '], [/「|」/g, '"'], [/『|』/g, '"']];
   const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-  const UNITS = {次: ['time', 'times'], 步: ['step', 'steps'], 个: ['', ''], 台: ['', ''], 条: ['', '']};
+  const UNITS = {次: ['time', 'times'], 步: ['step', 'steps'], 个: ['', ''], 台: ['', ''], 条: ['', ''], 篇: ['doc', 'docs']};
   const patterns = [
     [/第\s*(\d+)\s*(?:阶段|Stage)/g, 'Stage $1'],
     [/第\s*(\d+)\s*(?:轮|Round)/g, 'Round $1'],
@@ -37,7 +110,7 @@
     [/(^|[^\d])(\d{1,2})月(?![\u3400-\u9fff])/g, (_, pre, m) => pre + (MONTHS[m - 1] || m)],
     [/共\s*(\d+)\s*(?=[A-Za-z])/g, '$1 '],
     [/(\d{4}-\d{2}-\d{2})\s*至\s*(\d{4}-\d{2}-\d{2})/g, '$1 – $2'],
-    [/(\d+(?:\.\d+)?)\s*(次|步|个|台|条)(?![\u3400-\u9fff])/g, (_, n, u) => {
+    [/(\d+(?:\.\d+)?)\s*(次|步|个|台|条|篇)(?![\u3400-\u9fff])/g, (_, n, u) => {
       const word = UNITS[u][Number(n) === 1 ? 0 : 1];
       return word ? `${n} ${word}` : n;
     }],

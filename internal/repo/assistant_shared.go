@@ -60,7 +60,7 @@ func (r *AssistantRepo) EnsureRunAssistantSession(runID, projectID, title string
 		item.ExecutionTarget = &target
 	}
 	deriveAssistantParticipants(&item, item.Messages)
-	row := assistantSessionRow{ID: id, UserID: userID, ProjectID: projectID, Title: title, Source: item.Source, TaskID: item.TaskID, Payload: mustJSON(item), Created: &now, Updated: &now}
+	row := assistantSessionRow{ID: id, UserID: userID, ProjectID: projectID, Title: title, Source: item.Source, TaskID: item.TaskID, Payload: encodeAssistantSession(item), Created: &now, Updated: &now}
 	if err := r.DB.Clauses(clause.OnConflict{DoNothing: true}).Create(&row).Error; err != nil {
 		return item, err
 	}
@@ -87,7 +87,7 @@ func (r *AssistantRepo) ListSharedAssistantSessions() []domain.AssistantSession 
 	return out
 }
 
-// ListCrossUserAssistantSessions returns, in one query, SOP shared sessions
+// ListCrossUserAssistantSessions returns, in one query, LOOP shared sessions
 // and project-shared conversations created by other users. The HTTP layer
 // filters both by project membership.
 func (r *AssistantRepo) ListCrossUserAssistantSessions(excludeUserID int64) (shared, project []domain.AssistantSession) {
@@ -145,13 +145,25 @@ func validSharedAssistantSession(s domain.AssistantSession) bool {
 }
 
 // ProjectSharedAssistantSession reports whether an ordinary conversation is
-// shared with its project's members. SOP run sessions keep their own rules;
-// legacy per-user run discussions stay private.
+// shared with its project's members. LOOP run sessions keep their own rules;
+// legacy per-user run discussions stay private. A LOOP designer conversation
+// stays private to its author too: it edits one person's unsaved canvas and
+// is not a project discussion.
 func ProjectSharedAssistantSession(s domain.AssistantSession) bool {
-	return !s.Shared && s.RunID == "" && strings.TrimSpace(s.ProjectID) != "" && !strings.HasPrefix(s.ID, "sop-")
+	return !s.Shared && s.RunID == "" && strings.TrimSpace(s.ProjectID) != "" && !strings.HasPrefix(s.ID, "sop-") && s.Source != domain.AssistantSourceSOPDesigner
 }
 
 const assistantSessionMetadataColumns = "id, user_id, project_id, title, model, source, task_id, created_at, updated_at, JSON_REMOVE(payload, '$.messages') AS payload"
+
+// AssistantSessionMetadata looks up a conversation without its transcript.
+// Callers authorize access using the returned owner and project.
+func (r *AssistantRepo) AssistantSessionMetadata(id string) (domain.AssistantSession, bool) {
+	var row assistantSessionRow
+	if r.DB.Select(assistantSessionMetadataColumns).Where("id = ?", assistantRecordID(id)).Take(&row).Error != nil {
+		return domain.AssistantSession{}, false
+	}
+	return decodeAssistantSession(row), true
+}
 
 // ProjectAssistantSession returns the metadata of a project-shared
 // conversation regardless of who created it. Callers must authorize the
@@ -161,12 +173,8 @@ func (r *AssistantRepo) ProjectAssistantSession(id string) (domain.AssistantSess
 	if id == "" || strings.HasPrefix(id, "sop-") {
 		return domain.AssistantSession{}, false
 	}
-	var row assistantSessionRow
-	if r.DB.Table("assistant_sessions").Select(assistantSessionMetadataColumns).Where("id = ?", id).Take(&row).Error != nil {
-		return domain.AssistantSession{}, false
-	}
-	item := decodeAssistantSession(row)
-	return item, ProjectSharedAssistantSession(item)
+	item, ok := r.AssistantSessionMetadata(id)
+	return item, ok && ProjectSharedAssistantSession(item)
 }
 
 // Freeze the source under its generation lock; a branch never overwrites it.
@@ -219,6 +227,9 @@ func (r *AssistantRepo) ReplaceAssistantTurn(source domain.AssistantSession, ind
 		if active > 0 {
 			return fmt.Errorf("请先停止生成再编辑消息")
 		}
+		if old.ParentSessionID != "" && old.Executor == "" {
+			old.Executor = source.Executor
+		}
 		prefix := append([]domain.AssistantMessage(nil), old.Messages[:index]...)
 		if len(target) > 0 {
 			if !source.Shared || source.RunID != target[0].RunID || source.RootSessionID != target[0].ID {
@@ -253,6 +264,6 @@ func (r *AssistantRepo) ReplaceAssistantTurn(source domain.AssistantSession, ind
 			return fmt.Errorf("无法读取更新后的会话")
 		}
 		saved.HistoryRevision++
-		return tx.Model(&assistantSessionRow{}).Where("id = ? AND user_id = ?", saved.ID, saved.UserID).Update("payload", mustJSON(saved)).Error
+		return tx.Model(&assistantSessionRow{}).Where("id = ? AND user_id = ?", saved.ID, saved.UserID).Update("payload", encodeAssistantSession(saved)).Error
 	})
 }

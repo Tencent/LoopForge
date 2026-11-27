@@ -61,7 +61,7 @@ test('a script and human approval run without a model key, GitHub repository or 
   }finally{await removeRun(page,runId)}
 });
 
-test('all generic SOPs can start without a GitHub repository or token',async({page})=>{
+test('all generic LOOPs can start without a GitHub repository or token',async({page})=>{
   const {projectId}=await setup(page);
   const workflowId=`e2e-product-documents-${Date.now().toString(36)}`;
   let runId='',copied=false;
@@ -104,7 +104,7 @@ test('a real Agent generates a document with a model key and no GitHub repositor
     expect(saved.ok()).toBe(true);
     const agent=await page.request.put('/api/agents',{data:{id:agentId,name:'E2E document writer without GitHub',projectId,executorId:'codebuddy',model:process.env.AGENTFLOW_E2E_MODEL_ID||process.env.LOOPFORGE_TEST_MODEL||'default',prompt:`Write report.md in the current workspace with a short three-item to-do plan and the literal marker ${marker}. Do not use Git, access the network, install dependencies or modify other files. Reply when done.`}});
     expect(agent.ok()).toBe(true);agentSaved=true;
-    const workflow=await page.request.put('/api/workflows',{data:{id:workflowId,name:'E2E document without GitHub',projectId,status:'draft',revision:0,sandboxProfileId:'local',nodes:[
+    const workflow=await page.request.put('/api/workflows',{data:{id:workflowId,name:'E2E document without GitHub',projectId,status:'draft',revision:0,sandboxProfileId:'generic-docker',nodes:[
       {id:'write',name:'Write document',type:'agent',agentId,executorId:'codebuddy',maxAttempts:1,maxReworks:0,position:{x:100,y:100},artifactOutputs:[{name:'report',path:'report.md',mediaType:'text/markdown',required:true}]},
       {id:'verify',name:'Verify document',type:'script',scriptLanguage:'shell',script:`grep -q '${marker}' report.md`,maxAttempts:1,maxReworks:0,position:{x:350,y:100}},
     ],edges:[{id:'write-verify',source:'write',target:'verify',when:'success'}]}});

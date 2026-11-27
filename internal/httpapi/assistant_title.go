@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"math"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -116,18 +118,18 @@ func (h *assistantHandlers) scheduleAssistantTitle(ctx context.Context, ownerID 
 
 // assistantTitleModel picks the model and effort that name a session.
 // CodeBuddy uses its cheapest model, limited to shared when the turn borrows
-// the platform key. Other CLIs reuse the session's model at its weakest
+// the platform key. Other CLIs and custom gateways reuse the session's model at its weakest
 // effort; the gateway behind a Base URL may serve nothing else.
 func assistantTitleModel(ctx context.Context, user domain.User, model string, shared []string) (string, string) {
-	if engine, _ := assistantModelEngine(model); engine != assistantEngineCodeBuddy {
+	if engine, _ := assistantModelEngine(model); engine != assistantEngineCodeBuddy || user.CodeBuddyBaseURL != "" {
 		if efforts := assistantModelEfforts(ctx, user, model); len(efforts) > 0 {
 			return model, efforts[0]
 		}
 		return model, ""
 	}
-	catalog := assistantChatCatalog(ctx, user.CodeBuddyInternetEnvironment, nil)
+	catalog := assistantChatCatalog(user.CodeBuddyInternetEnvironment, user.CodeBuddyAPIKey, shared)
 	if len(shared) > 0 {
-		catalog = restrictAssistantCatalog(assistantChatCatalog(ctx, user.CodeBuddyInternetEnvironment, shared), shared)
+		catalog = restrictAssistantCatalog(catalog, shared)
 	}
 	if chosen := assistantApprovalReviewModel(catalog); chosen != "" {
 		return chosen, ""
@@ -136,6 +138,37 @@ func assistantTitleModel(ctx context.Context, user domain.User, model string, sh
 		return shared[0], ""
 	}
 	return catalog.Default, ""
+}
+
+// Numeric comparison, including zero-cost models; ties preserve catalog order.
+func assistantApprovalReviewModel(catalog assistantModelCatalog) string {
+	return cheapestAssistantReviewModel(catalog, false)
+}
+
+func cheapestAssistantReviewModel(catalog assistantModelCatalog, paidOnly bool) string {
+	selected, lowest := "", math.Inf(1)
+	for _, model := range catalog.Models {
+		cost, err := strconv.ParseFloat(strings.Trim(strings.ToLower(strings.TrimSpace(model.Credits)), "x× "), 64)
+		if err == nil && !math.IsNaN(cost) && !math.IsInf(cost, 0) && cost >= 0 && (!paidOnly || cost > 0) && cost < lowest {
+			selected, lowest = model.ID, cost
+		}
+	}
+	return selected
+}
+
+func assistantApprovalReviewModels(catalog assistantModelCatalog) []string {
+	primary := assistantApprovalReviewModel(catalog)
+	if primary == "" {
+		if catalog.Default == "" {
+			return nil
+		}
+		return []string{catalog.Default}
+	}
+	models := []string{primary}
+	if paid := cheapestAssistantReviewModel(catalog, true); paid != "" && paid != primary {
+		models = append(models, paid)
+	}
+	return models
 }
 
 func summarizeAssistantTitle(ctx context.Context, user domain.User, model, prompt string, shared []string) (string, error) {

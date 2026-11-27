@@ -61,18 +61,90 @@ globalThis.LoopForgeForgejoRepository = function parseForgejoRepository(cloneURL
   }
 };
 
-// Unknown HTTPS hosts use Git transport without identifying the hosting product.
-globalThis.LoopForgeGitHTTPS = function parseHTTPSRepository(raw) {
+// Use the URL parser to compress IPv6 and omit the HTTPS default port.
+globalThis.LoopForgeGitHTTPSHost = function normalizeHTTPSHost(raw) {
+  const input = String(raw || '').trim().toLowerCase();
+  let authority = input.replace(/^https:\/\//, '').replace(/\/$/, '');
+  if (!authority || /[\/@?#*%\s\\]/.test(authority)) return '';
+  if (!input.startsWith('https://') && !authority.startsWith('[') && authority.split(':').length > 2) {
+    authority = `[${authority}]`;
+  }
+  try {
+    const url = new URL(`https://${authority}`);
+    const hostname = url.hostname;
+    if (hostname.startsWith('[')) {
+      return /^\[::ffff:[a-f0-9]+:[a-f0-9]+\]$/.test(hostname) ? '' : url.host;
+    }
+    if (!/^[a-z0-9][a-z0-9.-]*$/.test(hostname) || hostname.includes('..') || /^\d+(?:\.\d+){3}$/.test(hostname)) return '';
+    return url.host;
+  } catch {
+    return '';
+  }
+};
+
+// A pasted clone command explicitly selects plaintext transport.
+globalThis.LoopForgeExplicitHTTPClone = function isHTTPCloneCommand(raw) {
+  const input = String(raw || '').trim();
+  return input.startsWith('git clone ') && /^http:\/\//i.test(input.slice('git clone '.length).trimStart());
+};
+
+// Keep the stored transport when displaying a repository in an editable field.
+globalThis.LoopForgeGitRepositoryReference = function gitRepositoryReference(repository) {
+  if (repository?.provider === 'http' && repository.cloneUrl) return `git clone ${repository.cloneUrl}`;
+  if (['ssh', 'forgejo'].includes(repository?.provider)) return repository.cloneUrl || '';
+  return repository?.webUrl || repository?.cloneUrl || repository?.gongfengProjectId || '';
+};
+
+// Generic HTTP(S) hosts use Git transport without a hosting API.
+globalThis.LoopForgeGitHTTPRepository = function parseHTTPRepository(raw) {
   const address=String(raw||'').trim().replace(/^git clone\s+/i,'');
-  if(!/^https:\/\//i.test(address)||/[\s\\]/.test(address))return null;
+  if(!/^https?:\/\//i.test(address)||/[\s\\]/.test(address))return null;
   try{
-    const u=new URL(address),host=u.host.toLowerCase();
-    if(u.username||u.password||u.search||u.hash||['github.com','git.example.com'].includes(u.hostname.toLowerCase()))return null;
-    if(!/^[a-z0-9][a-z0-9.-]*(?::[0-9]+)?$/i.test(host)||u.hostname.includes('..')||/^\d+(?:\.\d+){3}$/.test(u.hostname))return null;
+    const u=new URL(address),plain=u.protocol==='http:';
+    if(u.username||u.password||u.search||u.hash||u.port==='0')return null;
+    if(!plain&&['github.com','git.example.com'].includes(u.hostname))return null;
+    const rawAuthority=address.replace(/^https?:\/\//i,'').split('/')[0];
+    const ipv4=/^\d+(?:\.\d+){3}$/.test(u.hostname);
+    const validHost=ipv4
+      ? plain && rawAuthority.split(':')[0]===u.hostname
+      : !!globalThis.LoopForgeGitHTTPSHost(`https://${u.host}`);
+    if(!validHost)return null;
     const parts=u.pathname.replace(/^\/+|\/+$/g,'').split('/');
     if(parts.some(part=>!part||decodeURIComponent(part)==='.'||decodeURIComponent(part)==='..'))return null;
     const name=parts[parts.length-1].replace(/\.git$/,'');if(!name)return null;
-    const cloneUrl='https://'+host+'/'+parts.join('/');
-    return {provider:'https',host,project:host+'/'+parts.join('/').replace(/\.git$/,''),name,cloneUrl,webUrl:cloneUrl.replace(/\.git$/,'')};
+    const cloneUrl=u.origin+'/'+parts.join('/');
+    const host=plain?u.origin:u.host;
+    return {provider:plain?'http':'https',host,project:host+'/'+parts.join('/').replace(/\.git$/,''),name,cloneUrl,webUrl:cloneUrl.replace(/\.git$/,'')};
   }catch{return null}
+};
+
+// The managed host is supplied by the deployment. Explicit old links remain
+// readable so existing repositories can be opened and edited.
+globalThis.LoopForgeGongfengRepository = function parseManagedRepository(raw, host = '') {
+  const legacyHost = 'git.example.com';
+  const managedHost = host || legacyHost;
+  let value = String(raw || '').trim().replace(/^['"]+|['"]+$/g, '');
+  if (/^git\s+clone\s+/i.test(value)) {
+    value = value.replace(/^git\s+clone\s+/i, '').split(/\s+/)[0].replace(/^['"]+|['"]+$/g, '');
+  }
+  if (!value || /[\s"'<>\\?#]/.test(value)) return null;
+  const ssh = /^(?:git@|ssh:\/\/git@)/i.test(value);
+  const remote = value.replace(/^(?:https?:\/\/|ssh:\/\/)?(?:git@)?/i, '');
+  const lower = remote.toLowerCase();
+  const matched = [managedHost.toLowerCase(), legacyHost].find(candidate =>
+    lower.startsWith(candidate + '/') || lower.startsWith(candidate + ':'));
+  if (!matched) return null;
+  const separator = remote[matched.length];
+  let path = remote.slice(matched.length + 1);
+  if (separator === ':') path = path.replace(/^\d+\//, '');
+  for (const marker of ['/-/', '/tree/', '/blob/', '/commit/', '/commits/', '/merge_requests/', '/issues/', '/snippets/', '/wikis/', '/releases/', '/tags/']) {
+    const at = path.indexOf(marker);
+    if (at !== -1) path = path.slice(0, at);
+  }
+  path = path.replace(/\/+$/, '').replace(/\.git$/i, '');
+  const segments = path.split('/');
+  if (segments.length < 2 || path.includes('..') || segments.some(segment => !segment)) return null;
+  const webUrl = `https://${managedHost}/${path}`;
+  const cloneUrl = ssh && !managedHost.includes(':') ? `git@${managedHost}:${path}.git` : webUrl + '.git';
+  return {provider:'gongfeng', project:path, name:segments.at(-1), webUrl, cloneUrl};
 };

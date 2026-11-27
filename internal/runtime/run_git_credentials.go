@@ -14,7 +14,7 @@ import (
 	"agentflow/internal/gitwork"
 )
 
-// prepareRunGitBinding lends SOP commands an authenticated, command-lifetime
+// prepareRunGitBinding lends LOOP commands an authenticated, command-lifetime
 // credential relay. Tokens remain in memory, rather than environment variables
 // or the files that a workspace snapshot carries to the next node.
 func prepareRunGitBinding(ctx context.Context, sandbox Sandbox, command CommandSpec, credentials RunCredentials) (CommandSpec, func(), error) {
@@ -31,14 +31,12 @@ func prepareRunGitBinding(ctx context.Context, sandbox Sandbox, command CommandS
 	if !command.PrivateHome && command.environment["HOME"] == "" {
 		command.PrivateHome = true
 	}
-	hosts := map[string]string{}
+	hosts := runGitHosts(credentials)
 	secrets := map[string]domain.GitHTTPExecutionCredential{}
-	for host, credential := range credentials.GitHTTPCredentials {
-		if credential.Token != "" {
-			hosts[host], secrets[host] = credential.Platform, credential
-		}
+	for host := range hosts {
+		secrets[host] = credentials.GitHTTPCredentials[host]
 	}
-	// Keep BindGit distinct from conversation BindGitWorkspace: SOP SSH
+	// Keep BindGit distinct from conversation BindGitWorkspace: LOOP SSH
 	// credentials are keyed by the frozen remote, rather than by host.
 	// The host list is deliberately separate from the secret snapshot.
 	credentials.GitHTTPHosts = hosts
@@ -57,8 +55,8 @@ func prepareRunGitBinding(ctx context.Context, sandbox Sandbox, command CommandS
 			Params struct{ Protocol, Host string } `json:"params"`
 		}
 		result := gitCredentialReply{}
-		if len(raw) <= 4096 && json.Unmarshal(raw, &request) == nil && request.Method == gitCredentialMethod && request.Params.Protocol == "https" {
-			if host, err := gitwork.HTTPSHostScope(request.Params.Host); err == nil && ctx.Err() == nil {
+		if len(raw) <= 4096 && json.Unmarshal(raw, &request) == nil && request.Method == gitCredentialMethod {
+			if host, ok := gitwork.GitCredentialScope(request.Params.Protocol, request.Params.Host); ok && ctx.Err() == nil {
 				if credential, ok := secrets[host]; ok {
 					result = gitCredentialReply{Username: credential.GitUsername(), Password: credential.Token, Platform: credential.Platform}
 					if !credential.ExpiresAt.IsZero() {
@@ -89,14 +87,14 @@ func RunGitEnvironment(ctx context.Context, sandbox Sandbox, workspace string, c
 	for _, key := range workspaceGitSecretEnvironment {
 		env[key] = ""
 	}
-	if err := bindWorkspaceGitEnvironment(sandbox, workspace, env, credentials); err != nil {
+	if err := bindWorkspaceGitEnvironment(ctx, sandbox, workspace, env, credentials); err != nil {
 		closeRelay()
 		return nil, func() {}, err
 	}
 	return env, closeRelay, nil
 }
 
-var workspaceGitSecretEnvironment = []string{"AGENTFLOW_GIT_TOKEN", "AGENTFLOW_GIT_HTTP_USER", "AGENTFLOW_GIT_HTTP_PASSWORD", "AGENTFLOW_GIT_HTTP_HOST", "GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN", "GITLAB_TOKEN", "GLAB_TOKEN", "TEA_TOKEN", "CNB_TOKEN", "GIT_ASKPASS", "SSH_ASKPASS", "GIT_CONFIG_PARAMETERS"}
+var workspaceGitSecretEnvironment = []string{"AGENTFLOW_GIT_TOKEN", "AGENTFLOW_GIT_HTTP_USER", "AGENTFLOW_GIT_HTTP_PASSWORD", "AGENTFLOW_GIT_HTTP_HOST", "AGENTFLOW_GIT_HTTP_URL_HOST", "AGENTFLOW_GIT_HTTP_SCHEME", "GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN", "GITLAB_TOKEN", "GLAB_TOKEN", "TEA_TOKEN", "CNB_TOKEN", "GIT_ASKPASS", "SSH_ASKPASS", "GIT_CONFIG_PARAMETERS"}
 
 func scrubRunGitCredentials(ctx context.Context, sandbox Sandbox, workspace string, command CommandSpec, credentials RunCredentials) {
 	home := command.environment["HOME"]

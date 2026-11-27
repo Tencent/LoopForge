@@ -109,7 +109,7 @@ func (h *agentToolGateway) callMainBotWorkspace(ctx context.Context, s *AgentToo
 		return "", errAgentToolForbidden
 	}
 	if engine.WorkspaceRunID(run) != run.ID {
-		return "", fmt.Errorf("子 SOP 共享父任务工作区，请从父任务操作")
+		return "", fmt.Errorf("子 LOOP 共享父任务工作区，请从父任务操作")
 	}
 	wasReclaimed := !run.WorkspaceCleanedAt.IsZero()
 	var restoredArtifacts []string
@@ -146,6 +146,8 @@ func (h *agentToolGateway) callMainBotWorkspace(ctx context.Context, s *AgentToo
 	switch name {
 	case workspaceForgejoPRTool:
 		return h.submitWorkspaceForgejoPR(ctx, s, run, args)
+	case workspacePreviewServiceToolName:
+		return h.callWorkspacePreviewService(ctx, s, run, args)
 	case "workbench_workspace_tree":
 		// Internal only: preparing the workspace on open restores a reclaimed
 		// snapshot and starts the sandbox before the CLI hands over.
@@ -165,6 +167,7 @@ func (h *agentToolGateway) mainBotWorkspaceLease(ctx context.Context, s *AgentTo
 	if h.engine == nil {
 		return ctx, nil, release, nil
 	}
+	ctx = withAssistantDockerBuildProgress(ctx, s)
 	if s.workspaceTurn != nil {
 		ctx, err := s.workspaceTurn.lease(ctx, runID)
 		if err != nil {
@@ -230,7 +233,7 @@ func (e *mainBotWorkspaceError) Error() string { return e.body }
 var workspaceAttachmentTypes = map[string]string{
 	".html": "text/html", ".htm": "text/html",
 	".md": "text/markdown", ".markdown": "text/markdown",
-	".txt": "text/plain", ".log": "text/plain",
+	".txt": "text/plain", ".log": "text/plain", ".py": "text/plain",
 	".csv": "text/csv", ".yaml": "text/yaml", ".yml": "text/yaml",
 	".json": "application/json", ".xml": "application/xml",
 }
@@ -254,7 +257,7 @@ func (h *agentToolGateway) attachWorkspaceFile(ctx context.Context, s *AgentTool
 	name := pathpkg.Base(strings.ReplaceAll(rel, "\\", "/"))
 	mimeType := workspaceAttachmentTypes[strings.ToLower(pathpkg.Ext(name))]
 	if mimeType == "" {
-		return "", fmt.Errorf("path 只能是文本文件（html、md、txt、log、csv、yaml、json、xml）；要给用户看页面效果，用 workbench_browser_screenshot 截图")
+		return "", fmt.Errorf("path 只能是文本文件（html、md、txt、log、py、csv、yaml、json、xml）；要给用户看页面效果，用 workbench_browser_screenshot 截图")
 	}
 	result, err := (mcpserver.LocalInvoker{Handler: h.api}).Invoke(ctx, application.Operation{Method: "GET", Path: "/api/runs/{id}/workspace/file"}, mcpserver.ToolInput{Path: map[string]string{"id": runID}, Query: map[string]string{"path": rel}})
 	if err != nil {

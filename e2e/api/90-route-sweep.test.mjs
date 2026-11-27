@@ -69,6 +69,22 @@ test('knowledge: check reports its state, search and document validate input, th
   await status('GET', '/runners/knowledge/mcp', undefined, [200, 400, 401, 405, 406, 503]);
 });
 
+test('knowledge connectors: check, reference check, oauth edges and session binding validate input', async () => {
+  const check = await post('/api/knowledge/connectors/check', {});
+  assert.equal(check.ok, false);
+  await status('GET', `/api/knowledge/connectors/${MISSING}/sources`, undefined, [404]);
+  await status('POST', '/api/knowledge/reference-check', { knowledgeRefs: [] }, [204]);
+  await status('POST', '/api/knowledge/reference-check', { knowledgeRefs: [{ connectorId: MISSING }] }, [400]);
+  await status('POST', '/api/knowledge/oauth/mcp/authorize', {}, [400]);
+  await status('POST', '/api/knowledge/oauth/mcp/authorize', { connectorId: MISSING }, [404]);
+  for (const path of ['/api/knowledge/oauth/callback', '/api/knowledge/oauth/mcp/callback']) {
+    const res = await fetch(cfg.base + path, { redirect: 'manual' });
+    await res.body?.cancel();
+    assert.equal(res.status, 303, `${path} -> ${res.status}`);
+  }
+  await status('PUT', `/api/assistant/sessions/${MISSING}/knowledge`, { knowledgeRefs: [] }, [400, 403, 404]);
+});
+
 test('MCP market install and import validate their payloads', async () => {
   await status('POST', '/api/mcp-market/install', {}, [400]);
   await status('POST', '/api/mcp-servers/import', {}, [400]);
@@ -81,6 +97,12 @@ test('unknown bots, rooms and spaces answer 404', async () => {
   await status('PATCH', `/api/rooms/${MISSING}`, {}, [404]);
   await status('POST', `/api/rooms/${MISSING}/decisions`, {}, [404]);
   for (const sub of ['decisions', 'flows', 'sops']) await status('POST', `/api/spaces/${MISSING}/${sub}`, {}, [404]);
+});
+
+test('read-only status endpoints answer for a signed-in user', async () => {
+  const install = await get('/api/assistant/cli-install?engine=codex');
+  assert.ok(['installed', 'missing', 'installing', 'failed'].includes(install.status), install.status);
+  await status('GET', '/api/assistant/cli-install?engine=not-a-cli', undefined, [400]);
 });
 
 test('OTLP ingest accepts an empty export', async () => {
@@ -140,6 +162,7 @@ test('runner task plane requires a runner session', async () => {
     ['POST', `/api/runners/tasks/${MISSING}/start`], ['POST', `/api/runners/tasks/${MISSING}/lease/renew`],
     ['GET', `/api/runners/tasks/${MISSING}/events`], ['POST', `/api/runners/tasks/${MISSING}/events`],
     ['POST', `/api/runners/tasks/${MISSING}/complete`], ['GET', `/api/runners/tasks/${MISSING}/control`],
+    ['GET', `/api/runners/tasks/${MISSING}/input-file?path=plan.md`], ['PUT', `/api/runners/tasks/${MISSING}/output-file?path=plan.md`],
     ['POST', '/runners/tasks/claim'], ['GET', `/runners/tasks/${MISSING}/control`],
     ['POST', `/runners/previews/${MISSING}/complete`], ['PUT', `/runners/previews/${MISSING}/content`],
   ];
@@ -164,14 +187,15 @@ test('runner management: register, heartbeat, runtime status, run limit, unknown
   assert.equal(beat.ok, true);
   await status('POST', '/api/runners/runtimes', {}, [400]);
   await status('PUT', '/api/runners/runtimes', { runnerId, provider: 'codebuddy' }, [400]);
-  await status('PUT', `/api/runners/${runnerId}/run-limit`, { runLimit: 500 }, [400]);
-  await status('PUT', `/api/runners/${runnerId}/run-limit`, { runLimit: 2 }, [200, 403]);
+  await status('PUT', `/api/runners/${runnerId}/run-limit`, { runLimit: -1 }, [400]);
+  await status('PUT', `/api/runners/${runnerId}/run-limit`, { runLimit: 500 }, [200, 403]);
   assert.ok(Array.isArray(await get('/api/runners/tasks')));
   await status('POST', '/api/runners/tasks', {}, [400]);
   await status('POST', `/api/runners/tasks/${MISSING}/cancel`, {}, [200, 404]);
   for (const [method, path] of [
     ['GET', `/api/runners/tasks/${MISSING}`], ['POST', `/api/runners/tasks/${MISSING}/start`],
     ['POST', `/api/runners/tasks/${MISSING}/lease/renew`], ['GET', `/api/runners/tasks/${MISSING}/control`],
+    ['GET', `/api/runners/tasks/${MISSING}/input-file?path=plan.md`], ['PUT', `/api/runners/tasks/${MISSING}/output-file?path=plan.md`],
   ]) {
     await status(method, path, method === 'GET' ? undefined : {}, [400, 403, 404, 409], session);
   }

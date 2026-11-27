@@ -1,0 +1,243 @@
+.knowledge-ref-dialog {
+  color: var(--hui-ink, inherit);
+  background: var(--hui-surface, var(--surface, Canvas));
+  border: 1px solid var(--hui-border, var(--border, GrayText));
+  border-radius: 14px;
+  padding: 20px 22px;
+  width: min(520px, calc(100vw - 32px));
+  max-height: 82vh;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  box-shadow: 0 18px 48px rgba(15, 23, 42, .18);
+}
+
+.knowledge-ref-dialog::backdrop {
+  background: rgb(15 23 42 / 36%);
+}
+
+.knowledge-ref-dialog .kr-head {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.knowledge-ref-dialog h3 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.knowledge-ref-dialog .kr-lead {
+  margin: 0;
+  font-size: 13px;
+  color: var(--hui-ink, inherit);
+}
+
+.knowledge-ref-dialog .kr-sublead {
+  margin: 0;
+  font-size: 12px;
+  color: var(--hui-secondary, #64748b);
+}
+
+.knowledge-ref-dialog .kr-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.knowledge-ref-dialog .kr-service {
+  border: 1px solid var(--hui-border, rgba(15, 23, 42, .1));
+  border-radius: 10px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: var(--hui-surface, transparent);
+}
+
+.knowledge-ref-dialog .kr-service-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  cursor: pointer;
+}
+
+.knowledge-ref-dialog .kr-service-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.knowledge-ref-dialog .kr-service-id {
+  font-size: 11px;
+  color: var(--hui-secondary, #64748b);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.knowledge-ref-dialog .kr-service-body {
+  margin-left: 10px;
+  padding-left: 14px;
+  border-left: 2px solid var(--hui-border, rgba(15, 23, 42, .1));
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.knowledge-ref-dialog .kr-service-body[hidden] {
+  display: none;
+}
+
+.knowledge-ref-dialog .kr-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.knowledge-ref-dialog .kr-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.knowledge-ref-dialog .kr-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--hui-secondary, #64748b);
+}
+
+.knowledge-ref-dialog .kr-count {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--hui-secondary, #64748b);
+}
+
+.knowledge-ref-dialog .kr-count.warn {
+  color: var(--hui-error, #dc2626);
+}
+
+.knowledge-ref-dialog .kr-count.ok {
+  color: var(--hui-success, #059669);
+}
+
+.knowledge-ref-dialog .kr-control {
+  width: 100%;
+  height: 34px;
+  box-sizing: border-box;
+  padding: 0 10px;
+  border-radius: 8px;
+  border: 1px solid var(--hui-border, rgba(15, 23, 42, .14));
+  background: var(--hui-surface, #fff);
+  color: var(--hui-ink, inherit);
+  font-size: 13px;
+}
+
+.knowledge-ref-dialog .kr-control:focus {
+  outline: 2px solid var(--hui-accent, #6366f1);
+  outline-offset: -1px;
+}
+
+.knowledge-ref-dialog .kr-sources {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--hui-border, rgba(15, 23, 42, .1));
+  border-radius: 8px;
+  overflow: hidden;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.knowledge-ref-dialog .kr-source-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 9px 12px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--hui-border, rgba(15, 23, 42, .08));
+  transition: background-color .12s ease;
+}
+
+.knowledge-ref-dialog .kr-source-row:last-child {
+  border-bottom: 0;
+}
+
+.knowledge-ref-dialog .kr-source-row:hover {
+  background: color-mix(in srgb, var(--hui-ink, #0f172a) 4%, transparent);
+}
+
+.knowledge-ref-dialog .kr-source-row.selected {
+  background: color-mix(in srgb, var(--hui-accent, #6366f1) 8%, transparent);
+}
+
+.knowledge-ref-dialog .kr-source-row input[type="checkbox"] {
+  margin-top: 2px;
+  flex-shrink: 0;
+}
+
+.knowledge-ref-dialog .kr-source-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.knowledge-ref-dialog .kr-source-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--hui-ink, inherit);
+  word-break: break-word;
+}
+
+.knowledge-ref-dialog .kr-source-meta {
+  font-size: 11px;
+  color: var(--hui-secondary, #64748b);
+}
+
+.knowledge-ref-dialog .kr-advanced {
+  font-size: 12px;
+  color: var(--hui-secondary, #64748b);
+}
+
+.knowledge-ref-dialog .kr-advanced summary {
+  cursor: pointer;
+  user-select: none;
+  margin-bottom: 6px;
+}
+
+.knowledge-ref-dialog .kr-status {
+  margin: 0;
+  font-size: 12px;
+  min-height: 18px;
+  color: var(--hui-secondary, #64748b);
+}
+
+.knowledge-ref-dialog .kr-status.error {
+  color: var(--hui-error, #dc2626);
+}
+
+.knowledge-ref-footer {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+  padding-top: 12px;
+  border-top: 1px solid var(--hui-border, rgba(15, 23, 42, .08));
+}
+
+.knowledge-ref-footer .button {
+  min-width: 76px;
+  height: 34px;
+}
+
+.knowledge-ref-footer .button.primary:disabled {
+  opacity: .45;
+  cursor: not-allowed;
+}

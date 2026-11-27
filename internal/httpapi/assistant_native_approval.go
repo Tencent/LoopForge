@@ -198,7 +198,7 @@ func (h *agentToolGateway) approveNativeTool(ctx context.Context, s *AgentToolSe
 		return nativeToolApprovalResult{Allow: true}
 	}
 	switch strings.ToLower(action.Name) {
-	case "skill", "read", "read_file", "readfile", "glob", "grep", "list", "ls", "list_directory", "list_resources", "view_image", "todowrite", "todo_read", "todoread":
+	case "skill", "read", "read_file", "readfile", "glob", "grep", "list", "ls", "list_directory", "list_resources", "view_image", "readmediafile", "todowrite", "todo_read", "todoread":
 		return nativeToolApprovalResult{Allow: true}
 	}
 	if s.RuntimeMode != domain.AssistantModeWorkspace {
@@ -253,7 +253,7 @@ func (h *agentToolGateway) approveNativeTool(ctx context.Context, s *AgentToolSe
 		}
 		review, done, ok := s.nativeReview(ctx, nativeReviewPoll, id, nativeApprovalPhase(string(action.Input)), func(reviewCtx context.Context) assistantApprovalReview {
 			args := map[string]any{"tool": action.Name, "input": action.Input, "runId": s.workspaceRun()}
-			return reviewAssistantAction(withAssistantApprovalReviewer(reviewCtx, s.approvalReviewer), "native_"+action.Name, "工作区命令（"+label+"），会写入沙箱外的系统", args)
+			return reviewAssistantAction(withApprovalActionSource(withAssistantApprovalReviewer(reviewCtx, s.approvalReviewer), approvalSourceNativeCommand), "native_"+action.Name, "工作区命令（"+label+"），会写入沙箱外的系统", args)
 		})
 		switch {
 		case !ok:
@@ -287,23 +287,118 @@ func (h *agentToolGateway) approveNativeTool(ctx context.Context, s *AgentToolSe
 	return nativeToolApprovalResult{Pending: true}
 }
 
+// approveKnowledgeWrite gates potentially mutating knowledge MCP tool calls in
+// interactive Chat turns using the same approval modes and NativeApprovalPanel
+// workflow as native external writes.
+func (h *agentToolGateway) approveKnowledgeWrite(ctx context.Context, s *AgentToolSession, toolName string, rawArgs json.RawMessage) (string, bool) {
+	if s == nil {
+		return "缺少会话上下文，已拒绝知识库写入操作", false
+	}
+	if s.ExecMode.AutoWrite && !s.ExecMode.ReviewWrites {
+		return "", true
+	}
+	var compact bytes.Buffer
+	if len(rawArgs) == 0 || string(bytes.TrimSpace(rawArgs)) == "null" {
+		compact.WriteString("{}")
+	} else if json.Compact(&compact, rawArgs) != nil {
+		compact.WriteString("{}")
+	}
+	input := compact.Bytes()
+
+	if s.ExecMode.ReviewWrites {
+		review := reviewAssistantAction(
+			withAssistantApprovalReviewer(ctx, s.approvalReviewer),
+			toolName,
+			"知识库 MCP 写入操作（"+toolName+"）",
+			map[string]any{"tool": toolName, "arguments": json.RawMessage(input)},
+		)
+		if review.allows() {
+			return "", true
+		}
+		return nativeReviewRefusal(review), false
+	}
+
+	generation := ""
+	if s.ctx != nil {
+		generation = assistantControlScopeFrom(s.ctx).GenerationID
+	}
+	if h.repo == nil || s.ChatSessionID == "" || s.ChatOwnerID == 0 || generation == "" {
+		return "当前操作可能写入外部知识库，但缺少交互审批上下文，已拒绝执行；请先向用户确认后再试", false
+	}
+	phase := nativeApprovalPhase(s.Token)
+	callID := fmt.Sprintf("kbw-%d", time.Now().UTC().UnixNano())
+	id := nativeApprovalPhase(s.Token + "/" + callID)
+	item := domain.AssistantNativeApproval{
+		ID:           id,
+		GenerationID: generation,
+		ActorID:      s.UserID,
+		Tool:         toolName,
+		Summary:      "知识库写入操作：" + toolName,
+		Input:        input,
+	}
+	if err := h.repo.CreateNativeApproval(s.ChatOwnerID, s.ChatSessionID, phase, item); err != nil {
+		return "无法创建知识库写入审批请求，操作未执行", false
+	}
+	if !h.nativeToolTurnActive(ctx, s) {
+		_ = h.repo.ReleaseNativeApprovals(s.ChatOwnerID, s.ChatSessionID, generation, phase)
+		return "本轮已结束，知识库写入审批已失效", false
+	}
+	if s.Notify != nil {
+		s.Notify("native_approval", map[string]string{"id": item.ID})
+	}
+
+	ticker := time.NewTicker(250 * time.Millisecond)
+	defer ticker.Stop()
+	deadline := time.NewTimer(nativeApprovalWait)
+	defer deadline.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			_ = h.repo.DecideNativeApproval(s.ChatOwnerID, s.UserID, s.ChatSessionID, item.ID, "deny")
+			return "会话已取消，知识库写入操作未执行", false
+		case <-deadline.C:
+			_ = h.repo.DecideNativeApproval(s.ChatOwnerID, s.UserID, s.ChatSessionID, item.ID, "deny")
+			return "等待用户批准知识库写入超时，操作未执行；请告知用户需要确认的内容", false
+		case <-ticker.C:
+			if !h.nativeToolTurnActive(ctx, s) {
+				_ = h.repo.DecideNativeApproval(s.ChatOwnerID, s.UserID, s.ChatSessionID, item.ID, "deny")
+				return "本轮已结束，知识库写入操作未执行", false
+			}
+			cur, ok := h.repo.NativeApproval(s.ChatOwnerID, s.ChatSessionID, item.ID)
+			if !ok {
+				return "审批记录已失效，知识库写入操作未执行", false
+			}
+			switch cur.Decision {
+			case "allow":
+				return "", true
+			case "deny":
+				return "用户拒绝了本次知识库写入操作，不要换一种方式重试；请先询问用户如何处理", false
+			}
+		}
+	}
+}
+
 // nativeReviewRefusal tells the agent why assisted mode declined a command.
 // The reviewer's own texts for an unavailable review still mention a manual
 // confirmation used by platform drafts; native commands have none.
 func nativeReviewRefusal(review assistantApprovalReview) string {
+	reason := strings.TrimSpace(review.Rationale)
 	if review.Outcome != "allow" && review.Outcome != "deny" {
+		if reason != "" && !strings.Contains(reason, "手动确认") {
+			return "帮我批准：自动审查暂不可用（" + reason + "），已拒绝本次外部写入，操作未执行；告诉用户需要执行什么，不要换一种方式重试"
+		}
 		return "帮我批准：自动审查暂不可用，已拒绝本次外部写入，操作未执行；告诉用户需要执行什么，不要换一种方式重试"
 	}
-	reason := strings.TrimSpace(review.Rationale)
 	if reason == "" {
 		reason = "审查未通过"
 	}
 	return "帮我批准：审查拒绝了本次外部写入（" + reason + "），操作未执行；不要换一种方式重试，先告诉用户原因"
 }
 
-// nativeReviewBudget bounds one background review. The reviewer stops at 60
-// seconds itself; the margin only covers starting its CLI.
-const nativeReviewBudget = 90 * time.Second
+// nativeReviewBudget bounds one background review. The reviewer stops at 5
+// minutes itself; the extra margin covers CLI teardown and stays below the
+// hook's 570-second hard ceiling.
+const nativeReviewBudget = assistantApprovalMaxTimeout + 15*time.Second
 
 // nativeReviewPoll is how long one hook request waits for the verdict before
 // answering pending, below the hook's 20-second request timeout.

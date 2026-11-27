@@ -117,7 +117,7 @@ func sandboxTerminalCommandBound(ctx context.Context, sandbox Sandbox, command C
 			return nil, err
 		}
 		credentials.GitHTTPHosts = runGitHosts(credentials)
-		command, err = bindCommand(sandbox, sandbox.Workspace(), prepared, credentials)
+		command, err = bindCommand(ctx, sandbox, sandbox.Workspace(), prepared, credentials)
 		if err != nil {
 			closeGit()
 			return nil, err
@@ -136,6 +136,9 @@ func sandboxTerminalCommandBound(ctx context.Context, sandbox Sandbox, command C
 		return s.command(context.Background(), command, base)
 	case *dockerSandbox:
 		if err := s.ensureStarted(ctx); err != nil {
+			return nil, err
+		}
+		if err := s.prepareCommandGitTools(ctx, command.environment); err != nil {
 			return nil, err
 		}
 		return s.terminalCommand(command), nil

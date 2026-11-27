@@ -15,6 +15,7 @@ func TestCheckpointExclusionNames(t *testing.T) {
 		{"py/__pycache__/m.pyc", true, false},
 		{".zvec-grep/index", true, false},
 		{"deep/.zvec-grep", true, false},
+		{"app/.next/server/chunk.js", true, false},
 		{".cache2/file", false, false},
 		{"my_node_modules/a", false, false},
 		{"docs/.agentflow.md", false, false},
@@ -30,7 +31,7 @@ func TestCheckpointExclusionNames(t *testing.T) {
 }
 
 func TestCheckpointExcludedNamesDoNotAliasRestoreNames(t *testing.T) {
-	if len(checkpointRestoreExcludedNames) != 1 || len(checkpointExcludedNames) != 5 {
+	if len(checkpointRestoreExcludedNames) != 1 || len(checkpointExcludedNames) != 6 {
 		t.Fatalf("unexpected exclusion lists: restore=%v capture=%v", checkpointRestoreExcludedNames, checkpointExcludedNames)
 	}
 }

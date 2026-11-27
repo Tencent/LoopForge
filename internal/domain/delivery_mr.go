@@ -7,7 +7,7 @@ import (
 )
 
 // DeliveryMR is one merge request delivered for a work item. A multi-repository
-// SOP delivers at most one MR per run repository.
+// LOOP delivers at most one MR per run repository.
 type DeliveryMR struct {
 	RepositoryID string `json:"repositoryId,omitempty"`
 	Repository   string `json:"repository,omitempty"`
@@ -59,7 +59,7 @@ func GongfengMRURL(project string, iid int) string {
 		}
 		return fmt.Sprintf("https://%s/%s/-/merge_requests/%d", host, path, iid)
 	}
-	return fmt.Sprintf("https://git.example.com/%s/-/merge_requests/%d", project, iid)
+	return fmt.Sprintf("https://%s/%s/-/merge_requests/%d", GongfengRepositoryHost(), project, iid)
 }
 
 // AggregateDeliveryMRState folds per-MR states into the work item label state.

@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"agentflow/internal/domain"
+	"agentflow/internal/managedcli"
 	"context"
 	"errors"
 	"fmt"
@@ -9,7 +10,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
-	"time"
+	"sync/atomic"
 	"unicode/utf8"
 )
 
@@ -18,12 +19,25 @@ type ExecutorRunner struct{}
 func NewExecutorRunner() *ExecutorRunner { return &ExecutorRunner{} }
 
 func (r *ExecutorRunner) Run(ctx context.Context, sb Sandbox, invocationID string, ex domain.ExecutorDefinition, agent domain.AgentDefinition, assets domain.AgentAssetBundle, prompt string, options InvocationOptions, sink EventSink) (string, error) {
+	if options.DisableBrowser {
+		options.BrowserMCP = nil
+	}
 	provider := providerForKind(ex.Kind)
 	if err := ProvisionMCPAssets(ctx, sb, sb.Workspace(), assets, sink); err != nil {
 		return "", err
 	}
 	driver := sandboxDriver(sb)
-	if options.BrowserMCP == nil && BrowserWantedForExecutor(ex.Kind) {
+	binary, cliLease, err := pinNativeExecutorCLI(ctx, driver, options.RunID, ex)
+	if err != nil {
+		return "", err
+	}
+	if cliLease != nil {
+		defer cliLease.Close()
+	}
+	if binary != "" {
+		ex.Binary = binary
+	}
+	if !options.DisableBrowser && options.BrowserMCP == nil && BrowserWantedForExecutor(ex.Kind) {
 		options.BrowserMCP = EnsureSandboxBrowser(ctx, sb, sb.Workspace(), options.RunID, sink)
 	}
 	compiled, err := materializeInvocationForDriver(sb.Workspace(), invocationID, ex, agent, assets, options, driver)
@@ -58,9 +72,13 @@ func (r *ExecutorRunner) Run(ctx context.Context, sb Sandbox, invocationID strin
 			return "", err
 		}
 	}
-	command, err := provider.Prepare(providerInvocation{Executor: ex, Compiled: compiled, Prompt: prompt, PromptFile: promptRel, Driver: driver, Options: options})
+	command, err := provider.Prepare(providerInvocation{Executor: ex, Compiled: compiled, Prompt: prompt, PromptFile: promptRel, Driver: driver, Options: options, SOP: true})
 	if err != nil {
 		return "", err
+	}
+	command = withBwrapManagedCLI(command, driver)
+	if cliLease != nil {
+		command = WithCommandEnvironment(command, managedcli.AutoUpdateEnvironment(command.Provider))
 	}
 	if strings.EqualFold(command.Provider, "codex") {
 		overlay := map[string]string{}
@@ -77,28 +95,29 @@ func (r *ExecutorRunner) Run(ctx context.Context, sb Sandbox, invocationID strin
 	}
 	command = WithCommandEnvironment(command, hookExecutionEnvironment(options.Repositories))
 	adapter := provider.Protocol(ex, sink)
+	command, closeInput, err := adapter.openSOPInput(command)
+	if err != nil {
+		return "", err
+	}
+	defer closeInput()
 	execCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	stopObservation := provider.StartObservation(execCtx, compiled, sink)
 	defer stopObservation()
 	stopHookObservation := startHookObservation(execCtx, compiled, sink)
 	defer stopHookObservation()
+	var stoppedAfterDrain atomic.Bool
 	go func() {
-		select {
-		case <-adapter.Completed():
-			// Some CLI hook processes stay alive after the protocol has emitted its
-			// terminal result. Give stdout a short drain window, then stop the process.
-			timer := time.NewTimer(2500 * time.Millisecond)
-			defer timer.Stop()
-			select {
-			case <-timer.C:
-				cancel()
-			case <-execCtx.Done():
-			}
-		case <-execCtx.Done():
+		if waitForProcessTerminalDrain(execCtx, adapter.Completed(), nil) {
+			stoppedAfterDrain.Store(true)
+			cancel()
 		}
 	}()
 	raw, err := sb.Exec(execCtx, command, adapter.Handle)
+	adapter.finishCodeBuddyStream()
+	if adapter.codeBuddyStream != nil && stoppedAfterDrain.Load() && ctx.Err() == nil {
+		err = nil
+	}
 	output := strings.TrimSpace(adapter.VisibleOutput())
 	if adapter.Failed() {
 		if isMaxTurnsBudget(adapter.Result(), raw, err) {
@@ -174,6 +193,9 @@ type PreparedRemote struct {
 // execution and requests no credentials: Agent CLI credentials stay on the
 // runner machine by design (cli-connect.md).
 func (r *ExecutorRunner) PrepareRemote(workspace string, inv RemoteInvocation) (*PreparedRemote, error) {
+	if inv.Options.DisableBrowser {
+		inv.Options.BrowserMCP = nil
+	}
 	provider := providerForKind(inv.Executor.Kind)
 	driver := strings.TrimSpace(inv.Driver)
 	if driver == "" || driver == "local" {
@@ -202,7 +224,7 @@ func (r *ExecutorRunner) PrepareRemote(workspace string, inv RemoteInvocation) (
 			return nil, err
 		}
 	}
-	command, err := provider.Prepare(providerInvocation{Executor: inv.Executor, Compiled: compiled, Prompt: inv.Prompt, PromptFile: promptRel, Driver: driver, Options: inv.Options})
+	command, err := provider.Prepare(providerInvocation{Executor: inv.Executor, Compiled: compiled, Prompt: inv.Prompt, PromptFile: promptRel, Driver: driver, Options: inv.Options, SOP: true})
 	if err != nil {
 		return nil, err
 	}
@@ -210,7 +232,7 @@ func (r *ExecutorRunner) PrepareRemote(workspace string, inv RemoteInvocation) (
 		command.HookOutput = compiled.HookOutput
 	}
 	command = WithCommandEnvironment(command, hookExecutionEnvironment(inv.Options.Repositories))
-	return &PreparedRemote{Command: command}, nil
+	return &PreparedRemote{Command: withBwrapManagedCLI(command, driver)}, nil
 }
 
 func mockShouldSubmitGate(workspace string, agent domain.AgentDefinition, options InvocationOptions) bool {

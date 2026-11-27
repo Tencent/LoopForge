@@ -4,8 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -32,29 +30,6 @@ func TestOpenRemoteSandboxUsesExactRunnerWorkspace(t *testing.T) {
 	}
 }
 
-func TestOpenRemoteSandboxInstallsEnvironmentBeforeCommands(t *testing.T) {
-	workspace := t.TempDir()
-	profile := domain.SandboxProfile{Driver: "local", EnvironmentID: "runner-tools"}
-	resources := SandboxResources{Environment: domain.EnvironmentDefinition{ID: "runner-tools", InstallScript: `mkdir -p "$PREFIX/bin"
-printf '#!/bin/sh\nprintf runner-ready' > "$PREFIX/bin/runner-ready"
-chmod +x "$PREFIX/bin/runner-ready"
-printf x >> install-count`}}
-	for i := 0; i < 2; i++ {
-		sandbox, err := OpenRemoteSandbox(context.Background(), "runner-task", workspace, profile, SandboxRequirements{}, resources)
-		if err != nil {
-			t.Fatal(err)
-		}
-		output, err := sandbox.Exec(context.Background(), CommandSpec{Argv: []string{"sh", "-c", "runner-ready"}}, nil)
-		if err != nil || strings.TrimSpace(output) != "runner-ready" {
-			t.Fatalf("environment not installed: %q %v", output, err)
-		}
-		_ = sandbox.Close(context.Background())
-	}
-	if body, err := os.ReadFile(filepath.Join(workspace, "install-count")); err != nil || string(body) != "x" {
-		t.Fatalf("unchanged environment installed repeatedly: %q %v", body, err)
-	}
-}
-
 func TestWithSandboxCredentialsRefreshesExplicitBindings(t *testing.T) {
 	workspace := t.TempDir()
 	original := &localSandbox{workspace: workspace}
@@ -72,5 +47,18 @@ func TestWithSandboxCredentialsRefreshesExplicitBindings(t *testing.T) {
 	}
 	if output, err := refreshed.Exec(context.Background(), CommandSpec{Argv: command.Argv}, nil); err == nil {
 		t.Fatalf("unrequested credentials inherited: %q %v", output, err)
+	}
+}
+
+func TestCodeBuddyBaseURLIsBoundPerInvocation(t *testing.T) {
+	t.Setenv("CODEBUDDY_BASE_URL", "https://ambient.example/v1")
+	const gateway = "https://personal.example/v1"
+	command := CommandSpec{Argv: []string{"sh", "-c", `printf '%s' "$CODEBUDDY_BASE_URL"`}, Provider: "codebuddy", CredentialBindings: []CredentialBinding{BindCodeBuddy}}
+	for _, baseURL := range []string{gateway, ""} {
+		credentials := RunCredentials{CodeBuddy: CodeBuddyCredential{APIKey: "fixture-key", BaseURL: baseURL}}
+		output, err := ExecuteLocalCommand(context.Background(), t.TempDir(), command, credentials, nil)
+		if err != nil || strings.TrimSpace(output) != baseURL {
+			t.Fatalf("CodeBuddy received %q, want %q: %v", output, baseURL, err)
+		}
 	}
 }

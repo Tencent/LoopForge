@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/gitegress"
 )
 
 func TestGitHTTPCredentialsSettings(t *testing.T) {
@@ -42,7 +43,7 @@ func TestGitHTTPCredentialsSettings(t *testing.T) {
 	}
 	githubID := creds[0].ID
 	put(map[string]any{"host": "github.com", "name": "Again", "token": "other"}, http.StatusConflict)
-	put(map[string]any{"host": "http://github.com", "name": "Plain", "token": "x"}, http.StatusBadRequest)
+	put(map[string]any{"host": "http://github.com", "name": "Plain", "token": "x"}, http.StatusForbidden)
 	put(map[string]any{"host": "10.0.0.1", "name": "IP", "token": "x"}, http.StatusBadRequest)
 	put(map[string]any{"host": "gitlab.example.org", "name": "No token"}, http.StatusBadRequest)
 	put(map[string]any{"host": "gitlab.example.org", "name": "Spaces", "token": "a b"}, http.StatusBadRequest)
@@ -130,7 +131,7 @@ func TestVerifyGitHTTPCredential(t *testing.T) {
 	}))
 	defer srv.Close()
 	previous := gitHTTPVerifyClient
-	gitHTTPVerifyClient = func() *http.Client {
+	gitHTTPVerifyClient = func(gitegress.HTTPSHostLookup) *http.Client {
 		transport := srv.Client().Transport.(*http.Transport).Clone()
 		transport.TLSClientConfig = &tls.Config{RootCAs: transport.TLSClientConfig.RootCAs, ServerName: "example.com"}
 		transport.DialContext = func(ctx context.Context, network, _ string) (net.Conn, error) {

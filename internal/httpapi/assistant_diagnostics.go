@@ -85,6 +85,9 @@ func (d *assistantDiagnosticsCollector) checkpointSnapshot(g domain.AssistantGen
 
 func (d *assistantDiagnosticsCollector) fail(ctx context.Context, err error, user domain.User) domain.AssistantFailure {
 	f := classifyAssistantFailure(ctx, err)
+	if f.Code == "CONVERSATION_STATE_ERROR" {
+		f.Message = sanitizeAssistantDiagnostic(f.Message, user, 2048)
+	}
 	if d == nil {
 		return f
 	}

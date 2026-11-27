@@ -13,7 +13,9 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
+	"time"
 
 	"agentflow/internal/domain"
 )
@@ -53,13 +55,14 @@ func appendEnvironment(base []string, overlays ...map[string]string) []string {
 
 func controlledBaseEnvironment(base []string) []string {
 	blocked := []string{
-		"CODEBUDDY_API_KEY=",
+		"CODEBUDDY_API_KEY=", "CODEBUDDY_BASE_URL=",
 		"OPENAI_API_KEY=", "CODEX_API_KEY=", "OPENAI_BASE_URL=",
 		"ANTHROPIC_API_KEY=", "ANTHROPIC_AUTH_TOKEN=", "ANTHROPIC_BASE_URL=",
 		"CLAUDE_CODE_OAUTH_TOKEN=", "CODEX_HOME=", "CLAUDE_CONFIG_DIR=",
 		"CLAUDE_CODE_USE_BEDROCK=", "CLAUDE_CODE_USE_VERTEX=", "CLAUDE_CODE_USE_FOUNDRY=",
 		"CODEBUDDY_INTERNET_ENVIRONMENT=",
 		"AGENTFLOW_GIT_TOKEN=",
+		"AGENTFLOW_PROJECT_CREDENTIAL_KEY=",
 		"GH_TOKEN=",
 		"GITHUB_TOKEN=",
 		"AGENTFLOW_MCP_CONFIG=",
@@ -114,20 +117,82 @@ func createBwrap(id, workspace string, profile domain.SandboxProfile, requiremen
 	return createProcessSandbox("bwrap", "linux", "Linux", "bwrap", id, workspace, profile, requirements)
 }
 
+var nativeSandboxProbe struct {
+	sync.Mutex
+	binary    string
+	expires   time.Time
+	available bool
+}
+
+// NativeSandboxAvailable checks that the host can launch the requested
+// process sandbox. A binary alone is insufficient when user namespaces are
+// disabled. Cache the probe briefly for workspace choices and heartbeats.
+func NativeSandboxAvailable(driver string) bool {
+	driver, err := domain.ResolveSandboxDriver(driver, goruntime.GOOS)
+	if err != nil {
+		return false
+	}
+	var binary string
+	switch driver {
+	case domain.SandboxDriverSeatbelt:
+		binary, err = processSandboxBinary("seatbelt", "darwin", "macOS", "sandbox-exec")
+	case domain.SandboxDriverBwrap:
+		binary, err = processSandboxBinary("bwrap", "linux", "Linux", "bwrap")
+	default:
+		return false
+	}
+	if err != nil {
+		return false
+	}
+	nativeSandboxProbe.Lock()
+	defer nativeSandboxProbe.Unlock()
+	if nativeSandboxProbe.binary != binary || time.Now().After(nativeSandboxProbe.expires) {
+		nativeSandboxProbe.binary = binary
+		nativeSandboxProbe.available = probeNativeSandbox(driver, binary)
+		nativeSandboxProbe.expires = time.Now().Add(30 * time.Second)
+	}
+	return nativeSandboxProbe.available
+}
+
+func probeNativeSandbox(driver, binary string) bool {
+	workspace, err := os.MkdirTemp("", "loopforge-native-probe-")
+	if err != nil {
+		return false
+	}
+	defer os.RemoveAll(workspace)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	sandbox := processSandbox{workspace: workspace, driver: driver, binary: binary}
+	cmd, err := sandbox.command(ctx, CommandSpec{Argv: []string{"/usr/bin/true"}, OwnProcessGroup: true}, nil)
+	return err == nil && cmd.Run() == nil
+}
+
 // createProcessSandbox builds a processSandbox for driver once the host runs
 // requiredOS (named osName in errors) and binaryName is on PATH.
 func createProcessSandbox(driver, requiredOS, osName, binaryName, id, workspace string, profile domain.SandboxProfile, requirements SandboxRequirements) (Sandbox, error) {
-	if goruntime.GOOS != requiredOS {
-		return nil, fmt.Errorf("%s sandbox requires %s", driver, osName)
-	}
-	binary, err := exec.LookPath(binaryName)
+	binary, err := processSandboxBinary(driver, requiredOS, osName, binaryName)
 	if err != nil {
-		return nil, fmt.Errorf("%s sandbox unavailable: %w", driver, err)
+		return nil, err
 	}
 	return &processSandbox{id: id, workspace: workspace, driver: driver, profile: profile, requirements: requirements, binary: binary}, nil
 }
 
+func processSandboxBinary(driver, requiredOS, osName, binaryName string) (string, error) {
+	if goruntime.GOOS != requiredOS {
+		return "", fmt.Errorf("%s sandbox requires %s", driver, osName)
+	}
+	binary, err := exec.LookPath(binaryName)
+	if err != nil {
+		return "", fmt.Errorf("%s sandbox unavailable: %w", driver, err)
+	}
+	return binary, nil
+}
+
 func (s *processSandbox) Exec(ctx context.Context, command CommandSpec, sink EventSink) (string, error) {
+	command, err := projectCommandEnvironment(ctx, command, s.profile.Environment)
+	if err != nil {
+		return "", fmt.Errorf("%w: %w", errProcessNotStarted, err)
+	}
 	cmd, err := s.command(ctx, command, controlledBaseEnvironment(os.Environ()))
 	if err != nil {
 		return "", err
@@ -160,7 +225,7 @@ func (s *processSandbox) command(ctx context.Context, command CommandSpec, base 
 		if err != nil {
 			return nil, err
 		}
-		args = bwrapPrivateBinds(args, command.privateBinds)
+		args = bwrapPrivateBinds(args, command.privateBinds, command.managedCLIInstall)
 		if command.runnerLogin != nil {
 			// Hide host sources and the private journal after all other binds.
 			// The managed CLI uses only its own private HOME and host callback.
@@ -185,7 +250,7 @@ func (s *processSandbox) command(ctx context.Context, command CommandSpec, base 
 		return nil, fmt.Errorf("unsupported process sandbox %q", s.driver)
 	}
 	cmd.Dir = s.workspace
-	cmd.Env = appendEnvironment(base, s.profile.Environment, command.environment)
+	cmd.Env = appendEnvironment(base, s.profile.Environment, command.environment, command.projectCredentialEnv)
 	cmd.Stdin = command.Stdin
 	if command.WorkingDir != "" {
 		cmd.Env = upsertEnv(cmd.Env, "PWD", command.WorkingDir)
@@ -405,6 +470,14 @@ func seatbeltProfileCommand(workspace string, requirements SandboxRequirements) 
 			}
 		}
 	}
+	// The cache is private to the host side even when a sandbox has access
+	// to the host's temporary directory.
+	b.WriteString(`(deny file-read* file-write* (regex #"^(/private)?/tmp/[.]loopforge-repository-cache-[0-9]+(/|$)"))` + "\n")
+	if gitTools, err := nativeGitToolsRoot(); err == nil {
+		for _, path := range seatbeltPathVariants(gitTools) {
+			fmt.Fprintf(&b, "(deny file-write* (subpath %s))\n", strconv.Quote(path))
+		}
+	}
 	return b.String(), nil
 }
 
@@ -467,13 +540,16 @@ func ensureBunFSMountPoint() bool {
 // bwrapPrivateBinds adds per-process binds before the "--" that ends the
 // bwrap options. They come after --tmpfs /tmp, so a directory under the host
 // /tmp is visible to this process only.
-func bwrapPrivateBinds(args, binds []string) []string {
-	if len(binds) == 0 || len(args) == 0 || args[len(args)-1] != "--" {
+func bwrapPrivateBinds(args, binds []string, managedInstall string) []string {
+	if (len(binds) == 0 && managedInstall == "") || len(args) == 0 || args[len(args)-1] != "--" {
 		return args
 	}
 	out := append([]string{}, args[:len(args)-1]...)
 	for _, dir := range binds {
 		out = append(out, "--bind", dir, dir)
+	}
+	if managedInstall != "" {
+		out = append(out, "--ro-bind", managedInstall, managedInstall)
 	}
 	return append(out, "--")
 }
@@ -499,9 +575,11 @@ func bwrapArgsCommand(workspace string, requirements SandboxRequirements) ([]str
 		"--die-with-parent", "--new-session",
 		"--unshare-user", "--unshare-pid", "--unshare-ipc", "--unshare-uts",
 		"--ro-bind", "/", "/",
+		// The private /tmp comes before the workspace bind, or it would hide a
+		// workspace under the host /tmp.
+		"--tmpfs", "/tmp",
 		"--bind", root, root,
 		"--chdir", root,
-		"--tmpfs", "/tmp",
 		"--proc", "/proc",
 		"--dev-bind", "/dev", "/dev",
 	}
@@ -509,6 +587,9 @@ func bwrapArgsCommand(workspace string, requirements SandboxRequirements) ([]str
 		// Same layout as the Docker workspace: the native CLI keeps its HOME
 		// and cwd (<root>/ws, here the run workspace) across both modes.
 		args = append(args, "--bind", filepath.Join(conversation, "home"), filepath.Join(conversation, "home"), "--bind", root, filepath.Join(conversation, "ws"))
+		// The private /tmp can hide generated attachments under a conversation root.
+		attachments := filepath.Join(conversation, "attachments")
+		args = append(args, "--ro-bind-try", attachments, attachments)
 		// The approval hooks stay read-only, as in the Docker workspace.
 		parents, files, err := conversationGuardPaths(conversation)
 		if err != nil {
@@ -535,8 +616,10 @@ func bwrapArgsCommand(workspace string, requirements SandboxRequirements) ([]str
 			return nil, statErr
 		}
 	}
-	args = append(args, "--")
-	return args, nil
+	if gitTools, err := nativeGitToolsRoot(); err == nil {
+		args = append(args, "--ro-bind-try", gitTools, gitTools)
+	}
+	return append(args, "--"), nil
 }
 
 // dockerAgentStateMount exposes only the state directory belonging to the CLI

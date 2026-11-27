@@ -26,8 +26,8 @@ func TestSharedCodeBuddyEffortsIgnoreAnOldPersonalOverride(t *testing.T) {
 	h := &assistantHandlers{
 		deps: &deps{repo: st},
 		generate: func(_ context.Context, _ string, user domain.User) (string, error) {
-			if len(user.CodeBuddyModels) != 0 || user.ID != member.ID {
-				t.Error("shared-key turn must use its own catalog and keep the caller's identity")
+			if len(user.CodeBuddyModels) != 0 || user.CodeBuddyBaseURL != "" || user.ID != member.ID {
+				t.Error("shared-key turn must use its own endpoint and catalog while keeping the caller's identity")
 			}
 			return `{"message":"ok","drafts":[]}`, nil
 		},
@@ -49,6 +49,14 @@ func TestSharedCodeBuddyEffortsIgnoreAnOldPersonalOverride(t *testing.T) {
 	afterClear, err := st.UpdateUserCredentials(member.ID, repo.UserCredentialUpdate{CodeBuddyAPIKeyClear: true})
 	if err != nil || len(afterClear.CodeBuddyModels) != 1 {
 		t.Fatalf("expected the personal model catalog to remain saved after clearing its key: %v", err)
+	}
+	baseURL := "https://personal.example/v1"
+	member, err = st.UpdateUserCredentials(member.ID, repo.UserCredentialUpdate{CodeBuddyBaseURL: &baseURL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if scheduled, _, ok := scheduleCredentialUser(st, member, "", assistantEngineCodeBuddy); !ok || scheduled.CodeBuddyBaseURL != "" {
+		t.Fatal("a scheduled run on the shared key must not use the caller's personal endpoint")
 	}
 	c, rec := workbenchContext(afterClear, http.MethodGet, "/api/assistant/models", &bytes.Buffer{})
 	h.models(c)
@@ -238,7 +246,7 @@ func TestOwnKeyKeepsFreeModelChoice(t *testing.T) {
 	}
 }
 
-// The setup guides read bootstrap to tell new users that chat and SOP runs
+// The setup guides read bootstrap to tell new users that chat and LOOP runs
 // work on the shared model before they configure a key.
 func TestBootstrapAdvertisesSponsoredModel(t *testing.T) {
 	st, _ := sponsorFixture(t)
@@ -340,11 +348,11 @@ func TestAssistantModelsPerExecutor(t *testing.T) {
 	}
 	for executor, family := range map[string]string{"codex": "gpt", "claude": "claude", "claude-code": "claude"} {
 		rec, catalog := get(executor)
-		if rec.Code != 200 || catalog.Default != "default" || len(catalog.Models) < 2 || catalog.Models[0].ID != "default" {
+		if rec.Code != 200 || len(catalog.Models) < 2 || catalog.Default != catalog.Models[0].ID {
 			t.Fatalf("%s catalog: %d %s", executor, rec.Code, rec.Body.String())
 		}
 		for _, model := range catalog.Models {
-			if model.Family != family {
+			if model.ID == "default" || model.Family != family {
 				t.Fatalf("%s model %s family = %q", executor, model.ID, model.Family)
 			}
 			if len(model.Efforts) == 0 {
@@ -353,6 +361,11 @@ func TestAssistantModelsPerExecutor(t *testing.T) {
 		}
 		if catalog.SponsoredModel != "" {
 			t.Fatalf("%s must not offer the CodeBuddy sponsored model", executor)
+		}
+	}
+	for _, executor := range []string{"opencode", "pi"} {
+		if rec, catalog := get(executor); rec.Code != 200 || len(catalog.Models) != 0 || catalog.Default != "" {
+			t.Fatalf("%s without a configured catalog: %d %s", executor, rec.Code, rec.Body.String())
 		}
 	}
 	if rec, _ := get("bogus"); rec.Code != 400 || !strings.Contains(rec.Body.String(), "不支持的执行器") {
@@ -400,11 +413,10 @@ func TestTurnCatalogRefreshesBeforeFallingBackToTheDefault(t *testing.T) {
 func TestChatCatalogsListTheDefaultFirst(t *testing.T) {
 	t.Setenv("AGENTFLOW_ASSISTANT_MODEL", "glm-5.3-flash-ioa")
 	t.Setenv("AGENTFLOW_ASSISTANT_MODELS", "claude-opus-5.5,glm-5.3-flash-ioa")
-	ctx := context.Background()
 	shared := []string{"deepseek-v4.1-flash", "glm-5.3-flash-ioa"}
 	for name, catalog := range map[string]assistantModelCatalog{
-		"own key":    assistantChatCatalog(ctx, "", nil),
-		"shared key": restrictAssistantCatalog(assistantChatCatalog(ctx, "", shared), shared),
+		"own key":    loadAssistantModels("", "user-key"),
+		"shared key": restrictAssistantCatalog(assistantChatCatalog("", "shared-key", shared), shared),
 	} {
 		if len(catalog.Models) == 0 || catalog.Models[0].ID != catalog.Default {
 			t.Fatalf("%s: default %q is not listed first in %+v", name, catalog.Default, catalog.Models)

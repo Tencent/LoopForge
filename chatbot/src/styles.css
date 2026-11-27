@@ -1,3 +1,4 @@
+@import "./reference-input.css";
 :root {
   font-family:
     ui-sans-serif,
@@ -270,6 +271,13 @@ small {
 [data-theme="dark"] .conversation-status[data-conversation-status="interrupted"] {
   color: #e7b76b;
 }
+/* Waiting for the speaker to approve an external write: amber, and still. */
+.conversation-status[data-conversation-status="waiting_approval"] {
+  color: #b7791f;
+}
+[data-theme="dark"] .conversation-status[data-conversation-status="waiting_approval"] {
+  color: #f2c46d;
+}
 .conversation-status[data-conversation-status="running"] .conversation-status-dot {
   opacity: 1;
   transform-box: fill-box;
@@ -303,6 +311,21 @@ small {
     animation: none !important;
     transition: none;
   }
+}
+/* Amber alone is easy to miss, so the header also says the state in words. */
+.conversation-status-chip {
+  flex: none;
+  padding: 0 6px;
+  font-size: 11px;
+  line-height: 16px;
+  white-space: nowrap;
+  color: #b7791f;
+  background: var(--subtle);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+}
+[data-theme="dark"] .conversation-status-chip {
+  color: #f2c46d;
 }
 /* The ellipsis returns once the spans are swapped back for plain text. */
 .conversation-title > button.title-typing {
@@ -591,18 +614,70 @@ small {
   flex-direction: column;
 }
 .message-scroll {
+  --message-scrollbar-thumb: color-mix(in srgb, var(--muted) 28%, transparent);
   flex: 1;
   overflow-y: auto;
   overflow-x: hidden;
   min-height: 0;
-  scrollbar-width: thin;
   scroll-behavior: auto;
+}
+.message-scroll:hover,
+.message-scroll:focus-within {
+  --message-scrollbar-thumb: color-mix(in srgb, var(--muted) 46%, transparent);
+}
+/* Chrome 121+ ignores ::-webkit-scrollbar once scrollbar-width/color is set. */
+@supports not selector(::-webkit-scrollbar) {
+  .message-scroll {
+    scrollbar-width: thin;
+    scrollbar-color: color-mix(in srgb, var(--muted) 28%, transparent) transparent;
+  }
+  .message-scroll:hover,
+  .message-scroll:focus-within {
+    scrollbar-color: color-mix(in srgb, var(--muted) 46%, transparent) transparent;
+  }
+}
+.message-scroll::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+.message-scroll::-webkit-scrollbar-track,
+.message-scroll::-webkit-scrollbar-corner {
+  background: transparent;
+}
+.message-scroll::-webkit-scrollbar-button {
+  display: none;
+  width: 0;
+  height: 0;
+}
+.message-scroll::-webkit-scrollbar-thumb {
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background-clip: padding-box;
+  background-color: var(--message-scrollbar-thumb);
+}
+.message-scroll::-webkit-scrollbar-thumb:hover {
+  background-color: color-mix(in srgb, var(--muted) 58%, transparent);
 }
 .message-column {
   width: 100%;
   max-width: var(--chat-column-width);
   margin: auto;
   padding: 42px 24px 50px;
+}
+.message-history-more {
+  display: block;
+  margin: 0 auto 16px;
+  padding: 6px 12px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.message-history-more:hover,
+.message-history-more:focus-visible {
+  background: var(--hover);
+  color: var(--text);
 }
 .message {
   position: relative;
@@ -1084,98 +1159,6 @@ small {
   color: #a7a7aa;
   line-height: 1;
 }
-.composer textarea {
-  resize: none;
-  display: block;
-  border: 0;
-  background: none;
-  width: 100%;
-  font-size: var(--chat-font-size);
-  font-weight: var(--chat-font-weight);
-  line-height: var(--chat-line-height);
-  color: var(--text);
-  min-height: 75px;
-  max-height: 220px;
-  padding: 13px 14px 8px;
-  outline: 0;
-}
-.composer textarea::placeholder {
-  color: #96969b;
-}
-.mention-picker {
-  position: absolute;
-  bottom: calc(100% + 8px);
-  left: 0;
-  right: 0;
-  z-index: 40;
-  display: flex;
-  flex-direction: column;
-  max-height: min(440px, calc(100dvh - 120px));
-  overflow: hidden;
-  border: 1px solid var(--line);
-  border-radius: 16px;
-  background: var(--surface);
-  box-shadow: 0 12px 40px #00000018;
-  padding: 8px;
-  color: var(--text);
-}
-.mention-picker > header {
-  display: flex;
-  flex: none;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 8px 12px;
-  border-bottom: 1px solid var(--line);
-  color: var(--muted);
-}
-.mention-picker input {
-  min-width: 0;
-  flex: 1;
-  color: var(--text);
-  background: transparent;
-  border: 0;
-  outline: none;
-  font-size: 13px;
-}
-.mention-close {
-  font-size: 12px;
-}
-.mention-options {
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow: auto;
-  padding-top: 5px;
-}
-.mention-options > [role="option"] {
-  width: 100%;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 10px 12px;
-  border-radius: 9px;
-  text-align: left;
-}
-.mention-options > [aria-selected="true"] {
-  background: var(--subtle);
-}
-.mention-options > button > span {
-  flex: 1;
-  min-width: 0;
-}
-.mention-options strong,
-.mention-options small {
-  display: block;
-  overflow-wrap: anywhere;
-}
-.mention-options strong {
-  font-size: 13px;
-  font-weight: 500;
-}
-.mention-options small {
-  font-size: 11px;
-  margin-top: 4px;
-  color: var(--muted);
-}
 .operation-summary {
   margin: 10px 0 14px;
   font-size: 13px;
@@ -1371,39 +1354,6 @@ small {
   white-space: pre-wrap;
   word-break: break-word;
 }
-.composer-attachments {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-start;
-  padding: 9px 12px 0;
-  gap: 8px;
-}
-.composer-attachment-file {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  border: 1px solid var(--line);
-  border-radius: 7px;
-  padding: 4px 5px;
-  font-size: 11px;
-  background: var(--subtle);
-  max-width: 100%;
-  overflow-wrap: anywhere;
-}
-.composer-attachment-name {
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-.composer-attachment-file small {
-  flex: none;
-  font-size: 10px;
-  color: var(--muted);
-}
-.composer-attachment-file > button {
-  display: flex;
-  padding: 0 0 0 4px;
-}
 .composer-attachment-thumb {
   position: relative;
   display: inline-flex;
@@ -1574,36 +1524,44 @@ small {
   color: var(--muted);
   font-size: 11px;
 }
-.credential-notice {
+:is(.credential-notice, .runtime-cli-notice) {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   margin-bottom: 10px;
-  padding: 9px 11px;
+  padding: 8px 10px 8px 12px;
   border: 1px solid #f3e2b8;
   border-radius: 10px;
   background: #fffbf0;
   color: #7a5a12;
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.5;
 }
-.credential-notice > span {
-  flex: 1;
-}
-.credential-notice button {
-  height: 26px;
-  padding: 0 12px;
-  border: 0;
-  border-radius: 999px;
-  background: var(--accent);
-  color: var(--surface);
-  font-size: 12px;
-  cursor: pointer;
-}
-[data-theme="dark"] .credential-notice {
+[data-theme="dark"] :is(.credential-notice, .runtime-cli-notice) {
   border-color: #5a4a22;
   background: #2b2513;
   color: #e8cf8c;
+}
+:is(.credential-notice, .runtime-cli-notice) > svg {
+  flex: none;
+}
+:is(.credential-notice, .runtime-cli-notice) > span {
+  flex: 1;
+}
+:is(.credential-notice, .runtime-cli-notice) button {
+  flex: none;
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+}
+:is(.credential-notice, .runtime-cli-notice) button:hover {
+  background: var(--hover);
 }
 .info-card {
   position: absolute;
@@ -2651,6 +2609,257 @@ a.project-entry {
 .reply-timing[open] summary svg {
   transform: rotate(90deg);
 }
+.knowledge-reads {
+  margin: 6px 0;
+  font-size: 11px;
+  color: var(--muted);
+}
+.knowledge-reads > summary {
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+  list-style: none;
+}
+.knowledge-reads > summary::-webkit-details-marker {
+  display: none;
+}
+.knowledge-reads > summary::before {
+  content: "▸";
+  margin-right: 6px;
+  transition: transform 0.15s;
+}
+.knowledge-reads[open] > summary::before {
+  transform: rotate(90deg);
+}
+.knowledge-reads > p {
+  margin: 4px 0 0 18px;
+  line-height: 1.5;
+}
+.knowledge-cite-wrap {
+  vertical-align: super;
+  font-size: 0.72em;
+  line-height: 0;
+  margin: 0 2px;
+}
+.knowledge-cite-sup {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 999px;
+  border: 1px solid #d7d0fa;
+  background: #f2eeff;
+  color: #5b43d6;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  vertical-align: baseline;
+  transition: background-color 0.15s, border-color 0.15s;
+}
+button.knowledge-cite-sup:hover {
+  background: #e7dfff;
+  border-color: #b7a8f6;
+}
+.knowledge-cite-sup.is-streaming,
+.knowledge-cite-sup.is-unresolved {
+  vertical-align: super;
+  margin: 0 2px;
+  border-color: var(--line);
+  background: var(--subtle);
+  color: var(--muted);
+  cursor: default;
+}
+.knowledge-sources {
+  margin: 10px 0 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--subtle);
+  font-size: 12px;
+}
+.knowledge-sources-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.knowledge-sources-toggle {
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+}
+.knowledge-sources-toggle:hover .knowledge-sources-counts {
+  color: var(--text);
+}
+.knowledge-sources-chevron {
+  display: inline-block;
+  font-size: 11px;
+  color: var(--muted);
+  transition: transform 0.15s;
+}
+.knowledge-sources-chevron.is-open {
+  transform: rotate(90deg);
+}
+.knowledge-sources-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+  color: var(--text);
+}
+.knowledge-sources-counts {
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.knowledge-sources-group {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+}
+.knowledge-sources-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  margin-bottom: 5px;
+}
+.knowledge-sources-empty {
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+.knowledge-doc-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.knowledge-doc-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: var(--surface);
+  min-width: 0;
+  transition: border-color 0.2s, background-color 0.2s;
+}
+.knowledge-doc-row.is-used-row {
+  border-color: #dcd5fa;
+  background: #faf8ff;
+}
+.knowledge-doc-row.is-highlighted {
+  border-color: #7b61ff;
+  background: #f0edff;
+}
+.knowledge-doc-index {
+  flex-shrink: 0;
+  font-size: 11px;
+  font-weight: 700;
+  color: #5b43d6;
+  font-variant-numeric: tabular-nums;
+}
+.knowledge-doc-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+.knowledge-doc-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-weight: 500;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.knowledge-doc-meta {
+  font-size: 11px;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.knowledge-doc-tag {
+  flex-shrink: 0;
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 500;
+  line-height: 1.3;
+}
+.knowledge-doc-tag.is-used {
+  background: #eaf7f0;
+  color: #1f6f4a;
+}
+.knowledge-doc-tag.is-read {
+  background: #eef3fc;
+  color: #35589a;
+}
+.knowledge-doc-tag.is-retrieved {
+  background: var(--subtle);
+  color: var(--muted);
+}
+.knowledge-sources-more {
+  margin-top: 6px;
+  padding: 2px 0;
+  font-size: 11.5px;
+  color: var(--muted);
+}
+.knowledge-sources-more:hover {
+  color: var(--text);
+}
+.knowledge-reads-trace {
+  margin: 8px 0 0;
+  padding-top: 6px;
+  border-top: 1px dashed var(--line);
+}
+[data-theme="dark"] .knowledge-cite-sup {
+  border-color: #463a77;
+  background: #242033;
+  color: #c2b2ff;
+}
+[data-theme="dark"] button.knowledge-cite-sup:hover {
+  background: #2f2945;
+  border-color: #6b58b8;
+}
+[data-theme="dark"] .knowledge-doc-row.is-used-row {
+  border-color: #37314e;
+  background: #1d1b27;
+}
+[data-theme="dark"] .knowledge-doc-row.is-highlighted {
+  border-color: #a08aff;
+  background: #28233a;
+}
+[data-theme="dark"] .knowledge-doc-index {
+  color: #b8a5ff;
+}
+[data-theme="dark"] .knowledge-doc-tag.is-used {
+  background: #172e24;
+  color: #6ce3a9;
+}
+[data-theme="dark"] .knowledge-doc-tag.is-read {
+  background: #1b2538;
+  color: #8eb2f6;
+}
+@media (prefers-reduced-motion: reduce) {
+  .knowledge-cite-sup,
+  .knowledge-doc-row {
+    transition: none;
+  }
+}
 .reply-divider {
   display: block;
   width: 100%;
@@ -2924,6 +3133,38 @@ a.project-entry {
 .execution-step.is-failed {
   color: var(--error);
 }
+/* A row that waits for a person is not running: it says so and keeps still. */
+.execution-step[data-status="waiting_approval"] {
+  color: var(--text);
+}
+.execution-step-badge {
+  flex: none;
+  padding: 0 6px;
+  font-size: 11px;
+  line-height: 16px;
+  white-space: nowrap;
+  color: #b7791f;
+  background: var(--subtle);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+}
+[data-theme="dark"] .execution-step-badge {
+  color: #f2c46d;
+}
+.execution-waiting {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+  color: var(--text);
+}
+.execution-waiting > svg {
+  flex: none;
+  color: #b7791f;
+}
+[data-theme="dark"] .execution-waiting > svg {
+  color: #f2c46d;
+}
 .execution-thought {
   margin-top: 5px;
   color: var(--muted);
@@ -3014,7 +3255,7 @@ a.project-entry {
   border-radius: 3px;
 }
 
-/* Conversation files open on demand; only a linked SOP occupies the right rail. */
+/* Conversation files open on demand; only a linked LOOP occupies the right rail. */
 .artifact-panel-header {
   height: 51px;
   min-height: 51px;
@@ -3781,7 +4022,7 @@ a.draft-title {
 .project-picker {
   max-width: 100%;
 }
-/* The project decides where requirements, repositories and SOPs live, so the
+/* The project decides where requirements, repositories and LOOPs live, so the
    picker reads as a choice rather than a breadcrumb. */
 .project-picker span {
   min-width: 0;
@@ -3798,6 +4039,12 @@ a.draft-title {
 .project-picker.is-unset span,
 .project-picker.is-unset svg {
   color: var(--home-blue, #5273dc);
+}
+/* The knowledge picker is a sibling of the project/environment breadcrumbs,
+   so it reads with the same weight and label colour. */
+.knowledge-picker span {
+  font-weight: 600;
+  color: var(--text);
 }
 .composer {
   container-type: inline-size;

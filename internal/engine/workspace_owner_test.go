@@ -13,7 +13,7 @@ import (
 	flowruntime "agentflow/internal/runtime"
 )
 
-// 子 SOP 直接在父流程的工作区里干活：父流程前面节点的改动子流程看得到，子流程的改动父流程后面节点也看得到，不经过远端分支。
+// 子 LOOP 直接在父流程的工作区里干活：父流程前面节点的改动子流程看得到，子流程的改动父流程后面节点也看得到，不经过远端分支。
 func TestSOPChildWorksInParentWorkspace(t *testing.T) {
 	t.Parallel()
 	s, err := repo.OpenTest()
@@ -22,14 +22,14 @@ func TestSOPChildWorksInParentWorkspace(t *testing.T) {
 	}
 	defer s.Close()
 	child := domain.WorkflowDefinition{
-		ID: "child-edit", Name: "Child", SandboxProfileID: "local",
+		ID: "child-edit", Name: "Child", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{{
 			ID: "edit", Name: "Edit", Type: "script", ScriptLanguage: "shell",
 			Script: "test -f pre.txt && printf child > child.txt", MaxAttempts: 1,
 		}},
 	}
 	parent := domain.WorkflowDefinition{
-		ID: "parent-edit", Name: "Parent", SandboxProfileID: "local",
+		ID: "parent-edit", Name: "Parent", SandboxProfileID: "test-native",
 		Nodes: []domain.WorkflowNode{
 			{ID: "pre", Name: "Pre", Type: "script", ScriptLanguage: "shell", Script: "printf pre > pre.txt", MaxAttempts: 1},
 			{ID: "sub", Name: "Sub", Type: "sop", SOPWorkflowID: child.ID, MaxAttempts: 1},
@@ -98,7 +98,7 @@ func TestRetryOnDeadBoundHostIsTakenOverByLiveWorker(t *testing.T) {
 	s, _ := repo.OpenTest()
 	defer s.Close()
 	marker := filepath.Join(t.TempDir(), "ready")
-	wf := domain.WorkflowDefinition{ID: "retry-takeover", Name: "retry", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{
+	wf := domain.WorkflowDefinition{ID: "retry-takeover", Name: "retry", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{
 		ID: "work", Name: "work", Type: "command", Command: "test -e " + marker, MaxAttempts: 1,
 	}}}
 	if err := s.PutWorkflow(wf); err != nil {
@@ -139,7 +139,7 @@ func TestRetryOnDeadBoundHostIsTakenOverByLiveWorker(t *testing.T) {
 	}
 }
 
-// 子 SOP 跟着父流程的工作区绑定走：父流程绑在已下线的机器上，子流程也算丢失。
+// 子 LOOP 跟着父流程的工作区绑定走：父流程绑在已下线的机器上，子流程也算丢失。
 func TestChildFollowsParentWorkspaceBind(t *testing.T) {
 	t.Parallel()
 	s, _ := repo.OpenTest()
@@ -194,7 +194,7 @@ func TestResumeFailsRunWhoseWorkspaceWasLost(t *testing.T) {
 	}
 }
 
-// 执行机器上子 SOP 用父流程的检出目录；节点不再要求执行机器推工作分支。
+// 执行机器上子 LOOP 用父流程的检出目录；节点不再要求执行机器推工作分支。
 func TestRunnerChildUsesParentCheckoutWithoutBranchSync(t *testing.T) {
 	t.Parallel()
 	child := domain.Run{

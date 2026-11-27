@@ -65,9 +65,33 @@ func (h *scheduleHandlers) requireScheduleJob(c *gin.Context, job domain.Schedul
 }
 func (h *scheduleHandlers) visibleScheduleJobs(r *http.Request, jobs []domain.ScheduleJob) []domain.ScheduleJob {
 	out := make([]domain.ScheduleJob, 0, len(jobs))
+	var sessionIDs []string
 	for _, job := range jobs {
 		if h.scheduleJobAllowed(r, job, false) {
+			if job.SharedTaskID != "" {
+				if version, err := h.repo.SharedScheduleVersion(job.SharedTaskID, job.SharedTaskVersion); err == nil {
+					job.References = domain.CloneAssistantReferences(version.References)
+				}
+			} else if h.assistant != nil && len(job.References) > 0 {
+				if refs, err := h.assistant.scheduledMessageReferences(job.ProjectID, job.References); err == nil {
+					job.References = refs
+				}
+			}
+			job.LastSessionGone = false
+			if job.LastSessionID != "" && job.LastStatus != "running" {
+				sessionIDs = append(sessionIDs, job.LastSessionID)
+			}
 			out = append(out, job)
+		}
+	}
+	if len(sessionIDs) > 0 {
+		exists := h.repo.ExistingAssistantSessionIDs(sessionIDs)
+		for i := range out {
+			if out[i].LastSessionID != "" && out[i].LastStatus != "running" {
+				if alive, checked := exists[out[i].LastSessionID]; checked && !alive {
+					out[i].LastSessionGone = true
+				}
+			}
 		}
 	}
 	return out
@@ -148,6 +172,10 @@ func (h *scheduleHandlers) publishSharedSchedule(c *gin.Context) {
 		v.Prompt = job.AssistantPrompt
 	}
 	published, err := h.repo.PublishSharedSchedule(job.ID, job.ProjectID, v, *input.BaseVersion)
+	if errors.Is(err, repo.ErrSharedScheduleReferences) {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
 	if errors.Is(err, repo.ErrSharedScheduleVersionConflict) {
 		c.JSON(409, gin.H{"error": err.Error()})
 		return
@@ -197,10 +225,19 @@ func (h *scheduleHandlers) bindSharedSchedule(c *gin.Context, job *domain.Schedu
 		respond(c, err)
 		return false
 	}
+	if err := h.repo.ValidateSharedScheduleAssets(v); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return false
+	}
+	if len(job.References) > 0 && !sameScheduleReferenceIDs(job.References, v.References) {
+		c.JSON(400, gin.H{"error": "订阅任务的引用由共享版本维护，不能替换"})
+		return false
+	}
 	project, _ := h.repo.Project(job.ProjectID)
 	job.OwnerUserID = project.OwnerID
 	job.ParameterValues = values
 	job.AssistantPrompt = ""
+	job.References = domain.CloneAssistantReferences(v.References)
 	if job.Name == "" {
 		job.Name = v.Name
 	}

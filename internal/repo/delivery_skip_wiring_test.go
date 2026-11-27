@@ -20,7 +20,7 @@ func TestIssueDeliverySkippedOnlyComparesTimeForMerged(t *testing.T) {
 	}{
 		{name: "no delivery state", issue: domain.Issue{Status: "in_review", DeliveryUpdatedAt: later}},
 		{name: "opened delivery state", issue: domain.Issue{Status: "in_review", DeliveryState: "opened", DeliveryUpdatedAt: later}},
-		{name: "reopened via SOP", issue: domain.Issue{Status: "todo", DeliveryState: "reopened", DeliveryUpdatedAt: later}, fromSOP: true},
+		{name: "reopened via LOOP", issue: domain.Issue{Status: "todo", DeliveryState: "reopened", DeliveryUpdatedAt: later}, fromSOP: true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -78,7 +78,7 @@ func TestMarkIssueDeliveredPollKeepsOwnMRAgainstLeftover(t *testing.T) {
 	}
 	delivered, _ := s.Issue(issue.ID)
 	if !delivered.HasDeliveryMR(ownURL) {
-		t.Fatalf("SOP delivery should record its MR: %+v", delivered.DeliveryMRList())
+		t.Fatalf("LOOP delivery should record its MR: %+v", delivered.DeliveryMRList())
 	}
 
 	// A poll reporting a leftover MR from an earlier run, with a newer

@@ -91,7 +91,7 @@ async function openForgeTokens() {
   dialog.addEventListener('close',()=>{
     token.value='';
     dialog.remove();
-    const fallback=$('#credentialPanel [data-credential-row="forgeToken"] [data-credential-act="setup"]');
+    const fallback=$('#credentialPanel [data-credential-row="forgeToken"] .credential-row-main')||$('#credentialPanel [data-credential-add-menu="platform"]');
     (opener?.isConnected?opener:fallback)?.focus();
   },{once:true});
   document.body.append(dialog);

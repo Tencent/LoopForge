@@ -20,7 +20,7 @@ const (
 
 // PushConversationWorkspace commits whatever changed in the run workspace and
 // pushes the work branch of every bound repository that differs from its base,
-// so a conversation can open an MR without an SOP delivery node. Unchanged
+// so a conversation can open an MR without a LOOP delivery node. Unchanged
 // repositories are left out of the returned heads. Callers
 // hold the conversation workspace lease and supply the requesting user's Git
 // identity, so the push is attributed to whoever asked for it.
@@ -30,7 +30,7 @@ func (e *Engine) PushConversationWorkspace(ctx context.Context, runID string, re
 		return nil, fmt.Errorf("运行不存在")
 	}
 	if WorkspaceRunID(run) != run.ID {
-		return nil, fmt.Errorf("子 SOP 共享父任务工作区，请从父任务提交")
+		return nil, fmt.Errorf("子 LOOP 共享父任务工作区，请从父任务提交")
 	}
 	var repositories []domain.RepositoryContext
 	for _, rc := range run.RepositoryContexts() {
@@ -57,7 +57,7 @@ func (e *Engine) PushConversationWorkspace(ctx context.Context, runID string, re
 	ctx, cancel := context.WithTimeout(ctx, conversationPushTimeout)
 	defer cancel()
 	ctx = withGitIdentity(withRunGitCredentials(ctx, runtime.RunCredentials{GitHTTPCredentials: e.repo.GitHTTPCredentialSecrets(ctx, requesterID)}), gitUserName, gitUserEmail)
-	ctx = gitwork.WithSSHKeys(ctx, sshKeys)
+	ctx = gitwork.WithSSHKeys(e.withSSHKnownHosts(ctx), sshKeys)
 	if runnerID := e.defaultExecutionRunner(run); runnerID != "" {
 		return e.pushConversationOnRunner(ctx, runnerID, run, repositories, requesterID, gitUserName, gitUserEmail, message, sharedTarget)
 	}
@@ -120,7 +120,7 @@ func (e *Engine) pushConversationOnRunner(ctx context.Context, runnerID string, 
 	if !ok {
 		return nil, fmt.Errorf("执行机器 %s 不存在", runnerID)
 	}
-	if err := e.requireWorkBranchCapabilities(runnerID, repositories); err != nil {
+	if err := e.requireRunnerRepositoryCapabilities(runnerID, repositories); err != nil {
 		return nil, err
 	}
 	if sharedTarget != "" && !runner.SupportsSharedPush() {

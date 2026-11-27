@@ -36,6 +36,10 @@ func testScheduleJobUsesSaversDefaultRunnerLogin(t *testing.T, cliEngine string)
 	}
 	saver, _ := st.UserByLoginName("schedule-runner-saver")
 	joinScheduledProject(t, st, "workbench", saver.ID)
+	issue := domain.Issue{ID: "runner-schedule-reference", ProjectID: "workbench", Title: "Current scheduled asset", Description: "Inspect this asset"}
+	if err := st.PutIssue(issue); err != nil {
+		t.Fatal(err)
+	}
 	machine := domain.Runner{ID: "saver-machine", OwnerUserID: saver.ID, Status: domain.RunnerStatusOnline,
 		RunnerVersion: domain.RunnerVersionCLISettings, Runtimes: []domain.RunnerRuntime{
 			{Provider: cliEngine, Status: domain.RuntimeStatusOnline, AuthMode: domain.RuntimeAuthLocal},
@@ -58,12 +62,19 @@ func testScheduleJobUsesSaversDefaultRunnerLogin(t *testing.T, cliEngine string)
 	body := domain.ScheduleJob{
 		ID: "runner-login-job", ProjectID: "workbench", Name: "巡检", SkipDispatch: true, AssistantPrompt: "检查",
 		AssistantModel: cliEngine + ":default", RunAsUserID: owner.ID, IntervalSec: 3600, Enabled: true,
+		References: []domain.AssistantReference{{Type: "issue", ID: issue.ID, Name: "Forged asset title"}},
 	}
 	setDefault(foreign.ID)
 	if code := scheduleAuthzStatus(t, server, saver, http.MethodPut, "/api/schedule-jobs", body); code != http.StatusBadRequest {
 		t.Fatalf("a default runner owned by someone else enabled a keyless save: %d", code)
 	}
 	setDefault(machine.ID)
+	if code := scheduleAuthzStatus(t, server, saver, http.MethodPut, "/api/schedule-jobs", body); code != http.StatusBadRequest {
+		t.Fatalf("an unshared personal default enabled a keyless save: %d", code)
+	}
+	if err := st.SetRunnerSharedProjects(machine.ID, saver.ID, []string{body.ProjectID}); err != nil {
+		t.Fatal(err)
+	}
 	saved := requestJSONAuthed[domain.ScheduleJob](t, server, saver, http.MethodPut, "/api/schedule-jobs", body, http.StatusOK)
 	if saved.RunAsUserID != saver.ID || saved.AssistantModel != body.AssistantModel {
 		t.Fatalf("saved run-as identity = %d, model = %q", saved.RunAsUserID, saved.AssistantModel)
@@ -72,7 +83,7 @@ func testScheduleJobUsesSaversDefaultRunnerLogin(t *testing.T, cliEngine string)
 	for _, test := range []struct {
 		query string
 		want  bool
-	}{{"", false}, {"?schedule=1", true}} {
+	}{{"", false}, {"?schedule=1&projectId=workbench", true}, {"?schedule=1&projectId=platform", false}} {
 		c, rec := workbenchContext(saver, http.MethodGet, "/api/assistant/models"+test.query, &bytes.Buffer{})
 		h.models(c)
 		var catalog assistantModelCatalog
@@ -117,6 +128,10 @@ func testScheduleJobUsesSaversDefaultRunnerLogin(t *testing.T, cliEngine string)
 				if req.Command == nil || !req.Command.RunnerLogin || req.Command.Credentials.ClaudeCode.APIKey != "" || req.Command.Credentials.AgentCLI[cliEngine].APIKey != "" {
 					t.Fatal("scheduled turn did not request CLI account login")
 				}
+				prompt := strings.Join(req.Command.Argv, " ")
+				if !strings.Contains(prompt, issue.Title) || strings.Contains(prompt, "Forged asset title") {
+					t.Fatal("runner prompt did not resolve the scheduled asset")
+				}
 				launched = true
 			case "poll":
 				result.Events = []domain.TelemetryEvent{{Name: "process.stdout", Message: `{"type":"result","result":"巡检完成"}`}}
@@ -131,7 +146,7 @@ func testScheduleJobUsesSaversDefaultRunnerLogin(t *testing.T, cliEngine string)
 				result.Done = true
 			}
 			raw, _ := json.Marshal(result)
-			h.runnerControls.resolveWorkspace(msg.RequestID, domain.RunnerWorkspaceResponse{Status: http.StatusOK, Payload: raw})
+			h.runnerControls.resolveWorkspace(conn, msg.RequestID, domain.RunnerWorkspaceResponse{Status: http.StatusOK, Payload: raw})
 		case result := <-done:
 			if result.err != nil || result.message != "巡检完成" || !launched {
 				t.Fatalf("scheduled run = %q, %v, launched = %v", result.message, result.err, launched)
@@ -146,6 +161,18 @@ func testScheduleJobUsesSaversDefaultRunnerLogin(t *testing.T, cliEngine string)
 	if len(sessions) != 1 || sessions[0].UserID != saver.ID || sessions[0].Execution().RunnerID != machine.ID || !sessions[0].ExecutionLocked() {
 		t.Fatal("scheduled session did not retain the saver and their machine")
 	}
+	conversation, ok := st.AssistantSession(saver.ID, sessions[0].ID)
+	if !ok || len(conversation.Messages) != 2 {
+		t.Fatal("scheduled runner conversation was not saved")
+	}
+	refs := conversation.Messages[0].References
+	if len(refs) != 1 || refs[0].ID != issue.ID || refs[0].Name != issue.Title {
+		t.Fatalf("runner session references = %+v", refs)
+	}
+	issue.Title = "Updated scheduled asset"
+	if err := st.PutIssue(issue); err != nil {
+		t.Fatal(err)
+	}
 	machine.Status = domain.RunnerStatusOffline
 	if err := st.PutRunner(machine); err != nil {
 		t.Fatal(err)
@@ -153,8 +180,11 @@ func testScheduleJobUsesSaversDefaultRunnerLogin(t *testing.T, cliEngine string)
 	const saverKey = "saver-test-key"
 	keyAttempts := 0
 	var keyError error
-	h.generate = func(_ context.Context, _ string, actor domain.User) (string, error) {
+	h.generate = func(_ context.Context, prompt string, actor domain.User) (string, error) {
 		keyAttempts++
+		if !strings.Contains(prompt, issue.Title) || strings.Contains(prompt, "Forged asset title") {
+			t.Fatal("API Key fallback did not resolve the latest scheduled asset")
+		}
 		key := actor.ClaudeCodeAPIKey
 		if cliEngine == runtime.AgentCLIAntigravity {
 			key = actor.AgentCLICredentials[cliEngine].APIKey
@@ -202,5 +232,21 @@ func testScheduleJobUsesSaversDefaultRunnerLogin(t *testing.T, cliEngine string)
 	keyError = nil
 	if message, err := h.prepareScheduleJob(saved); err != nil || message != "云端巡检完成" || keyAttempts != 3 {
 		t.Fatalf("fallback with a Runner from main = %q, %v, attempts = %d", message, err, keyAttempts)
+	}
+
+	machine.RunnerVersion = domain.RunnerVersionCLISettings
+	if err := st.PutRunner(machine); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetRunnerSharedProjects(machine.ID, saver.ID, nil); err != nil {
+		t.Fatal(err)
+	}
+	saved.SessionMode, saved.FixedSessionID = domain.ScheduleSessionFixed, runnerSession
+	message, fallbackID, err := h.runScheduleJobPrompt(saved)
+	if err != nil || message != "云端巡检完成" || keyAttempts != 4 || fallbackID == "" || fallbackID == runnerSession {
+		t.Fatalf("revoked fixed session fallback = %q, session %q, %v, attempts = %d", message, fallbackID, err, keyAttempts)
+	}
+	if fallback, ok := st.AssistantSession(saver.ID, fallbackID); !ok || fallback.Execution().Pool != domain.ExecutionModeCloud {
+		t.Fatalf("expected a new cloud session, got %+v", fallback.Execution())
 	}
 }

@@ -24,7 +24,7 @@ type Position struct {
 	Y float64 `json:"y"`
 }
 
-// WorkflowRequirement declares an external capability a SOP needs before it can
+// WorkflowRequirement declares an external capability a LOOP needs before it can
 // deliver end to end. Studio renders the list as a preflight checklist when a
 // project adopts a template, so a missing Git Token or tracker MCP config
 // surfaces before the first run instead of failing in the middle of a pipeline.
@@ -37,6 +37,7 @@ type WorkflowRequirement struct {
 }
 
 type WorkflowNode struct {
+	KnowledgeRefs []KnowledgeRef `json:"knowledgeRefs,omitempty"`
 	// TaskPrompt is what an approval node asks its approver to check
 	// (「需要确认什么」). Role nodes take their whole brief from the role's
 	// prompt; the field is not read for them.
@@ -56,27 +57,27 @@ type WorkflowNode struct {
 	// SOPWorkflowID is the referenced workflow when Type is "sop".
 	SOPWorkflowID string `json:"sopWorkflowId,omitempty"`
 	// RunOnWorkspaceRebuild replays this script when restoring an already-used environment.
-	RunOnWorkspaceRebuild bool               `json:"runOnWorkspaceRebuild,omitempty"`
-	ScriptLanguage        string             `json:"scriptLanguage,omitempty"` // shell, python
-	Script                string             `json:"script,omitempty"`
+	RunOnWorkspaceRebuild bool   `json:"runOnWorkspaceRebuild,omitempty"`
+	ScriptLanguage        string `json:"scriptLanguage,omitempty"` // shell, python
+	Script                string `json:"script,omitempty"`
 	// CredentialEnv requests platform-managed credentials as environment
 	// variables for script and verification commands: each entry maps an
 	// environment variable name to a credential kind (a RunCredentials.Extra
 	// key registered by the deployment). A declared credential the
 	// responsible user has not saved fails the node up front; the secret
 	// itself never appears in workflow definitions, node configs or logs.
-	CredentialEnv  map[string]string `json:"credentialEnv,omitempty"`
-	ExecutionScope string            `json:"executionScope,omitempty"` // run, repositories; empty = run
-	Command               string             `json:"command,omitempty"`        // legacy command-node payload
-	ArtifactOutputs       []ArtifactContract `json:"artifactOutputs,omitempty"`
-	RejectTo              string             `json:"rejectTo,omitempty"`
-	OnFailure             string             `json:"onFailure,omitempty"`     // fail, reject
-	RetryStrategy         string             `json:"retryStrategy,omitempty"` // targeted_fix, full_redo
-	CarryOver             []string           `json:"carryOver,omitempty"`
-	MaxAttempts           int                `json:"maxAttempts"`
-	MaxReworks            int                `json:"maxReworks"`
-	Notifications         []NodeNotification `json:"notifications,omitempty"`
-	Position              Position           `json:"position"`
+	CredentialEnv   map[string]string  `json:"credentialEnv,omitempty"`
+	ExecutionScope  string             `json:"executionScope,omitempty"` // run, repositories; empty = run
+	Command         string             `json:"command,omitempty"`        // legacy command-node payload
+	ArtifactOutputs []ArtifactContract `json:"artifactOutputs,omitempty"`
+	RejectTo        string             `json:"rejectTo,omitempty"`
+	OnFailure       string             `json:"onFailure,omitempty"`     // fail, reject
+	RetryStrategy   string             `json:"retryStrategy,omitempty"` // targeted_fix, full_redo
+	CarryOver       []string           `json:"carryOver,omitempty"`
+	MaxAttempts     int                `json:"maxAttempts"`
+	MaxReworks      int                `json:"maxReworks"`
+	Notifications   []NodeNotification `json:"notifications,omitempty"`
+	Position        Position           `json:"position"`
 }
 
 // ValidateWorkflowMetricStages prevents silently dropping a mistyped stage.
@@ -131,7 +132,7 @@ type GroupTaskHistory struct {
 	State NodeRun      `json:"state"`
 }
 
-// GroupSOPHandoff points at immutable, archived context for resumed SOP nodes.
+// GroupSOPHandoff points at immutable, archived context for resumed LOOP nodes.
 // It belongs to a run snapshot, never to the catalog template.
 type GroupSOPHandoff struct {
 	ID                   string    `json:"id"`
@@ -152,7 +153,7 @@ type WorkflowDefinition struct {
 	GroupPlan         []GroupPlanItem       `json:"groupPlan,omitempty"`
 	CollaborationMode string                `json:"collaborationMode,omitempty"`
 	TaskTitle         string                `json:"taskTitle,omitempty"`
-	Notifications     []NotificationBinding `json:"notifications,omitempty"` // SOP completion reports
+	Notifications     []NotificationBinding `json:"notifications,omitempty"` // LOOP completion reports
 	ID                string                `json:"id"`
 	Name              string                `json:"name"`
 	Version           int                   `json:"version"`
@@ -165,6 +166,10 @@ type WorkflowDefinition struct {
 	Tags              []string              `json:"tags,omitempty"`
 	Description       string                `json:"description"`
 	SandboxProfileID  string                `json:"sandboxProfileId"`
+	// AutoSelectSandbox resolves a sandbox for each new run in its target project.
+	AutoSelectSandbox bool `json:"autoSelectSandbox,omitempty"`
+
+	ProjectCredentialIDs []string `json:"projectCredentialIds,omitempty"`
 	// MetricCategory 是受控的统计标签（需求开发/Bug 修复/…），用于交付指标归类。
 	// Run 创建时随 WorkflowSnapshot 冻结，历史执行不受后续编辑影响。
 	MetricCategory string `json:"metricCategory,omitempty"`
@@ -178,12 +183,16 @@ type WorkflowDefinition struct {
 	// reconstruct the original environment after catalog definitions change.
 	SandboxSnapshot *RunnerSandboxSpec `json:"sandboxSnapshot,omitempty"`
 	// Preview is the optional frontend delivery contract. It is frozen into
-	// the run snapshot so later SOP edits cannot change an in-flight archive.
+	// the run snapshot so later LOOP edits cannot change an in-flight archive.
 	Preview   *PreviewContract `json:"preview,omitempty"`
 	Nodes     []WorkflowNode   `json:"nodes"`
 	Edges     []WorkflowEdge   `json:"edges"`
 	CreatedAt time.Time        `json:"createdAt"`
 	UpdatedAt time.Time        `json:"updatedAt"`
+	// ExecutorDefaults is populated on a run snapshot for roles
+	// that inherit the responsible user's executor. An empty entry defers
+	// selection until the role starts on the bound machine.
+	ExecutorDefaults map[string]AssistantDefaults `json:"executorDefaults,omitempty"`
 }
 
 // UnmarshalJSON migrates the pre-workflow-sandbox shape while the legacy node

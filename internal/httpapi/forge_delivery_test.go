@@ -18,6 +18,7 @@ import (
 	"agentflow/internal/domain"
 	"agentflow/internal/forge"
 	"agentflow/internal/gitwork"
+	"agentflow/internal/repo"
 	"agentflow/internal/tracker"
 )
 
@@ -128,14 +129,14 @@ func testForgejoConversationPush(t *testing.T, borrowSOP bool) {
 	}
 	run := domain.Run{
 		ID: "run-forgejo", Kind: domain.RunKindWorkspace, Status: "waiting", Generation: 1,
-		WorkflowSnapshot: domain.WorkflowDefinition{ID: domain.ConversationWorkspaceWorkflowID, SandboxProfileID: "local"},
+		WorkflowSnapshot: domain.WorkflowDefinition{ID: domain.ConversationWorkspaceWorkflowID, SandboxProfileID: repo.TestNativeSandboxID},
 		ExecutionContext: domain.TelemetryContext{ProjectID: "platform", ResponsibleUserID: f.user.ID},
 		Nodes:            map[string]*domain.NodeRun{},
 	}
 	if borrowSOP {
 		// A completed SOP freezes its original SSH binding and branch choice.
 		run.Kind, run.Status = "", "succeeded"
-		run.WorkflowSnapshot = domain.WorkflowDefinition{ID: "delivery-sop", SandboxProfileID: "local"}
+		run.WorkflowSnapshot = domain.WorkflowDefinition{ID: "delivery-sop", SandboxProfileID: repo.TestNativeSandboxID}
 		run.ExecutionContext.IssueID = "forgejo-sop-issue"
 		if err := f.s.PutIssue(domain.Issue{ID: run.ExecutionContext.IssueID, ProjectID: "platform", Title: "SOP delivery", Status: "in_progress"}); err != nil {
 			t.Fatal(err)

@@ -7,12 +7,13 @@ import (
 
 // User 表示系统注册或登录的员工实体，用于后续资源归属与权限隔离。
 type User struct {
-	CodexAPIKey                string `json:"codexApiKey,omitempty"`
-	CodexAPIKeyConfigured      bool   `json:"codexApiKeyConfigured,omitempty"`
-	CodexBaseURL               string `json:"codexBaseUrl,omitempty"`
-	ClaudeCodeAPIKey           string `json:"claudeCodeApiKey,omitempty"`
-	ClaudeCodeAPIKeyConfigured bool   `json:"claudeCodeApiKeyConfigured,omitempty"`
-	ClaudeCodeBaseURL          string `json:"claudeCodeBaseUrl,omitempty"`
+	AssistantDefaults          AssistantDefaults `json:"-"`
+	CodexAPIKey                string            `json:"codexApiKey,omitempty"`
+	CodexAPIKeyConfigured      bool              `json:"codexApiKeyConfigured,omitempty"`
+	CodexBaseURL               string            `json:"codexBaseUrl,omitempty"`
+	ClaudeCodeAPIKey           string            `json:"claudeCodeApiKey,omitempty"`
+	ClaudeCodeAPIKeyConfigured bool              `json:"claudeCodeApiKeyConfigured,omitempty"`
+	ClaudeCodeBaseURL          string            `json:"claudeCodeBaseUrl,omitempty"`
 	// CodexModels and ClaudeCodeModels are the model catalogs AI 对话 offers
 	// for that CLI, in display order. Empty follows the CLI's built-in models
 	// on the official endpoint, or the models the Base URL publishes.
@@ -28,7 +29,7 @@ type User struct {
 	DeptID              int                           `json:"deptId"`
 	DeptName            string                        `json:"deptName"`
 	// PlatformRole is a platform-wide role, independent of project membership.
-	// "admin" may edit generic SOP templates; empty is a regular user.
+	// "admin" may edit generic LOOP templates; empty is a regular user.
 	PlatformRole                 string     `json:"platformRole,omitempty"`
 	GitToken                     string     `json:"gitToken,omitempty"`
 	GitHubCredentialConfigured   bool       `json:"gitHubCredentialConfigured,omitempty"`
@@ -40,10 +41,29 @@ type User struct {
 	GongfengTokenExpiresAt       time.Time  `json:"-"`
 	CodeBuddyAPIKey              string     `json:"codeBuddyApiKey,omitempty"`
 	CodeBuddyAPIKeyConfigured    bool       `json:"codeBuddyApiKeyConfigured,omitempty"`
+	CodeBuddyBaseURL             string     `json:"codeBuddyBaseUrl,omitempty"`
 	CodeBuddyInternetEnvironment string     `json:"codeBuddyInternetEnvironment,omitempty"`
 	CodeBuddyModels              []CLIModel `json:"codeBuddyModels,omitempty"`
 	CreatedAt                    time.Time  `json:"createdAt"`
 	UpdatedAt                    time.Time  `json:"updatedAt"`
+}
+
+// HasExecutorCredential reports whether the user has their own key for a CLI.
+func (u User) HasExecutorCredential(kind string) bool {
+	var key string
+	switch kind {
+	case "codebuddy":
+		key = u.CodeBuddyAPIKey
+	case "codex":
+		key = u.CodexAPIKey
+	case "claude-code":
+		key = u.ClaudeCodeAPIKey
+	default:
+		if IsAgentCLIKind(kind) {
+			key = u.AgentCLICredentials[kind].APIKey
+		}
+	}
+	return strings.TrimSpace(key) != ""
 }
 
 const PlatformRoleAdmin = "admin"
@@ -72,8 +92,8 @@ const GitTokenHTTPUser = "x-access-token"
 // adapter keeps (and refreshes) in user_configs.
 const ManagedGitHTTPCredentialID = "managed-internal"
 
-// GitHTTPCredential is the public description of a personal HTTPS Git
-// credential bound to one host[:port]. It never carries the token.
+// GitHTTPCredential is the public description of a personal Git credential.
+// Host is a legacy HTTPS authority or an explicit HTTP endpoint.
 type GitHTTPCredential struct {
 	ID       string `json:"id"`
 	Name     string `json:"name"`
@@ -94,6 +114,9 @@ func (c GitHTTPCredential) GitUsername() string {
 // APIBase is the REST API root the control plane uses for the credential's
 // host, or "" for platforms it does not call.
 func (c GitHTTPCredential) APIBase() string {
+	if strings.HasPrefix(c.Host, "http://") {
+		return ""
+	}
 	switch c.Platform {
 	case GitPlatformGitHub:
 		if c.Host == "github.com" {
@@ -194,8 +217,8 @@ func PublicUser(u User) User {
 // CLIModel is one entry of a CLI model catalog. ID is passed to the CLI
 // as-is; an empty Name shows the ID.
 //
-// Efforts is set on a Cursor model family folded out of the CLI's own model
-// list: it maps each reasoning effort onto the model ID cursor-agent printed
+// Efforts is set on a model family folded out of the CLI's own model
+// list: it maps each reasoning effort onto the model ID the CLI printed
 // for it, and DefaultEffort is the effort an empty choice runs. They are
 // saved with the catalog so the family resolves for its owner on any
 // instance and after a restart.

@@ -196,19 +196,24 @@ func TestRunEvalCRUDAndTrim(t *testing.T) {
 func TestBotConnectionConversationAndCardTransitions(t *testing.T) {
 	s := cvEStore(t)
 	now := time.Now().UTC()
-	if ok, err := s.ClaimBotConnection("cve-lease", "owner", now); err != nil || !ok {
+	if err := s.SaveNotificationBot(domain.NotificationBot{ID: "cve-bot", BotID: "cve-lease", ProjectID: "p", OwnerID: 1, Enabled: true, InteractionEnabled: true}, "s"); err != nil {
+		t.Fatal(err)
+	}
+	lease, ok, err := s.ClaimBotConnection("cve-lease", "owner")
+	if err != nil || !ok {
 		t.Fatalf("claim = %v %v", ok, err)
 	}
-	if ok, err := s.RenewBotConnection("cve-lease", "owner", "connected", "ok", now); err != nil || !ok {
+	if ok, err := s.RenewBotConnection(lease, "connected", "ok"); err != nil || !ok {
 		t.Fatalf("renew = %v %v", ok, err)
 	}
 	state, err := s.BotConnectionState("cve-lease")
 	if err != nil || state.State != "connected" {
 		t.Fatalf("state = %+v %v", state, err)
 	}
-	if err := s.ReleaseBotConnection("cve-lease", "owner"); err != nil {
+	if err := s.ReleaseBotConnection(lease); err != nil {
 		t.Fatal(err)
 	}
+	lease, _, _ = s.ClaimBotConnection("cve-lease", "owner")
 	state, _ = s.BotConnectionState("cve-lease")
 	if state.State != "offline" {
 		t.Fatalf("released state = %+v", state)
@@ -231,18 +236,22 @@ func TestBotConnectionConversationAndCardTransitions(t *testing.T) {
 	if err != nil || len(records) != 1 {
 		t.Fatalf("records = %d %v", len(records), err)
 	}
-	if err := s.NewBotConversation(records[0]); err != nil {
+	running, err := s.ClaimBotInteraction("cve-bot", lease, BotSendPolicy{})
+	if err != nil || running == nil {
+		t.Fatal(running, err)
+	}
+	if err := s.NewBotConversation(*running, lease); err != nil {
 		t.Fatal(err)
 	}
 
-	card := domain.BotInteraction{ID: "cve-card", BotID: "cve-bot", ConversationID: convID, Status: "ready", Action: "notification", CreatedAt: now, UpdatedAt: now}
+	card := domain.BotInteraction{ID: "cve-card", BotID: "cve-bot", ConversationID: convID, Status: "ready", Action: "notification", LeaseOwner: lease.Owner, LeaseEpoch: lease.Epoch, CreatedAt: now, UpdatedAt: now}
 	if err := s.DB.Create(&card).Error; err != nil {
 		t.Fatal(err)
 	}
-	if err := s.SetBotCardTaskID(card.ID, "opaque"); err != nil {
+	if err := s.SetBotCardTaskID(card.ID, lease, "opaque"); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.FailBotReply(card.ID, "wire"); err != nil {
+	if err := s.FailBotReply(card.ID, lease, "wire"); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.RequeueBotCard(card.ID); err != nil {
@@ -255,7 +264,7 @@ func TestBotConnectionConversationAndCardTransitions(t *testing.T) {
 	if err != nil || card.Status != "replied" || card.CardTaskID != "opaque" {
 		t.Fatalf("card = %+v %v", card, err)
 	}
-	if err := s.SetBotCardTaskID("missing", "x"); err == nil {
+	if err := s.SetBotCardTaskID("missing", lease, "x"); err == nil {
 		t.Fatal("missing card task update succeeded")
 	}
 	history, err := s.BotHistory(conv.SessionID)
@@ -304,36 +313,18 @@ func TestCloneParseSortAndJSONHelpers(t *testing.T) {
 
 func TestKnowledgeMCPFilesSpacesAndAssistantTasks(t *testing.T) {
 	s := cvEStore(t)
-	if err := s.PutKnowledgeSettings(domain.KnowledgeSettings{Enabled: true, URL: "https://kb", Token: "secret", DefaultSources: []string{"docs"}}); err != nil {
+	if err := s.PutKnowledgeConnector(domain.KnowledgeConnector{ID: "cve-conn", OwnerUserID: 7, Name: "Docs", Type: domain.ConnectorTypeMCP, Endpoint: "https://kb", SecretEnc: "v1:secret", Enabled: true}); err != nil {
 		t.Fatal(err)
 	}
-	settings := s.KnowledgeSettings()
-	if !settings.Enabled || settings.Token != "secret" || !settings.TokenConfigured {
-		t.Fatalf("settings = %+v", settings)
+	conns := s.ListKnowledgeConnectors(7)
+	if len(conns) != 1 || !conns[0].SecretConfigured || conns[0].SecretEnc != "v1:secret" {
+		t.Fatalf("connectors = %+v", conns)
 	}
-	if err := s.PutKnowledgeSubmission(domain.KnowledgeSubmission{}); err == nil {
-		t.Fatal("empty submission accepted")
+	if _, ok := s.GetKnowledgeConnector(8, "cve-conn"); ok {
+		t.Fatal("other user read private connector")
 	}
-	sub := domain.KnowledgeSubmission{ID: "cve-sub", ProjectID: "platform", RunID: "r", ArtifactID: "a", Title: "Doc", Content: "body"}
-	if err := s.PutKnowledgeSubmission(sub); err != nil {
-		t.Fatal(err)
-	}
-	gotSub, ok := s.KnowledgeSubmission(sub.ID)
-	if !ok || gotSub.Status != domain.KnowledgeSubmissionPending || gotSub.Content != "body" {
-		t.Fatalf("submission = %+v %v", gotSub, ok)
-	}
-	list := s.KnowledgeSubmissions("platform", domain.KnowledgeSubmissionPending, 0)
-	if len(list) != 1 || list[0].Content != "" {
-		t.Fatalf("submissions = %+v", list)
-	}
-	if ids := s.KnowledgeSubmissionIDsByArtifact([]string{"a", "missing"}); ids["a"] != sub.ID {
-		t.Fatalf("artifact IDs = %v", ids)
-	}
-	if err := s.DeleteKnowledgeSubmission(sub.ID); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.DeleteKnowledgeSubmission(sub.ID); err == nil {
-		t.Fatal("missing submission deleted")
+	if deleted, err := s.DeleteKnowledgeConnector(7, "cve-conn"); err != nil || !deleted {
+		t.Fatalf("delete = %v %v", deleted, err)
 	}
 
 	mcp := domain.MCPServerDefinition{ID: "cve-mcp", Name: "MCP", Transport: "stdio", Command: "tool"}
@@ -463,8 +454,8 @@ func TestRunnerUtilityAndEmptyQueryBranches(t *testing.T) {
 	if got := s.ListAssistantTasks(0); len(got) != 0 {
 		t.Fatalf("zero-user tasks = %+v", got)
 	}
-	if got := s.KnowledgeSubmissionIDsByArtifact(nil); len(got) != 0 {
-		t.Fatalf("empty artifact map = %v", got)
+	if got := s.ListKnowledgeConnectors(0); len(got) != 0 {
+		t.Fatalf("zero-user connectors = %+v", got)
 	}
 	if _, ok := s.SpaceByIssue(""); ok {
 		t.Fatal("empty issue matched a space")

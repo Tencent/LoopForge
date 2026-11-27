@@ -3,10 +3,12 @@ package runner
 import (
 	"context"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
 	goruntime "runtime"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -36,8 +38,7 @@ var defaultProviders = []providerSpec{
 	{Kind: "codex", Binary: "codex", Update: "update"},
 	{Kind: "codebuddy", Binary: "codebuddy", Update: "update"},
 	// Agent CLIs run in a private HOME. Antigravity can reuse account login;
-	// the others receive the responsible user's key. cursor and agy have no npm
-	// package and are found on PATH only.
+	// the others receive the responsible user's key.
 	{Kind: "opencode", Binary: "opencode", Update: "upgrade"},
 	{Kind: "cursor", Binary: "cursor-agent", Update: "update"},
 	{Kind: "agy", Binary: "agy", Update: "update"},
@@ -108,6 +109,14 @@ func DetectRuntimes(ctx context.Context, extraBinaries map[string]string) []doma
 
 func detectRuntimes(ctx context.Context, extraBinaries map[string]string, inventory managedcli.Inventory) []domain.RunnerRuntime {
 	specs := runtimeProviderSpecs(extraBinaries)
+	var enabledProviders []string
+	if inventory != nil {
+		var err error
+		enabledProviders, err = managedcli.EnabledProviders()
+		if err != nil {
+			log.Printf("managed CLI updates disabled: %v", err)
+		}
+	}
 	out := make([]domain.RunnerRuntime, 0, len(specs)+2)
 	out = append(out, builtinRuntimes()...)
 	for _, spec := range specs {
@@ -124,16 +133,16 @@ func detectRuntimes(ctx context.Context, extraBinaries map[string]string, invent
 		}
 		var env map[string]string
 		if managed {
-			env = managedCLIEnvironment(spec.Kind)
+			env = managedcli.AutoUpdateEnvironment(spec.Kind)
 		}
 		version := probeVersion(ctx, path, spec.VersionFlags, env)
 		if version == "" && len(spec.VersionFlags) > 0 {
 			continue
 		}
 		capabilities := []string{"non_interactive"}
-		if managed {
+		if managed && slices.Contains(enabledProviders, spec.Kind) {
 			capabilities = append(capabilities, domain.RuntimeCapabilityManagedUpdate)
-		} else if spec.Update != "" {
+		} else if !managed && spec.Update != "" {
 			// Inspect the installed CLI's subcommands only when asked to update.
 			capabilities = append(capabilities, domain.RuntimeCapabilityNativeUpdate)
 		}

@@ -22,7 +22,7 @@ import (
 //   - Otherwise the repository is shallow-cloned from its clone URL.
 //
 // The base branch is repo.DefaultBranch when set, falling back to "master".
-// Authentication reuses the same git-token plumbing as SOP execution, so the
+// Authentication reuses the same git-token plumbing as LOOP execution, so the
 // caller only needs to supply the resolved token (see ResolveClarifyGitToken).
 //
 // On success the checkout directory (cacheDir) is returned.

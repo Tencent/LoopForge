@@ -33,7 +33,7 @@ func TestWorkspacePreparationAPISeparatesReadersAndWriters(t *testing.T) {
 	h := &runsHandlers{deps: a.deps}
 	run, _ := a.repo.RunState("shared-run")
 	run.Status = "succeeded"
-	run.WorkflowSnapshot.SandboxProfileID = "local"
+	run.WorkflowSnapshot.SandboxProfileID = "test-native"
 	run.WorkflowSnapshot.Nodes = []domain.WorkflowNode{{ID: "prep", Name: "运行环境准备", Type: "script", Script: "mkdir -p .agentflow; printf secret-internal-output; printf ready > .agentflow/prepared", RunOnWorkspaceRebuild: true}}
 	run.Nodes = map[string]*domain.NodeRun{"prep": {NodeID: "prep", Status: "succeeded", Attempt: 7, Output: "business history"}}
 	if err := a.repo.PutRun(run); err != nil {

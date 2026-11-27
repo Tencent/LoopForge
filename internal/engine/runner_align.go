@@ -34,11 +34,11 @@ func (e *Engine) alignBaseline(repository domain.RepositoryContext, userID int64
 	if !ok {
 		ctx := withRunGitCredentials(context.Background(), runtime.RunCredentials{GitHTTPCredentials: e.repo.GitHTTPCredentialSecrets(context.Background(), userID)})
 		if ssh {
-			ctx = gitwork.WithSSHKeys(ctx, e.repo.GitSSHKeysForRemotes(userID, []string{repository.CloneURL}))
+			ctx = gitwork.WithSSHKeys(e.withSSHKnownHosts(ctx), e.repo.GitSSHKeysForRemotes(userID, []string{repository.CloneURL}))
 		}
 		return alignIntegrateBaseline(ctx, repository, e.repo)
 	}
-	if err := e.requireWorkBranchCapabilities(runner.ID, []domain.RepositoryContext{repository}); err != nil {
+	if err := e.requireRunnerRepositoryCapabilities(runner.ID, []domain.RepositoryContext{repository}); err != nil {
 		return err
 	}
 	unlock, err := lockIntegration(e.repo, repository.RepositoryID)

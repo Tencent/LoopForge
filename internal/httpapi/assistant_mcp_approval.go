@@ -14,6 +14,9 @@ import (
 var errMCPApprovalExpired = errors.New("本次外部 MCP 调用已结束，审批已失效，操作未执行")
 
 func (h *agentToolGateway) authorizeMCPWrite(ctx context.Context, session *AgentToolSession, name, destination string, call assistantMCPCall) error {
+	if session.ExecMode.ReadOnly {
+		return fmt.Errorf("只读模式拒绝可能写入外部系统的 MCP 调用 %s，请到平台页面操作", name)
+	}
 	if !session.ExecMode.AutoWrite {
 		if err := h.waitForMCPWriteApproval(ctx, session, name, destination, call); err != nil {
 			return err
@@ -22,7 +25,7 @@ func (h *agentToolGateway) authorizeMCPWrite(ctx context.Context, session *Agent
 			return errMCPApprovalExpired
 		}
 	} else if session.ExecMode.ReviewWrites {
-		review := reviewAssistantAction(ctx, name, destination+" MCP 写入外部系统", map[string]any{"server": call.Server, "tool": call.Tool, "arguments": call.Arguments})
+		review := reviewAssistantAction(withApprovalActionSource(ctx, approvalSourceExternalMCP), name, destination+" MCP 写入外部系统", map[string]any{"server": call.Server, "tool": call.Tool, "arguments": call.Arguments})
 		if !review.allows() {
 			return assistantReviewRefusal(name, review)
 		}

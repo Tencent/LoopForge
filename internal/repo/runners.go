@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -44,6 +46,8 @@ type runnerTaskPayload struct {
 	// workspace and reuse the existing verification/handoff pipeline.
 	Artifacts map[string]string         `json:"artifacts,omitempty"`
 	Outputs   *domain.RunnerTaskOutputs `json:"outputs,omitempty"`
+
+	ProjectCredentialIDs []string `json:"projectCredentialIds,omitempty"`
 }
 
 // runnerTaskTime decodes timestamps written by both write paths: Go struct
@@ -116,6 +120,7 @@ func runnerTaskFromRow(row runnerTaskRow) domain.RunnerTask {
 		t.CompletedAt = p.CompletedAt.toTime()
 		t.RunID = p.RunID
 		t.NodeID = p.NodeID
+		t.ProjectCredentialIDs = p.ProjectCredentialIDs
 		t.Invocation = p.Invocation
 		t.Sandbox = p.Sandbox
 		t.Command = p.Command
@@ -143,6 +148,7 @@ func runnerTaskPayloadBytes(v domain.RunnerTask) []byte {
 		Invocation: v.Invocation, Sandbox: v.Sandbox, Command: v.Command, Action: v.Action,
 		PreviewArchive: v.PreviewArchive, WorkBranchMessage: v.WorkBranchMessage, Artifacts: v.Artifacts,
 		Outputs: v.Outputs, IntegrationLabel: v.IntegrationLabel,
+		ProjectCredentialIDs: v.ProjectCredentialIDs,
 	})
 }
 
@@ -165,9 +171,57 @@ func takeRunnerTask(db *gorm.DB, id string) (runnerTaskRow, bool) {
 
 // ---------- Runner registry ----------
 
+// PutRunner upserts the row as given. It does not reset sharing, account
+// settings or default-runner preferences, so it must not move a machine to
+// another owner. Registration goes through RegisterRunner, which only renews
+// a row within its current owner scope.
 func (r *RunnersRepo) PutRunner(v domain.Runner) error {
+	values, err := runnerWriteValues(v)
+	if err != nil {
+		return err
+	}
+	updateCols := slices.Sorted(maps.Keys(values))
+	if v.OwnerUserID > 0 {
+		values["run_limit"] = domain.DefaultRunnerRunLimit
+	}
+	return upsertColumns(r.DB, "runners", values, updateCols)
+}
+
+// RegisterRunner creates a new machine or renews a session in its existing
+// owner scope. A renewal cannot replace a row that changed after the lookup.
+func (r *RunnersRepo) RegisterRunner(v domain.Runner, renew bool) error {
+	values, err := runnerWriteValues(v)
+	if err != nil {
+		return err
+	}
+	if !renew {
+		if v.OwnerUserID > 0 {
+			values["run_limit"] = domain.DefaultRunnerRunLimit
+		}
+		return r.DB.Table("runners").Create(values).Error
+	}
+	q := r.DB.Model(&runnerRow{}).Where("id = ?", v.ID)
+	if v.OwnerUserID > 0 {
+		q = q.Where("owner_user_id = ?", v.OwnerUserID)
+	} else {
+		q = q.Where("(owner_user_id IS NULL OR owner_user_id = 0)")
+	}
+	delete(values, "id")
+	delete(values, "owner_user_id")
+	delete(values, "created_at")
+	result := q.Updates(values)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return ErrRunnerNotFound
+	}
+	return nil
+}
+
+func runnerWriteValues(v domain.Runner) (map[string]any, error) {
 	if strings.TrimSpace(v.ID) == "" {
-		return fmt.Errorf("runner id is required")
+		return nil, fmt.Errorf("runner id is required")
 	}
 	now := time.Now().UTC()
 	if v.CreatedAt.IsZero() {
@@ -180,32 +234,30 @@ func (r *RunnersRepo) PutRunner(v domain.Runner) error {
 	if v.MaxConcurrency < 1 {
 		v.MaxConcurrency = 1
 	}
-	return upsert(r.DB, "runners", map[string]any{
+	return map[string]any{
 		"id": v.ID, "name": v.Name, "status": v.Status, "os": v.OS, "arch": v.Arch,
 		"runner_version": v.RunnerVersion, "labels": jsonBytes(v.Labels), "max_concurrency": v.MaxConcurrency,
-		"owner_user_id": nullableInt64(v.OwnerUserID), "session_token_hash": v.SessionTokenHash,
+		"native_sandbox_available": v.NativeSandboxAvailable,
+		"owner_user_id":            nullableInt64(v.OwnerUserID), "session_token_hash": v.SessionTokenHash,
 		"session_expires_at": v.SessionExpiresAt, "runtimes": jsonBytes(v.Runtimes),
 		"last_seen_at": v.LastSeenAt, "created_at": timePtr(v.CreatedAt), "updated_at": timePtr(v.UpdatedAt),
-	})
+	}, nil
 }
 
-// MaxRunnerRunLimit bounds the user-configurable per-machine run limit.
-const MaxRunnerRunLimit = 100
-
-// SetRunnerRunLimit is the only writer of run_limit; PutRunner (register and
-// heartbeat) deliberately omits the column so a reconnect never resets it.
+// SetRunnerRunLimit updates the owner-configured limit. PutRunner sets the
+// initial limit on insert, and re-registration preserves the stored value.
 // It takes only this machine's admission bucket so a limit change cannot
 // interleave with an admission decision on the same machine.
 func (r *RunnersRepo) SetRunnerRunLimit(id string, limit int) error {
-	if limit < 0 || limit > MaxRunnerRunLimit {
-		return fmt.Errorf("最多同时运行条数需在 0-%d 之间（0 表示不限制）", MaxRunnerRunLimit)
+	if limit < 0 {
+		return fmt.Errorf("最多同时运行条数需为非负整数（0 表示不限制）")
 	}
 	var value any
 	if limit > 0 {
 		value = limit
 	}
 	return r.DB.Transaction(func(tx *gorm.DB) error {
-		if err := lockAdmissionGate(r.deps, tx, admissionBucketKey("", id, true)); err != nil {
+		if err := lockAdmissionGate(r.deps, tx, runnerAdmissionBucketKey(id)); err != nil {
 			return err
 		}
 		res := tx.Model(&runnerRow{}).Where("id = ?", id).Updates(map[string]any{"run_limit": value, "updated_at": time.Now().UTC()})
@@ -216,7 +268,40 @@ func (r *RunnersRepo) SetRunnerRunLimit(id string, limit int) error {
 			return ErrRunnerNotFound
 		}
 		return nil
-	})
+	}, r.admissionTxOptions()...)
+}
+
+const platformRunnerSettingsID int64 = 1
+
+func (r *RunnersRepo) PlatformRunnerRunLimit() int {
+	limit, err := platformRunnerRunLimit(r.DB)
+	if err != nil {
+		return domain.DefaultRunnerRunLimit
+	}
+	return limit
+}
+
+func platformRunnerRunLimit(tx *gorm.DB) (int, error) {
+	var row platformRunnerSettingsRow
+	err := tx.Select("run_limit").Take(&row, platformRunnerSettingsID).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return domain.DefaultRunnerRunLimit, nil
+	}
+	return row.RunLimit, err
+}
+
+func (r *RunnersRepo) SetPlatformRunnerRunLimit(limit int, actorUserID int64) error {
+	if limit < 0 {
+		return fmt.Errorf("最多同时运行条数需为非负整数（0 表示不限制）")
+	}
+	return r.DB.Transaction(func(tx *gorm.DB) error {
+		if err := lockAdmissionGate(r.deps, tx, PlatformAdmissionBucketKey); err != nil {
+			return err
+		}
+		return upsert(tx, "platform_runner_settings", map[string]any{
+			"id": platformRunnerSettingsID, "run_limit": limit, "updated_by": actorUserID, "updated_at": time.Now().UTC(),
+		})
+	}, r.admissionTxOptions()...)
 }
 
 func (r *RunnersRepo) Runner(id string) (domain.Runner, bool) {
@@ -235,10 +320,18 @@ func runnerFromRow(row runnerRow) domain.Runner {
 	v := domain.Runner{
 		ID: row.ID, Name: row.Name, Status: row.Status, OS: row.OS, Arch: row.Arch,
 		RunnerVersion: row.RunnerVersion, MaxConcurrency: row.MaxConcurrency,
-		SessionTokenHash: row.SessionTokenHash,
+		NativeSandboxAvailable: row.NativeSandboxAvailable,
+		AllowPrivilegedSandbox: row.AllowPrivilegedSandbox,
+		SessionTokenHash:       row.SessionTokenHash,
 	}
 	if row.OwnerUserID != nil {
 		v.OwnerUserID = *row.OwnerUserID
+	}
+	if len(row.SharedProjectIDs) > 0 {
+		_ = json.Unmarshal(row.SharedProjectIDs, &v.SharedProjectIDs)
+	}
+	if len(row.LoginModels) > 0 {
+		_ = json.Unmarshal(row.LoginModels, &v.LoginModels)
 	}
 	if row.RunLimit != nil && *row.RunLimit > 0 {
 		v.RunLimit = *row.RunLimit
@@ -298,7 +391,7 @@ func (r *RunnersRepo) RunnerSessionByHash(hash string) (domain.Runner, bool) {
 // RunnerHeartbeat records liveness and the latest runtime inventory. The
 // server-side disabled flag survives: a CLI disabled from the 执行器 page
 // stays disabled even though the daemon keeps reporting it online.
-func (r *RunnersRepo) RunnerHeartbeat(id string, runtimes []domain.RunnerRuntime, version string, now, sessionExpiresAt time.Time) error {
+func (r *RunnersRepo) RunnerHeartbeat(id string, runtimes []domain.RunnerRuntime, version string, nativeSandboxAvailable bool, now, sessionExpiresAt time.Time) error {
 	current, ok := r.runnerRow(id)
 	disabled := map[string]bool{}
 	authModes := map[string]string{}
@@ -331,7 +424,8 @@ func (r *RunnersRepo) RunnerHeartbeat(id string, runtimes []domain.RunnerRuntime
 		return err
 	}
 	updates := map[string]any{
-		"status": domain.RunnerStatusOnline, "last_seen_at": now, "runtimes": string(raw),
+		"native_sandbox_available": nativeSandboxAvailable,
+		"status":                   domain.RunnerStatusOnline, "last_seen_at": now, "runtimes": string(raw),
 		"session_expires_at": sessionExpiresAt, "updated_at": now,
 	}
 	if version = strings.TrimSpace(version); version != "" {
@@ -490,13 +584,25 @@ func (r *RunnersRepo) RunnerTaskControl(id string) (domain.RunnerTask, bool) {
 }
 
 func (r *RunnersRepo) RunnerTasks() []domain.RunnerTask {
-	var rows []runnerTaskRow
-	if err := r.DB.Order("created_at DESC").Limit(200).Find(&rows).Error; err != nil {
+	// Sort ids only: MySQL filesort fails with "Out of sort memory" when one
+	// row's payload (e.g. embedded skill files) exceeds sort_buffer_size.
+	var ids []string
+	if err := r.DB.Model(&runnerTaskRow{}).Order("created_at DESC").Limit(200).Pluck("id", &ids).Error; err != nil || len(ids) == 0 {
 		return []domain.RunnerTask{}
 	}
-	out := make([]domain.RunnerTask, 0, len(rows))
+	var rows []runnerTaskRow
+	if err := r.DB.Where("id IN ?", ids).Find(&rows).Error; err != nil {
+		return []domain.RunnerTask{}
+	}
+	byID := make(map[string]runnerTaskRow, len(rows))
 	for _, row := range rows {
-		out = append(out, runnerTaskFromRow(row))
+		byID[row.ID] = row
+	}
+	out := make([]domain.RunnerTask, 0, len(rows))
+	for _, id := range ids {
+		if row, ok := byID[id]; ok {
+			out = append(out, runnerTaskFromRow(row))
+		}
 	}
 	return out
 }
@@ -544,7 +650,8 @@ func (r *RunnersRepo) ClaimRunnerTask(runnerID string, providers []string, now t
 	var found bool
 	err := r.DB.Transaction(func(tx *gorm.DB) error {
 		var rows []runnerTaskRow
-		if err := r.locking(tx).
+		// Select only what the lease update needs; see RunnerTasks.
+		if err := r.locking(tx).Select("id", "attempt").
 			Where("status = ? AND (runner_id = '' OR runner_id = ?) AND provider IN ?", domain.RunnerTaskQueued, runnerID, allowed).
 			Order("created_at").Limit(1).
 			Find(&rows).Error; err != nil {
@@ -670,6 +777,7 @@ func scrubRunnerTaskCredentials(task *domain.RunnerTask) {
 		return
 	}
 	task.Invocation.CodeBuddyAPIKey = ""
+	task.Invocation.CodeBuddyBaseURL = ""
 	task.Invocation.CodeBuddyInternetEnvironment = ""
 	task.Invocation.CodexAPIKey = ""
 	task.Invocation.CodexBaseURL = ""
@@ -819,6 +927,9 @@ func (r *RunnersRepo) DeregisterRunner(id string, now time.Time) error {
 		return fmt.Errorf("runner id is required")
 	}
 	return r.DB.Transaction(func(tx *gorm.DB) error {
+		if _, err := r.lockRunner(tx, id); err != nil {
+			return err
+		}
 		var rows []runnerTaskRow
 		if err := tx.Where("runner_id = ? AND status = ?", id, domain.RunnerTaskQueued).Find(&rows).Error; err != nil {
 			return err
@@ -837,6 +948,9 @@ func (r *RunnersRepo) DeregisterRunner(id string, now time.Time) error {
 			}
 		}
 		if err := tx.Where("default_runner_id = ?", id).Delete(&userRunnerPrefRow{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("default_runner_id = ?", id).Delete(&userProjectRunnerPrefRow{}).Error; err != nil {
 			return err
 		}
 		res := tx.Where("id = ?", id).Delete(&runnerRow{})
@@ -860,7 +974,10 @@ func (r *RunnersRepo) DefaultRunner(userID int64) string {
 		return ""
 	}
 	var row userRunnerPrefRow
-	if err := r.DB.Where("user_id = ?", userID).Take(&row).Error; err != nil {
+	// A former binding can leave a stale preference after older daemons
+	// re-register under another owner. Preserve legacy ownerless pool choices.
+	machines := r.DB.Model(&runnerRow{}).Select("id").Where("owner_user_id IS NULL OR owner_user_id IN ?", []int64{0, userID})
+	if err := r.DB.Where("user_id = ? AND default_runner_id IN (?)", userID, machines).Take(&row).Error; err != nil {
 		return ""
 	}
 	return strings.TrimSpace(row.DefaultRunnerID)

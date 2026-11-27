@@ -23,7 +23,7 @@ type credentialSandbox struct {
 }
 
 func (s credentialSandbox) Exec(ctx context.Context, command CommandSpec, sink EventSink) (string, error) {
-	bound, err := bindCommand(s.localSandbox, s.workspace, command, s.credentials)
+	bound, err := bindCommand(ctx, s.localSandbox, s.workspace, command, s.credentials)
 	if err != nil {
 		return "", err
 	}
@@ -88,7 +88,7 @@ func probeMCPServer(t *testing.T) (*httptest.Server, func() int) {
 	}
 }
 
-// Opt-in: runs the installed agent CLIs through the SOP node path with real
+// Opt-in: runs the installed agent CLIs through the LOOP node path with real
 // keys. Per kind: AGENTFLOW_TEST_<KIND>_KEY, _BASE_URL, _PROTOCOL, _MODEL.
 func TestAgentCLINodeInvocation(t *testing.T) {
 	if os.Getenv("AGENTFLOW_TEST_AGENT_CLIS") != "1" {

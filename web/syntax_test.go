@@ -39,9 +39,10 @@ func TestClarifyModelPickerAndMCPPrompt(t *testing.T) {
 	}
 	for _, want := range []string{
 		"agentflow.clarifyModel",
-		"selectedClarifyModel",
 		"data-clarify-model",
-		"model:selectedClarifyModel()",
+		"/clarify-models",
+		"picker.querySelector('[data-feature-model]')?.value",
+		"JSON.stringify({message:msg,history,model})",
 	} {
 		if !strings.Contains(string(app), want) {
 			t.Fatalf("clarify model picker is missing %q", want)
@@ -116,7 +117,7 @@ assert.ok(waiting.includes('去确认'));
 assert.equal((waiting.match(/class="issue-act /g)||[]).length, 1);
 state.data.workflows = [{id:'wf',version:2,revision:1}];
 assert.equal(refreshRunSOPButtonHTML({...run,workflowSnapshot:{}}), '');
-assert.ok(refreshRunSOPButtonHTML({...run,workflowSnapshot:{id:'wf',version:1,revision:1}}).includes('更新为最新 SOP'));
+assert.ok(refreshRunSOPButtonHTML({...run,workflowSnapshot:{id:'wf',version:1,revision:1}}).includes('更新为最新 LOOP'));
 assert.equal(refreshRunSOPButtonHTML({...run,workflowSnapshot:{id:'wf',version:2,revision:1}}), '');
 assert.ok(!code.includes('function issueMoreActionsHTML('));
 assert.ok(code.includes('data-rerun-from-here'));
@@ -168,7 +169,7 @@ func TestRuleGlobalSOPPicker(t *testing.T) {
 		"ruleGlobalFields",
 		"bindRuleGlobalPicker",
 		"selectedRuleWorkflowIds",
-		"该 SOP 的每个节点执行时都会带上这条规则",
+		"该 LOOP 的每个节点执行时都会带上这条规则",
 		"workflowIds:global?selectedRuleWorkflowIds():[]",
 		`class="rule-global-input" role="switch"`,
 	} {
@@ -504,29 +505,22 @@ assert.deepEqual(cred.CREDENTIAL_GROUPS.map(g => g.id), ['platform', 'model']);
 assert.deepEqual(cred.CREDENTIAL_KINDS.filter(k => k.group === 'platform').map(k => k.key), ['gitToken', 'gitSshKey', 'gitHttpCredentials', 'forgeToken']);
 assert.deepEqual(cred.CREDENTIAL_KINDS.filter(k => k.group === 'model').map(k => k.key), ['codeBuddyApiKey', 'codexApiKey', 'claudeCodeApiKey', 'agentCli.opencode', 'agentCli.cursor', 'agentCli.agy', 'agentCli.kimi', 'agentCli.pi', 'agentCli.dsh', 'agentCli.zcode']);
 
-// Progress, next-step hint, filter counts and per-group counts.
+// Existing credentials are rows. The add controls own the available types.
 const html = credentialPanelHTML(user);
-assert.ok(html.includes('<b>2</b> / 14 已配置'));
-assert.ok(html.includes('data-credential-setup="codeBuddyApiKey"'), 'next step follows Git → CodeBuddy');
-assert.ok(html.includes('1 / 4') && html.includes('1 / 10'));
-assert.ok(html.includes('已配置<span>2</span>') && html.includes('未配置<span>12</span>'));
-assert.equal(count(html, 'data-credential-row='), 14);
-assert.ok(!html.includes('credential-grid') && !html.includes('credential-savebar') && !html.includes('userCredentialForm'));
-// Unconfigured rows only offer 去配置; configured rows carry an inline editor with delete.
-assert.equal(count(html, 'data-credential-act="setup"'), 12);
+assert.equal(count(html, 'data-credential-row='), 2);
+assert.equal(count(html, 'data-credential-add-menu='), 2);
+assert.match(html, /新增 Git 配置.*<option value="gitToken"[^>]*>GitHub<\/option>/s);
+assert.match(html, /<option value="forgeToken"[^>]*>Forgejo<\/option>/);
+assert.ok(!html.includes('data-credential-row="forgeToken"'));
+assert.match(html, /新增执行器.*<option value="claudeCodeApiKey"[^>]*>Claude Code<\/option>/s);
+assert.ok(!html.includes('<option value="codexApiKey"'));
+assert.ok(html.includes('data-credential-row="codexApiKey"'));
 assert.equal(count(html, 'credential-editor-form'), 2);
 assert.equal(count(html, 'data-credential-act="delete"'), 2);
-for (const key of ['codeBuddyApiKey', 'claudeCodeApiKey']) {
-  const row = credentialRowHTML(cred.kind(key), user);
-  assert.ok(row.includes('去配置') && !row.includes('credential-editor-form') && !row.includes('is-configured'), key);
-  // The whole row is a hoverable button that opens the wizard; it has nothing to expand.
-  assert.ok(row.includes('class="credential-row-main credential-ink" role="button" tabindex="0">'), key);
-}
-assert.ok(credentialRowHTML(cred.kind('gitToken'), user).includes('class="credential-row-main credential-ink" role="button" tabindex="0" aria-expanded="false"'));
-assert.ok(!html.includes('点击任意行配置或编辑') && !html.includes('点击已配置的行展开编辑'));
+assert.equal(count(credentialPanelHTML({}), 'data-credential-row='), 0);
+assert.ok(!credentialPanelHTML({}).includes('data-credential-defaults'));
+assert.ok(html.includes('data-credential-defaults'));
 assert.ok(credentialRowHTML(cred.kind('gitToken'), user).includes('git-token-verify'), 'Git row keeps 重新校验');
-assert.ok(credentialPanelHTML({...user, codeBuddyApiKeyConfigured: true}).includes('推荐凭证已全部就绪'));
-assert.equal(credentialNextKind({}).key, 'gitToken');
 
 // Each kind saves and deletes only its own fields.
 assert.deepEqual(credentialSavePayload(cred.kind('gitToken'), {secret: ' ghp_1 '}), {gitToken: 'ghp_1'});
@@ -536,6 +530,7 @@ assert.ok(!sshRow.includes('credential-editor-form'));
 const forgeRow = credentialRowHTML(cred.kind('forgeToken'), {...user, forgeTokenConfigured: true});
 assert.match(forgeRow, /aria-haspopup="dialog">管理令牌/);
 assert.ok(!forgeRow.includes('credential-editor-form'));
+assert.ok(credentialPanelHTML({...user, forgeTokenConfigured: true}).includes('data-credential-row="forgeToken"'));
 const httpsRow = credentialRowHTML(cred.kind('gitHttpCredentials'), {...user, gitHttpCredentialsConfigured: true});
 assert.match(httpsRow, /aria-haspopup="dialog">管理令牌/);
 assert.ok(!httpsRow.includes('credential-editor-form'));
@@ -566,8 +561,13 @@ const officialCatalog = credentialCatalogHTML(cred.kind('codexApiKey'), {codexMo
 assert.ok(officialCatalog.includes('value="hy4"') && officialCatalog.includes('data-catalog-act="probe"') && officialCatalog.includes('改回使用自带的模型') && !officialCatalog.includes('data-catalog-body hidden'), 'an official key keeps its custom catalog editable');
 const officialEmpty = credentialCatalogHTML(cred.kind('codexApiKey'), {});
 assert.ok(officialEmpty.includes('使用 Codex 自带的模型') && officialEmpty.includes('data-catalog-act="add"') && !officialEmpty.includes('data-catalog-body hidden'));
-const geminiCatalog = credentialCatalogHTML(cred.kind('agentCli.agy'), {agentCliCredentials: {agy: {baseUrl: 'https://gw.example/v1', protocol: 'gemini'}}});
-assert.ok(geminiCatalog.includes('使用 Antigravity 自带的模型') && geminiCatalog.includes('data-catalog-act="probe"') && !geminiCatalog.includes('data-catalog-body hidden'), 'Gemini official API can still keep a custom catalog');
+const agyKind = cred.kind('agentCli.agy');
+const geminiOfficial = credentialCatalogHTML(agyKind, {agentCliCredentials: {agy: {protocol: 'gemini', models: [{id: 'gemini-4-neon-high'}]}}});
+assert.match(geminiOfficial, /data-catalog-mode="official"/);
+assert.ok(geminiOfficial.includes('value="gemini-4-neon-high"') && geminiOfficial.includes('使用 Antigravity 自带的模型') && !geminiOfficial.includes('data-catalog-body hidden'), 'a saved catalog stays editable on the official endpoint');
+const geminiGateway = credentialCatalogHTML(agyKind, {agentCliCredentials: {agy: {baseUrl: 'https://gw.example/v1', protocol: 'gemini'}}});
+assert.match(geminiGateway, /data-catalog-mode="remote"/);
+assert.ok(geminiGateway.includes('跟随服务发布的模型') && geminiGateway.includes('data-catalog-endpoint>/v1beta/models') && geminiGateway.includes('data-catalog-act="probe"'), 'a Gemini gateway uses its own model listing');
 assert.ok(credentialEditorHTML(cred.kind('codexApiKey'), catalogUser).includes('data-credential-catalog') && credentialEditorHTML(cred.kind('codexApiKey'), catalogUser).includes('has-catalog'));
 assert.ok(credentialEditorHTML(cred.kind('agentCli.cursor'), {agentCliCredentials: {cursor: {apiKeyConfigured: true}}}).includes('data-credential-catalog'), 'Cursor can fetch the models of its account');
 assert.equal(credentialCatalogKey([{id: 'a', name: 'a'}, {id: '', name: ''}]), credentialCatalogKey([{id: 'a'}]));
@@ -649,14 +649,15 @@ assert.equal(calls.length, 0);
   assert.equal(cred.wizard.secret, 'sk-KEEP', 're-selecting the same kind keeps the input');
   assert.ok(!credentialFieldHTML({label: 'k', name: 'secret', value: 'sk-LEAK'}).includes('sk-LEAK'), 'secrets are never written into markup');
   assert.ok(credentialFieldHTML({label: 'u', name: 'extra', type: 'url', value: 'https://p.example'}).includes('value="https://p.example"'));
-  // 去配置 jumps straight to step 2 with no back button.
+  // Choosing a provider opens its own form with a direct save action.
   cred.wizard = {step: 2, kind: 'codeBuddyApiKey', direct: true, secret: '', extra: 'ioa', guide: {}, error: ''};
   const cbStepTwo = credentialWizardStepTwoHTML(cred.kind('codeBuddyApiKey'));
   assert.ok(cbStepTwo.indexOf('<select name="extra">') < cbStepTwo.indexOf('name="secret"'), 'the network environment is picked before the key');
   assert.ok(cbStepTwo.includes('href="https://tencent.sso.copilot.tencent.com/profile/keys" target="_blank" rel="noopener noreferrer" data-wizard-link="1" data-environment-link>前往iOA获取 API Key'));
   assert.ok(!cbStepTwo.includes('https://www.codebuddy.ai/"'));
   cred.wizard.extra = '';
-  assert.ok(credentialWizardStepTwoHTML(cred.kind('codeBuddyApiKey')).includes('credential-description'));
+  assert.ok(credentialWizardStepTwoHTML(cred.kind('codeBuddyApiKey')).includes('新增 CodeBuddy'));
+  assert.ok(credentialWizardFootHTML().includes('保存执行器'));
   assert.ok(!credentialWizardFootHTML().includes('data-wizard-back'));
   assert.ok(credentialWizardFootHTML().includes('data-wizard-next disabled'), 'an empty key blocks next');
   cred.wizard.direct = false;
@@ -845,11 +846,15 @@ global.state = {data: {executors: [
   {id: 'zcode', name: 'ZCode'},
   {id: 'mock', name: '演示执行器'}
 ]}};
+global.window = {AgentFlowExecutorModels: Object.fromEntries(
+  state.data.executors.slice(1, -1).map(({id}) => [id, {configured: true}])
+)};
 eval(code.slice(code.indexOf('function executorOptions('), code.indexOf('function selectAgent(')));
 for (const id of ['opencode', 'cursor', 'agy', 'kimi', 'pi', 'dsh', 'zcode']) {
   assert.ok(executorOptions(id).includes('value="' + id + '" selected'), id);
 }
 assert.ok(!executorOptions('codex').includes('value="mock"'));
+assert.ok(!executorOptions('codex').includes('value="codebuddy"'));
 const legacy = executorOptions('legacy-codex');
 assert.ok(legacy.includes('历史执行器 legacy-codex'));
 assert.ok(legacy.includes('value="legacy-codex" selected disabled'));
@@ -968,7 +973,7 @@ func TestRepositoryFormUsesSingleURL(t *testing.T) {
 	for _, want := range []string{
 		`name="repoUrl"`,
 		`集成分支（可选）`,
-		`检查多个 SOP 执行后工作分支之间是否存在合并冲突`,
+		`检查多个 LOOP 执行后工作分支之间是否存在合并冲突`,
 	} {
 		if !strings.Contains(string(html), want) {
 			t.Fatalf("repository form missing %q", want)
@@ -989,23 +994,32 @@ func TestRepositoryFormUsesSingleURL(t *testing.T) {
 	script := `
 const assert = require('node:assert/strict');
 const code = require('node:fs').readFileSync('` + appBundlePath(t) + `', 'utf8');
+const state = { data: {} };
+eval(require('node:fs').readFileSync('app/git-ssh.js', 'utf8'));
+assert.equal(globalThis.LoopForgeGongfengRepository('Tencent/LoopForge', 'git.review.test'), null);
 eval(code.slice(code.indexOf('function parseGongfengRepoURL(raw){'), code.indexOf('function fillRepositoryFromLink(')));
 const web = parseGongfengRepoURL('https://git.example.com/example/agent-flow');
 assert.equal(web.project, 'example/agent-flow');
 assert.equal(web.cloneUrl, 'https://git.example.com/example/agent-flow.git');
 const ssh = parseGongfengRepoURL('git@git.example.com:example/agent-flow.git');
-assert.equal(ssh.project, 'example/agent-flow');
+assert.equal(ssh.provider, 'ssh');
 assert.equal(ssh.cloneUrl, 'git@git.example.com:example/agent-flow.git');
 const cloned = parseGongfengRepoURL('git clone git@git.example.com:example/agent-flow.git');
-assert.equal(cloned.project, 'example/agent-flow');
+assert.equal(cloned.provider, 'ssh');
 assert.equal(cloned.cloneUrl, 'git@git.example.com:example/agent-flow.git');
 assert.equal(web.name, 'agent-flow');
 const http = parseGongfengRepoURL('http://git.example.com/example/agent-flow.git');
+assert.equal(http.provider, 'gongfeng');
 assert.equal(http.project, 'example/agent-flow');
+assert.equal(http.cloneUrl, 'https://git.example.com/example/agent-flow.git');
 assert.equal(http.name, 'agent-flow');
+const plain = parseGongfengRepoURL('git clone http://git.example.com/example/agent-flow.git');
+assert.equal(plain.provider, 'http');
+assert.equal(plain.cloneUrl, 'http://git.example.com/example/agent-flow.git');
+assert.equal(parseGongfengRepoURL(globalThis.LoopForgeGitRepositoryReference(plain)).provider, 'http');
 assert.equal(ssh.name, 'agent-flow');
 const html = require('node:fs').readFileSync('index.html', 'utf8');
-assert.ok(html.includes('集成分支用于检查多个 SOP 执行后工作分支之间是否存在合并冲突'));
+assert.ok(html.includes('集成分支用于检查多个 LOOP 执行后工作分支之间是否存在合并冲突'));
 assert.ok(/<input[^>]*name="integrateBranch"[^>]*>/.test(html));
 assert.ok(!/<input[^>]*name="integrateBranch"[^>]*value="agentflow\/integration"/.test(html));
 assert.ok(!code.includes("integrateBranch:'agentflow/integration'"));
@@ -1040,7 +1054,7 @@ func TestRequirementDirectCreateUI(t *testing.T) {
 		t.Fatal("index.html must load the requirement composer script")
 	}
 	if !strings.Contains(page, `data-add="sop"`) {
-		t.Fatal("flow designer must offer SOP as a node type")
+		t.Fatal("flow designer must offer LOOP as a node type")
 	}
 	if !strings.Contains(page, `href="/app/requirement-wizard.css`) {
 		t.Fatal("index.html must load the requirement wizard stylesheet")
@@ -1054,7 +1068,7 @@ func TestRequirementDirectCreateUI(t *testing.T) {
 	for _, want := range []string{
 		`id="reqStepDescribe"`, `id="reqFooter"`,
 		`id="chatInput"`, `placeholder="要做什么？例如：`, `id="reqRepoChip"`, `id="reqRepoPopover"`, `id="reqRepository"`, `id="reqBaseBranch"`,
-		`id="reqWorkflow"`, `SOP 流程`, `id="reqTarget"`, `data-req-target="local"`, `data-req-target="tapd"`,
+		`id="reqWorkflow"`, `LOOP 流程`, `id="reqTarget"`, `data-req-target="local"`, `data-req-target="tapd"`,
 		`id="reqCreate"`, `创建需求`, `id="reqCreateChat"`, `创建并去对话澄清`, `先写一句需求`,
 	} {
 		if !strings.Contains(composer, want) {
@@ -1094,15 +1108,24 @@ func TestRequirementDirectCreateUI(t *testing.T) {
 	}
 	for _, want := range []string{
 		`function renderReqFooter(`, `function renderReqRepoChip(`, `persistRequirementComposer`, `agentflow.requirementComposer`, `未配置`, `if(modal.id==='requirementModal')return`,
-		`assigneeUserId:Number(state.currentUser?.id)||0`, `fillReqWorkflow`, `selectedReqWorkflowId`, `可在详情里触发 SOP`,
-		`createIssueFromChat(undefined,'chat')`, `if(toChat)openIssueInChat(issue)`, `function openIssueInChat(`, `type:'agentflow-chat-mention-issue'`, `&mentionIssue=`,
+		`assigneeUserId:Number(state.currentUser?.id)||0`, `fillReqWorkflow`, `selectedReqWorkflowId`, `可在详情里触发 LOOP`,
+		`createIssueFromChat(undefined,'chat')`, `if(toChat)openIssueInChat(issue,{intent:'clarify'})`, `function openIssueInChat(`, `type:'agentflow-chat-mention-issue'`, `&mentionIssue=`, `&mentionIntent=`,
 	} {
 		if !strings.Contains(code, want) {
 			t.Fatalf("requirement composer behavior is missing %q", want)
 		}
 	}
+	composerJS, err := os.ReadFile("app/composer.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, gone := range []string{`查看完整度详情`, `准入线`, `没有固定轮数`} {
+		if strings.Contains(composer, gone) || strings.Contains(string(composerJS), gone) {
+			t.Fatalf("requirement composer must not keep %q", gone)
+		}
+	}
 	for _, gone := range []string{
-		`查看完整度详情`, `准入线`, `composerAssessmentView`, `invalidateRequirementAnalysis`, `没有固定轮数`, `composerCreateReady`, `setComposerRetryMode`, `composerClarifyRetry`, `state.reqCreateMode`, `createIssueDirect`, `setChatCreateEnabled`, `syncReqComposerLayout`,
+		`composerAssessmentView`, `invalidateRequirementAnalysis`, `composerCreateReady`, `setComposerRetryMode`, `composerClarifyRetry`, `state.reqCreateMode`, `createIssueDirect`, `setChatCreateEnabled`, `syncReqComposerLayout`,
 		`function goReqStep(`, `function startReqClarify(`, `function sendChatClarify(`, `function pickReqOption(`, `function submitReqAnswers(`, `function reclarifyRequirement(`, `'/api/chat-clarify'`,
 	} {
 		if strings.Contains(code, gone) {
@@ -1199,10 +1222,10 @@ func TestTAPDImportUI(t *testing.T) {
 		t.Fatal("执行进展 must not configure or switch playbooks")
 	}
 	if strings.Contains(code, `交接产物`) {
-		t.Fatal("SOP pane must not ask users to type 交接产物")
+		t.Fatal("LOOP pane must not ask users to type 交接产物")
 	}
 	if strings.Contains(code, `并指定每一步的责任人`) {
-		t.Fatal("SOP pane must not ask users to configure an owner for every step")
+		t.Fatal("LOOP pane must not ask users to configure an owner for every step")
 	}
 	if strings.Contains(code, `从节点重跑`) {
 		t.Fatal("run header must not keep 从节点重跑; use node-local 从这里重跑")
@@ -1283,7 +1306,7 @@ func TestUsageAnalysisUI(t *testing.T) {
 		t.Fatal(err)
 	}
 	page := string(html)
-	for _, want := range []string{`data-obs-tab="overview"><svg class="agent-icon harness-icon" data-icon="token" width="14" height="14" aria-hidden="true"></svg>用量`, `data-obs-tab="delivery"><svg class="agent-icon harness-icon" data-icon="flag" width="14" height="14" aria-hidden="true"></svg>交付`, `id="exportObsReport"`} {
+	for _, want := range []string{`data-obs-tab="overview"><svg class="agent-icon harness-icon" data-icon="token" width="14" height="14" aria-hidden="true"></svg>总览`, `data-obs-tab="delivery"><svg class="agent-icon harness-icon" data-icon="flag" width="14" height="14" aria-hidden="true"></svg>交付`, `id="exportObsReport"`} {
 		if !strings.Contains(page, want) {
 			t.Fatalf("usage analysis UI missing %q", want)
 		}
@@ -1298,7 +1321,7 @@ func TestUsageAnalysisUI(t *testing.T) {
 		t.Fatal(err)
 	}
 	code := string(js)
-	for _, want := range []string{"ensureObsUserFilter", "obsRunMatchesUser", "exportObsReport", "buildObsReportHTML", "userDisplay(user)", "assigneeUserId", "各模型用量", "每人每日用量", "成员汇总", "data-obs-scope", "setObsScope", "需求类型分布", "SOP 版本对比", "节点质量明细", "setObsTrendGrain", "obsTrendChart", "该责任人在各项目", "data-obs-grain", "grain=", "全部", "obsApiGrain", "obsRangeCaption", "obsPeriodPicker", "setObsPeriod", "obsScopedView", "data-obs-period", "不含暂停/恢复", "Loop 指标", "workflow_task_id", "averageTokensPerRun", "toolSuccessRate", "runTraces", "obs-traces", "isPreviewHost", "showDirectRunButton"} {
+	for _, want := range []string{"ensureObsUserFilter", "obsRunMatchesUser", "exportObsReport", "buildObsReportHTML", "userDisplay(user)", "assigneeUserId", "各模型用量", "每人每日用量", "成员汇总", "data-obs-scope", "setObsScope", "需求类型分布", "LOOP 版本对比", "节点质量明细", "setObsTrendGrain", "obsTrendChart", "该责任人在各项目", "data-obs-grain", "grain=", "全部", "obsApiGrain", "obsRangeCaption", "obsPeriodPicker", "setObsPeriod", "obsScopedView", "data-obs-period", "不含暂停/恢复", "obsSummaryCard", "workflow_task_id", "averageTokensPerRun", "toolSuccessRate", "runTraces", "obs-traces", "isPreviewHost", "showDirectRunButton"} {
 		if !strings.Contains(code, want) {
 			t.Fatalf("app.js is missing %q", want)
 		}
@@ -1342,6 +1365,7 @@ assert.ok(!code.includes('function obsQuality('));
 eval(code.slice(code.indexOf('function obsTrendGrain(){'), code.indexOf('function ensureObsUserFilter')));
 function formatTokens(n){return String(n)}
 function escapeHTML(s){return String(s)}
+function lfT(zh){return zh}
 assert.equal(obsWeekLabel('2026-W37'), '9/7–9/13');
 assert.equal(obsTrendLabel({date:'2026-09-16'}), '09/16');
 assert.equal(obsTrendValue({tokens:10,runs:2,issues:3,costUsd:1.5},'issues'), 3);
@@ -1523,7 +1547,7 @@ assert.ok(pkg.includes('scmHistoryProvider'), 'workspace extension must enable t
 assert.ok(pkg.includes('view == workbench.scm'), 'refresh must sit on the SCM view title once, not per repository');
 assert.ok(pkg.includes('"scm/title"'), 'refresh must use scm/title because the SCM pane does not use view/title');
 assert.ok(pkg.includes('$(refresh)'), 'workspace extension must contribute a refresh icon on the SCM title');
-assert.ok(!extension.includes('SOP 更改'), 'workspace must not invent a custom SOP source control');
+assert.ok(!extension.includes('LOOP 更改'), 'workspace must not invent a custom LOOP source control');
 assert.ok(!extension.includes('mountGitChanges'), 'workspace must not paint a custom git HTML overlay');
 assert.ok(extension.includes('agentflow-base'), 'workspace extension must open diffs against HEAD');
 assert.ok(extension.includes("command: 'agentflow.openChange'"), 'SCM resources must open a file preview on click');
@@ -1707,7 +1731,7 @@ if (issueRunHealth(trackerClosed) !== 'closed' || issueStatusBucket(trackerClose
   throw new Error('closed external work item without delivery must use the closed filter');
 }
 if (issueCurrentStage(trackerClosed).label !== '已关闭' || issueListProgress(trackerClosed, null, null).pct !== 0) {
-  throw new Error('externally closed item without a run must display closed with zero SOP progress');
+  throw new Error('externally closed item without a run must display closed with zero LOOP progress');
 }
 const gongfengClosed = { id: 'gf-closed', source: 'gongfeng', status: 'closed', closeSource: 'external', externalRef: { externalState: 'closed' } };
 if (issueStatusBucket(gongfengClosed) !== 'closed' || issueCurrentStage(gongfengClosed).label !== '工蜂已关闭') {
@@ -1962,10 +1986,15 @@ func TestGenericTemplateEditorUsesBundledRoles(t *testing.T) {
 	if strings.Contains(app, "const foreign=catalogForeign((state.data.agents.find(x=>x.id===state.selectedAgent)||state.agentDraft||{}).projectId)") {
 		t.Fatal("agent wizard still treats a same-id project clone as a foreign generic role")
 	}
-	for _, want := range []string{"renderPlatformAdminPanel", "platformAdminPanel", "谁可以改通用模板"} {
+	for _, want := range []string{"renderPlatformAdminPanel", "platformAdminPanel", "谁可以改通用模板", "platformPublicURLHTML", "loadPlatformPublicURL", "外部访问地址"} {
 		if !strings.Contains(app, want) {
 			t.Fatalf("app.js is missing platform admin panel wiring %q", want)
 		}
+	}
+	// The suggested value must come from the admin's own browser, never from a
+	// Host header the platform received: it is pasted into binding links.
+	if !strings.Contains(app, "field.value = location.origin") {
+		t.Fatal("the public address page no longer suggests location.origin")
 	}
 	if strings.Contains(app, `id="platformAdminCard"`) {
 		t.Fatal("platform admin management is still embedded in personal settings")
@@ -1993,9 +2022,9 @@ func TestAgentPageListAndTabbedModal(t *testing.T) {
 		"function setAgentCreateStep(",
 		"function syncTabIndicator(",
 		"function persistAgent(",
-		"function openAgentWizard(agent=null,initialStep=1)",
+		"function openAgentWizard(",
 		"state.genericTemplateAgents",
-		"openAgentWizard(agent,2)",
+		"function applyAgentRoute(",
 	} {
 		if !strings.Contains(app, want) {
 			t.Fatalf("app bundle is missing agent page wiring %q", want)
@@ -2070,7 +2099,7 @@ func TestPlatformAdminLivesOnItsOwnView(t *testing.T) {
 		}
 	}
 	if strings.Contains(markup, `<div id="platformAdminPanel" class="platform-admin-panel" hidden></div>`) {
-		t.Fatal("platform admin panel is still embedded in the SOP catalog page")
+		t.Fatal("platform admin panel is still embedded in the LOOP catalog page")
 	}
 	for _, want := range []string{
 		"platform:'平台管理'",
@@ -2090,7 +2119,7 @@ func TestPlatformAdminLivesOnItsOwnView(t *testing.T) {
 		t.Fatal("a hand-typed #/platform is not blocked for non-admins")
 	}
 	if strings.Contains(source, "state.sopScope==='generic'&&isPlatformAdmin()") {
-		t.Fatal("platform admin visibility is still tied to the generic SOP tab")
+		t.Fatal("platform admin visibility is still tied to the generic LOOP tab")
 	}
 }
 
@@ -2352,6 +2381,7 @@ const code = require('node:fs').readFileSync('` + appBundlePath(t) + `', 'utf8')
 const escapeHTML = value => String(value??'').replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
 const isScriptWorkflowNode = node => node?.type==='script'||node?.type==='command';
 const cachedRun = () => null;
+const state = {authRequired:false, currentUser:null, data:{projects:[], issues:[]}};
 eval(code.slice(code.indexOf('function turnsExhausted('), code.indexOf('function failedNodeId(')));
 eval(code.slice(code.indexOf('function approvalCalloutHTML('), code.indexOf('async function retryWaitingNode(')));
 const node = {id:'summary', name:'交付汇总', type:'agent'};
@@ -2381,6 +2411,42 @@ assert.match(callout, /等待人工确认/);
 const bare = humanDecisionPanelHTML('run-1','summary',{status:'waiting_approval'},node,[node]);
 assert.match(bare, /判断依据/);
 assert.match(bare, /门禁未通过。请看产物和日志后决定。/);
+// Decision controls follow the server's run write guard (projectMemberWrites).
+state.authRequired = true;
+state.currentUser = {id:7, isPlatformAdmin:false};
+state.data.projects = [
+  {id:'mine', ownerId:7, members:[]},
+  {id:'team', ownerId:1, members:[{userId:7, role:'member'}]},
+  {id:'watch', ownerId:1, members:[{userId:7, role:'Viewer '}]},
+  {id:'other', ownerId:1, members:[{userId:2, role:'member'}]},
+  {id:'open', ownerId:0, members:[]},
+];
+state.data.issues = [{id:'iss-watch', projectId:'watch'}, {id:'iss-team', projectId:'team'}];
+const runIn = (projectId, issueId) => ({id:'run-x', status:'waiting', executionContext:{projectId, issueId}});
+const decide = run => humanDecisionPanelHTML('run-x','summary',nr,node,[node],run);
+for (const [label, run] of [
+  ['owner', runIn('mine')],
+  ['member', runIn('team')],
+  ['project without owner or members', runIn('open')],
+  ['project this client cannot see', runIn('hidden')],
+  ['run without a project', runIn('')],
+  ['requirement project fallback', runIn('', 'iss-team')],
+]) {
+  assert.equal(canDecideRun(run), true, label);
+  assert.match(decide(run), /确认通过，继续下游/, label);
+}
+assert.equal(canDecideRun(runIn('watch')), false);
+assert.match(decide(runIn('watch')), /你是该项目的只读成员/);
+assert.doesNotMatch(decide(runIn('watch')), /确认通过/);
+assert.equal(canDecideRun(runIn('', 'iss-watch')), false, 'requirement project fallback applies to viewers');
+assert.equal(canDecideRun(runIn('other')), false);
+assert.match(decide(runIn('other')), /你不是该项目的成员/);
+state.currentUser = {id:7, isPlatformAdmin:true};
+assert.equal(canDecideRun(runIn('watch')), true, 'platform admin');
+state.currentUser = {id:0, isGuest:true};
+assert.match(decide(runIn('open')), /登录后才能审批/);
+state.authRequired = false;
+assert.equal(canDecideRun(runIn('watch')), true, 'auth disabled');
 `
 	out, err := exec.Command(node, "-e", script).CombinedOutput()
 	if err != nil {
@@ -2505,7 +2571,7 @@ func TestNotificationEditorsSeparateNodeRemindersAndSOPReports(t *testing.T) {
  normalizeWorkflowNotifications(wf);
  assert.equal(wf.nodes[0].notifications,undefined);assert.equal(wf.notifications.length,1);
  const sop=sopNotificationHTML(wf.notifications,{sourceType:'run',kind:'sop',projectId:'p'});
- assert.match(sop,/汇总所有节点/);assert.ok(!sop.includes("data-sop-report-model"));assert.match(sop,/本次 SOP 执行身份/);assert.match(sop,/data-sop-notification-bot/);assert.match(sop,/自定义完成汇报/);assert.ok(!sop.includes('data-notification-mode'));assert.ok(!sop.includes('<details open'));
+ assert.match(sop,/汇总所有节点/);assert.ok(!sop.includes("data-sop-report-model"));assert.match(sop,/本次 LOOP 执行身份/);assert.match(sop,/data-sop-notification-bot/);assert.match(sop,/自定义完成汇报/);assert.ok(!sop.includes('data-notification-mode'));assert.ok(!sop.includes('<details open'));
  assert.match(sop,/接收者看到的消息示例/);assert.match(sop,/＋ 需求名称/);assert.match(sop,/用推荐格式/);
  assert.equal(recommendedSOPNotificationTemplate,'需求「{{issue.title}}」已完成\n\n{{ai.body}}\n\n{{url}}');
  const saved=sopNotificationHTML([{botId:'b',scope:'run',template:recommendedSOPNotificationTemplate}],{projectId:'p'});
@@ -2690,7 +2756,7 @@ func TestApprovalBadgeRefreshesOutsideApprovals(t *testing.T) {
 		"app/runs.js":   "state.data.runs=list;updateApprovalBadge();renderRuns();",
 		"app/sops.js":   "state.data.runs=runs;updateApprovalBadge();renderSOPCatalog()",
 	} {
-		if !strings.Contains(read(file), want) {
+		if !strings.Contains(strings.Join(strings.Fields(read(file)), ""), want) {
 			t.Fatalf("%s must refresh the approval badge after loading runs: missing %q", file, want)
 		}
 	}

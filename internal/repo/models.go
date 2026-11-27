@@ -38,6 +38,7 @@ type userConfigRow struct {
 	GongfengRefreshToken         *string    `gorm:"column:gongfeng_refresh_token;type:text"`
 	GongfengTokenExpiresAt       *time.Time `gorm:"column:gongfeng_token_expires_at"`
 	CodeBuddyAPIKey              *string    `gorm:"column:codebuddy_api_key;type:text"`
+	CodeBuddyBaseURL             *string    `gorm:"column:codebuddy_base_url;type:text"`
 	CodeBuddyInternetEnvironment string     `gorm:"column:codebuddy_internet_environment;size:64"`
 	CodeBuddyModels              *string    `gorm:"column:codebuddy_models;type:text"`
 	CodexAPIKey                  *string    `gorm:"column:codex_api_key;type:text"`
@@ -47,6 +48,7 @@ type userConfigRow struct {
 	ClaudeCodeBaseURL            *string    `gorm:"column:claude_code_base_url;type:text"`
 	ClaudeCodeModels             *string    `gorm:"column:claude_code_models;type:text"`
 	AgentCLICredentials          *string    `gorm:"column:agent_cli_credentials;type:text"`
+	AssistantDefaults            *string    `gorm:"column:assistant_defaults;type:text"`
 	Created                      *time.Time `gorm:"column:created_at"`
 	Updated                      *time.Time `gorm:"column:updated_at"`
 }
@@ -78,6 +80,7 @@ type gitHTTPCredentialRow struct {
 	Name     string     `gorm:"size:80;not null"`
 	Platform string     `gorm:"size:16;not null"`
 	Host     string     `gorm:"size:255;not null"`
+	HTTPHost string     `gorm:"size:267;not null;default:''"`
 	Username string     `gorm:"size:128;not null"`
 	Token    string     `gorm:"type:text;not null"`
 	Created  *time.Time `gorm:"column:created_at"`
@@ -121,6 +124,21 @@ type projectMemberRow struct {
 }
 
 func (projectMemberRow) TableName() string { return "project_members" }
+
+type projectJoinRequestRow struct {
+	ID         int64      `gorm:"column:id;primaryKey;autoIncrement"`
+	ProjectID  string     `gorm:"column:project_id;size:64;not null;index:idx_project_join_requests_project"`
+	UserID     int64      `gorm:"column:user_id;not null;index:idx_project_join_requests_user"`
+	Role       string     `gorm:"column:role;size:32;not null"`
+	Reason     string     `gorm:"column:reason;type:text"`
+	Status     string     `gorm:"column:status;size:16;not null"`
+	ReviewerID *int64     `gorm:"column:reviewer_user_id"`
+	Created    *time.Time `gorm:"column:created_at"`
+	Updated    *time.Time `gorm:"column:updated_at"`
+	Reviewed   *time.Time `gorm:"column:reviewed_at"`
+}
+
+func (projectJoinRequestRow) TableName() string { return "project_join_requests" }
 
 type repositoryRow struct {
 	ID        string     `gorm:"column:id;primaryKey;size:64"`
@@ -204,24 +222,6 @@ type executorRow struct {
 
 func (executorRow) TableName() string { return "executors" }
 
-type dockerfileRow struct {
-	ID      string     `gorm:"column:id;primaryKey;size:64"`
-	Name    string     `gorm:"column:name;size:255"`
-	Payload []byte     `gorm:"column:payload;type:json"`
-	Updated *time.Time `gorm:"column:updated_at"`
-}
-
-func (dockerfileRow) TableName() string { return "dockerfiles" }
-
-type environmentRow struct {
-	ID      string     `gorm:"column:id;primaryKey;size:64"`
-	Name    string     `gorm:"column:name;size:255"`
-	Payload []byte     `gorm:"column:payload;type:json"`
-	Updated *time.Time `gorm:"column:updated_at"`
-}
-
-func (environmentRow) TableName() string { return "environments" }
-
 type sandboxRow struct {
 	ID      string `gorm:"column:id;primaryKey;size:64"`
 	Name    string `gorm:"column:name;size:255"`
@@ -288,6 +288,16 @@ type scheduleJobExecutionStatRow struct {
 	Failed     int       `gorm:"column:failed;not null;default:0"`
 	Timed      int       `gorm:"column:timed;not null;default:0"`
 	DurationMs int64     `gorm:"column:duration_ms;not null;default:0"`
+	// Token usage of the AI prompts, priced when each execution finished
+	// (the hour mixes models, so it cannot be priced afterwards).
+	Metered          int     `gorm:"column:metered;not null;default:0"`
+	TokensTotal      int64   `gorm:"column:tokens_total;not null;default:0"`
+	TokensInput      int64   `gorm:"column:tokens_input;not null;default:0"`
+	TokensOutput     int64   `gorm:"column:tokens_output;not null;default:0"`
+	TokensCacheRead  int64   `gorm:"column:tokens_cache_read;not null;default:0"`
+	TokensCacheWrite int64   `gorm:"column:tokens_cache_write;not null;default:0"`
+	Priced           int     `gorm:"column:priced;not null;default:0"`
+	CostUSD          float64 `gorm:"column:cost_usd;not null;default:0"`
 }
 
 func (scheduleJobExecutionStatRow) TableName() string { return "schedule_job_execution_stats" }
@@ -431,7 +441,8 @@ type runArtifactRow struct {
 	SizeBytes     int64      `gorm:"column:size_bytes"`
 	SHA256        string     `gorm:"column:sha256;size:64"`
 	RepositoryDir string     `gorm:"column:repository_dir;size:128"`
-	Content       string     `gorm:"column:content;type:text"`
+	Content       string     `gorm:"column:content;type:mediumtext"`
+	BlobID        string     `gorm:"column:blob_id;size:64"`
 	Created       *time.Time `gorm:"column:created_at"`
 }
 
@@ -535,22 +546,27 @@ type definitionRevisionRow struct {
 func (definitionRevisionRow) TableName() string { return "definition_revisions" }
 
 type runnerRow struct {
-	ID               string     `gorm:"column:id;primaryKey;size:64"`
-	Name             string     `gorm:"column:name;size:255"`
-	Status           string     `gorm:"column:status;index:idx_runners_status;size:32"`
-	OS               string     `gorm:"column:os;size:32"`
-	Arch             string     `gorm:"column:arch;size:32"`
-	RunnerVersion    string     `gorm:"column:runner_version;size:64"`
-	Labels           []byte     `gorm:"column:labels;type:json"`
-	MaxConcurrency   int        `gorm:"column:max_concurrency"`
-	RunLimit         *int       `gorm:"column:run_limit"`
-	OwnerUserID      *int64     `gorm:"column:owner_user_id;index:idx_runners_owner"`
-	SessionTokenHash string     `gorm:"column:session_token_hash;index:idx_runners_session;size:64"`
-	SessionExpiresAt *time.Time `gorm:"column:session_expires_at"`
-	Runtimes         []byte     `gorm:"column:runtimes;type:json"`
-	LastSeenAt       *time.Time `gorm:"column:last_seen_at"`
-	Created          *time.Time `gorm:"column:created_at"`
-	Updated          *time.Time `gorm:"column:updated_at"`
+	ID                     string     `gorm:"column:id;primaryKey;size:64"`
+	Name                   string     `gorm:"column:name;size:255"`
+	Status                 string     `gorm:"column:status;index:idx_runners_status;size:32"`
+	OS                     string     `gorm:"column:os;size:32"`
+	Arch                   string     `gorm:"column:arch;size:32"`
+	RunnerVersion          string     `gorm:"column:runner_version;size:64"`
+	NativeSandboxAvailable bool       `gorm:"column:native_sandbox_available"`
+	Labels                 []byte     `gorm:"column:labels;type:json"`
+	MaxConcurrency         int        `gorm:"column:max_concurrency"`
+	RunLimit               *int       `gorm:"column:run_limit"`
+	OwnerUserID            *int64     `gorm:"column:owner_user_id;index:idx_runners_owner"`
+	SharedProjectIDs       []byte     `gorm:"column:shared_project_ids;type:json"`
+	LoginModels            []byte     `gorm:"column:login_model_catalogs;type:json"`
+	SessionTokenHash       string     `gorm:"column:session_token_hash;index:idx_runners_session;size:64"`
+	SessionExpiresAt       *time.Time `gorm:"column:session_expires_at"`
+	Runtimes               []byte     `gorm:"column:runtimes;type:json"`
+	LastSeenAt             *time.Time `gorm:"column:last_seen_at"`
+	Created                *time.Time `gorm:"column:created_at"`
+	Updated                *time.Time `gorm:"column:updated_at"`
+
+	AllowPrivilegedSandbox bool `gorm:"column:allow_privileged_sandbox;default:false"`
 }
 
 func (runnerRow) TableName() string { return "runners" }
@@ -590,14 +606,39 @@ type userRunnerPrefRow struct {
 
 func (userRunnerPrefRow) TableName() string { return "user_runner_prefs" }
 
-// assistantPreferenceRow: a missing row means switches are off and messages queue.
+type userProjectRunnerPrefRow struct {
+	UserID          int64  `gorm:"column:user_id;primaryKey;autoIncrement:false"`
+	ProjectID       string `gorm:"column:project_id;primaryKey;size:64"`
+	DefaultRunnerID string `gorm:"column:default_runner_id;not null;size:64;index:idx_user_project_runner_prefs_runner"`
+	SelectionMode   string `gorm:"column:selection_mode;not null;default:'';size:32"`
+}
+
+func (userProjectRunnerPrefRow) TableName() string { return "user_project_runner_prefs" }
+
+type platformRunnerSettingsRow struct {
+	ID        int64      `gorm:"column:id;primaryKey;autoIncrement:false"`
+	RunLimit  int        `gorm:"column:run_limit;not null"`
+	UpdatedBy int64      `gorm:"column:updated_by;not null;default:0"`
+	Updated   *time.Time `gorm:"column:updated_at"`
+
+	AllowPrivilegedSandbox bool `gorm:"column:allow_privileged_sandbox;default:false"`
+}
+
+func (platformRunnerSettingsRow) TableName() string { return "platform_runner_settings" }
+
+// assistantPreferenceRow: a missing row means switches are off, messages queue
+// and the agent picks conversation workspace sandboxes itself.
 type assistantPreferenceRow struct {
-	UserID         int64      `gorm:"column:user_id;primaryKey;autoIncrement:false"`
-	ProactiveRoles bool       `gorm:"column:proactive_roles;not null;default:false"`
-	ProactiveSOPs  bool       `gorm:"column:proactive_sops;not null;default:false"`
-	SteerOnSend    bool       `gorm:"column:steer_on_send;not null;default:false"`
-	Instructions   string     `gorm:"column:instructions;type:text"`
-	UpdatedAt      *time.Time `gorm:"column:updated_at"`
+	UserID              int64      `gorm:"column:user_id;primaryKey;autoIncrement:false"`
+	ProactiveRoles      bool       `gorm:"column:proactive_roles;not null;default:false"`
+	ProactiveSOPs       bool       `gorm:"column:proactive_sops;not null;default:false"`
+	SteerOnSend         bool       `gorm:"column:steer_on_send;not null;default:false"`
+	WorkspaceDriver     string     `gorm:"column:workspace_driver;type:varchar(16);not null;default:''"`
+	Instructions        string     `gorm:"column:instructions;type:text"`
+	ApprovalReviewMode  string     `gorm:"column:approval_review_mode;size:32;not null;default:''"`
+	ApprovalReviewModel string     `gorm:"column:approval_review_model;size:160;not null;default:''"`
+	ApprovalReviewAPI   *string    `gorm:"column:approval_review_api_json;type:text"`
+	UpdatedAt           *time.Time `gorm:"column:updated_at"`
 }
 
 func (assistantPreferenceRow) TableName() string { return "assistant_preferences" }
@@ -730,8 +771,106 @@ type spaceThreadRow struct {
 
 func (spaceThreadRow) TableName() string { return "space_threads" }
 
-// knowledgeSettingsRow keeps the upstream token in its own column so the JSON
-// payload can be logged or diffed without leaking the credential.
+// knowledgeConnectorRow stores one user-owned read-only knowledge connector.
+// Sealed upstream credentials stay in SecretEnc and never leak in API responses.
+type knowledgeConnectorRow struct {
+	ID          string     `gorm:"column:id;primaryKey;size:64"`
+	OwnerUserID int64      `gorm:"column:owner_user_id;index:idx_knowledge_connectors_owner;not null;default:0"`
+	Name        string     `gorm:"column:name;size:128;not null"`
+	Type        string     `gorm:"column:type;size:32;not null"`
+	Endpoint    string     `gorm:"column:endpoint;type:text;not null"`
+	ConfigJSON  []byte     `gorm:"column:config_json;type:json"`
+	SecretEnc   *string    `gorm:"column:secret_enc;type:text"`
+	Enabled     bool       `gorm:"column:enabled;not null"`
+	CreatedAt   *time.Time `gorm:"column:created_at"`
+	UpdatedAt   *time.Time `gorm:"column:updated_at"`
+}
+
+func (knowledgeConnectorRow) TableName() string { return "knowledge_connectors" }
+
+// platformSettingsRow is the single row of platform-wide settings a platform
+// administrator maintains on the management page (see domain.PlatformSettings).
+type platformSettingsRow struct {
+	ID      string     `gorm:"column:id;primaryKey;size:64"`
+	Payload []byte     `gorm:"column:payload;type:json"`
+	Updated *time.Time `gorm:"column:updated_at"`
+}
+
+func (platformSettingsRow) TableName() string { return "platform_settings" }
+
+type knowledgeConnectorUsageRow struct {
+	OwnerUserID      int64      `gorm:"column:owner_user_id;primaryKey;not null;default:0"`
+	ConnectorID      string     `gorm:"column:connector_id;primaryKey;size:64"`
+	CallCount        int64      `gorm:"column:call_count;not null;default:0"`
+	SearchCount      int64      `gorm:"column:search_count;not null;default:0"`
+	ReadCount        int64      `gorm:"column:read_count;not null;default:0"`
+	DocumentHitCount int64      `gorm:"column:document_hit_count;not null;default:0"`
+	ErrorCount       int64      `gorm:"column:error_count;not null;default:0"`
+	LastCalledAt     *time.Time `gorm:"column:last_called_at"`
+	CreatedAt        *time.Time `gorm:"column:created_at"`
+	UpdatedAt        *time.Time `gorm:"column:updated_at"`
+}
+
+func (knowledgeConnectorUsageRow) TableName() string { return "knowledge_connector_usage_counts" }
+
+type knowledgeDocumentUsageRow struct {
+	OwnerUserID    int64      `gorm:"column:owner_user_id;primaryKey;not null;default:0;index:idx_knowledge_doc_usage_owner_calls,priority:1"`
+	ConnectorID    string     `gorm:"column:connector_id;primaryKey;size:64"`
+	DocumentKey    string     `gorm:"column:document_key;primaryKey;size:255"`
+	SourceID       string     `gorm:"column:source_id;size:191;not null;default:''"`
+	SourceName     string     `gorm:"column:source_name;size:255;not null;default:''"`
+	DocumentID     string     `gorm:"column:document_id;size:512;not null;default:''"`
+	Title          string     `gorm:"column:title;size:255;not null;default:''"`
+	FileName       string     `gorm:"column:file_name;size:255;not null;default:''"`
+	CallCount      int64      `gorm:"column:call_count;index:idx_knowledge_doc_usage_owner_calls,priority:2;not null;default:0"`
+	SearchHitCount int64      `gorm:"column:search_hit_count;not null;default:0"`
+	ReadCount      int64      `gorm:"column:read_count;not null;default:0"`
+	CitedCount     int64      `gorm:"column:cited_count;not null;default:0"`
+	LastCalledAt   *time.Time `gorm:"column:last_called_at"`
+	CreatedAt      *time.Time `gorm:"column:created_at"`
+	UpdatedAt      *time.Time `gorm:"column:updated_at"`
+}
+
+func (knowledgeDocumentUsageRow) TableName() string { return "knowledge_document_usage_counts" }
+
+type knowledgeUsageEventRow struct {
+	ID           int64      `gorm:"column:id;primaryKey;autoIncrement"`
+	OwnerUserID  int64      `gorm:"column:owner_user_id;not null;default:0;index:idx_kb_usage_events_owner_time,priority:1;index:idx_kb_usage_events_owner_doc,priority:1;index:idx_kb_usage_events_owner_read,priority:1;index:idx_kb_usage_events_owner_caller,priority:1"`
+	ReadID       string     `gorm:"column:read_id;size:64;not null;default:'';index:idx_kb_usage_events_owner_read,priority:2"`
+	ConnectorID  string     `gorm:"column:connector_id;size:64;not null;index:idx_kb_usage_events_owner_doc,priority:2"`
+	DocumentKey  string     `gorm:"column:document_key;size:255;not null;index:idx_kb_usage_events_owner_doc,priority:3"`
+	SourceID     string     `gorm:"column:source_id;size:191;not null;default:''"`
+	SourceName   string     `gorm:"column:source_name;size:255;not null;default:''"`
+	DocumentID   string     `gorm:"column:document_id;size:512;not null;default:''"`
+	Title        string     `gorm:"column:title;size:255;not null;default:''"`
+	FileName     string     `gorm:"column:file_name;size:255;not null;default:''"`
+	Action       string     `gorm:"column:action;size:32;not null;default:'search_hit'"`
+	Tool         string     `gorm:"column:tool;size:128;not null;default:''"`
+	Query        string     `gorm:"column:query;size:255;not null;default:''"`
+	Cited        bool       `gorm:"column:cited;not null;default:false"`
+	CallerKind   string     `gorm:"column:caller_kind;size:32;not null;default:'';index:idx_kb_usage_events_owner_caller,priority:2"`
+	WorkflowID   string     `gorm:"column:workflow_id;size:64;not null;default:''"`
+	WorkflowName string     `gorm:"column:workflow_name;size:255;not null;default:''"`
+	RunID        string     `gorm:"column:run_id;size:64;not null;default:''"`
+	NodeID       string     `gorm:"column:node_id;size:64;not null;default:''"`
+	NodeName     string     `gorm:"column:node_name;size:255;not null;default:''"`
+	AgentID      string     `gorm:"column:agent_id;size:64;not null;default:''"`
+	AgentName    string     `gorm:"column:agent_name;size:255;not null;default:''"`
+	SessionID    string     `gorm:"column:session_id;size:64;not null;default:''"`
+	SessionTitle string     `gorm:"column:session_title;size:255;not null;default:''"`
+	SpaceID      string     `gorm:"column:space_id;size:64;not null;default:''"`
+	SpaceTitle   string     `gorm:"column:space_title;size:255;not null;default:''"`
+	IssueID      string     `gorm:"column:issue_id;size:64;not null;default:''"`
+	IssueTitle   string     `gorm:"column:issue_title;size:255;not null;default:''"`
+	ProjectID    string     `gorm:"column:project_id;size:64;not null;default:''"`
+	CalledAt     time.Time  `gorm:"column:called_at;not null;index:idx_kb_usage_events_owner_time,priority:2;index:idx_kb_usage_events_owner_doc,priority:4;index:idx_kb_usage_events_owner_caller,priority:3"`
+	CreatedAt    *time.Time `gorm:"column:created_at"`
+}
+
+func (knowledgeUsageEventRow) TableName() string { return "knowledge_usage_events" }
+
+// TODO(knowledge-legacy-compat): 保留历史表 knowledge_settings / knowledge_submissions
+// 的 ORM 映射，供旧版平台知识库与沉淀审核队列兼容路由使用；下线旧路由后一并移除。
 type knowledgeSettingsRow struct {
 	ID      string     `gorm:"column:id;primaryKey;size:64"`
 	Payload []byte     `gorm:"column:payload;type:json"`
@@ -756,23 +895,30 @@ func (knowledgeSubmissionRow) TableName() string { return "knowledge_submissions
 
 // allModels lists every table for the sqlite test schema (AutoMigrate).
 func allModels() []any {
-	return []any{domain.BotUserBinding{}, domain.BotBindingChallenge{}, domain.BotConnection{}, domain.BotConversation{}, domain.BotInteraction{}, notificationBotRow{}, botCredentialRow{}, domain.NotificationDelivery{},
+	return []any{domain.BotUserBinding{}, domain.BotBindingChallenge{}, domain.BotConnection{}, domain.BotConversation{}, domain.BotInteraction{}, notificationBotRow{}, botCredentialRow{}, botNativeSessionRow{}, botPendingDraftRow{}, botChatOriginRow{}, botClarifySessionRow{}, domain.NotificationDelivery{},
 		userRow{}, localAccountRow{}, userConfigRow{}, gitSSHKeyRow{}, forgeTokenRow{}, gitHTTPCredentialRow{}, authIntegrationRow{}, platformCodeBuddyKeyRow{}, apiTokenRow{}, genericTemplateRow{},
 		insightSourceRow{}, insightExecutionRow{},
-		projectRow{}, projectMemberRow{}, repositoryRow{}, businessDomainRow{}, businessDomainAssignmentRow{},
+		projectRow{}, projectMemberRow{}, projectJoinRequestRow{}, projectCredentialRow{}, repositoryRow{}, businessDomainRow{}, businessDomainAssignmentRow{},
 		agentRow{}, ruleRow{}, skillRow{}, skillFileRow{}, mcpServerRow{}, mcpFileRow{}, executorRow{},
-		dockerfileRow{}, environmentRow{}, sandboxRow{},
+		sandboxRow{},
 		workflowRow{}, syncConfigRow{}, scheduleJobRow{}, scheduleJobExecutionRow{}, scheduleJobExecutionStatRow{}, sharedScheduleVersionRow{},
-		issueRow{}, issueCommentRow{}, taskRow{},
-		runAdmissionLockRow{}, runRow{}, runNodeRow{}, runEventRow{}, runTelemetryRow{}, runLogRow{}, runArtifactRow{}, runEvalRow{},
+		issueRow{}, issueCommentRow{}, issueImageRow{}, taskRow{},
+		runAdmissionLockRow{}, runRow{}, runNodeRow{}, runEventRow{}, runTelemetryRow{}, runLogRow{}, runArtifactRow{}, runArtifactBlobRow{}, runArtifactBlobChunk{}, runEvalRow{},
 		runPreviewRow{}, previewSessionRow{}, previewBlobRow{}, WorkspaceCheckpoint{}, workspaceCheckpointChunk{},
 		mrDeliveryStateRow{}, definitionRevisionRow{},
-		runnerRow{}, runnerTaskRow{}, runnerTaskEventRow{}, userRunnerPrefRow{},
+		runnerRow{}, runnerTaskRow{}, runnerTaskEventRow{}, userRunnerPrefRow{}, userProjectRunnerPrefRow{}, platformRunnerSettingsRow{},
 		assistantSessionRow{}, assistantTaskRow{}, assistantGenerationRow{}, assistantSessionReadRow{}, assistantPreferenceRow{}, assistantDiagnosticsRow{},
 		chatRoomRow{}, chatMessageRow{},
 		requirementSpaceRow{}, spaceMemberRow{}, spaceArtifactRow{}, spaceArtifactRevisionRow{}, spaceThreadRow{},
 		engineInstanceRow{},
-		knowledgeSettingsRow{}, knowledgeSubmissionRow{},
-		pageFeedbackRow{}, pageFeedbackImageRow{},
+		knowledgeSettingsRow{},
+		knowledgeSubmissionRow{},
+		knowledgeConnectorRow{},
+		knowledgeConnectorUsageRow{},
+		knowledgeDocumentUsageRow{},
+		knowledgeUsageEventRow{},
+		evoPolicyRow{}, evoFindingRow{}, evoProposalRow{}, evoAssetGateRow{}, evoQueueRow{}, evoReplayRow{}, assetVersionRow{}, runAssetPinRow{}, evoSignalRow{}, evoSampleRow{}, evoSOPPolicyRow{},
+		platformSettingsRow{},
+		PlatformGitSSHHost{}, PlatformGitHTTPSHost{}, PlatformGitHTTPHost{},
 	}
 }

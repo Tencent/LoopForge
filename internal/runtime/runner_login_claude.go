@@ -13,6 +13,9 @@ import (
 	"time"
 )
 
+// ClaudeLoginMaxInputLine is the runner login bridge's NDJSON frame limit.
+const ClaudeLoginMaxInputLine = 8 << 20
+
 // Claude's host-refresh control channel stays on process stdin/stdout, including
 // docker exec -i. Refresh tokens never cross this channel or enter a sandbox.
 type claudeLoginBridge struct {
@@ -20,7 +23,9 @@ type claudeLoginBridge struct {
 	command        CommandSpec
 	input          io.Reader
 	reader, writer *os.File
-	writeMu        sync.Mutex
+	writeMu        sync.Mutex // Protects writes, inputEOF and pendingTurns.
+	inputEOF       bool
+	pendingTurns   int
 	mu             sync.Mutex
 	err            error
 	ready          chan struct{}
@@ -48,10 +53,30 @@ func (b *claudeLoginBridge) send(value any) error {
 	if err != nil {
 		return err
 	}
+	return b.writeLine(raw)
+}
+
+func (b *claudeLoginBridge) writeLine(raw []byte) error {
+	var envelope struct{ Type string }
+	_ = json.Unmarshal(raw, &envelope)
 	b.writeMu.Lock()
 	defer b.writeMu.Unlock()
-	_, err = b.writer.Write(append(raw, '\n'))
+	if _, err := b.writer.Write(raw); err != nil {
+		return err
+	}
+	_, err := b.writer.Write([]byte{'\n'})
+	if err == nil && envelope.Type == "user" {
+		b.pendingTurns++
+	}
 	return err
+}
+
+// The CLI waits for EOF after its print results. Keep stdin available for
+// token refresh until each submitted turn has finished. The caller holds writeMu.
+func (b *claudeLoginBridge) closeInputIfDone() {
+	if b.inputEOF && b.pendingTurns == 0 {
+		_ = b.writer.Close()
+	}
 }
 
 func (b *claudeLoginBridge) fail(err error) {
@@ -89,22 +114,25 @@ func (b *claudeLoginBridge) start() {
 				}
 			}
 		}
-		if b.input == nil {
-			return
-		}
-		scanner := bufio.NewScanner(b.input)
-		scanner.Buffer(make([]byte, 16<<10), 8<<20)
-		for scanner.Scan() {
-			b.writeMu.Lock()
-			_, err := b.writer.Write(append(append([]byte(nil), scanner.Bytes()...), '\n'))
-			b.writeMu.Unlock()
-			if err != nil {
+		if b.input != nil {
+			scanner := bufio.NewScanner(b.input)
+			scanner.Buffer(make([]byte, 16<<10), ClaudeLoginMaxInputLine)
+			for scanner.Scan() {
+				if b.writeLine(scanner.Bytes()) != nil {
+					return
+				}
+			}
+			if scanner.Err() != nil {
+				if b.ctx.Err() == nil {
+					b.fail(errors.New("Claude Code 输入超过限制或读取失败"))
+				}
 				return
 			}
 		}
-		if scanner.Err() != nil && b.ctx.Err() == nil {
-			b.fail(errors.New("Claude Code 输入超过限制或读取失败"))
-		}
+		b.writeMu.Lock()
+		b.inputEOF = true
+		b.closeInputIfDone()
+		b.writeMu.Unlock()
 	}()
 }
 
@@ -125,11 +153,12 @@ func (b *claudeLoginBridge) filter(line string) bool {
 	if json.Unmarshal([]byte(line), &event) != nil {
 		return true
 	}
-	if event.Type == "result" && b.command.runnerLoginInitialize && b.input == nil {
-		// Print mode with streaming input waits for EOF even after its result.
-		// Interactive conversations retain their caller-owned input instead.
+	if event.Type == "result" {
 		b.writeMu.Lock()
-		_ = b.writer.Close()
+		if b.pendingTurns > 0 {
+			b.pendingTurns--
+		}
+		b.closeInputIfDone()
 		b.writeMu.Unlock()
 	}
 	if event.Type == "system" && event.Subtype == "init" && event.Version != "" {

@@ -2,6 +2,7 @@ package repo
 
 import (
 	"encoding/json"
+	"math"
 	"strings"
 	"time"
 
@@ -95,6 +96,8 @@ func countScheduleJobExecution(tx *gorm.DB, e domain.ScheduleJobExecution) error
 	if _, err := insertIgnore(tx, "schedule_job_execution_stats", map[string]any{
 		"job_id": e.JobID, "bucket_hour": hour, "project_id": e.ProjectID,
 		"finished": 0, "success": 0, "failed": 0, "timed": 0, "duration_ms": 0,
+		"metered": 0, "tokens_total": 0, "tokens_input": 0, "tokens_output": 0,
+		"tokens_cache_read": 0, "tokens_cache_write": 0, "priced": 0, "cost_usd": 0,
 	}); err != nil {
 		return err
 	}
@@ -108,6 +111,18 @@ func countScheduleJobExecution(tx *gorm.DB, e domain.ScheduleJobExecution) error
 	if e.DurationMs > 0 {
 		updates["timed"] = gorm.Expr("timed + 1")
 		updates["duration_ms"] = gorm.Expr("duration_ms + ?", e.DurationMs)
+	}
+	if u := e.Usage; u != nil {
+		updates["metered"] = gorm.Expr("metered + 1")
+		updates["tokens_total"] = gorm.Expr("tokens_total + ?", e.ExecutionTotalTokens())
+		updates["tokens_input"] = gorm.Expr("tokens_input + ?", u.InputTokens)
+		updates["tokens_output"] = gorm.Expr("tokens_output + ?", u.OutputTokens)
+		updates["tokens_cache_read"] = gorm.Expr("tokens_cache_read + ?", u.CacheReadTokens)
+		updates["tokens_cache_write"] = gorm.Expr("tokens_cache_write + ?", u.CacheWriteTokens)
+		if e.CostCNY != nil {
+			updates["priced"] = gorm.Expr("priced + 1")
+			updates["cost_usd"] = gorm.Expr("cost_usd + ?", u.CostUSD)
+		}
 	}
 	return tx.Model(&scheduleJobExecutionStatRow{}).Where("job_id = ? AND bucket_hour = ?", e.JobID, hour).Updates(updates).Error
 }
@@ -133,6 +148,7 @@ func (r *CatalogRepo) ScheduleJobExecutionOverview(jobIDs []string, now time.Tim
 		return &current
 	}
 	durations := map[*domain.ScheduleExecutionWindow][2]int64{}
+	costs := map[*domain.ScheduleExecutionWindow]float64{}
 	var stats []scheduleJobExecutionStatRow
 	if err := r.DB.Where("job_id IN ? AND bucket_hour >= ?", jobIDs, previousFrom).Find(&stats).Error; err == nil {
 		for _, s := range stats {
@@ -145,6 +161,14 @@ func (r *CatalogRepo) ScheduleJobExecutionOverview(jobIDs []string, now time.Tim
 			w.Failed += s.Failed
 			d := durations[w]
 			durations[w] = [2]int64{d[0] + s.DurationMs, d[1] + int64(s.Timed)}
+			w.Metered += s.Metered
+			w.Tokens.Total += s.TokensTotal
+			w.Tokens.Input += s.TokensInput
+			w.Tokens.Output += s.TokensOutput
+			w.Tokens.CacheRead += s.TokensCacheRead
+			w.Tokens.CacheWrite += s.TokensCacheWrite
+			w.Priced += s.Priced
+			costs[w] += s.CostUSD
 		}
 	}
 	var running []*time.Time
@@ -164,6 +188,10 @@ func (r *CatalogRepo) ScheduleJobExecutionOverview(jobIDs []string, now time.Tim
 		if d := durations[w]; d[1] > 0 {
 			w.AvgMs = d[0] / d[1]
 		}
+		if w.Metered > 0 {
+			w.AvgTokens = w.Tokens.Total / int64(w.Metered)
+		}
+		w.CostCNY = math.Round(costs[w]*domain.AnalyticsUSDToCNY*100) / 100
 	}
 	return
 }

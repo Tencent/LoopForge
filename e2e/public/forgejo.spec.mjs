@@ -46,7 +46,9 @@ test('binds a Forgejo repository and saves only personal token metadata',async({
 
     await page.goto('/#/settings');
     await appReady(page);
-    await page.locator('[data-credential-row="forgeToken"] [data-credential-act="setup"]').click();
+    const add=page.locator('#credentialPanel').getByRole('button',{name:'新增 Git 配置',exact:true});
+    await add.click();
+    await page.getByRole('listbox',{name:'新增 Git 配置',exact:true}).getByRole('option',{name:'Forgejo',exact:true}).click();
     const dialog=page.locator('#forgeTokenDialog');
     await dialog.locator('[name="instance"]').selectOption(instance);
     const input=dialog.locator('[name="token"]');

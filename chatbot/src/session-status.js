@@ -1,5 +1,8 @@
 const states = {
   running: { state: "running", label: "正在回复", icon: "arc-spinner", busy: true },
+  // An external write is paused until the speaker answers: a still clock, not
+  // a spinner, because nothing is running while the turn waits for a person.
+  waiting_approval: { state: "waiting_approval", label: "待审批", icon: "pending-approval" },
   // 回复结束不再画勾：侧栏只提示进行中、异常和待接话的状态，
   // 避免每行都挂一个表示“已回复”的对勾。
   completed: { state: "completed", label: "回复完成" },
@@ -13,9 +16,15 @@ const states = {
 
 // A generation describes a model reply, never the completion of a project/task.
 // Only the selected session supplies live generation/submission information.
-export function sessionReplyStatus(session, { generation, busy = false } = {}) {
+// Pending external writes only count while a turn is still running: once it
+// ends there is nothing left to approve.
+export function sessionReplyStatus(session, { generation, busy = false, approvalCount = 0 } = {}) {
   const matching = generation && (!generation.sessionId || generation.sessionId === session.id);
-  const value = busy ? "running" : (matching && generation.status) || session.generationStatus;
+  const value = busy
+    ? approvalCount > 0
+      ? "waiting_approval"
+      : "running"
+    : (matching && generation.status) || session.generationStatus;
   return states[value === "canceled" ? "cancelled" : value] || states.idle;
 }
 
@@ -28,8 +37,8 @@ export function sidebarReplyStatus(status, unread = false) {
 }
 
 // Run sessions only earn a chip while something needs the reader: a running
-// SOP, a run waiting for a person, or a failure. Finished runs stay quiet; the
-// title already says which SOP they belong to.
+// LOOP, a run waiting for a person, or a failure. Finished runs stay quiet; the
+// title already says which LOOP they belong to.
 const runStates = {
   running: { state: "running", label: "运行中" },
   waiting: { state: "waiting", label: "待处理" },
@@ -44,7 +53,7 @@ export function runSessionState(session) {
 }
 
 // The hover text of a history row. A run conversation's title says what the
-// run does, so its SOP and run state are named here instead of in the row.
+// run does, so its LOOP and run state are named here instead of in the row.
 export function sessionTooltip(session, { projectName = "", replyLabel = "" } = {}) {
   const run = Boolean(session?.shared && session?.runId);
   const title = session?.displayTitle || session?.title || "新对话";

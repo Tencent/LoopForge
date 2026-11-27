@@ -88,17 +88,49 @@ function defaultPayload(pathname, method) {
     businessDomains: [], projects: [], trend: [], deliveryTrend: [], grain: 'day',
     timeZone: 'UTC', generatedAt: '2026-10-21T10:00:00Z',
   };
+  if (pathname === '/api/knowledge/connector-types') return [
+    {
+      type: 'weknora',
+      name: 'WeKnora 知识库',
+      description: '通过只读 REST API 接入个人或团队 WeKnora 实例（支持列子库、混合检索与分块原文读取）',
+      supportsSubSources: true,
+      defaultAuthType: 'api_key',
+      fields: [
+        { key: 'endpoint', label: 'WeKnora 服务地址', kind: 'url', required: true },
+        { key: 'token', label: 'API Key', kind: 'secret', required: true, secret: true },
+      ],
+    },
+    {
+      type: 'mcp',
+      name: '通用知识 MCP（Streamable HTTP）',
+      description: '接入遵循 Streamable HTTP MCP 协议的任意只读知识库服务（含 LightCloud 等），仅放行 readOnlyHint 工具',
+      supportsSubSources: true,
+      defaultAuthType: 'bearer',
+      fields: [
+        { key: 'endpoint', label: 'MCP 服务地址', kind: 'url', required: true },
+        { key: 'token', label: 'Bearer Token（可选）', kind: 'secret', required: false, secret: true },
+        { key: 'headers', label: '认证请求头（可选）', kind: 'kv', required: false, secret: true },
+      ],
+    },
+  ];
+  if (pathname === '/api/knowledge/connectors') return [];
+  if (/^\/api\/knowledge\/connectors\/[^/]+\/sources$/.test(pathname)) return [];
+  if (/^\/api\/knowledge\/connectors(?:\/[^/]+)?\/check$/.test(pathname)) {
+    return { ok: true, latencyMs: 8, sources: [], tools: ['kb_search'] };
+  }
+  if (pathname === '/api/knowledge/reference-options') return [];
+  if (pathname === '/api/knowledge/reference-check') return { ok: true };
   if (pathname === '/api/knowledge/settings') return {
     ready: true, url: 'https://knowledge.example/mcp', tokenConfigured: true,
     defaultSources: ['handbook'], projectSources: {},
   };
   if (/^\/api\/knowledge\/(submissions|candidates|sources)$/.test(pathname)) return [];
   if (pathname === '/api/knowledge/usage') return { searches: 3, fetches: 2, agents: 1 };
-  if (/^\/api\/(projects|issues|tasks|runs|flows|workflows|sops|agents|runners|assets|bots|rooms|users|notifications|revisions|approvals|business-domains|rules|skills|mcp|mcp-servers|executors|dockerfiles|environments|sandboxes|schedule-jobs)$/.test(pathname)) {
+  if (/^\/api\/(projects|issues|tasks|runs|flows|workflows|sops|agents|runners|assets|bots|rooms|users|notifications|revisions|approvals|business-domains|rules|skills|mcp|mcp-servers|executors|sandboxes|schedule-jobs)$/.test(pathname)) {
     const key = pathname.split('/').at(-1).replace('flows', 'workflows').replace('mcp-servers', 'mcpServers').replace('schedule-jobs', 'scheduleJobs');
     return sampleBootstrap()[key] || [];
   }
-  const collection = pathname.match(/\/(projects|issues|tasks|runs|workflows|agents|runners|bots|users|rules|skills|mcp-servers|dockerfiles|environments|sandboxes|schedule-jobs)$/)?.[1];
+  const collection = pathname.match(/\/(projects|issues|tasks|runs|workflows|agents|runners|bots|users|rules|skills|mcp-servers|sandboxes|schedule-jobs)$/)?.[1];
   if (collection) {
     const key = collection.replace('mcp-servers', 'mcpServers').replace('schedule-jobs', 'scheduleJobs');
     return sampleBootstrap()[key] || [];
@@ -143,8 +175,7 @@ export function sampleBootstrap() {
     runs: [run], workflows: [workflow], agents: [agent], workflowMetrics: [
       { workflowId: workflow.id, total: 4, succeeded: 3, failed: 1 },
     ], rules: [asset('rule-1', 'Code style')], skills: [asset('skill-1', 'Testing')],
-    dockerfiles: [asset('docker-1', 'Node image')], environments: [asset('env-1', 'Node setup')],
-    sandboxes: [asset('sandbox-1', 'Restricted')], mcpServers: [
+    sandboxes: [{ ...asset('sandbox-1', 'Restricted'), driver: 'docker', dockerfile: { content: 'FROM node:22' } }], mcpServers: [
       { id: 'mcp-1', projectId: project.id, name: 'Filesystem', command: 'npx', args: ['server'], enabled: true },
     ], executors: [{ id: 'runner-1', name: 'Linux Runner', status: 'online', maxConcurrent: 2 }],
     runners: [{ id: 'runner-1', name: 'Linux Runner', status: 'online', maxConcurrent: 2 }],

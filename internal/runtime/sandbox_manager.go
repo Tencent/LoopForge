@@ -46,7 +46,7 @@ func (m *Manager) Create(ctx context.Context, runID, nodeID string, profile doma
 	return m.open(ctx, id, id, profile, true, true, SandboxRequirements{}, RunCredentials{}, SandboxResources{})
 }
 
-// AcquirePersistent reuses a run/issue workspace across SOP nodes. An existing
+// AcquirePersistent reuses a run/issue workspace across LOOP nodes. An existing
 // git checkout is kept so later nodes continue the same branch.
 func (m *Manager) AcquirePersistent(ctx context.Context, persistID string, profile domain.SandboxProfile) (Sandbox, error) {
 	id := "persist-" + safeID(persistID)
@@ -61,7 +61,7 @@ func (m *Manager) AcquireRun(ctx context.Context, runID string, profile domain.S
 }
 
 // AcquireRunIn opens the sandbox of runID on the workspace of workspaceRunID.
-// A child SOP keeps its own sandbox (lock, container, environment install)
+// A child LOOP keeps its own sandbox (lock, container, environment install)
 // but works in the checkout of the run that owns the workspace.
 func (m *Manager) AcquireRunIn(ctx context.Context, runID, workspaceRunID string, profile domain.SandboxProfile, requirements SandboxRequirements, credentials RunCredentials, resources SandboxResources) (Sandbox, error) {
 	if strings.TrimSpace(workspaceRunID) == "" {
@@ -84,32 +84,21 @@ func (m *Manager) open(ctx context.Context, id, dir string, profile domain.Sandb
 	}
 	workspace := filepath.Join(m.root, dir)
 	if wipe {
-		if err := os.RemoveAll(workspace); err != nil {
+		if err := RemoveWorkspaceTree(workspace); err != nil {
 			return fail(fmt.Errorf("clean sandbox workspace: %w", err))
 		}
 	}
 	if err := os.MkdirAll(workspace, 0o700); err != nil {
 		return fail(err)
 	}
-	activated, err := prepareSandboxEnvironment(workspace, profile, resources.Environment)
-	if err != nil {
-		return fail(err)
-	}
-	profile.Environment = overlayEnvironment(profile.Environment, activated.Overlay)
-	profile, resources.Dockerfile = isolateLocalDriver(profile, resources.Dockerfile)
 	sandbox, err := createDriverSandbox(ctx, "sandbox", id, workspace, profile, requirements, resources.Dockerfile)
 	if err != nil {
 		return fail(err)
 	}
-	managed := &managedSandbox{Sandbox: sandbox, slots: m.slots, lock: lock, ephemeral: ephemeral, workspace: workspace, credentials: credentials}
-	if err := runEnvironmentInstall(ctx, managed, activated); err != nil {
-		_ = managed.Close(ctx)
-		return nil, err
-	}
-	return managed, nil
+	return &managedSandbox{Sandbox: sandbox, slots: m.slots, lock: lock, ephemeral: ephemeral, workspace: workspace, credentials: credentials}, nil
 }
 
-// DestroyRun deletes the host workspace for a finished SOP run: the persistent
+// DestroyRun deletes the host workspace for a finished LOOP run: the persistent
 // git checkout and any per-node directories. Artifacts must already be in the
 // store before calling this.
 func (m *Manager) DestroyRun(runID string) error {
@@ -162,7 +151,7 @@ func (m *Manager) RunsWithIdleDockerSandbox(ctx context.Context, runIDs []string
 		if id == "" {
 			continue
 		}
-		// A child SOP's container is named after the child but binds the
+		// A child LOOP's container is named after the child but binds the
 		// workspace of the run owning the checkout; its lock is the child's.
 		if _, ok := found[dockerContainerName(id)]; ok {
 			if !m.workspaceInUse(id) {
@@ -300,7 +289,7 @@ func (m *Manager) removeMatching(match func(name string) bool) (int, error) {
 		if m.workspaceInUse(name) {
 			continue
 		}
-		if err := os.RemoveAll(dir); err != nil {
+		if err := RemoveWorkspaceTree(dir); err != nil {
 			if first == nil {
 				first = err
 			}
@@ -368,7 +357,7 @@ func (s *managedSandbox) Close(ctx context.Context) error {
 	s.once.Do(func() {
 		err = s.Sandbox.Close(ctx)
 		if s.ephemeral && s.workspace != "" {
-			_ = os.RemoveAll(s.workspace)
+			_ = RemoveWorkspaceTree(s.workspace)
 		}
 		_ = unlockFile(s.lock)
 	})
@@ -436,15 +425,15 @@ func (s *managedSandbox) Exec(ctx context.Context, command CommandSpec, sink Eve
 	if credentials.GitHTTPCredentials != nil {
 		credentials.GitHTTPHosts = runGitHosts(credentials)
 	}
-	// Binding writes the credential helpers into the workspace; parallel
-	// branches then run their commands concurrently.
+	// Binding refreshes workspace config and prepares Runner helpers before
+	// parallel branches execute their commands.
 	s.execMu.Lock()
-	bound, err := bindCommand(s.Sandbox, s.workspace, command, credentials)
+	bound, err := bindCommand(ctx, s.Sandbox, s.workspace, command, credentials)
 	s.execMu.Unlock()
 	if err != nil {
 		return "", err
 	}
-	cleanup, err := bindCommandGitSSH(s.Sandbox, s.workspace, bound, credentials)
+	cleanup, err := bindCommandGitSSH(ctx, s.Sandbox, s.workspace, bound, credentials)
 	if err != nil {
 		return "", err
 	}
@@ -452,20 +441,6 @@ func (s *managedSandbox) Exec(ctx context.Context, command CommandSpec, sink Eve
 	defer scrubRunGitCredentials(ctx, s.Sandbox, s.workspace, bound, credentials)
 	out, err := s.Sandbox.Exec(ctx, bound, runGitEventSink(sink, credentials))
 	return redactRunGitSecrets(out, credentials), err
-}
-
-// overlayEnvironment layers an activated environment's overlay under env,
-// except PATH: the overlay's PATH wins so its tools stay first on the path.
-// An empty overlay returns env unchanged.
-func overlayEnvironment(env, overlay map[string]string) map[string]string {
-	if len(overlay) == 0 {
-		return env
-	}
-	merged := mergeEnvironmentMaps(overlay, env)
-	if path := overlay["PATH"]; path != "" {
-		merged["PATH"] = path
-	}
-	return merged
 }
 
 // createDriverSandbox builds the sandbox for profile.Driver. kind only names

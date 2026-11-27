@@ -103,7 +103,7 @@ func TestRunnerWorkspaceBusyClassification(t *testing.T) {
 	}
 }
 
-// An IDE terminal holds the runner fence after the SOP finished. Refilling
+// An IDE terminal holds the runner fence after the LOOP finished. Refilling
 // archived files must not fail the save or terminal input that triggered it.
 func TestArchivedRefillWaitsWhileRunnerIsBusy(t *testing.T) {
 	e, st := cvEEngine(t)

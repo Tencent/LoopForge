@@ -92,7 +92,7 @@ func saveWorkspacePreparationStatus(root string, state WorkspacePreparationStatu
 	return os.Rename(file.Name(), filepath.Join(dir, "state.json"))
 }
 
-// WorkspacePreparationWorkflow keeps the original SOP dependency graph when
+// WorkspacePreparationWorkflow keeps the original LOOP dependency graph when
 // free collaboration removes its business scheduling edges.
 func WorkspacePreparationWorkflow(wf domain.WorkflowDefinition) domain.WorkflowDefinition {
 	if wf.CollaborationMode == "group" && wf.SOPCheckpoint != nil {
@@ -283,7 +283,7 @@ func preparationCommand(node domain.WorkflowNode, repo *domain.RepositoryContext
 // EnsureWorkspacePreparation replays the explicitly selected, previously
 // completed scripts only when their execution environment was reconstructed.
 // Callers must serialize preparation. Changes to source files do not invalidate
-// these receipts; ordinary SOP script nodes always execute normally in order.
+// these receipts; ordinary LOOP script nodes always execute normally in order.
 func EnsureWorkspacePreparation(ctx context.Context, sb Sandbox, wf domain.WorkflowDefinition, repositories []domain.RepositoryContext, sink EventSink) (state WorkspacePreparationStatus, resultErr error) {
 	wf = WorkspacePreparationWorkflow(wf)
 	nodes, err := preparationNodes(wf)
@@ -473,7 +473,7 @@ func RecordWorkspacePreparation(ctx context.Context, sb Sandbox, wf domain.Workf
 }
 
 // WorkspacePreparationTrivial reports a recipe with nothing to prepare. A live
-// environment serves it as is, even if no run ever stamped it ready: SOP
+// environment serves it as is, even if no run ever stamped it ready: LOOP
 // nodes skip preparation entirely when their workflow has no such steps.
 func WorkspacePreparationTrivial(wf domain.WorkflowDefinition) bool {
 	nodes, err := preparationNodes(WorkspacePreparationWorkflow(wf))
