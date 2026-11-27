@@ -640,7 +640,10 @@ func (e *Engine) validateExecutionReconnect(run domain.Run, nodeID string) error
 // task ID makes those paths idempotent without resetting active/completed work.
 func (e *Engine) queueRunnerRunCleanup(run domain.Run) error {
 	if isOpenSandboxRun(run) && !sharesWorkspace(run) {
-		return e.releaseOpenSandbox(run)
+		if err := e.releaseOpenSandbox(run); err != nil {
+			return fmt.Errorf("%w：%v", ErrExecutionResourceRelease, err)
+		}
+		return nil
 	}
 	runnerID := e.defaultExecutionRunner(run)
 	if runnerID == "" {

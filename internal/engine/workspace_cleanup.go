@@ -4,6 +4,7 @@ import (
 	"agentflow/internal/domain"
 	"agentflow/internal/repo"
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -425,6 +426,9 @@ func (e *Engine) DeleteRun(runID string) error {
 		}
 	}
 	if err := e.queueRunnerRunCleanup(run); err != nil {
+		if errors.Is(err, ErrExecutionResourceRelease) {
+			return fmt.Errorf("%w；运行记录已保留，请稍后重试删除", err)
+		}
 		return fmt.Errorf("queue runner workspace cleanup: %w", err)
 	}
 	if err := e.releaseRunEnvironment(runID, true); err != nil {

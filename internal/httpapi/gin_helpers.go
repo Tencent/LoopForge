@@ -27,7 +27,8 @@ func (e HTTPError) Error() string { return e.Message }
 // respond 渲染操作结果，是唯一的统一响应入口：
 //   - err == nil → 200 {"ok": true}；
 //   - 否则渲染统一 JSON 错误形态，状态码取 HTTPError 自带值，
-//     apperr.Error 按 Kind 映射，ErrExecutionDisabled → 403，其余 → 400。
+//     apperr.Error 按 Kind 映射，ErrExecutionDisabled → 403，
+//     ErrExecutionResourceRelease → 503（可重试），其余 → 400。
 func respond(c *gin.Context, err error) {
 	if err == nil {
 		c.JSON(http.StatusOK, map[string]bool{"ok": true})
@@ -48,6 +49,13 @@ func respond(c *gin.Context, err error) {
 	}
 	if errors.Is(err, engine.ErrExecutionDisabled) {
 		c.JSON(http.StatusForbidden, map[string]string{"error": err.Error()})
+		return
+	}
+	if errors.Is(err, engine.ErrExecutionResourceRelease) {
+		// The provider did not release the sandbox and the run was kept so
+		// the delete can be repeated; tell the client this is transient.
+		c.Header("Retry-After", "30")
+		c.JSON(http.StatusServiceUnavailable, map[string]any{"error": err.Error(), "retryable": true})
 		return
 	}
 	c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})

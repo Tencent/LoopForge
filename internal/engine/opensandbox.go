@@ -16,6 +16,14 @@ const openSandboxStartupTimeout = 2 * time.Minute
 
 const DefaultOpenSandboxBackend = "default"
 
+// ErrExecutionResourceRelease marks a provider-side release (OpenSandbox
+// DELETE, lookup of a pending create, or a missing backend) that did not
+// complete. Callers keep the run: its ExecutionResourceID and Runner
+// registration are the only handle on the still-live sandbox, so dropping the
+// record would leak the Pod until the provider TTL with nothing left to retry
+// from. The HTTP layer answers 503 so the client retries the delete.
+var ErrExecutionResourceRelease = errors.New("OpenSandbox 执行环境释放失败")
+
 // ConfigureOpenSandbox installs a lifecycle backend before accepting runs.
 // Each project resolves to one backend, which is frozen on the root run.
 func (e *Engine) ConfigureOpenSandbox(backend string, client *opensandbox.Client, projects []string) error {
