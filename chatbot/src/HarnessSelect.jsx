@@ -195,7 +195,7 @@ export default function HarnessSelect({
                 {!visible.length ? <div className="harness-select-empty">没有匹配的选项</div> : null}
               </div>
             </div>,
-            document.body,
+            document.getElementById("chatRoot") || document.body,
           )
         : null}
     </>

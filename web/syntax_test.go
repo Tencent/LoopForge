@@ -487,6 +487,7 @@ const assert = require('node:assert/strict');
 const code = require('node:fs').readFileSync('` + appBundlePath(t) + `', 'utf8');
 const user = {id: 1, gitHubCredentialConfigured: true, codexApiKeyConfigured: true, codexBaseUrl: 'https://proxy.example.com/v1'};
 const state = {currentUser: {id: 1}, data: {users: [user]}};
+const platformNotify = () => {};
 const userById = id => state.data.users.find(u => u.id === id);
 const escapeHTML = v => String(v), toast = () => {};
 const calls = [];
@@ -1103,7 +1104,7 @@ func TestRequirementDirectCreateUI(t *testing.T) {
 	for _, want := range []string{
 		`function renderReqFooter(`, `function renderReqRepoChip(`, `persistRequirementComposer`, `agentflow.requirementComposer`, `未配置`, `if(modal.id==='requirementModal')return`,
 		`assigneeUserId:Number(state.currentUser?.id)||0`, `fillReqWorkflow`, `selectedReqWorkflowId`, `可在详情里触发 LOOP`,
-		`createIssueFromChat(undefined,'chat')`, `if(toChat)openIssueInChat(issue,{intent:'clarify'})`, `function openIssueInChat(`, `type:'agentflow-chat-mention-issue'`, `&mentionIssue=`, `&mentionIntent=`,
+		`createIssueFromChat(undefined,'chat')`, `if(toChat)openIssueInChat(issue,{intent:'clarify'})`, `function openIssueInChat(`, `platformNotify('mentionIssue'`,
 	} {
 		if !strings.Contains(code, want) {
 			t.Fatalf("requirement composer behavior is missing %q", want)
@@ -1694,6 +1695,7 @@ global.$ = () => mockEl();
 global.$$ = () => [];
 global.localStorage = { getItem: () => null, setItem: () => {}, removeItem: () => {} };
 global.fetch = () => Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
+window.loopforgeBootstrap = { ready: Promise.resolve(true) };
 eval(code + '; global.state = state; global.renderIssues = renderIssues; global.issueMatchesStatusFilter = issueMatchesStatusFilter; global.issueFinished = issueFinished; global.issueRunHealth = issueRunHealth; global.issueStatusBucket = issueStatusBucket; global.deliveryLockedLabel = deliveryLockedLabel; global.reopenDeliveredButton = reopenDeliveredButton; global.canRetriggerIssue = canRetriggerIssue; global.issueOutcome = issueOutcome; global.issueCurrentStage = issueCurrentStage; global.issueListProgress = issueListProgress;');
 state.data = { issues: [], projects: [], repositories: [], workflows: [], runs: [], tasks: [] };
 state.listPages = {};
@@ -1876,6 +1878,7 @@ global.document = {
 global.$ = () => mockEl();
 global.$$ = () => [];
 global.localStorage = { getItem: () => null, setItem: () => {}, removeItem: () => {} };
+window.loopforgeBootstrap = { ready: Promise.resolve(true) };
 eval(code + '; global.issueRow = issueRow; global.clarifyPane = clarifyPane; global.state = state;');
 
 // 1. Issue with pending confirm
@@ -2739,7 +2742,9 @@ func TestApprovalBadgeRefreshesOutsideApprovals(t *testing.T) {
 		}
 		return string(data)
 	}
-	if !strings.Contains(read("app.js"), "switchView(view);\n  settleBootLoader();\n  if(!['approvals','issues','runs','sops'].includes(state.currentView))preloadApprovalBadge();") {
+	_, boot, found := strings.Cut(read("app.js"), "async function boot(){")
+	boot, _, ended := strings.Cut(boot, "\nfunction finishBootLoader()")
+	if !found || !ended || !strings.Contains(strings.Join(strings.Fields(boot), ""), "elseswitchView(view,{fromLocation:true});finishBootLoader();if(!['approvals','issues','runs','sops'].includes(state.currentView))preloadApprovalBadge();") {
 		t.Fatal("boot must preload the approval badge when the first view does not fetch runs")
 	}
 	if !strings.Contains(read("app/approvals.js"), "async function preloadApprovalBadge(){try{const runs=await api('/api/runs',{silent:true});") {

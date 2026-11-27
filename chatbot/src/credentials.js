@@ -1,3 +1,4 @@
+import { platform, navigate } from "./platform-host.js";
 // Personal credentials configured under 个人配置 → 个人凭证. Field names match
 // the inputs there so the parent page can scroll to and focus the right card.
 // Keep the rules in sync with credentialHint in web/app/access.js.
@@ -181,6 +182,14 @@ export function credentialHint(text) {
 export function openCredentialSettings(field, sshRemote, { returnToQuickAccess = false } = {}) {
   const credential = field === "executors" || Object.hasOwn(CREDENTIALS, field) ? field : "";
   const resume = credential === "executors" && returnToQuickAccess;
+  if (platform()) {
+    navigate("settings", {
+      credential,
+      ...(credential === "gitSshKey" && sshRemote ? { sshRemote } : {}),
+      ...(resume ? { returnToQuickAccess: true } : {}),
+    });
+    return;
+  }
   if (window.parent !== window) {
     window.parent.postMessage(
       {

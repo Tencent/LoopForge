@@ -182,7 +182,7 @@ export default function MessageInfo({ message, sessionExecutor }) {
               onPointerEnter={cancelClose}
               onPointerLeave={leave}
             />,
-            document.body,
+            document.getElementById("chatRoot") || document.body,
           )
         : null}
     </>

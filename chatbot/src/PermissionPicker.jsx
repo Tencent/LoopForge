@@ -96,26 +96,11 @@ export default function PermissionPicker({ value, onSelect, open: requestedOpen,
     const outside = (event) => {
       if (!inside(event.target)) callbacks.current.onOpenChange(false);
     };
-    const parentOutside = (event) => {
-      if (event.target !== window.frameElement) callbacks.current.onOpenChange(false);
-    };
     document.addEventListener("pointerdown", outside, true);
     document.addEventListener("focusin", outside, true);
-    let parentDocument;
-    try {
-      if (window.parent !== window) {
-        parentDocument = window.parent.document;
-        parentDocument.addEventListener("pointerdown", parentOutside, true);
-        parentDocument.addEventListener("focusin", parentOutside, true);
-      }
-    } catch {
-      // A cross-origin host cannot expose its document to the embedded app.
-    }
     return () => {
       document.removeEventListener("pointerdown", outside, true);
       document.removeEventListener("focusin", outside, true);
-      parentDocument?.removeEventListener("pointerdown", parentOutside, true);
-      parentDocument?.removeEventListener("focusin", parentOutside, true);
     };
   }, [open]);
 
@@ -218,7 +203,7 @@ export default function PermissionPicker({ value, onSelect, open: requestedOpen,
               </span>
             </button>
           ))}
-        </div>, document.body,
+        </div>, document.getElementById("chatRoot") || document.body,
       ) : null}
     </div>
   );

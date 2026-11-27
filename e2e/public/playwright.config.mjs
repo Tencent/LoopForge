@@ -5,6 +5,6 @@ export default defineConfig({
   use: {
     baseURL: process.env.LOOPFORGE_TEST_URL || 'http://127.0.0.1:8090',
     viewport: {width:1600,height:1000}, trace:'retain-on-failure', screenshot:'only-on-failure',
-    launchOptions:{args:['--no-sandbox']},
+    launchOptions:{...(process.env.E2E_CHROMIUM ? {executablePath:process.env.E2E_CHROMIUM} : {}),args:['--no-sandbox']},
   },
 });

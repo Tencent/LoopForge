@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useEffect } from "react";
 import { createRoot } from "react-dom/client";
 import App from "./App";
 import SopDesigner from "./SopDesigner";
@@ -14,7 +14,7 @@ import "../../web/app/hui-tooltip.js";
 import "./navigation-motion.css";
 import "./composer-context.css";
 import "../../web/app/sliding-tabs.css";
-class Boundary extends React.Component {
+export class Boundary extends React.Component {
   state = { error: null };
   static getDerivedStateFromError(error) {
     return { error };
@@ -31,8 +31,18 @@ class Boundary extends React.Component {
     );
   }
 }
-createRoot(document.getElementById("root")).render(
-  <Boundary>
-    {isDesignerSurface(location.search) ? <SopDesigner /> : <App />}
-  </Boundary>,
-);
+function MainApplication({ onMounted }) {
+  useEffect(() => { onMounted?.(); }, [onMounted]);
+  return <Boundary><App /></Boundary>;
+}
+function mountWorkbench(root, onMounted) {
+  createRoot(root).render(<MainApplication onMounted={onMounted} />);
+}
+if (window.loopforgeBootstrap) {
+  window.loopforgeBootstrap.registerWorkbench(mountWorkbench);
+} else {
+  const root = document.getElementById("chatRoot");
+  if (!root) throw new Error("LoopForge chat root is missing");
+  if (isDesignerSurface(location.search)) createRoot(root).render(<Boundary><SopDesigner /></Boundary>);
+  else mountWorkbench(root);
+}

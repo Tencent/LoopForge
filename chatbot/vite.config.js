@@ -1,17 +1,22 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+import scopeChatCSS from "./scope-chat-css.js";
 const api = process.env.LOOPFORGE_API || "http://127.0.0.1:8080";
 export default defineConfig({
   base: "/chatbot/",
   plugins: [react()],
+  css: { postcss: { plugins: [scopeChatCSS()] } },
   build: {
     outDir: "../web/native-chat", emptyOutDir: true,
+    cssCodeSplit: false,
     rollupOptions: {
       input: {
         main: new URL("./index.html", import.meta.url).pathname,
         "prompt-editor": new URL("./src/prompt-editor-entry.jsx", import.meta.url).pathname,
       },
-      output: { entryFileNames: (chunk) => chunk.name === "prompt-editor" ? "prompt-editor.js" : "assets/[name]-[hash].js" },
+      output: {
+        entryFileNames: (chunk) => chunk.name === "prompt-editor" ? "prompt-editor.js" : "assets/[name]-[hash].js",
+      },
     },
   },
   server: {

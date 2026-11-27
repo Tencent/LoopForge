@@ -158,7 +158,9 @@
   }
   function translateAttrs(el) {
     if (el.closest && el.closest(SKIP_SEL)) return;
+    const skippedAttrs = el.getAttribute?.('data-i18n-skip-attrs')?.split(/\s+/);
     for (const name of ATTRS) {
+      if (skippedAttrs?.includes(name)) continue;
       const value = el.getAttribute && el.getAttribute(name);
       if (value && HAN.test(value)) {
         const next = el.closest(DATA_SEL) ? translateExact(value) : translate(value);

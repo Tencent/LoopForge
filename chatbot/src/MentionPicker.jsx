@@ -365,7 +365,7 @@ export default forwardRef(function MentionPicker(
             >
               <HarnessIcon name={icon} size={18} />
               <span>
-                <strong>
+                <strong data-i18n-skip={categories ? undefined : ""}>
                   {categories ? option.label : option.name || option.id}
                 </strong>
                 <small>

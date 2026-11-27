@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { subscribe } from "./platform-host.js";
 import { modelEffort } from "./effort.js";
 import { createLocalConversations } from "./local-conversation-fixtures.js";
 import { localId as newLocalId } from "./local-id.js";
@@ -107,15 +108,12 @@ export function useLocalConversations(real) {
     if (!available) selectLocal(null);
   }, [available, selectLocal]);
   useEffect(() => {
-    const onContext = (event) => {
-      if (event.origin !== location.origin || event.source !== window.parent || event.data?.type !== "agentflow-project-context") return;
-      const projectId = event.data.projectId || "";
+    return subscribe("project", (projectId) => {
+      projectId ||= "";
       if (projectId === hostProjectRef.current) return;
       hostProjectRef.current = projectId;
       selectLocal(null);
-    };
-    window.addEventListener("message", onContext);
-    return () => window.removeEventListener("message", onContext);
+    });
   }, [selectLocal]);
   useEffect(() => () => {
     timers.current.forEach((timer) => clearTimeout(timer));

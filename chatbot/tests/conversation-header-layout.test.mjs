@@ -54,8 +54,9 @@ test("the project name renders as a theme-aware capsule", () => {
   assert.match(project, /text-overflow:\s*ellipsis/);
 });
 
-test("an empty project name does not render an empty capsule", () => {
-  assert.match(app, /\{projectName \? \(\s*<div className="menu-anchor conversation-project-anchor">/);
+test("the project capsule falls back to a UI label rather than an empty name", () => {
+  assert.match(app, /const projectLabel = projectName \|\| personalChatLabel/);
+  assert.match(app, /<span data-i18n-skip=\{projectName \? "" : undefined\}>\{projectLabel\}<\/span>/);
 });
 
 test("the project capsule is a button that opens the project switcher", () => {

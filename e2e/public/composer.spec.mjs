@@ -68,7 +68,7 @@ test('the configured home composer sends a real model reply and reloads its save
   await input.fill(`这是只读的自动化测试。请回复一句话，包含 ${marker}。不要创建、修改或删除任何平台对象或文件。`);
   await chat(page).locator('.send-button').click();
   const reply=chat(page).locator('.message.assistant').last();
-  const sessionId=()=>new URL(page.frames().find(f=>f.url().includes('/chatbot/'))?.url()||'http://x/').searchParams.get('session')||'';
+  const sessionId=()=>new URL(page.url()).searchParams.get('chatSession')||'';
   try {
     await expect(reply).toContainText(marker,{timeout:240_000});
     await expect.poll(sessionId).not.toBe('');

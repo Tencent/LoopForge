@@ -1,3 +1,4 @@
+import { installTestPlatform } from "./setup.js";
 import React from "react";
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -162,6 +163,7 @@ describe("QuickAccessWizard", () => {
   });
 
   test("warns only when the selected SSH host has no personal key and refreshes after settings changes", async () => {
+    const host = installTestPlatform();
     mockState.sshKeys = [{ id: "gitlab", name: "GitLab", host: "gitlab.example.org:22" }];
     const userAction = userEvent.setup();
     try {
@@ -179,7 +181,7 @@ describe("QuickAccessWizard", () => {
       expect(screen.getByRole("alert")).toHaveTextContent("尚未配置 gitlab.example.org:2222 的 SSH 密钥");
       expect(screen.getByRole("alert").querySelector("button")).toBeNull();
       mockState.sshKeys = [...mockState.sshKeys, { id: "port", name: "Other SSH port", host: "gitlab.example.org:2222" }];
-      window.dispatchEvent(new MessageEvent("message", { origin: location.origin, source: window.parent, data: { type: "agentflow-credentials-changed" } }));
+      host.emit("credentials");
       await waitFor(() => expect(screen.queryByText(/尚未配置 .* 的 SSH 密钥/)).toBeNull());
       expect(address).toHaveValue("ssh://git@gitlab.example.org:2222/team/repo.git");
       await userAction.clear(address);
@@ -273,9 +275,7 @@ describe("QuickAccessWizard", () => {
 
       await act(async () => {
         window.dispatchEvent(new MessageEvent("message", { data, origin: location.origin, source: parent }));
-        window.dispatchEvent(new MessageEvent("message", { data: { type: "agentflow-chat-resume-quick-access" }, origin: location.origin, source: parent }));
       });
-      expect(screen.getByRole("heading", { name: "凭据与授权", level: 3 })).toHaveFocus();
       expect(screen.getByText(/可以继续选择项目和仓库/)).toBeVisible();
       await userAction.click(next);
       expect(await screen.findByRole("heading", { name: "项目与仓库", level: 3 })).toBeInTheDocument();

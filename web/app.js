@@ -8,9 +8,9 @@ window.__AGENTFLOW_APP_DOMAIN__ = document.querySelector('meta[name="agentflow-a
 const knownTime = v => { const d = v ? new Date(v) : null; return d && d.getFullYear() > 1970 ? d : null; };
 const clone = v => v==null ? v : JSON.parse(JSON.stringify(v));
 const state = {
-  data:null, currentUser:null, authRequired:false, currentView:'', analytics:null, workflow:null, workflowSaved:null, workflowDirty:false, selectedNode:null, connectFrom:null, connectCursor:null, activeRun:null,
+  data:null, currentUser:null, authRequired:false, analytics:null, workflow:null, workflowSaved:null, workflowDirty:false, selectedNode:null, connectFrom:null, connectCursor:null, activeRun:null,
   selectedAgent:null, selectedRun:null, selectedRunNode:null, runFilter:'all', runQuery:'', runWorkflowFilter:'',
-  selectedIssue:null, projectFilter:'', projectDraft:null, requirementIssueId:null, sourceFilter:'',
+  selectedIssue:null, projectDraft:null, requirementIssueId:null, sourceFilter:'',
   projectAdminDetailId:null, projectAdminTab:'basic', projectAdminQuery:'', projectAdminFilter:'all', projectDraftFor:'', projectDraftBase:null, projectIdentCustom:false, projectIdentSeed:'', projectAdminErrors:{},
   sopScope:'project', agentScope:'project', ruleScope:'project', skillScope:'project', sandboxScope:'project',
   issueRunFilter:'', issueStatusFilter:'', issueAssigneeFilter:'', issueQuery:'', issueView:localStorage.getItem('agentflow.issueView')||'table',
@@ -23,6 +23,11 @@ const state = {
   issueSelectionMode:false, issueSelection:new Set(), issueSelectionScope:'', issueBulkDeleting:false, issueBulkDeleteProgress:null, issueBulkDeleteResult:null,
   listPages:{}
 };
+const applicationState=window.loopforgeApplicationState;
+Object.defineProperties(state,{
+  currentView:{get:()=>applicationState.getSnapshot().view,set:value=>applicationState.update({view:value})},
+  projectFilter:{get:()=>applicationState.getSnapshot().project,set:value=>applicationState.update({project:value})},
+});
 
 const LIST_PAGE_SIZE={issues:20,runs:20,mcp:24,obs:20};
 function listPageSize(key){return String(key||'').startsWith('obs-')?LIST_PAGE_SIZE.obs:(LIST_PAGE_SIZE[key]||20)}
@@ -947,7 +952,7 @@ async function boot(){
 
   if (shouldAutoSSORedirect({isGuest, hostname: window.location.hostname, bypassAutoAuth, authErr, loginUrl: state.loginUrl})) {
     window.location.href = state.loginUrl;
-    return;
+    return false;
   }
 
   // Explicitly enabled loopback acceptance login is available before protected bootstrap.
@@ -957,10 +962,10 @@ async function boot(){
       finishBootLoader();
       document.body.innerHTML='<main style="max-width:480px;margin:15vh auto;padding:32px"><h1>本地验收环境</h1><p>登录配置的本地验收账号后查看项目和业务域。</p><button id="localBootLogin" class="button primary">本地验收登录</button><p id="localBootError"></p></main>';
       $('#localBootLogin').onclick=async()=>{const button=$('#localBootLogin');button.disabled=true;try{await api('/api/auth/local',{method:'POST',body:'{}'});location.reload()}catch(e){$('#localBootError').textContent=e.message;button.disabled=false}};
-      return;
+      return false;
     }
   }
-  if(isGuest&&state.authRequired){location.replace('/login.html');return}
+  if(isGuest&&state.authRequired){location.replace('/login.html');return false}
   renderUserBadge();
 
   const shell = await api('/api/bootstrap', {silent: restoredView()==='runs'});
@@ -974,18 +979,28 @@ async function boot(){
   renderProjectSwitcher(); updateApprovalBadge();
   ensureMCPMarketCatalog().then(()=>{if(activeViewName()==='sops')renderSOPCatalog()});
   listenForGongfengOAuth();
-  window.addEventListener('hashchange',async()=>{
+  let popstateURL='';
+  let routeRevision=0;
+  const applyLocation=async event=>{
+    if(event.type==='hashchange'){
+      const paired=popstateURL===event.newURL;
+      popstateURL='';
+      if(paired||event.newURL!==location.href)return;
+    }else popstateURL=location.href;
+    const revision=++routeRevision;
     const name=restoredView();
     const assetDetailHash=state.selectedAsset&&isProjectSharedAsset(activeViewName())?assetViewHash(state.assetType,state.selectedAsset):'';
     if(assetDetailHash&&location.hash!==assetDetailHash&&!(await confirmAssetLeave())){
-      history.pushState({assetFrom:assetViewHash(state.assetType)},'',assetDetailHash);
+      if(revision===routeRevision)history.pushState({assetFrom:assetViewHash(state.assetType)},'',assetDetailHash);
       return;
     }
+    if(revision!==routeRevision)return;
+    if(settingsRouteTransition?.target!==name)cancelSettingsRouteTransition();
     if(name==='settings'&&routePart(1)==='executors'){gotoCredential('executors');return}
     if(activeViewName()!==name){
       if(name==='flow')await applyFlowRoute();
       if(name==='projects')syncProjectAdminRouteState();
-      if(restoredView()===name)switchView(name);
+      if(revision===routeRevision&&restoredView()===name)switchView(name,{fromLocation:true});
       return;
     }
     if(name==='runs'){
@@ -995,28 +1010,26 @@ async function boot(){
       return;
     }
     if(name==='flow')applyFlowRoute();
-    if(name==='evolution'&&typeof evoApplyRoute==='function')evoApplyRoute();
     if(name==='agents')applyAgentRoute();
     if(isProjectSharedAsset(name))applyAssetRoute();
     if(name==='projects')applyProjectAdminRoute();
-    if(name==='collaboration'){
-      const id=routePart(1);
-      if(id){const url=new URL(location.href);url.searchParams.set('chatSession',id);history.replaceState({},'',url);const frame=$('#chatNextFrame');if(frame){frame.dataset.src='';mountNativeChat()}}
-    }
-  });
+    if(name==='evolution'&&typeof evoApplyRoute==='function')evoApplyRoute();
+    if(name==='collaboration')applyChatRoute();
+  };
+  window.addEventListener('hashchange',applyLocation);
+  window.addEventListener('popstate',applyLocation);
   const view=restoredView();
+  prepareApplication();
   if(view==='projects')syncProjectAdminRouteState();
   renderAll();
   if(view==='settings'&&routePart(1)==='executors')gotoCredential('executors');
-  else switchView(view);
-  settleBootLoader();
+  else switchView(view,{fromLocation:true});
+  finishBootLoader();
   if(!['approvals','issues','runs','sops'].includes(state.currentView))preloadApprovalBadge();
   restoreRequirementComposer();
+  return true;
 }
-const BOOT_LOADER_CHAT_TIMEOUT_MS=8000;
-let nativeChatReady=false,bootLoaderTimer=0;
 function finishBootLoader(){
-  clearTimeout(bootLoaderTimer);bootLoaderTimer=0;
   document.body.classList.remove('booting');
   const loader=document.getElementById('bootLoader');
   if(!loader?.isConnected||loader.classList.contains('leaving'))return;
@@ -1027,19 +1040,14 @@ function finishBootLoader(){
   loader.addEventListener('transitionend',remove,{once:true});
   setTimeout(remove,250);
 }
-function settleBootLoader(){
-  if(!document.body.classList.contains('chat-next-active')||nativeChatReady){finishBootLoader();return}
-  clearTimeout(bootLoaderTimer);
-  bootLoaderTimer=setTimeout(finishBootLoader,BOOT_LOADER_CHAT_TIMEOUT_MS);
-}
 window.addEventListener('pageshow',event=>{if(event.persisted)finishBootLoader()});
-// Shared with the /chatbot/ iframe (chatbot/src/theme.js): light|dark|system, while data-theme stays light|dark.
+// Shared theme preference: light|dark|system, while data-theme stays light|dark.
 const THEME_KEY='agentflow.theme.v3',LEGACY_THEME_KEY='agentflow.native-chat.theme',EARLIER_THEME_KEY='loopforge.theme.v3',themeMedia=matchMedia('(prefers-color-scheme: dark)');
 function readThemePreference(){try{const current=localStorage.getItem(THEME_KEY),legacy=localStorage.getItem(LEGACY_THEME_KEY),earlier=localStorage.getItem(EARLIER_THEME_KEY),valid=value=>['light','dark','system'].includes(value);let preference='light';if(valid(current))preference=current;else if(valid(legacy)||valid(earlier)){preference=valid(legacy)?legacy:earlier;localStorage.setItem(THEME_KEY,preference)}if(legacy!==null)localStorage.removeItem(LEGACY_THEME_KEY);if(earlier!==null)localStorage.removeItem(EARLIER_THEME_KEY);return preference}catch{return'light'}}
 function resolvedTheme(preference){return preference==='system'?(themeMedia.matches?'dark':'light'):preference==='dark'?'dark':'light'}
 // Kept in memory so the switcher still reflects the choice when localStorage is unavailable.
 let activeThemePreference='light',themeFadeTimer=0;
-function applyTheme(preference=readThemePreference()){const root=document.documentElement,previous=root.dataset.theme,next=resolvedTheme(preference);activeThemePreference=preference;if(previous&&previous!==next&&!matchMedia('(prefers-reduced-motion: reduce)').matches){root.classList.add('theme-fading');clearTimeout(themeFadeTimer);themeFadeTimer=setTimeout(()=>root.classList.remove('theme-fading'),320)}root.dataset.theme=next;if(typeof renderThemeToggle==='function')renderThemeToggle()}
+function applyTheme(preference=readThemePreference()){const root=document.documentElement,previous=root.dataset.theme,next=resolvedTheme(preference);activeThemePreference=preference;if(previous&&previous!==next&&!matchMedia('(prefers-reduced-motion: reduce)').matches){root.classList.add('theme-fading');clearTimeout(themeFadeTimer);themeFadeTimer=setTimeout(()=>root.classList.remove('theme-fading'),320)}root.dataset.theme=next;if(typeof renderThemeToggle==='function')renderThemeToggle();platformNotify('theme',preference)}
 applyTheme();
 themeMedia.addEventListener('change',()=>applyTheme());
 window.addEventListener('storage',event=>{if(!event.key||event.key===THEME_KEY)applyTheme()});
@@ -1054,8 +1062,9 @@ function bind(){
       resetProjectAdminDetail();
     }
     if(btn.id==='railSettingsEntry'&&(settingsRouteTransition?.target?isSettingsManagementView(settingsRouteTransition.target):document.body.classList.contains('management-mode'))){
-      switchView('collaboration');
-    }else switchView(btn.dataset.view);
+      returnToWorkbench();
+    }else if(btn.dataset.view==='collaboration')returnToWorkbench();
+    else switchView(btn.dataset.view);
   });
   $('#settingsSidebarToggle')?.addEventListener('click',()=>{cancelSettingsRouteTransition();setSettingsSidebarExpanded(!settingsSidebarExpanded())});
   $('#settingsSidebarExpand')?.addEventListener('click',()=>{
@@ -1362,15 +1371,22 @@ function bind(){
     modal.classList.remove('open');
   }));
   document.addEventListener('keydown',e=>{
-    if($('#artifactModal').open)return;
-    if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='k'){e.preventDefault();openCommandPalette();return}
+    if(e.defaultPrevented||document.querySelector('dialog[open]'))return;
+    if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='k'){
+      e.preventDefault();
+      if(document.querySelector('.modal.open')||state.drawerOpen||window.HuiPopover?.isOpen())return;
+      if(activeViewName()==='collaboration')platformNotify('search');
+      else openCommandPalette();
+      return;
+    }
     if(!$('#commandPalette').hidden){
-      if(e.key==='Escape'){closeCommandPalette();return}
+      if(e.key==='Escape'){e.preventDefault();closeCommandPalette();return}
       if(e.key==='ArrowDown'){e.preventDefault();moveCommandSelection(1);return}
       if(e.key==='ArrowUp'){e.preventDefault();moveCommandSelection(-1);return}
       if(e.key==='Enter'){e.preventDefault();executeCommand(commandSelectedIndex);return}
     }
     if(e.key==='Escape'){
+      if(activeViewName()==='collaboration'&&!state.drawerOpen&&!document.querySelector('.modal.open'))return;
       if(flowDesignerEscape(e))return;
       if(state.drawerOpen)return closeIssueDrawer();
       if($('#requirementModal')?.classList.contains('open')){
@@ -1388,15 +1404,15 @@ function bind(){
   });
 
   // --- 工作台 / 待办验收 / 可观测与分析 / Issue 详情抽屉 ---
-  $('.platform-sidebar .brand')?.addEventListener('click',()=>switchView('collaboration'));
-  $('.rail-brand') && ($('.rail-brand').onclick=()=>switchView('collaboration'));
+  $('.platform-sidebar .brand')?.addEventListener('click',returnToWorkbench);
+  $('.rail-brand') && ($('.rail-brand').onclick=returnToWorkbench);
   $('#railUserBadge') && ($('#railUserBadge').onclick=()=>switchView('settings'));
   (function bindSidebarResize(){
     const KEY=SIDEBAR_WIDTH_KEY,MIN=220,MAX=420,wide=matchMedia('(min-width:1001px)'),sidebar=$('.platform-sidebar');
     const handle=document.createElement('button');handle.type='button';handle.className='sidebar-resize';handle.title='拖动调整侧栏宽度，双击恢复默认';handle.setAttribute('aria-label','调整侧栏宽度');sidebar.append(handle);
     const clamp=px=>Math.round(Math.min(MAX,Math.max(MIN,px)));
     const apply=()=>{const saved=Number(localStorage.getItem(KEY));if(wide.matches&&saved)document.documentElement.style.setProperty('--sidebar-w',clamp(saved)+'px');else document.documentElement.style.removeProperty('--sidebar-w')};
-    const save=px=>{localStorage.setItem(KEY,String(clamp(px)));apply()};
+    const save=px=>{localStorage.setItem(KEY,String(clamp(px)));apply();platformNotify('sidebarWidth')};
     apply();wide.addEventListener('change',apply);
     window.addEventListener('storage',event=>{if(!event.key||event.key===KEY||event.key===SIDEBAR_LAYOUT_KEY)apply()});
     handle.onpointerdown=ev=>{
@@ -1406,13 +1422,13 @@ function bind(){
       handle.onpointermove=move=>document.documentElement.style.setProperty('--sidebar-w',clamp(startW+move.clientX-startX)+'px');
       handle.onpointerup=handle.onpointercancel=()=>{handle.onpointermove=handle.onpointerup=handle.onpointercancel=null;document.body.classList.remove('sidebar-resizing');save(sidebar.getBoundingClientRect().width)};
     };
-    handle.ondblclick=()=>{localStorage.removeItem(KEY);apply()};
+    handle.ondblclick=()=>{localStorage.removeItem(KEY);apply();platformNotify('sidebarWidth')};
     handle.onkeydown=ev=>{const cur=sidebar.getBoundingClientRect().width;if(ev.key==='ArrowRight'){ev.preventDefault();save(cur+16)}if(ev.key==='ArrowLeft'){ev.preventDefault();save(cur-16)}};
   })();
   $('#dashImportTAPD')&&($('#dashImportTAPD').onclick=openImportTAPDModal);
   $('#dashNewRequirement').onclick=openRequirementWizard;
   $('#dashNewRun').onclick=()=>switchView('issues');
-  $$('[data-jump]').forEach(el=>el.onclick=()=>switchView(el.dataset.jump));
+  $$('[data-jump]').forEach(el=>el.onclick=()=>el.dataset.jump==='collaboration'?returnToWorkbench():switchView(el.dataset.jump));
   $('#refreshApprovals').onclick=()=>renderApprovals(false);
   $('#refreshObs').onclick=refreshObs;
   $('#exportObsReport').onclick=exportObsReport;
@@ -1423,8 +1439,7 @@ function bind(){
   $$('[data-close-drawer]').forEach(el=>el.onclick=closeIssueDrawer);
   $('#projectSwitcher').onchange=async e=>{
     if(!await confirmAssetLeave()){e.target.value=state.projectFilter||'';return}
-    const frame=$('#chatNextFrame');
-    if(frame?.contentWindow)frame.contentWindow.postMessage({type:'agentflow-project-context',projectId:e.target.value},location.origin);
+    const previousProject=state.projectFilter||'';
     closeScheduleJobModal();
     state.projectFilter=e.target.value;state.selectedIssue=null;
     if(state.currentView==='aiSchedules')refreshAISchedules();
@@ -1442,6 +1457,7 @@ function bind(){
     if($('#observabilityView').classList.contains('active'))refreshObs();
     if($('#evolutionView')?.classList.contains('active')&&typeof renderEvolutionView==='function')renderEvolutionView();
     if($('#sopsView').classList.contains('active'))refreshWorkflowMetrics();
+    platformNotify('project',state.projectFilter,previousProject);
   };
   document.querySelectorAll('[data-scope-for]').forEach(bar=>{
     bar.querySelectorAll('[data-scope]').forEach(btn=>btn.onclick=()=>{
@@ -1550,38 +1566,55 @@ function nativeChatProjectId(){
   const chosen=new URL(location.href).searchParams.has('projectId')||!!localStorage.getItem('agentflow.activeProject');
   return chosen?($('#projectSwitcher')?.value||state.projectFilter||''):'';
 }
-function postNativeChatProject(frame){
-  frame.contentWindow?.postMessage({type:'agentflow-project-context',projectId:nativeChatProjectId()},location.origin);
-  frame.contentWindow?.postMessage({type:'agentflow-environments-changed'},location.origin);
+// Explicit boundary between the React chat surface and the in-document management views.
+function platformNotify(type, ...values){applicationState.emit(type,...values)}
+function validChatSession(id){return /^[a-zA-Z0-9_-]{1,64}$/.test(id||'')?id:''}
+function parseChatRoute(){
+  const params=new URLSearchParams(location.search);
+  const detail=routePart(0)==='collaboration'?routePart(1):'';
+  const sessionId=validChatSession(detail||params.get('chatSession'));
+  return {sessionId,issueId:sessionId?'':params.get('chatIssue')||''};
 }
-// A requirement handed to the chat opens a new conversation with the
-// requirement already @-mentioned. It waits here until the chat frame can
-// take it: in the frame URL on first mount, otherwise once the chat is ready.
-let pendingChatIssueMention=null;
-let pendingQuickAccessReturn=false;
+function applyChatRoute(){
+  const {sessionId,issueId}=parseChatRoute();
+  const current=applicationState.getSnapshot();
+  if(current.session===sessionId&&current.issue===issueId)return;
+  applicationState.update({session:sessionId,issue:issueId});
+  platformNotify('session',sessionId,issueId);
+}
+function chatViewHash(id){return id?'#/collaboration/'+encodeURIComponent(id):'#/collaboration'}
+function returnToWorkbench(){switchView('collaboration')}
+let pendingIssueHandoff=null;
+let issueHandoffReady=false;
+// A project created, deleted or restored from the chat must reach the project
+// switcher without a page refresh.
+function reloadShellProjects(){
+  return api('/api/bootstrap',{silent:true}).then(shell=>{Object.assign(state.data,shell);renderAll();return state.data.projects||[]});
+}
+// Executor settings opened from the chat wizard return to it. The wizard is
+// part of this document now, so the resume travels through the shared state.
 const QUICK_ACCESS_EXECUTOR_SETTINGS='#/settings/executors/quick-access';
 let quickAccessExecutorSettingsActive=false;
-function postQuickAccessReturn(frame){
-  if(!pendingQuickAccessReturn||!nativeChatReady||!frame?.contentWindow)return;
-  pendingQuickAccessReturn=false;
-  frame.contentWindow.postMessage({type:'agentflow-chat-resume-quick-access'},location.origin);
-}
 function returnToQuickAccess(){
   if(location.hash!==QUICK_ACCESS_EXECUTOR_SETTINGS)return;
   if(history.state?.quickAccessExecutorReturn){history.back();return}
-  const chat=new URL('/chatbot/',location.origin),params=new URLSearchParams(location.search);
-  chat.searchParams.set('quickAccess','1');
-  const projectId=params.get('projectId');
-  const session=params.get('chatSession');
-  if(projectId)chat.searchParams.set('projectId',projectId);
-  if(session)chat.searchParams.set('session',session);
-  location.replace(chat);
+  returnToWorkbench();
 }
-function postPendingChatIssueMention(frame){
-  if(!pendingChatIssueMention||!nativeChatReady||frame?.dataset.src!=='native')return;
-  frame.contentWindow?.postMessage({type:'agentflow-chat-mention-issue',...pendingChatIssueMention},location.origin);
-  pendingChatIssueMention=null;
+function openIssueInChat(issue,opts){
+  if(!issue?.id||!issue.projectId)return;
+  const intent=String(opts?.intent||'').trim();
+  localStorage.setItem('agentflow.activeProject',issue.projectId);
+  const url=new URL(location.href);
+  ['chatSession','chatIssue'].forEach(key=>url.searchParams.delete(key));
+  history.replaceState({},'',url.pathname+url.search+'#/collaboration');
+  switchView('collaboration',{fromLocation:true});
+  const handoff={issueId:issue.id,projectId:issue.projectId,...(intent?{intent}:{})};
+  if(!issueHandoffReady)pendingIssueHandoff=handoff;
+  platformNotify('mentionIssue',handoff);
 }
+// The schedule sidebar (feat #1440) deep-links to a scheduled run's chat
+// session. The session travels through the shared application state instead
+// of a parent/child window bridge.
 function openChatSessionInWorkbench(sessionId,projectId){
   if(!sessionId)return;
   if(projectId){
@@ -1594,150 +1627,95 @@ function openChatSessionInWorkbench(sessionId,projectId){
   if(projectId)url.searchParams.set('projectId',projectId);
   url.searchParams.set('chatSession',sessionId);
   url.searchParams.delete('chatIssue');
-  history.replaceState({},'',url.pathname+url.search+'#/collaboration/'+encodeURIComponent(sessionId));
-  const frame=$('#chatNextFrame');
-  if(nativeChatReady&&frame?.dataset.src==='native'&&frame.contentWindow){
-    frame.contentWindow.postMessage({type:'agentflow-chat-open-session',sessionId,projectId:projectId||''},location.origin);
-    switchView('collaboration');
-    return;
-  }
-  if(frame)frame.dataset.src='';
-  switchView('collaboration');
-}
-function openIssueInChat(issue,opts){
-  if(!issue?.id||!issue.projectId)return;
-  const intent=String(opts?.intent||'').trim();
-  pendingChatIssueMention={issueId:issue.id,projectId:issue.projectId,...(intent?{intent}:{})};
-  localStorage.setItem('agentflow.activeProject',issue.projectId);
-  const url=new URL(location.href);
-  ['chatSession','chatIssue'].forEach(key=>url.searchParams.delete(key));
   history.replaceState({},'',url.pathname+url.search+'#/collaboration');
-  // The mention goes first: it moves the chat to the requirement's project,
-  // so the project context posted by switchView no longer rebinds anything.
-  postPendingChatIssueMention($('#chatNextFrame'));
-  switchView('collaboration');
+  switchView('collaboration',{fromLocation:true});
 }
-// A project created, deleted or restored from the chat must reach the project
-// switcher without a page refresh.
-function reloadShellProjects(){
-  return api('/api/bootstrap',{silent:true}).then(shell=>{Object.assign(state.data,shell);renderAll();return state.data.projects||[]});
+function refreshCredentialUser(){
+  const userId=state.currentUser?.id;
+  if(!userId)return;
+  api('/api/users',{silent:true}).then(users=>{
+    if(state.currentUser?.id!==userId)return;
+    const saved=users.find(user=>Number(user.id)===Number(userId));
+    if(saved)storeCredentialUser(saved);
+  }).catch(()=>{});
 }
-function mountNativeChat(){
-  const frame=$('#chatNextFrame');
-  if(!frame)return;
-  if(!frame.dataset.nativeBridge){
-    frame.dataset.nativeBridge='1';
-    frame.addEventListener('load',()=>postNativeChatProject(frame));
-    window.addEventListener('message',event=>{
-      if(event.origin!==location.origin||event.source!==frame.contentWindow)return;
-      const message=event.data||{};
-      if(message.type==='agentflow-chat-ready'){
-        nativeChatReady=true;
-        postPendingChatIssueMention(frame);
-        postNativeChatProject(frame);
-        postQuickAccessReturn(frame);
-        finishBootLoader();
+let initialQuickAccess=false;
+window.loopforgePlatform={
+  subscribe(type,listener){return applicationState.on(type,listener)},
+  issueHandoffReady(){
+    issueHandoffReady=true;
+    const handoff=pendingIssueHandoff;
+    pendingIssueHandoff=null;
+    if(handoff)platformNotify('mentionIssue',handoff);
+    return ()=>{issueHandoffReady=false};
+  },
+  getSnapshot(){return applicationState.getSnapshot()},
+  initialChatContext(){
+    const params=new URL(location.href).searchParams;
+    return {projectId:nativeChatProjectId(),...parseChatRoute(),quickAccess:initialQuickAccess||params.get('quickAccess')==='1'};
+  },
+  setSession(id){
+    id=id||'';if(id&&!validChatSession(id))return;
+    const url=new URL(location.href);
+    if(id)url.searchParams.set('chatSession',id);else url.searchParams.delete('chatSession');
+    url.searchParams.delete('chatIssue');
+    if(activeViewName()==='collaboration')url.hash=chatViewHash(id);
+    history.replaceState({},'',url);
+    applicationState.update({session:id,issue:''});
+  },
+  setIssue(id){const url=new URL(location.href);if(id)url.searchParams.set('chatIssue',id);else url.searchParams.delete('chatIssue');history.replaceState({},'',url);applicationState.update({issue:id||''})},
+  setProject(projectId){
+    applicationState.update({chatProject:projectId||''});
+    if(!projectId){localStorage.removeItem('agentflow.activeProject');return}
+    const known=()=>!projectId||(state.data.projects||[]).some(project=>project.id===projectId);
+    const follow=()=>{if(!known())return;localStorage.setItem('agentflow.activeProject',projectId);if(state.projectFilter===projectId)return;const select=$('#projectSwitcher'),option=[...select.options].find(item=>item.value===projectId);if(option)option.selected=true;else select.value=projectId;select.dispatchEvent(new Event('change',{bubbles:true}))};
+    if(known())follow();else reloadShellProjects().then(follow).catch(()=>{});
+  },
+  projectsChanged(){reloadShellProjects().catch(()=>{})},
+  credentialsChanged(){platformNotify('credentials');refreshCredentialUser()},
+  setTheme(preference){setThemePreference(preference)},
+  navigate(view,options={}){
+    if(!['settings','runners','sops','projects','runs','agents','environments','dockerfiles','sandboxes','flow','mcp','knowledge','aiSchedules'].includes(view))return;
+    if(view==='settings'&&(options.credential==='executors'||Object.hasOwn(CREDENTIAL_FIELDS,options.credential||''))){
+      if(options.credential==='executors'&&options.returnToQuickAccess===true&&activeViewName()==='collaboration'&&location.hash!==QUICK_ACCESS_EXECUTOR_SETTINGS){
+        history.pushState({quickAccessExecutorReturn:true},'',QUICK_ACCESS_EXECUTOR_SETTINGS);
       }
-      if(message.type==='agentflow-chat-session'){
-        const id=message.sessionId||'';
-        if(id&&!/^[a-zA-Z0-9_-]{1,64}$/.test(id))return;
-        const url=new URL(location.href);
-        if(id)url.searchParams.set('chatSession',id);else url.searchParams.delete('chatSession');
-        url.searchParams.delete('chatIssue');
-        if(activeViewName()==='collaboration'&&restoredView()==='collaboration')url.hash=id?'#/collaboration/'+encodeURIComponent(id):'#/collaboration';
-        history.replaceState({},'',url);
-      }
-      if(message.type==='agentflow-chat-project'){
-        const projectId=typeof message.projectId==='string'?message.projectId:'';
-        const known=()=>!projectId||(state.data.projects||[]).some(project=>project.id===projectId);
-        const follow=()=>{
-          if(!known())return;
-          localStorage.setItem('agentflow.activeProject',projectId);
-          if(state.projectFilter===projectId)return;
-          const select=$('#projectSwitcher');
-          const option=[...select.options].find(item=>item.value===projectId);
-          if(option)option.selected=true;else select.value=projectId;
-          select.dispatchEvent(new Event('change',{bubbles:true}));
-        };
-        if(known())follow();
-        else reloadShellProjects().then(follow).catch(()=>{});
-      }
-      if(message.type==='agentflow-projects-changed')reloadShellProjects().catch(()=>{});
-      if(message.type==='agentflow-credentials-changed'){
-        const userId=state.currentUser?.id;
-        api('/api/users',{silent:true}).then(users=>{
-          if(state.currentUser?.id!==userId)return;
-          const saved=users.find(user=>Number(user.id)===Number(userId));
-          if(saved)storeCredentialUser(saved);
-        }).catch(()=>{});
-      }
-      if(message.type==='agentflow-quick-access-completed'){
-        api('/api/bootstrap',{silent:true}).then(shell=>{
-          Object.assign(state.data,shell);
-          const pid=typeof message.projectId==='string'?message.projectId:'';
-          if(pid&&(state.data.projects||[]).some(p=>p.id===pid)){
-            state.projectFilter=pid;
-            localStorage.setItem('agentflow.activeProject',pid);
-          }
-          renderAll();
-        }).catch(()=>{});
-      }
-      if(message.type==='agentflow-chat-open-view'&&['settings','runners','sops','projects','runs','agents','sandboxes','flow','mcp','knowledge','aiSchedules'].includes(message.view)){
-        if(message.view==='settings'&&message.credential){
-          if(message.credential==='executors'&&message.returnToQuickAccess===true&&activeViewName()==='collaboration'&&location.hash!==QUICK_ACCESS_EXECUTOR_SETTINGS){
-            history.pushState({quickAccessExecutorReturn:true},'',QUICK_ACCESS_EXECUTOR_SETTINGS);
-          }
-          gotoCredential(message.credential,message.sshRemote);
-        }
-        else if(message.view==='sandboxes'&&message.action==='create')createConversationSandbox(message.projectId).catch(error=>toast(error.message));
-        else if(message.view==='runs'&&/^run-[\w-]+$/.test(message.runId||''))location.hash='#/runs/'+encodeURIComponent(message.runId);
-        else if(message.view==='aiSchedules'){
-          if(message.projectId&&state.projectFilter!==message.projectId&&(state.data.projects||[]).some(p=>p.id===message.projectId)){
-            state.projectFilter=message.projectId;
-            localStorage.setItem('agentflow.activeProject',message.projectId);
-            const select=$('#projectSwitcher');
-            if(select&&[...select.options].some(o=>o.value===message.projectId))select.value=message.projectId;
-          }
-          if(message.action==='executions'&&typeof openScheduleExecutions==='function'){
-            openScheduleExecutions(message.jobId||'');
-          }else{
-            switchView('aiSchedules');
-            if(message.action==='create'&&typeof openScheduleJobModal==='function'){
-              openScheduleJobModal('assistant');
-            }else if(message.action==='edit'&&message.jobId&&typeof openScheduleJobModal==='function'){
-              const job=(state.data.scheduleJobs||[]).find(j=>j.id===message.jobId);
-              if(job)openScheduleJobModal('assistant',job);
-              else refreshAISchedules().then(()=>{const found=(state.data.scheduleJobs||[]).find(j=>j.id===message.jobId);if(found)openScheduleJobModal('assistant',found)}).catch(()=>{});
-            }
-          }
-        }
-        else switchView(message.view);
-      }
-    });
-  }
-  if(frame.dataset.src!=='native'){
-    frame.dataset.src='native';
-    nativeChatReady=false;
-    const topParams=new URL(location.href).searchParams;
-    const projectId=nativeChatProjectId();
-    const sessionId=topParams.get('chatSession')||'';
-    const issueId=topParams.get('chatIssue')||'';
-    const quickAccess=topParams.get('quickAccess')==='1';
-    if(quickAccess||topParams.get('gongfeng')==='ok'){
-      // renderPersonalSettings still owes the OAuth return toast after the URL is cleaned.
-      if(topParams.get('gongfeng')==='ok')state.gongfengReturned=true;
-      topParams.delete('quickAccess');
-      topParams.delete('gongfeng');
-      const clean=topParams.toString();
-      history.replaceState({},'',location.pathname+(clean?'?'+clean:'')+location.hash);
+      gotoCredential(options.credential,options.sshRemote);
     }
-    const mention=pendingChatIssueMention;
-    pendingChatIssueMention=null;
-    frame.src=mention
-      ?'/chatbot/?projectId='+encodeURIComponent(mention.projectId)+'&mentionIssue='+encodeURIComponent(mention.issueId)+(mention.intent?'&mentionIntent='+encodeURIComponent(mention.intent):'')
-      :'/chatbot/?projectId='+encodeURIComponent(projectId)+(sessionId?'&session='+encodeURIComponent(sessionId):issueId?'&issueId='+encodeURIComponent(issueId):'')+(quickAccess?'&quickAccess=1':'');
-  }
-  postNativeChatProject(frame);
+    else if(view==='sandboxes'&&options.action==='create')createConversationSandbox(options.projectId).catch(error=>toast(error.message));
+    else if(view==='runs'&&/^run-[\w-]+$/.test(options.runId||''))location.hash='#/runs/'+encodeURIComponent(options.runId);
+    else if(view==='aiSchedules'){
+      if(options.projectId&&state.projectFilter!==options.projectId&&(state.data.projects||[]).some(p=>p.id===options.projectId)){
+        state.projectFilter=options.projectId;
+        localStorage.setItem('agentflow.activeProject',options.projectId);
+        const select=$('#projectSwitcher');
+        if(select&&[...select.options].some(o=>o.value===options.projectId))select.value=options.projectId;
+      }
+      if(options.action==='executions'&&typeof openScheduleExecutions==='function'){
+        openScheduleExecutions(options.jobId||'');
+      }else{
+        switchView('aiSchedules');
+        if(options.action==='create'&&typeof openScheduleJobModal==='function'){
+          openScheduleJobModal('assistant');
+        }else if(options.action==='edit'&&options.jobId&&typeof openScheduleJobModal==='function'){
+          const job=(state.data.scheduleJobs||[]).find(j=>j.id===options.jobId);
+          if(job)openScheduleJobModal('assistant',job);
+          else refreshAISchedules().then(()=>{const found=(state.data.scheduleJobs||[]).find(j=>j.id===options.jobId);if(found)openScheduleJobModal('assistant',found)}).catch(()=>{});
+        }
+      }
+    }
+    else switchView(view);
+  },
+  quickAccessCompleted(projectId){api('/api/bootstrap',{silent:true}).then(shell=>{Object.assign(state.data,shell);if(projectId&&(state.data.projects||[]).some(p=>p.id===projectId)){state.projectFilter=projectId;localStorage.setItem('agentflow.activeProject',projectId);applicationState.update({chatProject:projectId})}renderAll()}).catch(()=>{})},
+};
+function prepareApplication(){
+  const url=new URL(location.href),params=url.searchParams;
+  initialQuickAccess=params.get('quickAccess')==='1';
+  const context=window.loopforgePlatform.initialChatContext();
+  applicationState.update({chatProject:context.projectId,session:context.sessionId,issue:context.issueId});
+  if(params.get('gongfeng')==='ok')state.gongfengReturned=true;
+  params.delete('gongfeng');params.delete('quickAccess');
+  if(url.href!==location.href)history.replaceState(history.state,'',url);
 }
 function settingsSidebarExpanded(){
   return document.body.classList.contains('management-mode')&&!document.body.classList.contains('settings-sidebar-hidden');
@@ -1757,15 +1735,12 @@ function settingsRouteSurface(name){
     const rect=card.getBoundingClientRect(),top=header.getBoundingClientRect().bottom;
     return {nav,expanded:settingsSidebarExpanded(),geometry:{left:rect.left+1,top,width:rect.width-2,height:Math.max(0,rect.bottom-top-1),background:getComputedStyle(card).backgroundColor}};
   }
-  const frame=$('#chatNextFrame');
-  try{
-    const shell=frame?.contentDocument?.querySelector('.chat-shell');
-    const nav=shell?.querySelector('.conversation-sidebar'),header=shell?.querySelector('.brand');
-    if(!shell||!nav||!header)return null;
-    const frameRect=frame.getBoundingClientRect(),width=parseFloat(shell.style.getPropertyValue('--sidebar-width'))||304;
-    const top=frameRect.top+header.getBoundingClientRect().bottom;
-    return {nav,shell,expanded:!shell.classList.contains('sidebar-hidden'),geometry:{left:frameRect.left+1,top,width:width-2,height:Math.max(0,frameRect.bottom-14-top-1),background:shell.ownerDocument.defaultView.getComputedStyle(shell).backgroundColor}};
-  }catch{return null}
+  const host=$('#chatRoot'),shell=host?.querySelector('.chat-shell');
+  const nav=shell?.querySelector('.conversation-sidebar'),header=shell?.querySelector('.brand');
+  if(!shell||!nav||!header)return null;
+  const rect=host.getBoundingClientRect(),width=parseFloat(shell.style.getPropertyValue('--sidebar-width'))||304;
+  const top=header.getBoundingClientRect().bottom;
+  return {nav,shell,expanded:!shell.classList.contains('sidebar-hidden'),geometry:{left:rect.left+1,top,width:width-2,height:Math.max(0,rect.bottom-14-top-1),background:getComputedStyle(shell).backgroundColor}};
 }
 function cancelSettingsRouteTransition(){
   const transition=settingsRouteTransition;
@@ -1780,10 +1755,10 @@ function cancelSettingsRouteTransition(){
   }
   document.body.classList.remove('settings-mode-switch');
 }
-function startSettingsRouteTransition(name){
+function startSettingsRouteTransition(name,options){
   const apply=()=>{
     settingsRouteApplying=true;
-    try{switchView(name)}finally{settingsRouteApplying=false}
+    try{switchView(name,options)}finally{settingsRouteApplying=false}
     const focused=document.activeElement;
     if(focused&&focused!==document.body&&!focused.getClientRects().length){
       $('#railSettingsEntry')?.focus({preventScroll:true});
@@ -1793,6 +1768,7 @@ function startSettingsRouteTransition(name){
   if(current?.motion){
     const reversing=isSettingsManagementView(current.target)!==isSettingsManagementView(name);
     current.target=name;
+    current.options=options;
     apply();
     if(reversing)current.motion.reverse();
     return;
@@ -1802,7 +1778,7 @@ function startSettingsRouteTransition(name){
   const home=settingsRouteSurface('collaboration');
   const homeSettled=!home?.shell?.matches('.sidebar-entering,.sidebar-transitioning,.sidebar-resizing');
   const preserveGeometry=!!from?.expanded&&homeSettled&&(isSettingsManagementView(name)||!!home?.expanded);
-  const transition={from:fromName,to:name,target:name,preserveGeometry,held:[],motion:null,observer:null,timer:0};
+  const transition={from:fromName,to:name,target:name,options,preserveGeometry,held:[],motion:null,observer:null,timer:0};
   settingsRouteTransition=transition;
   if(from?.expanded&&!isSettingsManagementView(name)&&home&&!home.expanded){
     // Returning to an intentionally closed drawer needs one close, not a
@@ -1853,17 +1829,17 @@ function startSettingsRouteTransition(name){
   }
 }
 window.addEventListener('resize',()=>{
-  const pending=settingsRouteTransition?.target;
+  const pending=settingsRouteTransition;
   cancelSettingsRouteTransition();
-  if(pending&&activeViewName()!==pending){
+  if(pending&&activeViewName()!==pending.target){
     settingsRouteApplying=true;
-    try{switchView(pending)}finally{settingsRouteApplying=false}
+    try{switchView(pending.target,pending.options)}finally{settingsRouteApplying=false}
   }
 });
 settingsRouteMotion.addEventListener('change',()=>{
-  const pending=settingsRouteTransition?.target;
+  const pending=settingsRouteTransition;
   cancelSettingsRouteTransition();
-  if(pending)switchView(pending);
+  if(pending)switchView(pending.target,pending.options);
   setSettingsSidebarExpanded(settingsSidebarExpanded());
 });
 function setSettingsSidebarExpanded(expanded,focusToggle=false){
@@ -1938,6 +1914,7 @@ function activeViewName(){if(state.currentView)return state.currentView;const el
 function restoredView(){
   const titles=viewTitles();
   const hash=(location.hash||'').replace(/^#\/?/,'').split(/[/?]/)[0];
+  if(!hash||hash==='dashboard')return 'collaboration';
   if(hash==='access')return 'guide';
   if(['assets','dockerfiles','environments'].includes(hash))return 'sandboxes';
   if(hash==='playbooks')return 'sops';
@@ -2036,8 +2013,9 @@ function syncRunHash(id){
   const next=runViewHash(id||'');
   if(location.hash!==next)history.replaceState(null,'',next);
 }
-function persistView(name,push=false){
+function persistView(name,push=false,{fromLocation}={}){
   localStorage.setItem('agentflow.activeView',name);
+  if(name==='collaboration'&&fromLocation)return;
   let next=`#/${name}`;
   if(name==='settings'&&location.hash===QUICK_ACCESS_EXECUTOR_SETTINGS)next=QUICK_ACCESS_EXECUTOR_SETTINGS;
   if(name==='runs'){
@@ -2045,16 +2023,12 @@ function persistView(name,push=false){
     if(linked)next=runViewHash(linked);
   }
   if(name==='flow')next=flowViewHash();
-  if(name==='evolution'&&routePart(0)==='evolution')next=location.hash;
   if(name==='agents'&&agentRouteId())next=`#/agents/${encodeURIComponent(agentRouteId())}${routePart(2)==='gov'?'/gov':''}`;
   if(isProjectSharedAsset(name)&&routePart(0)===name&&assetRouteId())next=`#/${name}/${encodeURIComponent(assetRouteId())}`;
   if(name==='projects')next=projectAdminHash(state.projectAdminDetailId||'',state.projectAdminTab);
+  if(name==='evolution'&&routePart(0)==='evolution')next=location.hash;
   if(name==='collaboration'){
-    const current=(location.hash||'').replace(/^#\/?/,'').split('?')[0].split('/').filter(Boolean);
-    let fromHash=current[0]==='collaboration'?current[1]||'':'';
-    try{fromHash=decodeURIComponent(fromHash)}catch{}
-    const id=new URL(location.href).searchParams.get('chatSession')||fromHash;
-    if(id)next='#/collaboration/'+encodeURIComponent(id);
+    next=chatViewHash(applicationState.getSnapshot().session);
   }
   if(location.hash===next)return;
   // push=true 时压入新历史记录，让浏览器「后退」能在平台页面间回退；
@@ -2062,7 +2036,7 @@ function persistView(name,push=false){
   if(push)history.pushState(null,'',next);
   else history.replaceState(null,'',next);
 }
-function switchView(name){
+function switchView(name,options={}){
   $$('details.collab-settings').forEach(menu=>menu.open=false);
   const titles=viewTitles();
   if(name==='dashboard')name='collaboration';
@@ -2088,7 +2062,7 @@ function switchView(name){
   if(previous==='agents'&&name!=='agents')$('#agentModal')?.classList.remove('open');
   if(!settingsRouteApplying){
     const crossingSettings=previous!==name&&((previous==='collaboration'&&isSettingsManagementView(name))||(isSettingsManagementView(previous)&&name==='collaboration'));
-    if(crossingSettings&&!settingsRouteMotion.matches){startSettingsRouteTransition(name);return}
+    if(crossingSettings&&!settingsRouteMotion.matches){startSettingsRouteTransition(name,options);return}
     cancelSettingsRouteTransition();
   }
   const target=assetViews.includes(name)?'assets':name;
@@ -2116,24 +2090,26 @@ function switchView(name){
   $('#railSettingsEntry')?.classList.toggle('active', isPureManagement);
   const noSidebarViews = ['issues', 'approvals', 'observability'];
   document.body.classList.toggle('no-sidebar', noSidebarViews.includes(name));
-  document.body.classList.toggle('chat-next-active', name==='collaboration');
-  if(name==='collaboration'||isPureManagement)mountNativeChat();
+  document.body.classList.toggle('platform-chat-active', name==='collaboration');
+  platformNotify('view',name);
+  // Chat stays mounted while management views are active. Project and
+  // environment changes travel through the shared application state instead
+  // of a parent/child window bridge.
+  if(name==='collaboration'||isPureManagement)platformNotify('environments');
   showDirectRunButton(name==='flow');
   closeIssueDrawer();
   if(name!=='sops'&&typeof hideSOPCardMenu==='function')hideSOPCardMenu();
   // 仅真实用户切换时压栈：boot 首次进入（prevView 为空）与同视图重复调用
   //（staying）不压；hashchange 后退触发的调用 prevView 非空且 hash 已是目标值，
   // persistView 内部会短路，不会重复压栈。
-  persistView(name,!staying&&!!prevView);
+  persistView(name,!options.fromLocation&&!staying&&!!prevView,options);
+  if(name==='collaboration')applyChatRoute();
+  if(name==='evolution'&&typeof renderEvolutionView==='function')renderEvolutionView();
   const resumeQuickAccess=name==='collaboration'&&quickAccessExecutorSettingsActive;
   quickAccessExecutorSettingsActive=name==='settings'&&location.hash===QUICK_ACCESS_EXECUTOR_SETTINGS;
   const quickAccessReturnButton=$('#returnToQuickAccess');
   if(quickAccessReturnButton)quickAccessReturnButton.hidden=!quickAccessExecutorSettingsActive;
-  if(name!=='collaboration')pendingQuickAccessReturn=false;
-  if(resumeQuickAccess){
-    pendingQuickAccessReturn=true;
-    postQuickAccessReturn($('#chatNextFrame'));
-  }
+  if(resumeQuickAccess)platformNotify('quickAccessReturn');
   const nav=$('.platform-sidebar nav');
   if(nav){
     if(['dashboard','issues','approvals'].includes(name)){
@@ -2162,7 +2138,6 @@ function switchView(name){
   if(name==='aiSchedules'){renderScheduleJobs();refreshAISchedules()}
   if(name==='bots')loadBots();
   if(name==='assistant')loadAssistantSettings();
-  if(name==='evolution'&&typeof renderEvolutionView==='function')renderEvolutionView();
   if(name==='sops'){if(!staying&&state.data){sopCatalogMotion.reset();renderSOPCatalog()}refreshWorkflowMetrics()}
   if(name==='dashboard')refreshDashboard()
   if(name==='approvals')renderApprovals(false)

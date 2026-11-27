@@ -301,7 +301,7 @@
   }
 
   window.AgentFlowSlidingTabs = { mount };
-  // The React iframe opts in through its wrapper. Only the native host scans.
+  // The React chat surface opts in through its wrapper. Only the management host scans.
   function scanNative() {
     for (const state of instances) if (state.auto && !state.root.isConnected) state.api.dispose();
     for (const [selector, activeSelector, itemSelector] of registrations) {

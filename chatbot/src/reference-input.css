@@ -98,7 +98,21 @@
   padding: 9px 12px 0;
   gap: 8px;
 }
+/* Screen-reader-only halves of the remove button's accessible name; the
+   visible chip already shows both. */
+.composer-attachment-file .sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
 .composer-attachment-file {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 5px;

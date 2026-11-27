@@ -57,7 +57,8 @@ const putCalls=()=>calls.filter(c=>c.method==='PUT');
 const panel={innerHTML:'',classList:{remove(){}},querySelector:()=>null,querySelectorAll:()=>[]};
 const host={innerHTML:'',querySelector(selector){return {'#credentialPanel':panel}[selector]??null},querySelectorAll:()=>[]};
 const posted=[];
-const $=selector=>({'#personalSettingsContent':host,'#credentialPanel':panel,'#chatNextFrame':{contentWindow:{postMessage:m=>posted.push(m)}}}[selector]??null);
+const $=selector=>({'#personalSettingsContent':host,'#credentialPanel':panel}[selector]??null);
+const platformNotify=type=>posted.push(type);
 const document={querySelectorAll:()=>[],activeElement:null};
 const window={};
 const location={search:'',pathname:'/',hash:'',origin:'http://localhost'};
@@ -122,7 +123,7 @@ const gitToken=cred.kind('gitToken');
  assert.equal(putCalls().length,1);
  assert.deepEqual(JSON.parse(putCalls()[0].body),{name:'GitHub',platform:'github',host:'github.com',username:'x-access-token',token:'typed-pat'});
  assert.equal(state.gitTokenVerify.result.valid,true);
- assert.deepEqual(posted,[{type:'agentflow-credentials-changed'}]);
+ assert.deepEqual(posted,['credentials']);
  // Returning from Gongfeng OAuth clears the cache, announces and re-verifies.
  location.search='?gongfeng=ok';
  result={valid:false,missing:['api']};

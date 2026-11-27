@@ -57,20 +57,11 @@ func TestBootLoaderClosesAfterShellOrChatReady(t *testing.T) {
 	app := readThemeSource(t, "app.js")
 	start := readThemeSource(t, "app/start.js")
 
-	if !strings.Contains(app, "BOOT_LOADER_CHAT_TIMEOUT_MS=8000") {
-		t.Error("app.js should cap the chat-ready wait at 8000ms")
-	}
-	if !regexp.MustCompile(`(?s)function settleBootLoader\(\)\{.*chat-next-active.*nativeChatReady.*finishBootLoader\(\).*setTimeout\(finishBootLoader,BOOT_LOADER_CHAT_TIMEOUT_MS\)`).MatchString(app) {
-		t.Error("settleBootLoader should close immediately outside the AI workbench and otherwise arm the 8s fallback")
-	}
-	if !regexp.MustCompile(`switchView\(view\);\s*settleBootLoader\(\);`).MatchString(app) {
+	if !regexp.MustCompile(`switchView\(view,\{fromLocation:true\}\);\s*finishBootLoader\(\);`).MatchString(app) {
 		t.Error("boot() should settle the loader right after the first switchView")
 	}
-	if !regexp.MustCompile(`(?s)message\.type==='agentflow-chat-ready'\)\{\s*nativeChatReady=true;.*?finishBootLoader\(\);`).MatchString(app) {
-		t.Error("agentflow-chat-ready should record readiness and close the loader")
-	}
-	if !regexp.MustCompile(`(?s)function finishBootLoader\(\)\{\s*clearTimeout\(bootLoaderTimer\).*classList\.remove\('booting'\)`).MatchString(app) {
-		t.Error("finishBootLoader should clear the fallback timer and drop body.booting")
+	if !regexp.MustCompile(`function finishBootLoader\(\)\{\s*document.body.classList\.remove\('booting'\)`).MatchString(app) {
+		t.Error("finishBootLoader should drop body.booting")
 	}
 	if !strings.Contains(app, "addEventListener('pageshow',event=>{if(event.persisted)finishBootLoader()})") {
 		t.Error("a bfcache restore should not leave the loader on screen")
@@ -78,7 +69,7 @@ func TestBootLoaderClosesAfterShellOrChatReady(t *testing.T) {
 	if !regexp.MustCompile(`finishBootLoader\(\);\s*document\.body\.innerHTML=`).MatchString(app) {
 		t.Error("the local acceptance login screen should drop the loader before replacing body")
 	}
-	if !strings.Contains(start, "boot().catch(e=>{finishBootLoader();document.body.innerHTML=") {
+	if !regexp.MustCompile(`then\(boot\)\.catch\(error => \{\s*finishBootLoader\(\);`).MatchString(start) {
 		t.Error("the boot failure page should drop the loader before replacing body")
 	}
 }

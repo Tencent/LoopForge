@@ -328,7 +328,12 @@ function bindScheduleModelPicker(){
     if(next)paintScheduleModel(next);
   };
   document.addEventListener('click',e=>{if(!host.contains(e.target))closeScheduleModelMenu()});
-  document.addEventListener('keydown',e=>{if(e.key==='Escape')closeScheduleModelMenu()});
+  host.closest('.modal-card').addEventListener('keydown', event=>{
+    if(event.defaultPrevented||event.key!=='Escape'||menu.hidden)return;
+    event.preventDefault();
+    closeScheduleModelMenu();
+    toggle.focus();
+  });
   // A fixed menu would drift from its toggle; close it when anything else scrolls.
   document.addEventListener('scroll',e=>{if(!menu.contains(e.target))closeScheduleModelMenu()},true);
   window.addEventListener('resize',closeScheduleModelMenu);
@@ -477,6 +482,7 @@ function closeScheduleJobModal(){
   const modal=$('#scheduleModal');
   if(!modal.classList.contains('open'))return;
   modal.classList.remove('open');
+  closeScheduleModelMenu();
   schedulePromptEditor?.destroy();schedulePromptEditor=null;
   const editId=scheduleModalOpener?.dataset?.editSchedule;
   const replacement=editId?[...$$('#aiScheduleJobList [data-edit-schedule]')].find(el=>el.dataset.editSchedule===editId):null;

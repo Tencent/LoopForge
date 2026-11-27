@@ -1,3 +1,4 @@
+import { installTestPlatform } from "./setup.js";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 
@@ -96,6 +97,7 @@ describe("personal execution machine selection", () => {
   });
 
   test("refreshes the default after returning from settings", async () => {
+    const host = installTestPlatform();
     const { result } = renderHook(() =>
       useExecutionMachines(1, false, false, vi.fn(), bindMock),
     );
@@ -103,15 +105,7 @@ describe("personal execution machine selection", () => {
     apiMock.mockImplementation(async (path) =>
       path.includes("?mine=1") ? machines : { runnerId: "" },
     );
-    act(() =>
-      window.dispatchEvent(
-        new MessageEvent("message", {
-          source: window.parent,
-          origin: location.origin,
-          data: { type: "agentflow-environments-changed" },
-        }),
-      ),
-    );
+    act(() => host.emit("environments"));
     await waitFor(() => expect(result.current.defaultRunnerId).toBe(""));
   });
 

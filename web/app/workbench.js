@@ -1079,7 +1079,7 @@ function storeCredentialUser(saved){
   if(index>=0)users[index]=saved;else users.push(saved);
 }
 function notifyCredentialsChanged(){
-  $('#chatNextFrame')?.contentWindow?.postMessage({type:'agentflow-credentials-changed'},location.origin);
+  platformNotify('credentials');
   $('#aiOrchestratorFrame')?.contentWindow?.postMessage({type:'agentflow-credentials-changed'},location.origin);
   if(typeof window!=='undefined'){
     window.AgentFlowAssistantModels?.load?.({refresh:true})?.then(()=>{
@@ -1627,7 +1627,7 @@ async function renderPersonalSettings(){
   const gongfengInURL=new URLSearchParams(location.search).get('gongfeng')==='ok';
   if(state.gongfengReturned||gongfengInURL){
     state.gongfengReturned=false;
-    if(gongfengInURL)history.replaceState(null,'',location.pathname+location.hash);
+    if(gongfengInURL){const params=new URLSearchParams(location.search);params.delete('gongfeng');const query=params.toString();history.replaceState(null,'',location.pathname+(query?'?'+query:'')+location.hash)}
     state.gitTokenVerify=null;
     state.gitTokenAnnounceVerify=true;
     toast('工蜂授权已保存，正在校验授权有效性…');

@@ -7,6 +7,7 @@ import React, {
   useState,
 } from "react";
 import { api } from "./api";
+import { navigate } from "./platform-host.js";
 import HarnessIcon from "./HarnessIcon";
 import {
   credentialGuide,
@@ -29,12 +30,7 @@ function readDismissed() {
   }
 }
 function openRunPage(runId) {
-  if (window.parent !== window)
-    window.parent.postMessage(
-      { type: "agentflow-chat-open-view", view: "runs", runId },
-      location.origin,
-    );
-  else location.href = `/#/runs/${encodeURIComponent(runId)}`;
+  navigate("runs", { runId });
 }
 const prefersReducedMotion = () =>
   !!window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;

@@ -30,8 +30,8 @@ func appBundleFiles(t testing.TB) []string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(names) < 2 || names[0] != "app.js" {
-		t.Fatalf("index.html should load app.js first, got %v", names)
+	if len(names) < 3 || names[0] != "app/platform-state.js" || names[1] != "app.js" {
+		t.Fatalf("index.html should load shared state before app.js, got %v", names)
 	}
 	return names
 }

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { platform, initialChatContext, subscribe } from "./platform-host.js";
 import {
   api,
   write,
@@ -100,9 +101,6 @@ const PROJECT_LIST_TOOLS = new Set([
   "projects_delete",
   "projects_restore",
 ]);
-const initialProject =
-  new URLSearchParams(location.search).get("projectId") || "";
-
 class ComposerModelError extends Error {}
 
 function withSessionTitle(session, source) {
@@ -113,6 +111,8 @@ function withSessionTitle(session, source) {
 }
 
 export function useChat() {
+  const initialContext = initialChatContext();
+  const initialProject = initialContext.projectId;
   const stopRequestRef = useRef(null);
   const accountDefaultsRef = useRef(null);
   const draftExecutorPicked = useRef(false);
@@ -125,18 +125,14 @@ export function useChat() {
     [sandboxBusy, setSandboxBusy] = useState(false),
     [loadedWorkspace, setLoadedWorkspace] = useState(null),
     [users, setUsers] = useState([]),
-    [draftIssueId, setDraftIssueId] = useState(
-      new URLSearchParams(location.search).get("issueId") || "",
-    ),
+    [draftIssueId, setDraftIssueId] = useState(initialContext.issueId),
     [models, setModels] = useState([]),
     [catalogEngines, setCatalogEngines] = useState([]),
     [accountDefaults, setAccountDefaults] = useState(null),
     [modelCatalogRefresh, requestModelCatalogRefresh] = useState(0),
     [sessions, setSessions] = useState([]),
     [session, setSession] = useState(null),
-    [activeId, setActiveId] = useState(
-      new URLSearchParams(location.search).get("session") || null,
-    ),
+    [activeId, setActiveId] = useState(initialContext.sessionId || null),
     // The last conversation reached by opening it rather than by creating it;
     // the header reveals that conversation's title once it has loaded.
     [revealId, setRevealId] = useState(activeId),
@@ -224,27 +220,20 @@ export function useChat() {
     }
   }, [mergeRenamedTitle]);
   const changeURL = useCallback((id) => {
-    const url = new URL(location.href);
-    url.searchParams.delete("issueId");
-    if (id) url.searchParams.set("session", id);
-    else url.searchParams.delete("session");
-    history.replaceState({}, "", url);
-    window.parent !== window &&
-      window.parent.postMessage(
-        { type: "agentflow-chat-session", sessionId: id || "" },
-        location.origin,
-      );
+    if (platform()) platform().setSession(id || "");
+    else {
+      const url = new URL(location.href);
+      url.searchParams.delete("issueId");
+      if (id) url.searchParams.set("session", id); else url.searchParams.delete("session");
+      history.replaceState({}, "", url);
+    }
   }, []);
   const syncProject = useCallback((id) => {
     globalProject.current = id;
-    window.parent !== window &&
-      window.parent.postMessage(
-        { type: "agentflow-chat-project", projectId: id },
-        location.origin,
-      );
+    platform()?.setProject(id);
   }, []);
   const open = useCallback(
-    (id) => {
+    (id, { fromRoute = false } = {}) => {
       if (id === currentId.current && sessionRef.current?.id === id) return;
       setError("");
       generationRevision.current++;
@@ -262,12 +251,13 @@ export function useChat() {
       currentId.current = id;
       setActiveId(id);
       if (id) setRevealId(id);
-      changeURL(id);
+      if (!fromRoute) changeURL(id);
     },
     [changeURL, executionMachines.resetMachine, setGenerationKnown],
   );
   const newChat = useCallback(() => {
     setDraftIssueId("");
+    platform()?.setIssue("");
     open(null);
   }, [open]);
   function restoreConversationModel(stored, { running = false, preserveChoice = false } = {}) {
@@ -290,7 +280,6 @@ export function useChat() {
     const opening = sessionRef.current?.id !== stored.id;
     restoreConversationModel(stored, { running, preserveChoice: !opening });
     if (opening) {
-      changeURL(stored.id);
       setProjectId(stored.projectId || "");
       syncProject(stored.projectId || "");
     }
@@ -324,6 +313,7 @@ export function useChat() {
           event.data?.type === "agentflow-assistant-preferences-changed")
         void refresh();
     };
+    const unsubscribe = subscribe("assistantPreferences", () => { void refresh(); });
     const onVisibilityChange = () => {
       if (document.visibilityState === "visible") void refresh();
     };
@@ -333,6 +323,7 @@ export function useChat() {
     return () => {
       current = false;
       document.removeEventListener("visibilitychange", onVisibilityChange);
+      unsubscribe();
       window.removeEventListener("message", onMessage);
     };
   }, [user?.id, user?.isGuest]);
@@ -594,13 +585,17 @@ export function useChat() {
     };
   }, [activeId, readSession, ready, refreshSessions, setGenerationKnown]);
   const selectProject = useCallback(
-    async (id, { external = false } = {}) => {
+    async (id, { external = false, previousProject } = {}) => {
       const current = sessionRef.current;
+      const restoreExternalProject = () => {
+        if (external && globalProject.current === id) syncProject(previousProject ?? projectRef.current);
+      };
       const strategy = projectChange(current, id);
       setError("");
       if (strategy === "bind") {
         if (generation?.status === "running" || submittingRef.current) {
           setError("请先停止当前生成，再绑定项目。");
+          restoreExternalProject();
           return;
         }
         try {
@@ -619,6 +614,7 @@ export function useChat() {
           await refreshSessions();
         } catch (e) {
           setError(e.message);
+          restoreExternalProject();
         }
         return;
       }
@@ -626,9 +622,8 @@ export function useChat() {
       if (id !== projectRef.current) {
         setSandboxProfileId(""); setDraftKnowledgeRefs([]);
         setDraftIssueId("");
-        const url = new URL(location.href);
-        url.searchParams.delete("issueId");
-        history.replaceState({}, "", url);
+        if (platform()) platform().setIssue("");
+        else { const url = new URL(location.href); url.searchParams.delete("issueId"); history.replaceState({}, "", url); }
       }
       setProjectId(id);
       syncProject(id);
@@ -655,52 +650,32 @@ export function useChat() {
   useEffect(() => {
     if (!ready || activeId || !projectId) return;
     const project = projects.find((p) => p.id === projectId);
-    if (project && !canChatInProject(project, user)) setProjectId("");
-  }, [ready, activeId, projectId, projects, user]);
+    if (project && !canChatInProject(project, user)) {
+      setProjectId("");
+      syncProject("");
+    }
+  }, [ready, activeId, projectId, projects, user, syncProject]);
   useEffect(() => {
-    const listener = (e) => {
-      if (
-        e.source !== window.parent ||
-        e.origin !== location.origin
-      ) return;
-      if (e.data?.type === "agentflow-environments-changed" && ready) {
-        void Promise.all([api("/api/sandboxes"), api("/api/projects")])
-          .then(([sandboxRows, projectRows]) => {
-            if (Array.isArray(sandboxRows)) setSandboxes(sandboxRows);
-            if (Array.isArray(projectRows)) setProjects(projectRows);
-          }).catch(() => {});
-        return;
-      }
-      if (e.data?.type === "agentflow-chat-open-session") {
-        const sid = typeof e.data.sessionId === "string" ? e.data.sessionId.trim() : "";
-        if (!sid) return;
-        const pid = typeof e.data.projectId === "string" ? e.data.projectId.trim() : "";
-        if (pid) globalProject.current = pid;
-        setRevealId(sid);
-        setActiveId(sid);
-        setError("");
-        void api("/api/assistant/sessions")
-          .then((rows) => {
-            if (Array.isArray(rows)) setSessions(rows);
-          })
-          .catch(() => {});
-        return;
-      }
-      if (e.data?.type !== "agentflow-project-context") return;
-      const id = e.data.projectId || "";
+    const offProject = subscribe("project", (id, previousProject) => {
+      id ||= "";
       if (id === globalProject.current) return;
       globalProject.current = id;
-      void selectRef.current?.(id, { external: true });
-    };
-    window.addEventListener("message", listener);
-    if (ready)
-      window.parent !== window &&
-        window.parent.postMessage(
-          { type: "agentflow-chat-ready" },
-          location.origin,
-        );
-    return () => window.removeEventListener("message", listener);
-  }, [ready]);
+      void selectRef.current?.(id, { external: true, previousProject });
+    });
+    const offEnvironments = subscribe("environments", () => {
+      if (!ready) return;
+      void Promise.all([api("/api/sandboxes"), api("/api/projects")])
+        .then(([sandboxRows, projectRows]) => {
+          if (Array.isArray(sandboxRows)) setSandboxes(sandboxRows);
+          if (Array.isArray(projectRows)) setProjects(projectRows);
+        }).catch(() => {});
+    });
+    const offSession = subscribe("session", (id, issueId) => {
+      setDraftIssueId(issueId || "");
+      if ((id || null) !== currentId.current) open(id || null, { fromRoute: true });
+    });
+    return () => { offProject(); offEnvironments(); offSession(); };
+  }, [ready, open]);
   const missingKey = !!user && !user.codeBuddyApiKeyConfigured;
   // Without their own key users chat on the platform's shared key, limited to
   // the models the administrator allowed (the first is the default).
@@ -953,19 +928,17 @@ export function useChat() {
     requestModelCatalogRefresh((revision) => revision + 1);
   }, []);
   useEffect(() => {
+    const unsubscribe = subscribe("credentials", refreshCredentials);
+    // Standalone and iframe surfaces still announce credential changes by message.
     const onMessage = (e) => {
-      if (
-        e.source === window.parent &&
-        e.origin === location.origin &&
-        e.data?.type === "agentflow-credentials-changed"
-      ) {
-        refreshCredentials();
-      }
+      if (e.source === window.parent && e.origin === location.origin &&
+          e.data?.type === "agentflow-credentials-changed") refreshCredentials();
     };
     const onFocus = () => requestModelCatalogRefresh(revision => revision + 1);
     window.addEventListener("message", onMessage);
     if (ready && !user?.isGuest) window.addEventListener("focus", onFocus);
     return () => {
+      unsubscribe();
       window.removeEventListener("message", onMessage);
       window.removeEventListener("focus", onFocus);
     };
@@ -1486,11 +1459,7 @@ export function useChat() {
         void api("/api/projects")
           .then((rows) => Array.isArray(rows) && setProjects(rows))
           .catch(() => {});
-        window.parent !== window &&
-          window.parent.postMessage(
-            { type: "agentflow-projects-changed" },
-            location.origin,
-          );
+        platform()?.projectsChanged();
       }
       stored.messages[messageIndex].content = JSON.stringify(reply);
       const saved = await write(sessionPath(id), {
@@ -1561,10 +1530,8 @@ export function useChat() {
     setError("");
     if (!s) {
       setDraftIssueId(issueId);
-      const url = new URL(location.href);
-      if (issueId) url.searchParams.set("issueId", issueId);
-      else url.searchParams.delete("issueId");
-      history.replaceState({}, "", url);
+      if (platform()) platform().setIssue(issueId);
+      else { const url = new URL(location.href); if (issueId) url.searchParams.set("issueId", issueId); else url.searchParams.delete("issueId"); history.replaceState({}, "", url); }
       return true;
     }
     try {

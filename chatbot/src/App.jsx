@@ -9,6 +9,7 @@ import React, {
 import { useChat } from "./useChat";
 import NativeApprovalPanel from "./NativeApprovalPanel";
 import { useNativeApprovals } from "./useNativeApprovals";
+import { platform, initialChatContext, navigate as platformNavigate, subscribe, uiLabel } from "./platform-host.js";
 import { AgentBrowserLinks } from "./agent-browser-links.js";
 import ActivityTrace, { ReplyTimeline } from "./ActivityTrace";
 import MessageInfo from "./MessageInfo";
@@ -118,15 +119,7 @@ const draftSnapshot = ({ text, attachments, references }) => JSON.stringify({ te
 const sidebarWidthKey = "agentflow.sidebarWidth";
 const sidebarLayoutKey = "agentflow.sidebarLayoutVersion";
 const sidebarLayoutVersion = "grasp-reference-v3";
-function sidebarViewport() {
-  try {
-    // The workbench and settings share the host's desktop breakpoint.
-    window.parent.matchMedia("(min-width:1001px)");
-    return window.parent;
-  } catch {
-    return window;
-  }
-}
+function sidebarViewport() { return window; }
 function readSidebarWidth() {
   // Also migrate standalone workbench loads, before the first React render.
   if (localStorage.getItem(sidebarLayoutKey) !== sidebarLayoutVersion) {
@@ -484,9 +477,10 @@ export default function App() {
     [uploading, setUploading] = useState(false),
     [runsRefresh, setRunsRefresh] = useState(0),
     [quickAccessOpen, setQuickAccessOpen] = useState(
-      () => new URLSearchParams(location.search).get("quickAccess") === "1",
+      () => initialChatContext().quickAccess,
     ),
-    [theme, setTheme] = useState(() => readThemePreference(localStorage)),
+    [workbenchVisible, setWorkbenchVisible] = useState(() => (platform()?.getSnapshot?.().view || "collaboration") === "collaboration"),
+    [theme, setTheme] = useState(() => platform()?.getSnapshot?.().theme || readThemePreference(localStorage)),
     [environmentVisibility, setEnvironmentVisibility] = useState(() => readJSON(environmentVisibilityKey, {}));
   const environmentPreferenceOwner = String(chat.user?.id || "guest");
   const showEnvironmentPicker = environmentVisibility[environmentPreferenceOwner] === true;
@@ -501,6 +495,14 @@ export default function App() {
     setIssueMention(null);
     chat.newChat();
   }
+  useEffect(() => subscribe("view", (view) => {
+    setWorkbenchVisible(view === "collaboration");
+    if (view === "collaboration") return;
+    setMenu(null);
+    setSessionContext(null);
+    setDialog(null);
+    setMention(null);
+  }), []);
   const input = useRef(),
     referenceInput = useRef(),
     sessionPress = useRef(null),
@@ -643,8 +645,9 @@ export default function App() {
     readJSON(`agentflow.native-chat.pins.${chat.user?.id}`, []);
   const projectName =
     chat.projects.find((p) => p.id === chat.projectId)?.name ||
-    (chat.projectId && (chat.session?.projectName || chat.projectId)) ||
-    "个人对话";
+    (chat.projectId && (chat.session?.projectName || chat.projectId));
+  const personalChatLabel = uiLabel("个人对话", "Personal chat");
+  const projectLabel = projectName || personalChatLabel;
   const sessionLoading = !!chat.activeId && chat.session?.id !== chat.activeId;
   const composerLoading = sessionLoading || chat.replyStatePending;
   const hasComposerExecutor = !!chat.executor || chat.local;
@@ -726,14 +729,17 @@ export default function App() {
       ) apply();
     };
     apply();
+    const unsubscribe = subscribe("sidebarWidth", apply);
     wide.addEventListener("change", apply);
     window.addEventListener("storage", onStorage);
     return () => {
+      unsubscribe();
       wide.removeEventListener("change", apply);
       window.removeEventListener("storage", onStorage);
     };
   }, []);
   useEffect(() => {
+    if (platform()) return;
     const media = matchMedia("(prefers-color-scheme: dark)");
     const apply = () => {
       document.documentElement.dataset.theme = resolveTheme(
@@ -747,13 +753,10 @@ export default function App() {
     return () => media.removeEventListener("change", apply);
   }, [theme]);
   useEffect(() => {
-    // The host shell writes the same key; storage events only reach the other documents.
-    const onStorage = (event) => {
-      if (!event.key || event.key === THEME_KEY)
-        setTheme(readThemePreference(localStorage));
-    };
+    const unsubscribe = subscribe("theme", setTheme);
+    const onStorage = (event) => { if (!event.key || event.key === THEME_KEY) setTheme(readThemePreference(localStorage)); };
     window.addEventListener("storage", onStorage);
-    return () => window.removeEventListener("storage", onStorage);
+    return () => { unsubscribe(); window.removeEventListener("storage", onStorage); };
   }, []);
   useEffect(() => {
     if (!chat.user) return;
@@ -775,26 +778,18 @@ export default function App() {
   // new conversation with the requirement already @-mentioned. It waits for
   // the new conversation's draft to load so the draft does not overwrite it.
   useEffect(() => {
-    const listener = (event) => {
-      if (
-        event.source !== window.parent ||
-        event.origin !== location.origin
-      ) return;
-      if (event.data?.type === "agentflow-chat-resume-quick-access") {
-        setQuickAccessOpen(true);
-        return;
-      }
-      if (event.data?.type !== "agentflow-chat-mention-issue") return;
-      const issueId = String(event.data.issueId || "");
-      const projectId = String(event.data.projectId || "");
-      const intent = String(event.data.intent || "");
+    const receive = ({ issueId, projectId, intent }) => {
+      issueId = String(issueId || "");
+      projectId = String(projectId || "");
       if (!issueId || !projectId) return;
       chat.startProjectDraft(projectId);
       setIssueDraft({ issueId, projectId });
       setIssueMention({ issueId, projectId, ...(intent ? { intent } : {}) });
     };
-    window.addEventListener("message", listener);
-    return () => window.removeEventListener("message", listener);
+    const offMention = subscribe("mentionIssue", receive);
+    const offResume = subscribe("quickAccessReturn", () => setQuickAccessOpen(true));
+    const offReady = platform()?.issueHandoffReady?.();
+    return () => { offMention(); offResume(); offReady?.(); };
   }, [chat.startProjectDraft]);
   useEffect(() => {
     if (
@@ -819,10 +814,7 @@ export default function App() {
           projectId: issue.projectId,
         };
         const value = insertMention("", { start: 0, end: 0 }, ref);
-        const initialText = issueMention.intent === "clarify"
-          ? `${value.text}帮我澄清这个需求`
-          : value.text;
-        const initialCaret = initialText.length;
+        const initialText = issueMention.intent === "clarify" ? `${value.text}帮我澄清这个需求` : value.text;
         setText(initialText);
         setReferences([ref]);
         setMention(null);
@@ -832,17 +824,19 @@ export default function App() {
           if (draftReady.current !== draftKey || !editor?.isConnected || editor.value !== initialText) return;
           if (document.activeElement !== focusBeforeHandoff) return;
           editor.focus();
-          editor.setSelectionRange(initialCaret, initialCaret);
+          editor.setSelectionRange(initialText.length, initialText.length);
         });
       })
       .catch((e) => current && chat.setError(e.message))
       .finally(() => {
         if (!current) return;
         setIssueMention(null);
-        const url = new URL(location.href);
-        url.searchParams.delete("mentionIssue");
-        url.searchParams.delete("mentionIntent");
-        history.replaceState({}, "", url);
+        if (location.search.includes("mentionIssue=")) {
+          const url = new URL(location.href);
+          url.searchParams.delete("mentionIssue");
+          url.searchParams.delete("mentionIntent");
+          history.replaceState(history.state, "", url);
+        }
       });
     return () => {
       current = false;
@@ -914,11 +908,17 @@ export default function App() {
     runAlertKeys,
   ]);
   useEffect(() => {
+    const openSearch = () => {
+      if (dialog || mention || menu || imagePreview || sessionContext || quickAccessOpen) return;
+      setDialog({ type: "search" });
+      setQuery("");
+    };
+    const offSearch = subscribe("search", openSearch);
     const keyboard = (e) => {
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
+      if (e.defaultPrevented || !workbenchVisible) return;
+      if (!platform() && (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
         e.preventDefault();
-        setDialog({ type: "search" });
-        setQuery("");
+        openSearch();
       }
       if (
         (e.ctrlKey || e.metaKey) &&
@@ -936,13 +936,14 @@ export default function App() {
         e.preventDefault();
         setDialog({ type: "settings" });
       }
-      if (e.key === "Escape") {
+      if (e.key === "Escape" && menu && !dialog && !mention && !imagePreview && !sessionContext && !quickAccessOpen) {
+        e.preventDefault();
         setMenu(null);
       }
     };
     window.addEventListener("keydown", keyboard);
-    return () => window.removeEventListener("keydown", keyboard);
-  }, [chat.newChat]);
+    return () => { offSearch(); window.removeEventListener("keydown", keyboard); };
+  }, [chat.newChat, workbenchVisible, dialog, mention, menu, imagePreview, sessionContext, quickAccessOpen]);
   const closeMenu = () => setMenu(null),
     closeDialog = () => {
       if (dialog?.type === "search") setQuery("");
@@ -966,12 +967,7 @@ export default function App() {
     setSelectedArtifact(a);
   }
   function navigate(view, options = {}) {
-    if (window.parent !== window)
-      window.parent.postMessage(
-        { type: "agentflow-chat-open-view", view, ...options },
-        location.origin,
-      );
-    else location.href = `/${options.projectId ? "?projectId=" + encodeURIComponent(options.projectId) : ""}#/${view}${options.action === "create" ? "/__new__" : ""}`;
+    platformNavigate(view, options);
     closeDialog();
     closeMenu();
   }
@@ -1416,14 +1412,14 @@ export default function App() {
           if (innerWidth < 850) setSidebar(false);
         }}
       >
-        <span>{options.label || s.displayTitle || s.title || "新对话"}</span>
+        <span data-i18n-skip={s.displayTitle || s.title ? "" : undefined}>{options.label || s.displayTitle || s.title || "新对话"}</span>
         {!options.hideScheduledTag && scheduledSession(s) ? (
           <span className="session-project-tag session-source-tag" title="定时任务产生的会话">
             定时
           </span>
         ) : null}
         {options.projectName ? (
-          <span className="session-project-tag">{options.projectName}</span>
+          <span className="session-project-tag" data-i18n-skip>{options.projectName}</span>
         ) : null}
         {runState ? (
           <span
@@ -1567,6 +1563,7 @@ export default function App() {
                 disabled={!canRenameSession}
                 title={sessionTitle}
                 aria-label={sessionTitle}
+                data-i18n-skip
                 className={titleReveal ? "title-typing" : undefined}
                 style={
                   titleReveal
@@ -1629,7 +1626,6 @@ export default function App() {
           {chat.session ? (
             <>
               {conversationStarted ? <ExecutionMachinePicker chat={chat} onManage={() => navigate("runners")} /> : null}
-              {projectName ? (
                 <div className="menu-anchor conversation-project-anchor">
                   {/* The conversation's project; picking another one opens a
                       new chat there (a personal chat is bound in place). */}
@@ -1637,8 +1633,9 @@ export default function App() {
                     ref={headerProjectPicker}
                     type="button"
                     className="conversation-project"
-                    title={`当前项目：${projectName}，点击切换项目`}
-                    aria-label={`当前项目：${projectName}，切换项目`}
+                    title={uiLabel(`当前项目：${projectLabel}，点击切换项目`, `Current project: ${projectLabel}. Switch project`)}
+                    aria-label={uiLabel(`当前项目：${projectLabel}，切换项目`, `Current project: ${projectLabel}. Switch project`)}
+                    data-i18n-skip-attrs="title aria-label"
                     aria-haspopup="listbox"
                     aria-expanded={menu?.type === "header-project"}
                     onClick={() =>
@@ -1650,7 +1647,7 @@ export default function App() {
                     }
                   >
                     <HarnessIcon name="folder" size={12} interactive={false} />
-                    <span>{projectName}</span>
+                    <span data-i18n-skip={projectName ? "" : undefined}>{projectLabel}</span>
                     <HarnessIcon name="chevron-down" size={11} interactive={false} />
                   </button>
                   <SelectMenu
@@ -1666,7 +1663,6 @@ export default function App() {
                     actions={projectActions}
                   />
                 </div>
-              ) : null}
               {!chat.local && !chat.readOnly && chat.projectId && !chat.sandboxLocked ? <button className="context-pill knowledge-picker" type="button" title="关联我的知识库：会话回答时只读检索所选个人知识库连接器" aria-label="关联我的知识库" onClick={()=>window.editKnowledgeRefs(chat.projectId,chat.knowledgeRefs,chat.saveKnowledgeRefs)}><HarnessIcon name="layers" size={13} interactive={false} /><span>知识库{chat.knowledgeRefs?.length ? " · "+chat.knowledgeRefs.length : ""}</span><HarnessIcon name="chevron-down" size={12} interactive={false} /></button> : null}
               {showEnvironmentPicker ? <SandboxPicker chat={chat} onCreate={() => navigate("sandboxes", { action: "create", projectId: chat.projectId })} /> : null}
               <Participants session={chat.session} users={chat.users} />
@@ -2300,7 +2296,7 @@ export default function App() {
                                 chat.users,
                               )}
                             />
-                            <span>
+                            <span data-i18n-skip>
                               {
                                 authorFor(message, chat.session, chat.users)
                                   .name
@@ -2308,20 +2304,21 @@ export default function App() {
                             </span>
                             <MessageTime messages={messages} index={index} />
                           </div>
-                          <div className="user-bubble">{message.content}</div>
+                          <div className="user-bubble" data-i18n-skip>{message.content}</div>
                           {message.references?.length ? (
                             <div className="message-references">
                               {message.references.map((ref) => (
                                 <span
                                   key={ref.type + ref.id}
                                   title={ref.type === "element" ? elementTitle(ref) : undefined}
+                                  data-i18n-skip
                                 >
                                   {ref.type === "element" ? (
                                     <HarnessIcon name="crosshair" size={12} />
                                   ) : (
                                     "@"
                                   )}
-                                  {ref.name || ref.id}
+                                  <span data-i18n-skip>{ref.name || ref.id}</span>
                                 </span>
                               ))}
                             </div>
@@ -2361,7 +2358,7 @@ export default function App() {
                             ) : null}
                             <CopyButton
                               value={message.content}
-                              label="复制消息"
+                              label={window.lfT?.("复制消息", "Copy message") || "复制消息"}
                             />
                           </div>
                         </>
@@ -2922,7 +2919,7 @@ export default function App() {
         <Dialog
           title={
             {
-              search: "搜索会话",
+              search: uiLabel("搜索会话", "Search conversations"),
               delete: "删除会话",
               edit: dialog.fork ? "创建分支" : "编辑消息",
               settings: "设置",
@@ -2978,9 +2975,8 @@ export default function App() {
               <label className="dialog-search">
                 <HarnessIcon name="search" size={17} />
                 <input
-                  autoFocus
-                  aria-label="搜索会话名称"
-                  placeholder="搜索会话名称或项目"
+                  aria-label={uiLabel("搜索会话名称", "Search conversation names")}
+                  placeholder={uiLabel("搜索会话名称或项目", "Search by conversation name or project")}
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
                 />
@@ -2989,9 +2985,11 @@ export default function App() {
                 {searchGroups.map((group) => (
                   <section
                     key={group.projectId}
-                    aria-label={`${group.name}的搜索结果`}
+                    aria-labelledby={`conversation-search-group-${group.projectId}`}
                   >
-                    <div className="date-label">{group.name}</div>
+                    <div className="date-label" id={`conversation-search-group-${group.projectId}`} data-i18n-skip={group.projectId ? "" : undefined}>
+                      {group.projectId ? group.name : personalChatLabel}
+                    </div>
                     {group.sessions.map((s) => (
                       <button
                         key={s.id}
@@ -3003,10 +3001,10 @@ export default function App() {
                       >
                         <HarnessIcon name="new-request" size={16} />
                         <span>
-                          {s.displayTitle || s.title}
+                          <span data-i18n-skip>{s.displayTitle || s.title}</span>
                           <small>
-                            {sessionProjectName(s.projectId, chat.projects)}
-                            {s.archived ? " · 已归档" : ""}
+                            {s.projectId ? <span data-i18n-skip>{group.name}</span> : personalChatLabel}
+                            {s.archived ? uiLabel(" · 已归档", " · Archived") : ""}
                           </small>
                         </span>
                       </button>
@@ -3014,7 +3012,7 @@ export default function App() {
                   </section>
                 ))}
                 {!searchGroups.length ? (
-                  <p className="end-label">没有匹配的会话</p>
+                  <p className="end-label">{uiLabel("没有匹配的会话", "No matching conversations")}</p>
                 ) : null}
               </div>
             </>
@@ -3060,7 +3058,7 @@ export default function App() {
                 <HarnessSelect
                   value={theme}
                   ariaLabel="外观"
-                  onChange={(e) => setTheme(e.target.value)}
+                  onChange={(e) => platform() ? platform().setTheme(e.target.value) : setTheme(e.target.value)}
                   options={THEME_OPTIONS}
                 />
               </label>
@@ -3094,6 +3092,7 @@ export default function App() {
       ) : null}
       <QuickAccessWizard
         open={quickAccessOpen}
+        visible={quickAccessOpen && workbenchVisible}
         user={chat.user}
         projects={chat.projects}
         projectId={chat.projectId}

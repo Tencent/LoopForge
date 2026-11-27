@@ -193,29 +193,30 @@
 .sidebar-conversations #collabSessions{max-height:none;flex:1;min-height:0}
 .sidebar-conversations .collaboration-tasks{display:none}
 .sidebar-conversations h3 .collab-task-actions{margin-left:auto}
-/* Keep global business navigation alongside the embedded workbench, including
+/* Keep global business navigation alongside the in-document workbench, including
    narrow windows where the legacy shell otherwise hides the icon rail. */
-body.chat-next-active .app-shell{grid-template-columns:var(--rail-w) minmax(0,1fr)!important}
-body.chat-next-active .platform-rail{display:flex!important}
+body.platform-chat-active .app-shell{grid-template-columns:var(--rail-w) minmax(0,1fr)!important}
+body.platform-chat-active .platform-rail{display:flex!important}
 @media(max-width:1000px){
   body .platform-rail{display:flex!important}
   body .app-shell,body.no-sidebar .app-shell{grid-template-columns:var(--rail-w) minmax(0,1fr)!important}
   body.ai-assistant-open .app-shell,body.no-sidebar.ai-assistant-open .app-shell{grid-template-columns:var(--rail-w) minmax(0,1fr) var(--ai-panel-w,380px)!important}
-  body.chat-next-active .app-shell{grid-template-columns:var(--rail-w) minmax(0,1fr)!important}
+  body.platform-chat-active .app-shell{grid-template-columns:var(--rail-w) minmax(0,1fr)!important}
   body.sidebar-open .platform-sidebar{left:calc(var(--rail-w) + var(--shell-inset-x))!important;width:min(var(--sidebar-w),calc(100vw - var(--rail-w) - var(--shell-inset-x)))!important;max-width:min(var(--sidebar-w),calc(100vw - var(--rail-w) - var(--shell-inset-x)))!important}
   /* The drawer's generic .nav padding must not flatten the indented sub-items. */
   body.sidebar-open .platform-sidebar .nav.nav-child{padding:0 10px 0 44px!important;margin:0!important}
 }
-body.chat-next-active .platform-sidebar{display:none!important}
-body.chat-next-active .topbar{display:none!important}
-body.chat-next-active .shell-main{display:flex;flex-direction:column;width:auto!important;margin-left:0!important;min-width:0;height:100%;overflow:hidden}
-body.chat-next-active .shell-main>main{overflow:hidden;scrollbar-gutter:auto;display:flex;flex-direction:column}
-body.chat-next-active #collaborationView.page-view.active{display:flex;flex-direction:column;flex:1;min-height:0;height:auto;padding:0;overflow:hidden}
-body.chat-next-active #collaborationView>.collaboration-shell{display:none!important}
-.chat-next-host{display:none}
-body.chat-next-active .chat-next-host{display:flex;flex:1;flex-direction:column;width:100%;min-height:0;height:auto}
-.chat-next-frame{display:block;width:100%;height:100%;border:0;background:var(--bg,transparent)}
-.chat-next-return{position:fixed;right:18px;bottom:18px;z-index:40;border-radius:999px!important;box-shadow:0 4px 14px #0002;background:var(--panel)!important}
+body.platform-chat-active .platform-sidebar{display:none!important}
+body.platform-chat-active .topbar{display:none!important}
+body.platform-chat-active .shell-main{display:flex;flex-direction:column;width:auto!important;margin-left:0!important;min-width:0;height:100%;overflow:hidden}
+body.platform-chat-active .shell-main>main{overflow:hidden;scrollbar-gutter:auto;display:flex;flex-direction:column}
+body.platform-chat-active #collaborationView.page-view.active{display:flex;flex-direction:column;flex:1;min-height:0;height:auto;padding:0;overflow:hidden}
+body.platform-chat-active #collaborationView>.collaboration-shell{display:none!important}
+.platform-chat-host{display:none}
+body.platform-chat-active .platform-chat-host{display:flex;flex:1;flex-direction:column;width:100%;min-height:0;height:auto}
+.chat-workbench{display:block;width:100%;height:100%;min-height:0;position:relative;isolation:isolate}
+.platform-chat-host{position:relative}
+.chat-workbench-status:not([hidden]){position:absolute;inset:0;z-index:1;display:flex;flex-direction:column;gap:12px;align-items:center;justify-content:center;background:var(--hui-surface)}
 
 /* Codex thread: duration, a rule, then the reply. */
 #collaborationView .collaboration-shell{background:var(--bg,#f7f7f8)}

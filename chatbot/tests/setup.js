@@ -83,6 +83,19 @@ afterEach(() => {
   for (const id of activeTimers) nativeClearTimeout(id);
   activeTimers.clear();
   cleanup();
+  if (typeof window !== "undefined") delete window.loopforgePlatform;
   if (typeof localStorage !== "undefined") localStorage.clear();
   if (typeof sessionStorage !== "undefined") sessionStorage.clear();
 });
+
+export function installTestPlatform() {
+  const listeners = new Map();
+  const api = {
+    subscribe(type, fn) { if (!listeners.has(type)) listeners.set(type, new Set()); listeners.get(type).add(fn); return () => listeners.get(type)?.delete(fn); },
+    emit(type, value) { for (const fn of listeners.get(type) || []) fn(value); },
+    initialChatContext() { const q = new URLSearchParams(location.search); return { projectId:q.get('projectId') || '', sessionId:q.get('session') || '', issueId:q.get('issueId') || '', quickAccess:false }; },
+    setSession() {}, setProject() {}, setIssue() {}, projectsChanged() {}, credentialsChanged() { api.emit("credentials"); }, quickAccessCompleted() {},
+  };
+  window.loopforgePlatform = api;
+  return api;
+}

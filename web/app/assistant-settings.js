@@ -795,7 +795,7 @@ function renderAssistantSettings(draftOverride){
   assistantPrefsUI.saving=true;save.disabled=true;save.textContent='保存中…';
   try{
    assistantPrefsUI.saved=await api('/api/assistant/preferences',{method:'PUT',body:JSON.stringify(draft)});
-   document.querySelector('#chatNextFrame')?.contentWindow?.postMessage({type:'agentflow-assistant-preferences-changed'},location.origin);
+   platformNotify('assistantPreferences');
    toast('AI 助手设置已保存');
    assistantPrefsUI.saving=false;
    renderAssistantSettings();

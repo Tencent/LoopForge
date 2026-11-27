@@ -30,7 +30,7 @@ test('AI workbench: a saved conversation is listed, opened, searched, renamed, a
 
   const errors = watchErrors(page);
   await openView(page, 'collaboration');
-  const app = page.frameLocator('#chatNextFrame');
+  const app = page.locator('#chatRoot');
   const row = text => app.locator('.session-row').filter({ hasText: text });
   const dialog = app.getByRole('dialog');
 

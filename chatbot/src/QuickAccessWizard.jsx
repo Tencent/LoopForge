@@ -8,6 +8,7 @@ import React, {
   useState,
 } from "react";
 import { createPortal } from "react-dom";
+import { platform, subscribe } from "./platform-host.js";
 import "../../web/app/git-ssh.js";
 import HarnessIcon from "./HarnessIcon";
 import SlidingTabs from "./SlidingTabs";
@@ -443,7 +444,7 @@ export function HarnessSelect({
                 )}
               </div>
             </div>,
-            document.body,
+            document.getElementById("chatRoot") || document.body,
           )
         : null}
     </div>
@@ -690,6 +691,7 @@ async function provisionFallbackProjectSOP(projectId, workflowId, owner) {
 
 export default function QuickAccessWizard({
   open,
+  visible = open,
   user,
   projects = [],
   projectId = "",
@@ -739,7 +741,9 @@ export default function QuickAccessWizard({
   const [stepAnimated, setStepAnimated] = useState(false);
   const headingRef = useRef(null);
   const bodyRef = useRef(null);
-  const presence = usePanelPresence(open, 300);
+  const catalogContext = useRef({ projects, projectId });
+  catalogContext.current = { projects, projectId };
+  const presence = usePanelPresence(visible, 300);
   const reopenedWhileClosing = presence.phase === "closing";
 
   const editableProjects = useMemo(
@@ -887,16 +891,20 @@ export default function QuickAccessWizard({
     setIdTouched(false);
     setKeyTouched(false);
   }, [open]);
+  useEffect(() => {
+    if (!visible) setGitToken("");
+  }, [visible]);
 
   useEffect(() => {
     if (!open) return undefined;
+    const { projects: fallbackProjects, projectId: preferredProjectId } = catalogContext.current;
     let active = true;
     async function load() {
       setLoading(true);
       try {
         const [projectsRes, reposRes, workflowsRes, agentsRes] =
           await Promise.all([
-            api("/api/projects").catch(() => projects),
+            api("/api/projects").catch(() => fallbackProjects),
             api("/api/repositories").catch(() => []),
             api("/api/workflows").catch(() => []),
             api("/api/agents").catch(() => []),
@@ -904,7 +912,7 @@ export default function QuickAccessWizard({
         if (!active) return;
         const nextProjects = Array.isArray(projectsRes)
           ? projectsRes
-          : projects;
+          : fallbackProjects;
         setCatalogProjects(nextProjects);
         setRepositories(Array.isArray(reposRes) ? reposRes : []);
         const nextWorkflows = Array.isArray(workflowsRes) ? workflowsRes : [];
@@ -913,7 +921,7 @@ export default function QuickAccessWizard({
         const actor = userId == null ? null : { id: userId, isPlatformAdmin, platformRole };
         const mine = nextProjects.filter((project) => canChatInProject(project, actor));
         const preferred =
-          mine.find((project) => project.id === projectId) || mine[0] || null;
+          mine.find((project) => project.id === preferredProjectId) || mine[0] || null;
         if (preferred) {
           setProjectMode("existing");
           setSelectedProjectId(preferred.id);
@@ -942,10 +950,10 @@ export default function QuickAccessWizard({
     return () => {
       active = false;
     };
-  }, [open, projectId, projects, userId, loginName, chineseName, isPlatformAdmin, platformRole]);
+  }, [open, userId, loginName, chineseName, isPlatformAdmin, platformRole]);
 
   useEffect(() => {
-    if (!open || !userId || isGuest) return undefined;
+    if (!visible || !userId || isGuest) return undefined;
     let active = true;
     let generation = 0;
     const refresh = () => {
@@ -978,27 +986,33 @@ export default function QuickAccessWizard({
           if (current()) setSSHCredentials({ userId, keys: [], error: true });
         });
     };
-    const credentialsChanged = (event) => {
-      if (event.source !== window.parent || event.origin !== location.origin) return;
-      if (event.data?.type === "agentflow-chat-resume-quick-access") {
-        headingRef.current?.focus({ preventScroll: true });
-        refresh();
-        return;
-      }
-      if (event.data?.type !== "agentflow-credentials-changed") return;
+    const credentialsChanged = () => {
       setCredentialsPending(true);
       setError(previous => previous === CREDENTIALS_REQUIRED ? "" : previous);
       refresh();
     };
+    const resumeQuickAccess = () => {
+      headingRef.current?.focus({ preventScroll: true });
+      refresh();
+    };
+    const onMessage = (event) => {
+      if (event.source !== window.parent || event.origin !== location.origin) return;
+      if (event.data?.type !== "agentflow-credentials-changed") return;
+      credentialsChanged();
+    };
+    const offCredentials = subscribe("credentials", credentialsChanged);
+    const offResume = subscribe("quickAccessReturn", resumeQuickAccess);
     refresh();
     window.addEventListener("focus", refresh);
-    window.addEventListener("message", credentialsChanged);
+    if (!platform()) window.addEventListener("message", onMessage);
     return () => {
       active = false;
       window.removeEventListener("focus", refresh);
-      window.removeEventListener("message", credentialsChanged);
+      window.removeEventListener("message", onMessage);
+      offCredentials();
+      offResume();
     };
-  }, [open, userId, isGuest]);
+  }, [visible, userId, isGuest]);
 
   useEffect(() => {
     if (!open || !selectedWorkflowId) return undefined;
@@ -1023,19 +1037,22 @@ export default function QuickAccessWizard({
   }, [open, selectedWorkflowId, workflows]);
 
   useEffect(() => {
-    if (!open) return;
+    if (!visible || !presence.mounted) return;
     if (bodyRef.current) bodyRef.current.scrollTop = 0;
     headingRef.current?.focus({ preventScroll: true });
-  }, [open, step, phase]);
+  }, [visible, presence.mounted, step, phase]);
 
   useEffect(() => {
-    if (!open) return undefined;
+    if (!visible) return undefined;
     const onKeyDown = (event) => {
-      if (event.key === "Escape" && !saving && !verifyingGit && !closeActiveSelect) onClose?.();
+      if (!event.defaultPrevented && event.key === "Escape" && !saving && !verifyingGit && !closeActiveSelect) {
+        event.preventDefault();
+        onClose?.();
+      }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [open, saving, verifyingGit, onClose]);
+  }, [visible, saving, verifyingGit, onClose]);
 
   useEffect(() => {
     if (projectMode !== "create" || !parsedRepo) return;
@@ -1136,7 +1153,8 @@ export default function QuickAccessWizard({
         setCredentialUser({ ...storedUser, id: userId, gitHubCredentialConfigured: true, gitHttpCredentialsConfigured: true });
         setGitToken("");
         onCredentialsSaved?.();
-        if (window.parent !== window) {
+        if (platform()) platform().credentialsChanged();
+        else if (window.parent !== window) {
           window.parent.postMessage({ type: "agentflow-credentials-changed" }, location.origin);
         }
       }
@@ -1367,7 +1385,8 @@ export default function QuickAccessWizard({
         }
       }
 
-      window.parent !== window &&
+      if (platform()) platform().quickAccessCompleted(targetProject?.id || "");
+      else window.parent !== window &&
         window.parent.postMessage(
           {
             type: "agentflow-quick-access-completed",

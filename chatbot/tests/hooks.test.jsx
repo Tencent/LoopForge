@@ -1,3 +1,4 @@
+import { installTestPlatform } from "./setup.js";
 import { act, fireEvent, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 
@@ -58,7 +59,47 @@ import { useArtifactPanelLayout } from "../src/useArtifactPanelLayout.js";
 import { useConversationRuns } from "../src/runs.js";
 
 describe("conversation hooks", () => {
+  test("restores the workbench project when binding a personal session fails", async () => {
+    const host = installTestPlatform();
+    host.setProject = vi.fn();
+    const original = apiMock.getMockImplementation();
+    apiMock.mockImplementation((path, options) => path === "/api/assistant/sessions/s1"
+      ? Promise.resolve({ id: "s1", projectId: "", messages: [] })
+      : original(path, options));
+    try {
+      const { result } = renderHook(() => useChat());
+      await waitFor(() => expect(result.current.ready).toBe(true));
+      act(() => result.current.open("s1"));
+      await waitFor(() => expect(result.current.session?.id).toBe("s1"));
+      writeMock.mockRejectedValueOnce(new Error("项目绑定失败"));
+      act(() => host.emit("project", "p1"));
+      await waitFor(() => expect(result.current.error).toBe("项目绑定失败"));
+      expect(result.current.projectId).toBe("");
+      expect(host.setProject).toHaveBeenLastCalledWith("");
+    } finally { apiMock.mockImplementation(original); }
+  });
+
+  test("keeps shared chat context current when a project is inaccessible or a chat is reset", async () => {
+    history.replaceState({}, "", "/?projectId=p1&issueId=issue-1");
+    const host = installTestPlatform();
+    host.setProject = vi.fn();
+    host.setIssue = vi.fn();
+    const original = apiMock.getMockImplementation();
+    apiMock.mockImplementation((path, options) => path === "/api/projects"
+      ? Promise.resolve([{id:"p1", name:"其他项目", ownerId:2}])
+      : original(path, options));
+    try {
+      const { result } = renderHook(() => useChat());
+      await waitFor(() => expect(result.current.ready).toBe(true));
+      await waitFor(() => expect(result.current.projectId).toBe(""));
+      expect(host.setProject).toHaveBeenCalledWith("");
+      act(() => result.current.newChat());
+      expect(host.setIssue).toHaveBeenCalledWith("");
+    } finally { apiMock.mockImplementation(original); }
+  });
+
   test("refreshes environments after returning from sandbox creation", async () => {
+    const host = installTestPlatform();
     const { result } = renderHook(() => useChat());
     await waitFor(() => expect(result.current.ready).toBe(true));
     const original = apiMock.getMockImplementation();
@@ -66,10 +107,7 @@ describe("conversation hooks", () => {
       ? Promise.resolve([{id:"created-from-chat",driver:"docker",projectId:"p1"}])
       : original(path, options));
     try {
-      act(() => window.dispatchEvent(new MessageEvent("message", {
-        origin: location.origin, source: window.parent,
-        data: {type:"agentflow-environments-changed"},
-      })));
+      act(() => host.emit("environments"));
       await waitFor(() => expect(result.current.sandboxes).toEqual([expect.objectContaining({id:"created-from-chat"})]));
     } finally { apiMock.mockImplementation(original); }
   });
@@ -1360,9 +1398,8 @@ describe("conversation hooks", () => {
   });
 
   test("a confirmed project change refreshes both project pickers and new questions carry a time", async () => {
-    const parent = { postMessage: vi.fn() };
-    const original = Object.getOwnPropertyDescriptor(window, "parent");
-    Object.defineProperty(window, "parent", { configurable: true, get: () => parent });
+    const host = installTestPlatform();
+    host.projectsChanged = vi.fn();
     try {
       const { result } = renderHook(() => useChat());
       await waitFor(() => expect(result.current.ready).toBe(true));
@@ -1380,12 +1417,11 @@ describe("conversation hooks", () => {
       const before = projectLoads();
       await act(() => result.current.applyDraft(0, 0, { approved: true }));
       await waitFor(() => expect(projectLoads()).toBe(before + 1));
-      expect(parent.postMessage).toHaveBeenCalledWith({ type: "agentflow-projects-changed" }, location.origin);
+      expect(host.projectsChanged).toHaveBeenCalled();
       const generation = writeMock.mock.calls.filter(([path]) => path === "/api/assistant/generations").at(-1);
       expect(generation[1].messages.at(-1)).toMatchObject({ role: "user", createdAt: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/) });
     } finally {
-      if (original) Object.defineProperty(window, "parent", original);
-      else delete window.parent;
+      delete window.loopforgePlatform;
     }
   });
 

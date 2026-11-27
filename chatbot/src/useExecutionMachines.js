@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "./api";
+import { subscribe } from "./platform-host.js";
 
 // Machine selection belongs to the local draft until its first turn starts.
 export function useExecutionMachines(userId, busy, readOnly, onError, bindMachine, draftTarget, projectId = "") {
@@ -59,19 +60,11 @@ export function useExecutionMachines(userId, busy, readOnly, onError, bindMachin
     setMachineError("");
     void refreshMachines(true);
     window.addEventListener("focus", refreshMachines);
-    const returnedToChat = (event) => {
-      if (
-        event.source === window.parent &&
-        event.origin === location.origin &&
-        event.data?.type === "agentflow-environments-changed"
-      )
-        void refreshMachines();
-    };
-    window.addEventListener("message", returnedToChat);
+    const unsubscribe = subscribe("environments", refreshMachines);
     return () => {
       ++revision.current;
       window.removeEventListener("focus", refreshMachines);
-      window.removeEventListener("message", returnedToChat);
+      unsubscribe();
     };
   }, [refreshMachines, resetMachine]);
 

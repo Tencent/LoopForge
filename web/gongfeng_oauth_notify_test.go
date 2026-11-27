@@ -61,6 +61,7 @@ const panel={set innerHTML(v){panelRenders++},querySelector(s){return {'[data-cr
 const $=s=>({'#credentialPanel':panel,'[data-credential-row="gitToken"]':row,'#credentialPanel [data-credential-row="gitToken"]':row}[s]??null);
 const document={createElement(){const holder={set innerHTML(v){holder.firstElementChild={html:v}}};return holder},querySelectorAll:()=>[]};
 const window={};
+const platformNotify=()=>{};
 eval(code.slice(code.indexOf('const CREDENTIAL_GROUPS='),code.indexOf('// 谁能改通用模板')));
 (async()=>{
  const channel=listenForGongfengOAuth();

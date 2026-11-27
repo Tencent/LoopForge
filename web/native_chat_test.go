@@ -9,29 +9,18 @@ import (
 	"testing"
 )
 
-// Browsers fall back to the host iframe's title as a tooltip for any element
-// inside the frame without its own title, so the chat frame must not set one.
-func TestNativeChatFrameHasNoTitleTooltip(t *testing.T) {
+// The workbench shares the host document and keeps an accessible label.
+func TestNativeChatMountIsInMainDocument(t *testing.T) {
 	html, err := os.ReadFile("index.html")
 	if err != nil {
 		t.Fatal(err)
 	}
-	tag := regexp.MustCompile(`<iframe[^>]*id="chatNextFrame"[^>]*>`).Find(html)
-	if tag == nil {
-		t.Fatal("index.html is missing the chatNextFrame iframe")
+	tag := regexp.MustCompile(`<div[^>]*id="chatRoot"[^>]*>`).Find(html)
+	if tag == nil || !strings.Contains(string(tag), `aria-label="LoopForge 工作台"`) {
+		t.Fatal("missing labelled workbench mount")
 	}
-	if regexp.MustCompile(`\stitle=`).Match(tag) {
-		t.Errorf("chatNextFrame must not have a title attribute: %s", tag)
-	}
-	if !strings.Contains(string(tag), `aria-label="LoopForge 工作台"`) {
-		t.Errorf("chatNextFrame should keep an aria-label for accessibility: %s", tag)
-	}
-	bundle, err := readAppBundle()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(bundle), "frame.title=") {
-		t.Error("app bundle must not assign frame.title on the chat frame")
+	if strings.Contains(string(html), `id="chatNextFrame"`) {
+		t.Fatal("home must not embed the chat in an iframe")
 	}
 }
 
