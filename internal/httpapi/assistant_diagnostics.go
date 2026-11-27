@@ -105,6 +105,11 @@ func (d *assistantDiagnosticsCollector) fail(ctx context.Context, err error, use
 			f = candidate
 		}
 	}
+	if !specific && f.Code == "OPENCODE_VARIANT_UNSUPPORTED" {
+		if candidate, ok := d.structuredFailureLocked(ctx); ok {
+			f = candidate
+		}
+	}
 	if f.Code == "AUTHENTICATION_FAILED" && len(d.report.Attempts) > 0 {
 		engine := d.report.Attempts[len(d.report.Attempts)-1].Engine
 		if engine != assistantEngineCodeBuddy {
