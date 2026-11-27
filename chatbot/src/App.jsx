@@ -20,6 +20,7 @@ import {
 } from "./activity";
 import {
   api,
+  write,
   attachmentURL,
   collectArtifacts,
   elapsedSeconds,
@@ -58,9 +59,13 @@ import QueuedMessages from "./QueuedMessages";
 import "./message-queue.css";
 import ConversationStatusIcon from "./ConversationStatusIcon";
 import { SidebarSection } from "./SidebarPreview";
+import SlidingTabs from "./SlidingTabs";
 import {
   splitSidebarSections,
+  groupScheduledSessionsByTask,
+  summarizeSidebarTabBadges,
   PROJECT_PREVIEW_LIMIT,
+  SCHEDULED_TASK_PREVIEW_LIMIT,
   previewSessions,
 } from "./session-sections.js";
 import { useLocalConversations } from "./useLocalConversations.js";
@@ -310,6 +315,7 @@ export default function App() {
     try { localStorage.setItem(environmentVisibilityKey, JSON.stringify(next)); } catch {}
   }
   function startNewChat() {
+    setSidebarTab("personal");
     setIssueDraft(null);
     setIssueMention(null);
     chat.newChat();
@@ -980,6 +986,103 @@ export default function App() {
     setReferences((old) => [...old, ref]);
     requestAnimationFrame(() => input.current?.focus());
   }
+  const [sidebarTab, setSidebarTab] = useState("personal");
+  const [scheduledGroupMode, setScheduledGroupMode] = useState("task");
+  const [collapsedTasks, setCollapsedTasks] = useState({});
+  const [expandedTasks, setExpandedTasks] = useState({});
+  const [scheduleJobs, setScheduleJobs] = useState([]);
+  const [runningScheduleId, setRunningScheduleId] = useState("");
+
+  const activeSessionSummary = useMemo(
+    () =>
+      chat.session ||
+      (chat.sessions || []).find((item) => item.id === chat.activeId) ||
+      null,
+    [chat.session, chat.sessions, chat.activeId],
+  );
+  const isViewingScheduled = Boolean(
+    chat.activeId && scheduledSession(activeSessionSummary),
+  );
+  const activeScheduleJob = useMemo(() => {
+    const taskId = String(activeSessionSummary?.taskId || "").trim();
+    if (!taskId) return null;
+    return scheduleJobs.find((job) => job.id === taskId) || null;
+  }, [activeSessionSummary?.taskId, scheduleJobs]);
+
+  useEffect(() => {
+    if (!chat.activeId) return;
+    if (scheduledSession(activeSessionSummary)) {
+      setSidebarTab("scheduled");
+    } else if (activeSessionSummary) {
+      setSidebarTab((current) => (current === "scheduled" ? "personal" : current));
+    }
+  }, [chat.activeId, activeSessionSummary?.source, activeSessionSummary?.title]);
+
+  const loadScheduleJobs = useCallback(() => {
+    if (!chat.ready || chat.local) return;
+    let alive = true;
+    api("/api/schedule-jobs")
+      .then((list) => {
+        if (alive && Array.isArray(list)) setScheduleJobs(list);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [chat.ready, chat.local]);
+
+  useEffect(() => {
+    if (!chat.ready || chat.local) return;
+    if (sidebarTab !== "scheduled" && !isViewingScheduled) return;
+    return loadScheduleJobs();
+  }, [chat.ready, chat.local, sidebarTab, isViewingScheduled, loadScheduleJobs]);
+
+  async function runScheduledJobNow(jobId) {
+    if (!jobId || runningScheduleId) return;
+    setRunningScheduleId(jobId);
+    try {
+      const saved = await write(`/api/schedule-jobs/${encodeURIComponent(jobId)}/run`, {});
+      if (saved?.id) {
+        setScheduleJobs((list) =>
+          list.some((item) => item.id === saved.id)
+            ? list.map((item) => (item.id === saved.id ? saved : item))
+            : [saved, ...list],
+        );
+      }
+      await chat.refresh?.();
+      if (saved?.lastSessionId) {
+        setSidebarTab("scheduled");
+        chat.open(saved.lastSessionId);
+      }
+    } catch (err) {
+      chat.setError(err?.message || "立即执行定时任务失败");
+    } finally {
+      setRunningScheduleId("");
+    }
+  }
+
+  const sidebarTabBadges = useMemo(
+    () =>
+      summarizeSidebarTabBadges(chat.sessions, {
+        activeId: chat.activeId,
+        archived,
+        mineOnly,
+        currentUserId: chat.user?.id,
+        readReplies,
+        activeGeneration: chat.generation,
+        activeBusy: chat.busy,
+      }),
+    [
+      chat.sessions,
+      chat.activeId,
+      archived,
+      mineOnly,
+      chat.user?.id,
+      readReplies,
+      chat.generation,
+      chat.busy,
+    ],
+  );
   const sidebarSections = splitSidebarSections(chat.sessions, chat.projects, {
     archived,
     mineOnly,
@@ -988,7 +1091,41 @@ export default function App() {
     pinned,
     activeId: chat.activeId,
     hideIdleRuns: true,
+    bucket: sidebarTab === "scheduled" ? "scheduled" : "personal",
   });
+  const scheduledTaskGroups = useMemo(
+    () =>
+      sidebarTab === "scheduled" && scheduledGroupMode === "task"
+        ? groupScheduledSessionsByTask(chat.sessions, chat.projects, {
+            jobs: scheduleJobs,
+            archived,
+            mineOnly,
+            currentUserId: chat.user?.id,
+            query,
+            pinned,
+            activeId: chat.activeId,
+            readReplies,
+            activeGeneration: chat.generation,
+            activeBusy: chat.busy,
+          })
+        : [],
+    [
+      sidebarTab,
+      scheduledGroupMode,
+      chat.sessions,
+      chat.projects,
+      scheduleJobs,
+      archived,
+      mineOnly,
+      chat.user?.id,
+      query,
+      pinned,
+      chat.activeId,
+      readReplies,
+      chat.generation,
+      chat.busy,
+    ],
+  );
   const searchGroups = groupSessionHistory(chat.sessions, chat.projects, {
     query,
     pinned,
@@ -1111,8 +1248,8 @@ export default function App() {
           if (innerWidth < 850) setSidebar(false);
         }}
       >
-        <span>{s.displayTitle || s.title || "新对话"}</span>
-        {scheduledSession(s) ? (
+        <span>{options.label || s.displayTitle || s.title || "新对话"}</span>
+        {!options.hideScheduledTag && scheduledSession(s) ? (
           <span className="session-project-tag session-source-tag" title="定时任务产生的会话">
             定时
           </span>
@@ -1511,113 +1648,448 @@ export default function App() {
               ) : null}
             </div>
           </div>
+          <SlidingTabs
+            className="sidebar-bucket-tabs"
+            aria-label="会话来源分栏"
+          >
+            <button
+              type="button"
+              role="tab"
+              aria-selected={sidebarTab === "personal"}
+              className={`sidebar-bucket-tab ${sidebarTab === "personal" ? "active" : ""}`}
+              onClick={() => setSidebarTab("personal")}
+            >
+              <span>个人</span>
+              {sidebarTab !== "personal" && sidebarTabBadges.personal.unread > 0 ? (
+                <span
+                  className="sidebar-tab-dot"
+                  data-tone="unread"
+                  title={`${sidebarTabBadges.personal.unread} 条未读`}
+                  aria-label={`${sidebarTabBadges.personal.unread} 条未读`}
+                />
+              ) : null}
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={sidebarTab === "scheduled"}
+              className={`sidebar-bucket-tab ${sidebarTab === "scheduled" ? "active" : ""}`}
+              onClick={() => setSidebarTab("scheduled")}
+            >
+              <span>定时任务</span>
+              {sidebarTabBadges.scheduled.running > 0 ? (
+                <span
+                  className="sidebar-tab-dot"
+                  data-tone="running"
+                  title={`${sidebarTabBadges.scheduled.running} 个运行中`}
+                  aria-label={`${sidebarTabBadges.scheduled.running} 个运行中`}
+                />
+              ) : sidebarTabBadges.scheduled.failed > 0 ? (
+                <span
+                  className="sidebar-tab-dot"
+                  data-tone="failed"
+                  title={`${sidebarTabBadges.scheduled.failed} 个失败`}
+                  aria-label={`${sidebarTabBadges.scheduled.failed} 个失败`}
+                />
+              ) : sidebarTab !== "scheduled" && sidebarTabBadges.scheduled.unread > 0 ? (
+                <span
+                  className="sidebar-tab-dot"
+                  data-tone="unread"
+                  title={`${sidebarTabBadges.scheduled.unread} 条未读`}
+                  aria-label={`${sidebarTabBadges.scheduled.unread} 条未读`}
+                />
+              ) : null}
+            </button>
+          </SlidingTabs>
           <div className="session-list">
-            {archived ? <div className="section-label">已归档</div> : null}
-            {!archived && sidebarSections.pinnedSessions.length ? (
-              <SidebarSection
-                className="sidebar-pinned"
-                title="置顶"
-                icon="pin"
-                count={sidebarSections.pinnedSessions.length}
-                expanded={!!query || pinnedOpen}
-                onToggle={() => setPinnedOpen((open) => !open)}
-              >
-                {sidebarSections.pinnedSessions.map((session) =>
-                  renderSession(session, {
-                    projectName: sessionProjectName(
-                      session.projectId,
-                      chat.projects,
-                    ),
-                  }),
-                )}
-              </SidebarSection>
-            ) : null}
-            {sidebarSections.groups.length ? (
+            {sidebarTab === "scheduled" ? (
               <>
-                {sidebarSections.groups.map((group) => {
-                  const stored = collapsedProjects[group.projectId];
-                  const expanded =
-                    !!query ||
-                    (stored === undefined
-                      ? group.projectId === chat.projectId || !group.projectId
-                      : !stored);
-                  const showAll = !!query || !!expandedProjects[group.projectId];
-                  const sessions = showAll
-                    ? group.sessions
-                    : previewSessions(
-                        group.sessions,
-                        PROJECT_PREVIEW_LIMIT,
-                        chat.activeId,
-                      );
-                  const hidden = group.sessions.length - sessions.length;
-                  return (
-                    <SidebarSection
-                      key={group.projectId}
-                      title={group.name}
-                      icon={group.projectId ? "folder" : "user"}
-                      count={group.sessions.length}
-                      expanded={expanded}
-                      onToggle={() =>
-                        setCollapsedProjects((previous) => ({
-                          ...previous,
-                          [group.projectId]: expanded,
-                        }))
-                      }
+                <div className="sidebar-subbar">
+                  <div className="sidebar-mode-pills" role="group" aria-label="定时会话视图">
+                    <button
+                      type="button"
+                      className={scheduledGroupMode === "task" ? "active" : ""}
+                      onClick={() => setScheduledGroupMode("task")}
                     >
-                      {sessions.map((session) => renderSession(session))}
-                      {hidden > 0 ? (
-                        <button
-                          type="button"
-                          className="sidebar-more"
-                          onClick={() =>
-                            setExpandedProjects((previous) => ({
-                              ...previous,
-                              [group.projectId]: true,
-                            }))
-                          }
+                      按任务
+                    </button>
+                    <button
+                      type="button"
+                      className={scheduledGroupMode === "timeline" ? "active" : ""}
+                      onClick={() => setScheduledGroupMode("timeline")}
+                    >
+                      按项目
+                    </button>
+                  </div>
+                  <button
+                    type="button"
+                    className="sidebar-subbar-action"
+                    onClick={() =>
+                      navigate("aiSchedules", {
+                        projectId: chat.projectId,
+                        action: "create",
+                      })
+                    }
+                  >
+                    + 新建
+                  </button>
+                </div>
+                {scheduledGroupMode === "task" ? (
+                  scheduledTaskGroups.length ? (
+                    scheduledTaskGroups.map((group) => {
+                      const stored = collapsedTasks[group.key];
+                      const expanded =
+                        !!query ||
+                        (stored === undefined
+                          ? group.sessions.some((item) => item.id === chat.activeId) ||
+                            group.running ||
+                            scheduledTaskGroups.indexOf(group) < 3
+                          : !stored);
+                      const showAll = !!query || !!expandedTasks[group.key];
+                      const rows = showAll
+                        ? group.sessions
+                        : previewSessions(
+                            group.sessions,
+                            SCHEDULED_TASK_PREVIEW_LIMIT,
+                            chat.activeId,
+                          );
+                      const hidden = group.sessions.length - rows.length;
+                      return (
+                        <section
+                          key={group.key}
+                          className="sidebar-project-section"
+                          aria-label={`定时任务 ${group.title} 的会话`}
                         >
-                          展开其余 {hidden} 条
-                        </button>
-                      ) : null}
-                      {showAll && group.sessions.length > PROJECT_PREVIEW_LIMIT ? (
-                        <button
-                          type="button"
-                          className="sidebar-more"
-                          onClick={() =>
-                            setExpandedProjects((previous) => ({
-                              ...previous,
-                              [group.projectId]: false,
-                            }))
-                          }
-                        >
-                          收起
-                        </button>
-                      ) : null}
-                    </SidebarSection>
-                  );
-                })}
+                          <div className="sidebar-task-head">
+                            <button
+                              type="button"
+                              className="sidebar-task-toggle"
+                              aria-expanded={expanded}
+                              onClick={() =>
+                                setCollapsedTasks((prev) => ({
+                                  ...prev,
+                                  [group.key]: expanded,
+                                }))
+                              }
+                            >
+                              <HarnessIcon
+                                name={expanded ? "chevron-down" : "chevron-right"}
+                                size={12}
+                              />
+                              <span title={`${group.title} · ${group.projectName}`}>
+                                {group.title}
+                              </span>
+                              {group.fixedSession ? (
+                                <span className="session-project-tag">同会话</span>
+                              ) : null}
+                            </button>
+                            <div className="sidebar-task-actions">
+                              {group.taskId ? (
+                                <>
+                                  <button
+                                    type="button"
+                                    className="sidebar-task-quick is-run"
+                                    title="立即执行一次"
+                                    aria-label={`立即执行 ${group.title}`}
+                                    disabled={runningScheduleId === group.taskId}
+                                    onClick={() => runScheduledJobNow(group.taskId)}
+                                  >
+                                    <HarnessIcon
+                                      name={runningScheduleId === group.taskId ? "arc-spinner" : "play"}
+                                      size={12}
+                                      motion={runningScheduleId === group.taskId ? "busy" : "idle"}
+                                    />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="sidebar-task-quick"
+                                    title="任务设置"
+                                    aria-label={`打开 ${group.title} 设置`}
+                                    onClick={() =>
+                                      navigate("aiSchedules", {
+                                        projectId: group.projectId || chat.projectId,
+                                        action: "edit",
+                                        jobId: group.taskId,
+                                      })
+                                    }
+                                  >
+                                    <HarnessIcon name="edit" size={12} />
+                                  </button>
+                                </>
+                              ) : null}
+                              {group.running ? (
+                                <span className="sidebar-tab-dot" data-tone="running" title="运行中" />
+                              ) : group.failed ? (
+                                <span className="sidebar-tab-dot" data-tone="failed" title="执行失败" />
+                              ) : group.unread > 0 ? (
+                                <span className="sidebar-tab-dot" data-tone="unread" title={`${group.unread} 条未读`} />
+                              ) : null}
+                              <span className="sidebar-task-count">{group.sessions.length}</span>
+                            </div>
+                          </div>
+                          <div
+                            className={`sidebar-section-collapse ${expanded ? "is-open" : ""}`}
+                            aria-hidden={!expanded || undefined}
+                            inert={!expanded}
+                          >
+                            <div className="sidebar-section-items">
+                              {rows.map((session) =>
+                                renderSession(session, { hideScheduledTag: true }),
+                              )}
+                              {hidden > 0 ? (
+                                <button
+                                  type="button"
+                                  className="sidebar-more"
+                                  onClick={() =>
+                                    setExpandedTasks((prev) => ({
+                                      ...prev,
+                                      [group.key]: true,
+                                    }))
+                                  }
+                                >
+                                  展开其余 {hidden} 条
+                                </button>
+                              ) : null}
+                              {showAll && group.sessions.length > SCHEDULED_TASK_PREVIEW_LIMIT ? (
+                                <button
+                                  type="button"
+                                  className="sidebar-more"
+                                  onClick={() =>
+                                    setExpandedTasks((prev) => ({
+                                      ...prev,
+                                      [group.key]: false,
+                                    }))
+                                  }
+                                >
+                                  收起
+                                </button>
+                              ) : null}
+                            </div>
+                          </div>
+                        </section>
+                      );
+                    })
+                  ) : (
+                    <div className="empty-session-list">
+                      <p className="end-label">
+                        {chat.ready ? "还没有定时任务会话" : "正在连接…"}
+                      </p>
+                    </div>
+                  )
+                ) : (
+                  <>
+                    {sidebarSections.groups.length ? (
+                      sidebarSections.groups.map((group) => {
+                        const stored = collapsedProjects[`sched:${group.projectId}`];
+                        const expanded = !!query || stored !== true;
+                        return (
+                          <SidebarSection
+                            key={`sched-${group.projectId}`}
+                            title={group.name}
+                            icon={group.projectId ? "folder" : "clock"}
+                            count={group.sessions.length}
+                            expanded={expanded}
+                            onToggle={() =>
+                              setCollapsedProjects((previous) => ({
+                                ...previous,
+                                [`sched:${group.projectId}`]: expanded,
+                              }))
+                            }
+                          >
+                            {group.sessions.map((session) =>
+                              renderSession(session, { hideScheduledTag: true }),
+                            )}
+                          </SidebarSection>
+                        );
+                      })
+                    ) : (
+                      <div className="empty-session-list">
+                        <p className="end-label">
+                          {chat.ready ? "还没有定时任务会话" : "正在连接…"}
+                        </p>
+                      </div>
+                    )}
+                  </>
+                )}
               </>
-            ) : null}
-            {!sidebarSections.pinnedSessions.length &&
-            !sidebarSections.groups.length ? (
-              <div className="empty-session-list">
-                <p className="end-label">
-                  {chat.ready
-                    ? archived
-                      ? "还没有归档会话"
-                      : mineOnly
-                        ? "还没有你参与的会话"
-                        : "还没有会话"
-                    : "正在连接…"}
-                </p>
-              </div>
-            ) : null}
+            ) : (
+              <>
+                {archived ? <div className="section-label">已归档</div> : null}
+                {!archived && sidebarSections.pinnedSessions.length ? (
+                  <SidebarSection
+                    className="sidebar-pinned"
+                    title="置顶"
+                    icon="pin"
+                    count={sidebarSections.pinnedSessions.length}
+                    expanded={!!query || pinnedOpen}
+                    onToggle={() => setPinnedOpen((open) => !open)}
+                  >
+                    {sidebarSections.pinnedSessions.map((session) =>
+                      renderSession(session, {
+                        projectName: sessionProjectName(
+                          session.projectId,
+                          chat.projects,
+                        ),
+                      }),
+                    )}
+                  </SidebarSection>
+                ) : null}
+                {sidebarSections.groups.length ? (
+                  <>
+                    {sidebarSections.groups.map((group) => {
+                      const stored = collapsedProjects[group.projectId];
+                      const expanded =
+                        !!query ||
+                        (stored === undefined
+                          ? group.projectId === chat.projectId || !group.projectId
+                          : !stored);
+                      const showAll = !!query || !!expandedProjects[group.projectId];
+                      const sessions = showAll
+                        ? group.sessions
+                        : previewSessions(
+                            group.sessions,
+                            PROJECT_PREVIEW_LIMIT,
+                            chat.activeId,
+                          );
+                      const hidden = group.sessions.length - sessions.length;
+                      return (
+                        <SidebarSection
+                          key={group.projectId}
+                          title={group.name}
+                          icon={group.projectId ? "folder" : "user"}
+                          count={group.sessions.length}
+                          expanded={expanded}
+                          onToggle={() =>
+                            setCollapsedProjects((previous) => ({
+                              ...previous,
+                              [group.projectId]: expanded,
+                            }))
+                          }
+                        >
+                          {sessions.map((session) => renderSession(session))}
+                          {hidden > 0 ? (
+                            <button
+                              type="button"
+                              className="sidebar-more"
+                              onClick={() =>
+                                setExpandedProjects((previous) => ({
+                                  ...previous,
+                                  [group.projectId]: true,
+                                }))
+                              }
+                            >
+                              展开其余 {hidden} 条
+                            </button>
+                          ) : null}
+                          {showAll && group.sessions.length > PROJECT_PREVIEW_LIMIT ? (
+                            <button
+                              type="button"
+                              className="sidebar-more"
+                              onClick={() =>
+                                setExpandedProjects((previous) => ({
+                                  ...previous,
+                                  [group.projectId]: false,
+                                }))
+                              }
+                            >
+                              收起
+                            </button>
+                          ) : null}
+                        </SidebarSection>
+                      );
+                    })}
+                  </>
+                ) : null}
+                {!sidebarSections.pinnedSessions.length &&
+                !sidebarSections.groups.length ? (
+                  <div className="empty-session-list">
+                    <p className="end-label">
+                      {chat.ready
+                        ? archived
+                          ? "还没有归档会话"
+                          : mineOnly
+                            ? "还没有你参与的会话"
+                            : "还没有会话"
+                        : "正在连接…"}
+                    </p>
+                  </div>
+                ) : null}
+              </>
+            )}
           </div>
+          {sidebarTab === "scheduled" ? (
+            <div className="sidebar-bucket-footer">
+              <span>{scheduleJobs.filter((j) => j.skipDispatch && j.enabled).length} 个任务启用中</span>
+              <button
+                type="button"
+                onClick={() => navigate("aiSchedules", { projectId: chat.projectId })}
+              >
+                管理定时任务 ↗
+              </button>
+            </div>
+          ) : null}
         </aside>
       ) : null}
       <main
         className={`conversation-main ${!chat.activeId ? "empty-conversation" : ""}`}
       >
+        {isViewingScheduled && activeSessionSummary?.taskId ? (
+          <div className="scheduled-context-banner" role="region" aria-label="定时任务信息">
+            <div className="scheduled-context-meta">
+              <HarnessIcon name="clock" size={14} />
+              <b>{activeScheduleJob?.name || activeSessionSummary.title || "AI 定时任务"}</b>
+              {activeScheduleJob?.cron || activeScheduleJob?.intervalSec ? (
+                <span>
+                  · {activeScheduleJob.cron || `每 ${Math.max(1, Math.round((activeScheduleJob.intervalSec || 3600) / 60))} 分钟`}
+                </span>
+              ) : null}
+              {activeScheduleJob?.sessionMode === "fixed" ? <span>· 固定同一会话</span> : null}
+            </div>
+            <div className="scheduled-context-actions">
+              <button
+                type="button"
+                className="scheduled-action-btn"
+                disabled={runningScheduleId === activeSessionSummary.taskId || activeScheduleJob?.lastStatus === "running"}
+                onClick={() => runScheduledJobNow(activeSessionSummary.taskId)}
+              >
+                <HarnessIcon
+                  name={runningScheduleId === activeSessionSummary.taskId ? "arc-spinner" : "play"}
+                  size={12}
+                  motion={runningScheduleId === activeSessionSummary.taskId ? "busy" : "idle"}
+                />
+                {runningScheduleId === activeSessionSummary.taskId || activeScheduleJob?.lastStatus === "running"
+                  ? "执行中…"
+                  : "立即再跑一次"}
+              </button>
+              <button
+                type="button"
+                className="scheduled-action-btn"
+                onClick={() =>
+                  navigate("aiSchedules", {
+                    projectId: activeSessionSummary.projectId || chat.projectId,
+                    action: "edit",
+                    jobId: activeSessionSummary.taskId,
+                  })
+                }
+              >
+                任务设置
+              </button>
+              <button
+                type="button"
+                className="scheduled-action-btn"
+                onClick={() =>
+                  navigate("aiSchedules", {
+                    projectId: activeSessionSummary.projectId || chat.projectId,
+                    action: "executions",
+                    jobId: activeSessionSummary.taskId,
+                  })
+                }
+              >
+                执行记录 ↗
+              </button>
+            </div>
+          </div>
+        ) : null}
         {chat.activeId ? (
           <MessageHistory
             key={chat.activeId}

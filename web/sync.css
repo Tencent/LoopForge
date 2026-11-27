@@ -398,3 +398,18 @@
 .shared-schedule-version-editor .shared-schedule-diff pre { max-height:180px; }
 @media(max-width:720px) { .shared-schedule-version-editor .shared-schedule-section-head { align-items:flex-start;flex-direction:column;gap:10px; } }
 #sharedScheduleVersionEditor .shared-schedule-version-select { display:flex;flex:none;align-items:center;gap:12px;margin:0;white-space:nowrap; }
+
+/* Settings modal latest-execution bar, save-and-run footer, and row jump pill */
+.schedule-latest-exec { display:flex;flex-direction:column;gap:8px;padding:12px 14px;border:1px solid var(--hui-border,var(--line));border-radius:10px;background:var(--hui-canvas,var(--bg-soft)); }
+.schedule-latest-exec-head { display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px 12px; }
+.schedule-latest-exec-meta { display:flex;align-items:center;flex-wrap:wrap;gap:8px;font-size:12px;color:var(--hui-secondary,var(--muted-2)); }
+.schedule-latest-exec-meta b { color:var(--hui-text,var(--text));font-weight:600; }
+.schedule-latest-exec-actions { display:inline-flex;align-items:center;flex-wrap:wrap;gap:6px;flex:none; }
+.schedule-latest-exec-summary { margin:0;font-size:12px;line-height:1.5;color:var(--hui-secondary,var(--muted-2));overflow-wrap:anywhere; }
+.schedule-latest-exec-summary.is-error { color:var(--hui-error,var(--red)); }
+.schedule-form-action-buttons { display:inline-flex;align-items:center;gap:8px;margin-left:auto;flex-wrap:wrap; }
+.schedule-open-after-run { font-size:12px;font-weight:500;color:var(--hui-secondary,var(--muted-2)); }
+.schedule-latest-btn { white-space:nowrap; }
+.schedule-latest-btn[data-tone="info"] { color:var(--hui-info);border-color:color-mix(in srgb,var(--hui-info) 30%,var(--hui-border));background:color-mix(in srgb,var(--hui-info) 8%,var(--hui-surface)); }
+.schedule-latest-btn[data-tone="success"] { color:var(--hui-success);border-color:color-mix(in srgb,var(--hui-success) 30%,var(--hui-border));background:color-mix(in srgb,var(--hui-success) 8%,var(--hui-surface)); }
+.schedule-latest-btn[data-tone="error"] { color:var(--hui-error);border-color:color-mix(in srgb,var(--hui-error) 30%,var(--hui-border));background:color-mix(in srgb,var(--hui-error) 8%,var(--hui-surface)); }
