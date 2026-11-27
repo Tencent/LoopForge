@@ -853,7 +853,7 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 				continue
 			}
 		}
-		if len(reply.Drafts) == 0 && assistantProgressOnly(reply.Message, req.Messages) {
+		if len(reply.Drafts) == 0 && assistantProgressOnly(assistantProgressText(reply.Message, activity.snapshot()), req.Messages) {
 			if progressRetries >= 2 {
 				fail(502, "模型连续只返回进度说明，尚未完成请求；执行记录已保留，请核对后继续。")
 				return
@@ -1085,9 +1085,41 @@ func assistantNativeRetryPrompt() string {
 	return "本轮尚未完成，请沿当前上下文继续，核对已执行操作，避免重复写入。需要待确认的平台操作时通过 mcp__agentflow_session__submit_assistant_reply 提交完整草稿；普通问答和已实际完成的操作用自然语言总结结果；若工具参数校验失败，修正字段后再提交。不要提交空草稿或进度占位回复。"
 }
 
+// assistantProgressText is the part of a reply that tells whether the turn
+// stopped at a progress note. Most CLIs report only the text written after
+// their last tool call as the result, but Cursor joins every paragraph of the
+// turn, so a reply that opened with "我先…" before calling tools still starts
+// with that plan after the answer followed. Judge Main Bot's text after its
+// last tool call, as the other CLIs report it; without a tool call, or with
+// no text after it, the whole reply is judged.
+func assistantProgressText(message string, events []domain.AssistantActivityEvent) string {
+	last := -1
+	for i, event := range events {
+		if event.Kind == "tool" && event.Parent == "" {
+			last = i
+		}
+	}
+	if last < 0 {
+		return message
+	}
+	var parts []string
+	for _, event := range events[last+1:] {
+		if event.Kind != "text" || event.Parent != "" {
+			continue
+		}
+		if text := strings.TrimSpace(event.Text); text != "" && !assistantCLINoticeText(text) {
+			parts = append(parts, text)
+		}
+	}
+	if len(parts) == 0 {
+		return message
+	}
+	return strings.Join(parts, "\n\n")
+}
+
 func assistantProgressOnly(message string, messages []assistantMessage) bool {
 	text := strings.TrimSpace(message)
-	if len([]rune(text)) > 600 || strings.Contains(text, "```") {
+	if text == "" || len([]rune(text)) > 600 || strings.Contains(text, "```") {
 		return false
 	}
 	if len(messages) > 0 {
@@ -1103,6 +1135,18 @@ func assistantProgressOnly(message string, messages []assistantMessage) bool {
 			return false
 		}
 	}
+	// Every line must be a plan: an answer that opens with "我先查了…，结论
+	// 如下。" and then lists the results is not a progress note.
+	for line := range strings.SplitSeq(text, "\n") {
+		if strings.TrimSpace(line) != "" && !assistantProgressSentence(line) {
+			return false
+		}
+	}
+	return true
+}
+
+func assistantProgressSentence(text string) bool {
+	text = strings.TrimSpace(text)
 	for _, prefix := range []string{"稍等", "请稍等", "好的，我先", "我先", "让我先", "接下来我会", "接下来我将", "我会先", "I'll first", "Let me first"} {
 		if strings.HasPrefix(text, prefix) {
 			return true
