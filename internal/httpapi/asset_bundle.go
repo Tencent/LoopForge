@@ -112,8 +112,12 @@ func (h *assetBundleHandlers) importBundle(c *gin.Context, save bool) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	bindings := bundle.Bindings
+	if save {
+		bindings = repo.ImportedBundleBindings(assets, bindings)
+	}
 	c.Header("Cache-Control", "private, no-store")
-	c.JSON(status, gin.H{"assets": assets, "bindings": bundle.Bindings})
+	c.JSON(status, gin.H{"assets": assets, "bindings": bindings})
 }
 
 func readAssetBundleJSON(c *gin.Context, value any, limit int64) bool {

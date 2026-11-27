@@ -249,3 +249,143 @@ func TestProjectAssetBundlePreservesAutomaticExecutionSettings(t *testing.T) {
 		}
 	}
 }
+
+func TestProjectAssetBundleExportIgnoresOtherProjectsGlobalRules(t *testing.T) {
+	f := cvBNewHTTPFixture(t)
+	save := func(err error) {
+		t.Helper()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	save(f.s.PutProject(domain.Project{ID: "bundle-shared-src", Name: "Source", OwnerID: f.user.ID}))
+	save(f.s.PutProject(domain.Project{ID: "bundle-other", Name: "Other", OwnerID: f.user.ID + 99}))
+	save(f.s.PutAgent(domain.AgentDefinition{ID: "shared-src-role", Name: "Reviewer", ProjectID: "bundle-shared-src"}))
+	save(f.s.PutWorkflow(domain.WorkflowDefinition{
+		ID: "shared-src-loop", Name: "Shared LOOP", ProjectID: "bundle-shared-src", Shared: true, AutoSelectSandbox: true,
+		Nodes: []domain.WorkflowNode{{ID: "review", Name: "Review", Type: "agent", AgentID: "shared-src-role"}},
+	}))
+	save(f.s.PutRule(domain.RuleDefinition{
+		ID: "shared-src-own-rule", Name: "Own", ProjectID: "bundle-shared-src", Global: true,
+		WorkflowIDs: []string{"shared-src-loop"}, Content: "Own rule.",
+	}))
+	// Another project binds its own global rule to the shared LOOP. The source
+	// project cannot see or remove it, so it must not block or join the export.
+	save(f.s.PutRule(domain.RuleDefinition{
+		ID: "other-global-rule", Name: "Other", ProjectID: "bundle-other", Global: true,
+		WorkflowIDs: []string{"shared-src-loop"}, Content: "Other project rule.",
+	}))
+	res := cvBRequest(t, f, "POST", "/api/projects/bundle-shared-src/asset-bundles/export",
+		map[string]any{"assets": []domain.BundleAssetRef{{Kind: "sop", ID: "shared-src-loop"}}}, true)
+	if res.Code != http.StatusOK {
+		t.Fatalf("export: %d %s", res.Code, res.Body.String())
+	}
+	var bundle domain.ProjectAssetBundle
+	if err := json.Unmarshal(res.Body.Bytes(), &bundle); err != nil {
+		t.Fatal(err)
+	}
+	if len(bundle.Rules) != 1 || bundle.Rules[0].ID != "shared-src-own-rule" || strings.Contains(res.Body.String(), "other-global-rule") {
+		t.Fatalf("export must carry only this project's global rules: %+v", bundle.Rules)
+	}
+}
+
+func TestProjectAssetBundleExplainsForeignDependencies(t *testing.T) {
+	f := cvBNewHTTPFixture(t)
+	save := func(err error) {
+		t.Helper()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	save(f.s.PutProject(domain.Project{ID: "bundle-borrower", Name: "Borrower", OwnerID: f.user.ID}))
+	save(f.s.PutAgent(domain.AgentDefinition{ID: "lender-role", Name: "Shared role", ProjectID: "bundle-lender", Shared: true}))
+	save(f.s.PutWorkflow(domain.WorkflowDefinition{
+		ID: "borrower-loop", Name: "Borrower LOOP", ProjectID: "bundle-borrower", AutoSelectSandbox: true,
+		Nodes: []domain.WorkflowNode{{ID: "review", Name: "Review", Type: "agent", AgentID: "lender-role"}},
+	}))
+	path := "/api/projects/bundle-borrower/asset-bundles/export"
+	res := cvBRequest(t, f, "POST", path, map[string]any{"assets": []domain.BundleAssetRef{{Kind: "sop", ID: "borrower-loop"}}}, true)
+	if res.Code != http.StatusBadRequest || !strings.Contains(res.Body.String(), "agent/lender-role") ||
+		!strings.Contains(res.Body.String(), "请先复制到当前项目") {
+		t.Fatalf("a shared role from another project needs a copy hint: %d %s", res.Code, res.Body.String())
+	}
+	// A private asset of another project must read exactly like a missing one.
+	save(f.s.PutSkill(domain.SkillDefinition{ID: "lender-private", Name: "Private", ProjectID: "bundle-lender"}))
+	errorFor := func(id string) string {
+		t.Helper()
+		res := cvBRequest(t, f, "POST", path, map[string]any{"assets": []domain.BundleAssetRef{{Kind: "skill", ID: id}}}, true)
+		if res.Code != http.StatusBadRequest {
+			t.Fatalf("export skill %s: %d %s", id, res.Code, res.Body.String())
+		}
+		return strings.ReplaceAll(res.Body.String(), id, "<id>")
+	}
+	if hidden, missing := errorFor("lender-private"), errorFor("missing-skill"); hidden != missing || strings.Contains(hidden, "复制") {
+		t.Fatalf("a private foreign asset is distinguishable from a missing one: %s vs %s", hidden, missing)
+	}
+}
+
+func TestProjectAssetBundlePreviewRunsTheSave(t *testing.T) {
+	f := cvBNewHTTPFixture(t)
+	if err := f.s.PutProject(domain.Project{ID: "bundle-dry-run", Name: "Dry run", OwnerID: f.user.ID}); err != nil {
+		t.Fatal(err)
+	}
+	tgt := "/api/projects/bundle-dry-run/asset-bundles/"
+	bundle := func(role domain.AgentDefinition) domain.ProjectAssetBundle {
+		return domain.ProjectAssetBundle{
+			Format: domain.ProjectAssetBundleFormat,
+			Agents: []domain.AgentDefinition{role},
+			Workflows: []domain.WorkflowDefinition{{
+				ID: "dry-loop", Name: "Dry LOOP", AutoSelectSandbox: true,
+				Nodes: []domain.WorkflowNode{{ID: "review", Name: "Review", Type: "agent", AgentID: role.ID}},
+			}},
+			Bindings: []domain.BundleBinding{{Kind: "loop-integrations", AssetID: "dry-loop"}},
+		}
+	}
+	for name, role := range map[string]domain.AgentDefinition{
+		"hook language": {ID: "dry-role", Name: "Role", Hooks: []domain.AgentHook{{ID: "h1", Name: "bad", Event: "Stop", Language: "ruby", Script: "puts 1"}}},
+		"artifact path": {ID: "dry-role", Name: "Role", ArtifactOutputs: []domain.ArtifactContract{{Name: "x", Path: "../escape"}}},
+	} {
+		res := cvBRequest(t, f, "POST", tgt+"preview", bundle(role), true)
+		if res.Code != http.StatusBadRequest {
+			t.Fatalf("preview accepted an invalid %s: %d %s", name, res.Code, res.Body.String())
+		}
+	}
+	valid := bundle(domain.AgentDefinition{ID: "dry-role", Name: "Role"})
+	res := cvBRequest(t, f, "POST", tgt+"preview", valid, true)
+	if res.Code != http.StatusOK || strings.Contains(res.Body.String(), "targetId") {
+		t.Fatalf("preview: %d %s", res.Code, res.Body.String())
+	}
+	for _, workflow := range f.s.Workflows() {
+		if workflow.ProjectID == "bundle-dry-run" {
+			t.Fatal("preview persisted a LOOP")
+		}
+	}
+	for _, role := range f.s.Agents() {
+		if role.ProjectID == "bundle-dry-run" {
+			t.Fatal("preview persisted a role")
+		}
+	}
+	res = cvBRequest(t, f, "POST", tgt+"import", valid, true)
+	if res.Code != http.StatusCreated {
+		t.Fatalf("import: %d %s", res.Code, res.Body.String())
+	}
+	var result struct {
+		Assets   []domain.BundleAssetSummary
+		Bindings []domain.BundleBinding
+	}
+	if err := json.Unmarshal(res.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	loopID := ""
+	for _, asset := range result.Assets {
+		if asset.Kind == "sop" {
+			loopID = asset.TargetID
+		}
+	}
+	if loopID == "" || len(result.Bindings) != 1 || result.Bindings[0].AssetID != loopID {
+		t.Fatalf("import bindings must point at the imported copy: %+v", result)
+	}
+	if workflow, ok := f.s.Workflow(loopID); !ok || workflow.ProjectID != "bundle-dry-run" {
+		t.Fatal("import did not save the LOOP")
+	}
+}

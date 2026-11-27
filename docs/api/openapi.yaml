@@ -1944,7 +1944,7 @@ paths:
     post:
       tags: [Assets]
       operationId: exportProjectAssetBundle
-      description: Export the selected assets and their project-owned dependencies. Requires a project owner, maintainer, or platform administrator.
+      description: Export the selected assets and their project-owned dependencies. Global rules that other projects bind to a shared LOOP are not included. Requires a project owner, maintainer, or platform administrator.
       requestBody:
         required: true
         content:
@@ -1989,7 +1989,7 @@ paths:
     post:
       tags: [Assets]
       operationId: previewProjectAssetBundle
-      description: Validate a bundle and preview assets and connection setup without writing to the project. Requires a project owner, maintainer, or platform administrator.
+      description: Validate a bundle and preview assets and connection setup. The import runs in a transaction that is rolled back, so nothing is written to the project. Requires a project owner, maintainer, or platform administrator.
       requestBody:
         required: true
         content:
@@ -2022,7 +2022,7 @@ paths:
     post:
       tags: [Assets]
       operationId: importProjectAssetBundle
-      description: Create the project-owned copies in one transaction and rebind their references. LOOPs start as drafts. Requires a project owner, maintainer, or platform administrator.
+      description: Create the project-owned copies in one transaction and rebind their references. LOOPs start as drafts. Each asset reports its new targetId and each binding assetId names the imported copy. Requires a project owner, maintainer, or platform administrator.
       requestBody:
         required: true
         content:

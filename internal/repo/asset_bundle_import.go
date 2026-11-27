@@ -3,6 +3,7 @@ package repo
 import (
 	"crypto/rand"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"path"
 	"regexp"
@@ -24,18 +25,28 @@ type bundleImport struct {
 	fileSize int64
 }
 
+// errBundlePreviewRollback discards the dry-run save of a preview.
+var errBundlePreviewRollback = errors.New("asset bundle preview rollback")
+
+// PreviewProjectAssetBundle runs the complete import inside a transaction and
+// rolls it back, so the checks that only the save path performs (role hooks,
+// artifact paths, sandbox lookups) fail the preview instead of the import.
 func (r *CatalogRepo) PreviewProjectAssetBundle(project string, bundle domain.ProjectAssetBundle) ([]domain.BundleAssetSummary, error) {
-	plan, err := r.prepareProjectAssetBundle(project, bundle, "preview")
+	plan, err := r.importProjectAssetBundle(project, bundle, false)
 	if err != nil {
 		return nil, err
 	}
-	for i := range plan.summary {
-		plan.summary[i].TargetID = ""
+	for i := range plan {
+		plan[i].TargetID = ""
 	}
-	return plan.summary, nil
+	return plan, nil
 }
 
 func (r *CatalogRepo) ImportProjectAssetBundle(project string, bundle domain.ProjectAssetBundle) ([]domain.BundleAssetSummary, error) {
+	return r.importProjectAssetBundle(project, bundle, true)
+}
+
+func (r *CatalogRepo) importProjectAssetBundle(project string, bundle domain.ProjectAssetBundle, commit bool) ([]domain.BundleAssetSummary, error) {
 	var nonce [12]byte
 	if _, err := rand.Read(nonce[:]); err != nil {
 		return nil, err
@@ -44,11 +55,45 @@ func (r *CatalogRepo) ImportProjectAssetBundle(project string, bundle domain.Pro
 	if err != nil {
 		return nil, err
 	}
-	return plan.summary, r.DB.Transaction(func(tx *gorm.DB) error {
+	err = r.DB.Transaction(func(tx *gorm.DB) error {
 		catalog := *r
 		catalog.deps = &deps{DB: tx}
-		return plan.save(&catalog, bundle)
+		if err := plan.save(&catalog, bundle); err != nil {
+			return err
+		}
+		if !commit {
+			return errBundlePreviewRollback
+		}
+		return nil
 	})
+	if errors.Is(err, errBundlePreviewRollback) {
+		err = nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return plan.summary, nil
+}
+
+// ImportedBundleBindings points each follow-up item at the imported copy,
+// so the caller can configure the asset by its new ID.
+func ImportedBundleBindings(assets []domain.BundleAssetSummary, bindings []domain.BundleBinding) []domain.BundleBinding {
+	kinds := map[string]string{
+		"mcp-connection": "mcp", "role-integrations": "agent", "loop-integrations": "sop",
+		"sandbox-environment": "sandbox", "sandbox-privileged": "sandbox",
+	}
+	targets := make(map[domain.BundleAssetRef]string, len(assets))
+	for _, asset := range assets {
+		targets[asset.BundleAssetRef] = asset.TargetID
+	}
+	out := make([]domain.BundleBinding, 0, len(bindings))
+	for _, binding := range bindings {
+		if id := targets[assetRef(kinds[binding.Kind], binding.AssetID)]; id != "" {
+			binding.AssetID = id
+		}
+		out = append(out, binding)
+	}
+	return out
 }
 
 func (r *CatalogRepo) prepareProjectAssetBundle(project string, b domain.ProjectAssetBundle, prefix string) (*bundleImport, error) {

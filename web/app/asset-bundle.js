@@ -39,7 +39,29 @@
     }[kind] || kind;
   }
 
-  function bindingText({kind, assetId}) {
+  const bindingAssetKinds = {
+    'mcp-connection': 'mcp', 'role-integrations': 'agent', 'loop-integrations': 'sop',
+    'sandbox-environment': 'sandbox', 'sandbox-privileged': 'sandbox',
+  };
+
+  // Name the asset a follow-up item points at. Preview bindings carry the
+  // bundle ID and import bindings carry the new ID of the imported copy.
+  function bindingTarget({kind, assetId}, assets) {
+    const assetKind = bindingAssetKinds[kind];
+    const asset = (assets || []).find(item => item.kind === assetKind &&
+      (item.targetId ? item.targetId === assetId : item.id === assetId));
+    if (!asset) return assetId;
+    return asset.targetId ? asset.name + ' (' + asset.targetId + ')' : asset.name;
+  }
+
+  function exportedAssets(value) {
+    return [['sop', 'workflows'], ['agent', 'agents'], ['mcp', 'mcpServers'], ['sandbox', 'sandboxes']]
+      .flatMap(([kind, collection]) => (value[collection] || []).map(item => ({kind, id: item.id, name: item.name})));
+  }
+
+  function bindingText(binding, assets) {
+    const {kind} = binding;
+    const assetId = bindingTarget(binding, assets);
     const label = {
       'mcp-connection': copy('配置 MCP 连接及凭据', 'Configure the MCP connection and credentials'),
       'role-integrations': copy('核对角色的平台 MCP 和知识库绑定', 'Review platform MCP and knowledge bindings for the role'),
@@ -135,7 +157,7 @@
     const result = await api(endpoint('export'), {method: 'POST', body: JSON.stringify({assets})});
     download(result);
     const bindings = result.bindings || [];
-    show([copy('已导出所选资产及项目内依赖。', 'Exported the selected assets and project dependencies.'), ...bindings.map(bindingText)].join('\n'));
+    show([copy('已导出所选资产及项目内依赖。', 'Exported the selected assets and project dependencies.'), ...bindings.map(item => bindingText(item, exportedAssets(result)))].join('\n'));
   }));
   upload.addEventListener('change', () => work(async () => {
     bundle = null;
@@ -153,7 +175,7 @@
       copy('将导入 ' + assets.length + ' 项资产，LOOP 保存为项目私有草稿。',
         'Importing ' + assets.length + ' assets. LOOPs will be saved as project drafts.'),
       ...assets.map(item => labelFor(item.kind) + ' · ' + item.name),
-      ...bindings.map(bindingText),
+      ...bindings.map(item => bindingText(item, assets)),
     ].join('\n'));
     bundle = text;
   }));
@@ -161,7 +183,14 @@
     const result = await api(endpoint('import'), {method: 'POST', body: bundle});
     bundle = null;
     upload.value = '';
-    show(copy('已导入 ' + result.assets.length + ' 项私有资产。', 'Imported ' + result.assets.length + ' project assets.'));
+    const assets = result.assets || [];
+    const bindings = result.bindings || [];
+    show([
+      copy('已导入 ' + assets.length + ' 项私有资产（名称 → 新 ID）：', 'Imported ' + assets.length + ' project assets (name → new ID):'),
+      ...assets.map(item => labelFor(item.kind) + ' · ' + item.name + ' → ' + item.targetId),
+      ...(bindings.length ? [copy('导入后需配置：', 'Configure after import:')] : []),
+      ...bindings.map(item => bindingText(item, assets)),
+    ].join('\n'));
     try {
       const fresh = await api('/api/bootstrap', {silent: true});
       Object.assign(state.data, fresh);
