@@ -126,7 +126,7 @@ function renderScheduleLatestExecBar(job){
   const summary=running?'正在服务端执行，会话就绪后可直接点击跳转实时观看。':(job.lastError||job.lastAssistantMessage||'');
   const action=scheduleLatestExecutionAction(job);
   const jumpBtn=action
-    ?`<button type="button" class="button ghost small schedule-latest-btn" data-tone="${action.tone}" data-modal-jump-latest="${escapeHTML(job.id)}">${escapeHTML(action.label)}</button>`
+    ?`<button type="button" class="button ghost small schedule-latest-btn" data-tone="${escapeHTML(action.tone)}" data-modal-jump-latest="${escapeHTML(job.id)}">${escapeHTML(action.label)}</button>`
     :'';
   const runBtn=`<button type="button" class="button ghost small" data-modal-run-schedule="${escapeHTML(job.id)}" ${running||!canRun?'disabled':''}>${running?'运行中…':'立即执行一次'}</button>`;
   host.innerHTML=`<div class="schedule-latest-exec-head"><div class="schedule-latest-exec-meta"><b>最近一次执行</b>${badge}<span>${escapeHTML(when)}</span></div><div class="schedule-latest-exec-actions">${runBtn}${jumpBtn}</div></div>${summary?`<p class="schedule-latest-exec-summary${job.lastStatus==='failed'?' is-error':''}">${escapeHTML(String(summary).slice(0,220))}</p>`:''}`;
@@ -728,7 +728,7 @@ function renderScheduleJobList(list,jobs,kind,canRun){
     const runTitle=running?'任务正在服务端运行，关闭页面不会中断':(canRun?'':'本实例未启用 scheduler');
     const session=assistant&&j.sessionMode==='fixed'?' · 同一会话':'';
     const latestAction=assistant?scheduleLatestExecutionAction(j):null;
-    const latestBtn=latestAction?`<button type="button" class="button ghost small schedule-latest-btn" data-tone="${latestAction.tone}" data-open-latest-schedule="${escapeHTML(j.id)}">${escapeHTML(latestAction.label)}</button>`:'';
+    const latestBtn=latestAction?`<button type="button" class="button ghost small schedule-latest-btn" data-tone="${escapeHTML(latestAction.tone)}" data-open-latest-schedule="${escapeHTML(j.id)}">${escapeHTML(latestAction.label)}</button>`:'';
     return `<div class="schedule-job-item${running?' is-running':''}${assistant&&!j.enabled?' is-paused':''}"><div class="schedule-job-row"><button type="button" class="schedule-job-main" data-edit-schedule="${escapeHTML(j.id)}" title="${assistant?'编辑 AI 定时任务':'编辑触发配置'}"><b><span class="schedule-kind-tag ${assistant?'is-assistant':'is-dispatch'}">${kind}</span>${escapeHTML(j.name)}</b>${sharedScheduleRowInfo(j)}<span>${escapeHTML(scheduleJobTimingLabel(j))}${assistant?'':` · ${j.enabled?'已启用':'已停用'}`}${assistant?session:` · 单次最多 ${escapeHTML(j.maxDispatch||10)} 个需求`}${running?' · 正在运行':''}</span><small class="${running?'schedule-run-live':''}">${(j.lastRunAt&&!String(j.lastRunAt).startsWith('0001-'))||running?`最近：${new Date(j.lastRunAt||Date.now()).toLocaleString()}${extra}${status}`:'尚未运行'}</small></button>${sharedScheduleRowAction(j)}${latestBtn}${assistant?scheduleEnabledSwitchHTML(j):''}<button type="button" class="button ghost small" data-run-schedule="${escapeHTML(j.id)}" ${runDisabled?'disabled':''} ${runTitle?`title="${escapeHTML(runTitle)}"`:''}>${running?'运行中…':'立即运行'}</button>${scheduleRowMenuHTML(j)}</div>${assistant?'':scheduleBlockerHTML(j)}</div>`;
   };
   list.innerHTML=scheduleJobGroups(jobs).map(g=>g.jobs.length>1?scheduleJobGroupHTML(g,rowHTML):rowHTML(g.jobs[0])).join('')||'<div class="sync-empty">当前项目还没有 AI 定时任务，点击右上角「新建 AI 定时任务」。</div>';
@@ -869,6 +869,10 @@ function scheduleJobPollSignature(jobs, projectId){
 }
 function flushPendingScheduleAutoOpen(jobs){
   if(!pendingScheduleAutoOpen.size)return;
+  if(state.currentView&&state.currentView!=='aiSchedules'){
+    pendingScheduleAutoOpen.clear();
+    return;
+  }
   for(const job of jobs||[]){
     if(!pendingScheduleAutoOpen.has(job.id))continue;
     if(job.lastSessionId&&!job.lastSessionGone){

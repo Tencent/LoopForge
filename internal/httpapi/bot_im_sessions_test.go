@@ -100,8 +100,8 @@ func TestBotIMConversationsListDetailAndContinue(t *testing.T) {
 		ConversationID: convID,
 		SessionID:      "bot-sess-1",
 		SenderID:       "ou_lisi",
-		Content:        "/bind SECRET-CODE-999",
-		Reply:          "请打开 /bot-bind.html#request=SECRET-TOKEN",
+		Content:        "/bind BIND-CODE-MARK",
+		Reply:          "请打开 /bot-bind.html#request=BIND-LINK-MARK",
 		Status:         domain.BotReplied,
 		CreatedAt:      now,
 		UpdatedAt:      now,
@@ -181,7 +181,7 @@ func TestBotIMConversationsListDetailAndContinue(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &list); err != nil {
 		t.Fatal(err)
 	}
-	if len(list) != 1 || list[0].ID != convID || list[0].Channel != domain.BotChannelFeishu || list[0].ChatType != "group" || !strings.Contains(list[0].Preview, "构建失败") || strings.Contains(list[0].Preview, "SECRET") || list[0].SenderID != "ou_zhang" {
+	if len(list) != 1 || list[0].ID != convID || list[0].Channel != domain.BotChannelFeishu || list[0].ChatType != "group" || !strings.Contains(list[0].Preview, "构建失败") || strings.Contains(list[0].Preview, "BIND-CODE-MARK") || list[0].SenderID != "ou_zhang" {
 		t.Fatalf("owner list = %+v", list)
 	}
 

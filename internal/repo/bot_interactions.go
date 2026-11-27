@@ -552,17 +552,22 @@ func (r *BotInteractionsRepo) BotConversationInteractions(conversationID string,
 
 // RecentBotInteractionsByConversations returns recent interactions across the
 // given conversation IDs ordered newest first, selecting only display fields
-// (never reply routes) so callers can pick the newest non-binding preview.
+// (never reply routes) with a bounded row limit so callers can pick the newest
+// non-binding preview without scanning unbounded history.
 func (r *BotInteractionsRepo) RecentBotInteractionsByConversations(conversationIDs []string) ([]domain.BotInteraction, error) {
 	if len(conversationIDs) == 0 {
 		return []domain.BotInteraction{}, nil
+	}
+	limit := len(conversationIDs) * 8
+	if limit > 500 {
+		limit = 500
 	}
 	var rows []domain.BotInteraction
 	err := r.DB.Select(
 		"id", "bot_id", "conversation_id", "session_id", "sender_id",
 		"content", "quote", "action", "status", "reply", "last_error",
 		"created_at", "updated_at",
-	).Where("conversation_id IN ?", conversationIDs).Order("created_at desc, id desc").Find(&rows).Error
+	).Where("conversation_id IN ?", conversationIDs).Order("created_at desc, id desc").Limit(limit).Find(&rows).Error
 	return rows, err
 }
 
