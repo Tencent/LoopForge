@@ -1102,3 +1102,14 @@ Object.assign(window.LF_I18N_EN, {
   "团队共享 · 来自 ": "Team shared · from ",
   "当前项目还没有自建或复制的 SOP。可以新建，或从共享模板 / 通用模板复制一份后修改；项目默认 SOP 不在本列表单独占卡。": "No self-created or copied SOPs in this project yet. Create one, or copy from shared / general templates and edit it; the project default SOP does not get its own card here.",
 });
+Object.assign(window.LF_I18N_EN, {
+  "角色是供流程节点选用的 AI 岗位：一套职责、任务书、产物和门禁。创建后到「流程模板」为节点选择角色，流程里只选不改；本项目角色可共享给其他项目。": "Roles are AI positions that SOP steps pick: one set of duties, task brief, outputs and gates. After creating one, pick it for a step in “SOP templates”; SOPs pick roles but never edit them here. Project roles can be shared with other projects.",
+  "当前项目还没有角色。": "This project has no Roles yet.",
+  "角色供流程节点选用，例如「独立评审」：独立检查实现与风险，交付评审报告。创建后到「流程模板」为节点选择角色；也可以先浏览共享角色，复制一份再改。": "Roles are picked by SOP steps. Example: “Independent Review” — check implementation and risk independently, deliver a review report. After creating one, pick it for a step in “SOP templates”; or browse shared Roles and copy one to edit.",
+  "浏览共享角色": "Browse shared roles",
+  "没有匹配的角色。": "No matching Roles.",
+  "调整搜索关键词试试。": "Try a different search keyword.",
+  "没有匹配的共享角色。": "No matching shared Roles.",
+  "换个关键词，或回到项目角色。": "Try another keyword, or go back to project Roles.",
+  "请在角色所属项目中共享，或共享一个引用它的技能。": "Share the Role from its project, or share a skill that references it.",
+});

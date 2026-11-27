@@ -8,18 +8,30 @@ function renderAgents(){
   const query=($('#agentSearch')?.value||'').trim().toLowerCase(),agents=scopedAgents().filter(a=>!query||`${a.name} ${a.id} ${a.description} ${(a.rules||[]).join(' ')} ${(a.skills||[]).join(' ')}`.toLowerCase().includes(query));
   const used=new Map();(state.data.workflows||[]).forEach(w=>(w.nodes||[]).forEach(n=>{if(n.agentId)used.set(n.agentId,(used.get(n.agentId)||0)+1)}));
   $('#agentCatalogStats').innerHTML=`<span><b>${agents.length}</b> 个${state.agentScope==='shared'?'共享':'项目'}角色</span><span><b>${agents.reduce((n,a)=>n+(a.skills?.length||0),0)}</b> 项技能绑定</span><span><b>${agents.reduce((n,a)=>n+(a.mcpServers?.length||0),0)}</b> 个 MCP 连接</span>`;
-  const empty=state.agentScope==='shared'?'还没有共享给当前项目的角色。':'当前项目还没有角色。可以新建，或从共享角色复制后改。';
+  const searchEmpty=state.agentScope==='shared'
+    ?'<b>没有匹配的共享角色。</b><p>换个关键词，或回到项目角色。</p>'
+    :'<b>没有匹配的角色。</b><p>调整搜索关键词试试。</p>';
+  // #1370: the first-empty state explains what a role is for, gives a concrete
+  // work example, and points to the two ways to start plus where roles are used.
+  const firstEmpty=state.agentScope==='shared'
+    ?'<b>还没有共享给当前项目的角色。</b><p>请在角色所属项目中共享，或共享一个引用它的技能。</p>'
+    :'<b>当前项目还没有角色。</b><p>角色供流程节点选用，例如「独立评审」：独立检查实现与风险，交付评审报告。创建后到「流程模板」为节点选择角色；也可以先浏览共享角色，复制一份再改。</p><div class="catalog-empty-actions"><button type="button" class="button primary" data-agent-empty-new><svg class="agent-icon harness-icon" data-icon="plus" width="14" height="14" aria-hidden="true"></svg>新建角色</button><button type="button" class="button ghost" data-agent-empty-browse>浏览共享角色</button></div>';
   closeAgentRowMenu();
   state.agentUsage=used;
   const rows=agents.map(a=>{const exec=(state.data.executors||[]).find(x=>x.id===a.executorId);const model=a.model||exec?.model||exec?.name||'';const uses=used.get(a.id)||0;return`<div class="agent-row" role="button" tabindex="0" data-agent-id="${escapeHTML(a.id)}" title="${escapeHTML(`${a.id} · v${a.version||1}`)}"><div class="agent-row-who"><div><b>${escapeHTML(a.name)}</b>${agentRowTag(a)}<small>${escapeHTML(a.description||'未填写职责')}</small></div></div><div class="agent-row-model${model?'':' none'}">${escapeHTML(model||'未选模型')}</div><div class="agent-row-config agent-col-config">${agentConfigSummary(a)}</div><div class="agent-row-uses agent-col-uses${uses?'':' zero'}">${uses?`${uses} 个节点`:'未使用'}</div><div class="agent-row-more"><button type="button" class="agent-more-btn" data-agent-more="${escapeHTML(a.id)}" aria-label="更多操作" aria-haspopup="menu" aria-expanded="false"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg></button></div></div>`}).join('');
   const head='<div class="agent-row agent-row-head" aria-hidden="true"><div>角色</div><div>模型</div><div class="agent-col-config">配置</div><div class="agent-col-uses">引用</div><div></div></div>';
-  list.innerHTML=rows?head+rows:(query&&scopedAgents().length?'<div class="catalog-empty"><span>AI</span><b>没有匹配的角色。</b><p>调整搜索，或新建一个角色。</p></div>':`<div class="catalog-empty"><span>AI</span><b>${empty}</b><p>调整搜索，或新建一个角色。</p></div>`);
+  list.innerHTML=rows?head+rows:(query&&scopedAgents().length?`<div class="catalog-empty"><span>AI</span>${searchEmpty}</div>`:`<div class="catalog-empty"><span>AI</span>${firstEmpty}</div>`);
+  const emptyNew=list.querySelector('[data-agent-empty-new]');
+  if(emptyNew)emptyNew.onclick=()=>openAgentWizard();
+  const emptyBrowse=list.querySelector('[data-agent-empty-browse]');
+  if(emptyBrowse)emptyBrowse.onclick=()=>{state.agentScope='shared';renderAgents()};
   list.querySelectorAll('[data-agent-more]').forEach(btn=>btn.onclick=e=>{e.stopPropagation();openAgentRowMenu(btn,state.data.agents.find(a=>a.id===btn.dataset.agentMore))});
   list.querySelectorAll('.agent-row[data-agent-id]').forEach(row=>{
     const open=()=>openAgentWizard(state.data.agents.find(a=>a.id===row.dataset.agentId));
     row.onclick=open;
     row.onkeydown=e=>{if(e.target===row&&(e.key==='Enter'||e.key===' ')){e.preventDefault();open()}};
   });
+  window.AgentFlowHarnessIcons?.hydrate?.(list);
   syncTabIndicator($('#agentsView [data-scope-for="agent"]'));
 }
 function agentRowTag(a){

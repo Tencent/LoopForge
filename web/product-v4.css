@@ -3002,6 +3002,8 @@ html[data-theme="dark"] #runnersView .runner-runtime-icon:is(.codex,.claude-code
 #agentsView .agent-more-btn:hover,#agentsView .agent-more-btn[aria-expanded="true"]{background:var(--hu-overlay);color:var(--hu-text)}
 #agentsView .agent-more-btn:focus-visible{box-shadow:0 0 0 3px var(--hu-accent-soft)}
 #agentsView .agent-list-table .catalog-empty{margin-top:12px;padding:56px 0;border:0;background:transparent;box-shadow:none;text-align:center;color:var(--hu-muted)}
+#agentsView .catalog-empty-actions{display:flex;justify-content:center;gap:8px;margin-top:16px}
+#agentsView .catalog-empty-actions .button{height:32px;display:inline-flex;align-items:center;gap:6px}
 #agentsView .agent-row-menu{
   position:fixed;z-index:1200;min-width:168px;max-width:240px;padding:4px;box-sizing:border-box;
   border:1px solid var(--hu-border);border-radius:var(--hu-r-lg);background:var(--hu-surface);box-shadow:var(--hu-shadow);
