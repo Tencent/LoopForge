@@ -441,7 +441,7 @@ func TestEvolutionP0WatchAlignedWithSOPBatchSizeUnlocksNextRound(t *testing.T) {
 		ID: "evp-v2-watch", ProjectID: "evo-p", AssetKind: domain.EvoAssetAgent, AssetID: env.agent.ID,
 		AssetName: env.agent.Name, Title: "v2 已发布", Status: domain.EvoProposalReleased,
 		BaseContent: "old", BaseHash: "prevhash", CandidateContent: env.agent.Prompt,
-		ReleasedVersion: 2, DecidedAt: now.Add(-1 * time.Hour),
+		ReleasedVersion: 2, CreatedAt: now.Add(-2 * time.Hour), DecidedAt: now.Add(-1 * time.Hour),
 		Watch: &domain.EvoWatch{
 			Version: 2, Hash: liveHash, PrevVersion: 1, PrevHash: "prevhash",
 			MinRuns: 5, Status: domain.EvoWatchWatching, StartedAt: now.Add(-1 * time.Hour),
@@ -484,5 +484,52 @@ func TestEvolutionP0WatchAlignedWithSOPBatchSizeUnlocksNextRound(t *testing.T) {
 	updated, _ := env.store.EvoProposal(released.ID)
 	if updated.Watch.Status != domain.EvoWatchHealthy {
 		t.Fatalf("expected watch to settle as healthy at 5/5, got %+v", updated.Watch)
+	}
+
+	// Regression: if a previous attempt while watch was active left a "queued" row
+	// for the SOP's open finding, auto-batch must promote that queued item once
+	// the asset is free instead of staying stuck in queued forever!
+	f := domain.EvoFinding{
+		ID: "evf-stale-queue", ProjectID: "evo-p", AssetKind: domain.EvoAssetAgent, AssetID: env.agent.ID,
+		AssetName: env.agent.Name, WorkflowIDs: []string{env.wf.ID}, Title: "优化 Token",
+		Status: domain.EvoFindingOpen, SampleRunIDs: []string{"watch-r-a"},
+		Signals: []domain.EvoSignal{{RunID: "watch-r-a", NodeID: "code", Kind: evolution.SignalSOPPreference, Detail: "高消耗"}},
+	}
+	if err := env.store.PutEvoFinding(f); err != nil {
+		t.Fatal(err)
+	}
+	// Put a busy watch temporarily so SubmitEvoProposal creates a genuine "queued" item.
+	busyProp := updated
+	busyProp.Watch.Status = domain.EvoWatchWatching
+	if err := env.store.PutEvoProposal(busyProp); err != nil {
+		t.Fatal(err)
+	}
+	_, queued, _, err := env.store.SubmitEvoProposal(domain.EvoProposal{
+		ID: "evp-temp", ProjectID: "evo-p", FindingID: f.ID, AssetKind: domain.EvoAssetAgent, AssetID: env.agent.ID,
+		AssetName: env.agent.Name, Status: domain.EvoProposalDrafting, CreatedBy: env.user.ID,
+	}, "evq-stale-1", "")
+	if err != nil || queued == nil {
+		t.Fatalf("expected queued item while watch active, got queued=%+v err=%v", queued, err)
+	}
+
+	called := make(chan struct{}, 1)
+	setEvoImproveForTest(func(context.Context, domain.EvoProposal, string, string, domain.User) (string, error) {
+		select {
+		case called <- struct{}{}:
+		default:
+		}
+		return "", context.Canceled
+	})
+	t.Cleanup(func() { setEvoImproveForTest(nil) })
+
+	// Now sweepSOPBatches: settles the 5/5 watch AND auto-promotes evq-stale-1!
+	env.h.sweepSOPBatches(now)
+	select {
+	case <-called:
+	case <-time.After(3 * time.Second):
+		t.Fatal("stale queued item was not auto-promoted after watch settled")
+	}
+	if q, ok := env.store.EvoQueueItem("evq-stale-1"); !ok || q.Status != "started" {
+		t.Fatalf("expected stale queue item to become started, got %+v", q)
 	}
 }

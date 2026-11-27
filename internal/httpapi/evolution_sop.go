@@ -469,10 +469,12 @@ func (h *evolutionHandlers) checkSOPBatchAutoTriggerWithRuns(policy domain.EvoSO
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	if _, _, created, err := h.startSOPOptimization(ctx, policy.ProjectID, wf.ID, resolvedModel, user, true); err != nil {
+	if _, queued, created, err := h.startSOPOptimization(ctx, policy.ProjectID, wf.ID, resolvedModel, user, true); err != nil {
 		log.Printf("evolution sop auto-batch %s/%s: %v", policy.ProjectID, wf.ID, err)
 	} else if created {
 		log.Printf("evolution sop auto-batch triggered optimization for %s/%s (%d/%d runs)", policy.ProjectID, wf.ID, pending, policy.BatchSize)
+	} else if queued != nil {
+		log.Printf("evolution sop auto-batch %s/%s queued (%s): asset busy", policy.ProjectID, wf.ID, queued.ID)
 	}
 }
 
@@ -804,6 +806,17 @@ func (h *evolutionHandlers) startSOPOptimization(ctx context.Context, projectID,
 	p, queued, created, err := h.repo.SubmitEvoProposal(p, "evq-"+randomID(), "")
 	if err != nil {
 		return domain.EvoProposal{}, nil, false, err
+	}
+	// If a prior attempt left a "queued" item while the asset was in post-release
+	// watch or busy, and the asset is now free, promote that queued item cleanly
+	// using the freshly re-authorized actor and latest asset baseline.
+	if queued != nil {
+		if _, busy, berr := h.repo.CurrentEvoProposalForAsset(p.AssetKind, p.AssetID); berr == nil && !busy {
+			promoted, promotedQueue, promotedCreated, perr := h.repo.SubmitEvoProposal(p, "", queued.ID)
+			if perr == nil {
+				p, queued, created = promoted, promotedQueue, promotedCreated
+			}
+		}
 	}
 	if queued != nil {
 		return p, queued, false, nil
