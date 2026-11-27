@@ -803,6 +803,8 @@ func (h *evolutionHandlers) sweepProposal(p domain.EvoProposal, now time.Time) d
 	timeout := evoDurationEnv("AGENTFLOW_EVOLUTION_REPLAY_TIMEOUT", evoDefaultReplayTimeout)
 	grace := evoDurationEnv("AGENTFLOW_EVOLUTION_WAIT_GRACE", evoDefaultWaitGrace)
 	asset, assetOK := h.loadAsset(p.AssetKind, p.AssetID)
+	sopAssertions := h.proposalSOPAssertions(p)
+	sopBaseline := h.proposalSOPBaseline(p)
 	replays := h.repo.EvoReplays(p.ID)
 	if len(replays) < p.ExpectedReplays {
 		if now.Sub(p.UpdatedAt) > timeout {
@@ -837,6 +839,24 @@ func (h *evolutionHandlers) sweepProposal(p domain.EvoProposal, now time.Time) d
 				if run.Status == "cancelled" {
 					blockReplay(r, now, firstNonEmpty(r.Error, "回放运行被取消"))
 					break
+				}
+				// Layer 2 hard gate: evaluate SOP outcome assertions first.
+				if len(sopAssertions) > 0 {
+					rep := evolution.EvaluateRunAssertionsForSource(run, r.SourceRunID, sopAssertions)
+					r.AssertionReport = &rep
+					if rep.Configured && !rep.AllPassed {
+						r.Score = 0
+						r.Outcome = domain.EvoOutcomeRegressed
+						r.Error = "结果验收未通过：" + formatFailedAssertionReasons(rep)
+						break
+					}
+				}
+				// Layer 1 deterministic process score for paired comparison.
+				repPS := evolution.ScoreRunProcess(run, sopBaseline)
+				r.ReplayProcessScore = &repPS
+				if srcRun, okSrc := h.repo.RunState(r.SourceRunID); okSrc {
+					srcPS := evolution.ScoreRunProcess(srcRun, sopBaseline)
+					r.SourceProcessScore = &srcPS
 				}
 				r.Outcome = evolution.Outcome(r.SourceScore, score)
 				if assetOK && r.Outcome == domain.EvoOutcomeRegressed && evoFeedbackSampleGroup(*r) {
@@ -952,8 +972,17 @@ func (h *evolutionHandlers) sweepProposal(p domain.EvoProposal, now time.Time) d
 		if p.Status == domain.EvoProposalFailed {
 			h.recordSOPProposalOutcome(p, false, p.Error, now)
 		}
+		if p.Status == domain.EvoProposalPending && p.SemanticJudge == nil && p.Summary.AssertionsFailed == 0 && p.Summary.ProcessDelta > -5 && p.Summary.ProcessDelta < 5 {
+			if actor, ok := h.resolveRefineActor(p); ok {
+				replaysCopy := append([]domain.EvoReplay(nil), replays...)
+				go h.attachSemanticJudge(p.ID, replaysCopy, actor)
+			}
+		}
 		if p.Status == domain.EvoProposalPending && assetOK && h.autoEvolution(asset) {
-			if started, err := h.startCanary(p, asset, 0, 0, 0, "L3 自动开始试用", true); err == nil {
+			if allowed, reason := h.proposalAllowsAutoRelease(p); !allowed {
+				p.AutoReleaseBlocked = reason
+				_ = h.repo.PutEvoProposal(p)
+			} else if started, err := h.startCanary(p, asset, 0, 0, 0, "L3 自动开始试用", true); err == nil {
 				started.Replays = replays
 				return started
 			} else {

@@ -239,12 +239,15 @@ type EvoReplay struct {
 	Overrides    EvoAssetOverride `json:"overrides"`
 	// ReusedNodes are source-run nodes the replay took over instead of
 	// re-executing; empty means the whole SOP was replayed.
-	ReusedNodes        []string               `json:"reusedNodes,omitempty"`
-	SourceMeasurements *EvoReplayMeasurements `json:"sourceMeasurements,omitempty"`
-	ReplayMeasurements *EvoReplayMeasurements `json:"replayMeasurements,omitempty"`
-	StartedAt          time.Time              `json:"startedAt,omitempty"`
-	FinishedAt         time.Time              `json:"finishedAt,omitempty"`
-	WaitingSince       time.Time              `json:"waitingSince,omitempty"`
+	ReusedNodes        []string                `json:"reusedNodes,omitempty"`
+	SourceMeasurements *EvoReplayMeasurements  `json:"sourceMeasurements,omitempty"`
+	ReplayMeasurements *EvoReplayMeasurements  `json:"replayMeasurements,omitempty"`
+	SourceProcessScore *EvoRunProcessScore     `json:"sourceProcessScore,omitempty"`
+	ReplayProcessScore *EvoRunProcessScore     `json:"replayProcessScore,omitempty"`
+	AssertionReport    *EvoRunAssertionReport  `json:"assertionReport,omitempty"`
+	StartedAt          time.Time               `json:"startedAt,omitempty"`
+	FinishedAt         time.Time               `json:"finishedAt,omitempty"`
+	WaitingSince       time.Time               `json:"waitingSince,omitempty"`
 }
 
 // EvoReplayMeasurements compare only the executed scope of each side.
@@ -267,20 +270,24 @@ func (o EvoAssetOverride) Empty() bool {
 // EvoReplaySummary is the verdict over all replays of one proposal.
 // Keep all fields comparable value types so proposal change detection works by value.
 type EvoReplaySummary struct {
-	Total        int     `json:"total"`
-	Finished     int     `json:"finished"`
-	Fixed        int     `json:"fixed"`
-	Regressed    int     `json:"regressed"`
-	Unchanged    int     `json:"unchanged"`
-	Changed      int     `json:"changed"`
-	Blocked      int     `json:"blocked"`
-	Passed       bool    `json:"passed"`
-	Verdict      string  `json:"verdict,omitempty"`
-	GoalMetric   string  `json:"goalMetric,omitempty"`
-	GoalBefore   float64 `json:"goalBefore,omitempty"`
-	GoalAfter    float64 `json:"goalAfter,omitempty"`
-	GoalDeltaPct float64 `json:"goalDeltaPct,omitempty"`
-	GoalMet      bool    `json:"goalMet,omitempty"`
+	Total            int     `json:"total"`
+	Finished         int     `json:"finished"`
+	Fixed            int     `json:"fixed"`
+	Regressed        int     `json:"regressed"`
+	Unchanged        int     `json:"unchanged"`
+	Changed          int     `json:"changed"`
+	Blocked          int     `json:"blocked"`
+	AssertionsFailed int     `json:"assertionsFailed,omitempty"`
+	ProcessBefore    float64 `json:"processBefore,omitempty"`
+	ProcessAfter     float64 `json:"processAfter,omitempty"`
+	ProcessDelta     float64 `json:"processDelta,omitempty"`
+	Passed           bool    `json:"passed"`
+	Verdict          string  `json:"verdict,omitempty"`
+	GoalMetric       string  `json:"goalMetric,omitempty"`
+	GoalBefore       float64 `json:"goalBefore,omitempty"`
+	GoalAfter        float64 `json:"goalAfter,omitempty"`
+	GoalDeltaPct     float64 `json:"goalDeltaPct,omitempty"`
+	GoalMet          bool    `json:"goalMet,omitempty"`
 }
 
 // EvoRefineAttempt records one completed reflection-and-refinement iteration
@@ -334,10 +341,12 @@ type EvoProposal struct {
 	CandidateContent string           `json:"candidateContent,omitempty"`
 	Status           string           `json:"status"`
 	Model            string           `json:"model,omitempty"`
-	Replays          []EvoReplay      `json:"replays,omitempty"`
-	ExpectedReplays  int              `json:"expectedReplays,omitempty"`
-	Summary          EvoReplaySummary `json:"summary"`
-	Error            string           `json:"error,omitempty"`
+	Replays            []EvoReplay            `json:"replays,omitempty"`
+	ExpectedReplays    int                    `json:"expectedReplays,omitempty"`
+	Summary            EvoReplaySummary       `json:"summary"`
+	SemanticJudge      *EvoSemanticComparison `json:"semanticJudge,omitempty"`
+	AutoReleaseBlocked string                 `json:"autoReleaseBlocked,omitempty"`
+	Error              string                 `json:"error,omitempty"`
 	CreatedBy        int64            `json:"createdBy,omitempty"`
 	DecidedBy        int64            `json:"decidedBy,omitempty"`
 	DecisionNote     string           `json:"decisionNote,omitempty"`
@@ -560,21 +569,140 @@ const (
 	EvoPrefClean    = "clean"
 )
 
+// Three-layer scorer version & assertion kinds.
+// TargetScope keeps assertions extensible to future mutable SOP targets (e.g. script nodes, tools).
+const (
+	EvoScorerVersion = "v1.0"
+
+	EvoAssertArtifactExists = "artifact_exists"
+	EvoAssertJSONValid      = "json_valid"
+	EvoAssertJSONField      = "json_field"
+	EvoAssertOutputRegex    = "output_regex"
+	EvoAssertGateVerdict    = "gate_verdict"
+	EvoAssertCommandExit    = "command_exit"
+)
+
+// EvoSOPScoreBaseline is the frozen per-SOP historical anchor for Layer 1
+// deterministic relative scoring.
+type EvoSOPScoreBaseline struct {
+	ScorerVersion     string    `json:"scorerVersion"`
+	FrozenAt          time.Time `json:"frozenAt,omitempty"`
+	SampleRuns        int       `json:"sampleRuns"`
+	BaselineReady     bool      `json:"baselineReady"`
+	MedianTokens      int64     `json:"medianTokens,omitempty"`
+	MedianTools       float64   `json:"medianTools,omitempty"`
+	MedianDurationSec float64   `json:"medianDurationSec,omitempty"`
+	BaselineScore     int       `json:"baselineScore"`
+}
+
+// EvoScoreDeduction traces a single Layer 1 score gain or penalty to a concrete
+// run metric or execution event so every point is auditable.
+type EvoScoreDeduction struct {
+	Dimension string `json:"dimension"` // control | latency | tools | tokens | recovery | delivery
+	Label     string `json:"label"`
+	Delta     int    `json:"delta"` // positive bonus or negative deduction
+	Reason    string `json:"reason"`
+	RunID     string `json:"runId,omitempty"`
+	NodeID    string `json:"nodeId,omitempty"`
+	EventRef  string `json:"eventRef,omitempty"`
+}
+
+// EvoRunProcessScore is the Layer 1 pure-rule deterministic 0..100 score of one run.
+type EvoRunProcessScore struct {
+	ScorerVersion string              `json:"scorerVersion"`
+	Score         int                 `json:"score"`
+	BaselineReady bool                `json:"baselineReady"`
+	Dimensions    map[string]int      `json:"dimensions,omitempty"`
+	Deductions    []EvoScoreDeduction `json:"deductions,omitempty"`
+}
+
+// EvoSOPAssertion is one Layer 2 declarative hard-gate outcome check configured
+// per SOP (typically generated from a single user sentence and backtested).
+type EvoSOPAssertion struct {
+	ID             string    `json:"id"`
+	Name           string    `json:"name"`
+	Kind           string    `json:"kind"` // artifact_exists | json_valid | json_field | output_regex | gate_verdict | command_exit
+	TargetScope    string    `json:"targetScope,omitempty"` // "" / "sop" / "node:<id>" / "script:<id>"
+	Enabled        bool      `json:"enabled"`
+	Path           string    `json:"path,omitempty"`
+	RequiredFields []string  `json:"requiredFields,omitempty"`
+	FieldPath      string    `json:"fieldPath,omitempty"`
+	AllowedValues  []string  `json:"allowedValues,omitempty"`
+	ExpectedValue  string    `json:"expectedValue,omitempty"`
+	Regex          string    `json:"regex,omitempty"`
+	Contains       []string  `json:"contains,omitempty"`
+	SampleRunID    string    `json:"sampleRunId,omitempty"` // non-empty => golden sample expectation
+	Prompt         string    `json:"prompt,omitempty"`      // original one-sentence user input
+	Expression     string    `json:"expression,omitempty"`
+	CreatedAt      time.Time `json:"createdAt,omitempty"`
+}
+
+// EvoAssertionResult is the pass/fail result of one Layer 2 assertion on one run.
+type EvoAssertionResult struct {
+	AssertionID string `json:"assertionId"`
+	Name        string `json:"name"`
+	Kind        string `json:"kind"`
+	Passed      bool   `json:"passed"`
+	Detail      string `json:"detail,omitempty"`
+}
+
+// EvoRunAssertionReport aggregates all Layer 2 assertions evaluated on a run.
+type EvoRunAssertionReport struct {
+	Configured bool                 `json:"configured"`
+	Total      int                  `json:"total"`
+	Passed     int                  `json:"passed"`
+	AllPassed  bool                 `json:"allPassed"`
+	Results    []EvoAssertionResult `json:"results,omitempty"`
+}
+
+// EvoAssertionBacktest verifies a generated assertion against recent clean runs
+// before the user adds it, preventing false-negative rules.
+type EvoAssertionBacktest struct {
+	Assertion  EvoSOPAssertion `json:"assertion"`
+	Expression string          `json:"expression"`
+	TestedRuns int             `json:"testedRuns"`
+	PassedRuns int             `json:"passedRuns"`
+	AllPassed  bool            `json:"allPassed"`
+	Details    []string        `json:"details,omitempty"`
+}
+
+// EvoSemanticCheckItem is one binary yes/no criterion in Layer 3 AI comparison.
+type EvoSemanticCheckItem struct {
+	Criterion string `json:"criterion"`
+	OldPass   bool   `json:"oldPass"`
+	NewPass   bool   `json:"newPass"`
+}
+
+// EvoSemanticComparison is Layer 3 stabilized AI reference (swapped A/B pairwise
+// double evaluation). It is displayed separately and never overwrites Layer 1.
+type EvoSemanticComparison struct {
+	Model        string                 `json:"model,omitempty"`
+	Round1Winner string                 `json:"round1Winner,omitempty"` // old | new | tie
+	Round2Winner string                 `json:"round2Winner,omitempty"` // old | new | tie
+	Consistent   bool                   `json:"consistent"`
+	Winner       string                 `json:"winner"` // new | old | tie | inconsistent
+	Checklist    []EvoSemanticCheckItem `json:"checklist,omitempty"`
+	Summary      string                 `json:"summary,omitempty"`
+}
+
 // EvoSOPPolicy configures per-SOP evolution switch, multi-select preferences,
-// and batch trigger size (default 10 runs, adjustable per SOP).
+// batch trigger size (default 10 runs, adjustable per SOP), optional Layer 2
+// outcome assertions, and frozen Layer 1 baseline anchor.
 type EvoSOPPolicy struct {
-	WorkflowID        string    `json:"workflowId"`
-	ProjectID         string    `json:"projectId"`
-	Enabled           bool      `json:"enabled"`
-	Preferences       []string  `json:"preferences"`
-	BatchSize         int       `json:"batchSize"`
-	Model             string    `json:"model,omitempty"`
-	ConsecutiveNoGain int       `json:"consecutiveNoGain,omitempty"`
-	SleepStage        int       `json:"sleepStage,omitempty"`
-	SleepingUntil     time.Time `json:"sleepingUntil,omitempty"`
-	SleepReason       string    `json:"sleepReason,omitempty"`
-	UpdatedBy         int64     `json:"updatedBy,omitempty"`
-	UpdatedAt         time.Time `json:"updatedAt,omitempty"`
+	WorkflowID        string               `json:"workflowId"`
+	ProjectID         string               `json:"projectId"`
+	Enabled           bool                 `json:"enabled"`
+	Preferences       []string             `json:"preferences"`
+	BatchSize         int                  `json:"batchSize"`
+	Model             string               `json:"model,omitempty"`
+	Assertions        []EvoSOPAssertion    `json:"assertions,omitempty"`
+	ScoreBaseline     *EvoSOPScoreBaseline `json:"scoreBaseline,omitempty"`
+	ConsecutiveNoGain int                  `json:"consecutiveNoGain,omitempty"`
+	SleepStage        int                  `json:"sleepStage,omitempty"`
+	SleepingUntil     time.Time            `json:"sleepingUntil,omitempty"`
+	SleepReason       string               `json:"sleepReason,omitempty"`
+	UpdatedBy         int64                `json:"updatedBy,omitempty"`
+	UpdatedAt         time.Time            `json:"updatedAt,omitempty"`
 }
 
 func DefaultEvoSOPPolicy(projectID, workflowID string) EvoSOPPolicy {
@@ -589,17 +717,24 @@ func DefaultEvoSOPPolicy(projectID, workflowID string) EvoSOPPolicy {
 
 // EvoSOPMetrics summarizes core execution metrics and computed SOP score.
 type EvoSOPMetrics struct {
-	Runs        int     `json:"runs"`
-	TotalTokens int64   `json:"totalTokens"`
-	AvgTokens   int64   `json:"avgTokens"`
-	TotalTools  int     `json:"totalTools"`
-	AvgTools    float64 `json:"avgTools"`
-	AvgDuration float64 `json:"avgDuration"` // seconds
-	CleanCount  int     `json:"cleanCount"`
-	CleanRate   float64 `json:"cleanRate"`
-	Score       *int    `json:"score,omitempty"`
-	ScoredRuns  int     `json:"scoredRuns"`
-	ScoreSource string  `json:"scoreSource,omitempty"` // "eval" | "heuristic"
+	Runs              int                 `json:"runs"`
+	TotalTokens       int64               `json:"totalTokens"`
+	AvgTokens         int64               `json:"avgTokens"`
+	TotalTools        int                 `json:"totalTools"`
+	AvgTools          float64             `json:"avgTools"`
+	AvgDuration       float64             `json:"avgDuration"` // seconds
+	CleanCount        int                 `json:"cleanCount"`
+	CleanRate         float64             `json:"cleanRate"`
+	Score             *int                `json:"score,omitempty"`
+	ScoredRuns        int                 `json:"scoredRuns"`
+	ScoreSource       string              `json:"scoreSource,omitempty"` // "process_v1" | "heuristic" | "eval"
+	ScorerVersion     string              `json:"scorerVersion,omitempty"`
+	BaselineScore     *int                `json:"baselineScore,omitempty"`
+	BaselineReady     bool                `json:"baselineReady,omitempty"`
+	AssertionChecked  int                 `json:"assertionChecked,omitempty"`
+	AssertionPassed   int                 `json:"assertionPassed,omitempty"`
+	AssertionPassRate *float64            `json:"assertionPassRate,omitempty"`
+	Deductions        []EvoScoreDeduction `json:"deductions,omitempty"`
 }
 
 // EvoSOPVersionPoint is one historical SOP version row for the trend chart/table.
@@ -688,9 +823,12 @@ type EvoSOPSummary struct {
 	SleepReason       string        `json:"sleepReason,omitempty"`
 	AutoBlockReason   string        `json:"autoBlockReason,omitempty"`
 	LastRunNote       string        `json:"lastRunNote,omitempty"`
-	LatestMetrics    EvoSOPMetrics `json:"latestMetrics"`
-	ActiveProposalID string        `json:"activeProposalId,omitempty"`
-	OpenFindings     int           `json:"openFindings,omitempty"`
+	LatestMetrics      EvoSOPMetrics        `json:"latestMetrics"`
+	AssertionCount     int                  `json:"assertionCount,omitempty"`
+	AutoReleaseAllowed bool                 `json:"autoReleaseAllowed,omitempty"`
+	ScoreBaseline      *EvoSOPScoreBaseline `json:"scoreBaseline,omitempty"`
+	ActiveProposalID   string               `json:"activeProposalId,omitempty"`
+	OpenFindings       int                  `json:"openFindings,omitempty"`
 }
 
 // EvoSOPExternalEdit records an edit to an SOP's role/rule made outside RSI
@@ -717,8 +855,10 @@ type EvoSOPDetail struct {
 	BatchMetrics   *EvoSOPMetrics       `json:"batchMetrics,omitempty"`
 	Problems       []EvoSOPProblemItem  `json:"problems,omitempty"`
 	ChangeFiles    []EvoSOPChangeFile   `json:"changeFiles,omitempty"`
-	RecentEdits    []EvoSOPExternalEdit `json:"recentEdits,omitempty"`
-	Assets         []EvoSOPAssetRef     `json:"assets,omitempty"`
+	RecentEdits      []EvoSOPExternalEdit `json:"recentEdits,omitempty"`
+	Assets           []EvoSOPAssetRef     `json:"assets,omitempty"`
+	Assertions       []EvoSOPAssertion    `json:"assertions,omitempty"`
+	LatestScoreTrace []EvoScoreDeduction  `json:"latestScoreTrace,omitempty"`
 }
 
 // EvoOverview is the 进化中心 dashboard payload.

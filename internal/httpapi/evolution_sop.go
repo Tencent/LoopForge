@@ -913,9 +913,10 @@ func (h *evolutionHandlers) buildSOPDetail(projectID, workflowID string, days in
 	}
 
 	summary, ctx := h.computeSOPSummary(projectID, wf, policy, projectModel, runs, evals, detections, signals, findings, proposals)
+	baseline := evolution.EffectiveSOPScoreBaseline(policy, ctx.sopRuns)
 	recentEdits := h.collectSOPExternalEdits(wf, ctx.sopRuns)
 	assets := h.collectSOPAssets(projectID, wf, ctx.sopRuns)
-	versions := evolution.BuildSOPVersions(wf, ctx.sopRuns, evals, policy.BatchSize)
+	versions := evolution.BuildSOPVersionsWithScorer(wf, ctx.sopRuns, baseline, policy.Assertions, policy.BatchSize)
 	if len(assets) > 0 && assets[0].VersionCount >= 2 {
 		primary := assets[0]
 		assetVers := h.repo.AssetVersions(primary.Kind, primary.ID)
@@ -930,11 +931,11 @@ func (h *evolutionHandlers) buildSOPDetail(projectID, workflowID string, days in
 				}
 			}
 		}
-		versions = evolution.SplitSOPVersionsByAssetHistory(wf, versions, ctx.sopRuns, evals, primary, assetVers, runPinVer, policy.BatchSize)
+		versions = evolution.SplitSOPVersionsByAssetHistoryWithScorer(wf, versions, ctx.sopRuns, baseline, policy.Assertions, primary, assetVers, runPinVer, policy.BatchSize)
 	} else {
-		versions = evolution.SplitSOPVersionsWithExternalEdits(wf, versions, ctx.sopRuns, evals, recentEdits, policy.BatchSize)
+		versions = evolution.SplitSOPVersionsWithExternalEditsWithScorer(wf, versions, ctx.sopRuns, baseline, policy.Assertions, recentEdits, policy.BatchSize)
 	}
-	grayRounds := h.buildSOPGrayRounds(projectID, wf, ctx.sopProposals, evals)
+	grayRounds := h.buildSOPGrayRounds(projectID, wf, ctx.sopProposals, baseline, policy.Assertions)
 
 	var activeFull *domain.EvoProposal
 	var lastFull *domain.EvoProposal
@@ -965,20 +966,28 @@ func (h *evolutionHandlers) buildSOPDetail(projectID, workflowID string, days in
 	if len(batchSlice) > policy.BatchSize {
 		batchSlice = batchSlice[:policy.BatchSize]
 	}
-	batchMetrics := evolution.SummarizeSOPRuns(batchSlice, evals)
+	batchMetrics := evolution.SummarizeSOPRunsWithScorer(batchSlice, baseline, policy.Assertions)
 	problems := evolution.BuildSOPProblems(ctx.sopFindings, ctx.sopSignals, policy.Preferences, changeSource)
 
+	var latestTrace []domain.EvoScoreDeduction
+	if len(ctx.sopRuns) > 0 {
+		ps := evolution.ScoreRunProcess(ctx.sopRuns[0], baseline)
+		latestTrace = ps.Deductions
+	}
+
 	return domain.EvoSOPDetail{
-		EvoSOPSummary:  summary,
-		Versions:       versions,
-		GrayRounds:     grayRounds,
-		ActiveProposal: activeFull,
-		LastProposal:   lastFull,
-		BatchMetrics:   &batchMetrics,
-		Problems:       problems,
-		ChangeFiles:    changeFiles,
-		RecentEdits:    recentEdits,
-		Assets:         assets,
+		EvoSOPSummary:    summary,
+		Versions:         versions,
+		GrayRounds:       grayRounds,
+		ActiveProposal:   activeFull,
+		LastProposal:     lastFull,
+		BatchMetrics:     &batchMetrics,
+		Problems:         problems,
+		ChangeFiles:      changeFiles,
+		RecentEdits:      recentEdits,
+		Assets:           assets,
+		Assertions:       policy.Assertions,
+		LatestScoreTrace: latestTrace,
 	}, true
 }
 
@@ -1161,7 +1170,9 @@ func (h *evolutionHandlers) computeSOPSummary(
 	if len(batchSlice) > policy.BatchSize {
 		batchSlice = batchSlice[:policy.BatchSize]
 	}
-	latestMetrics := evolution.SummarizeSOPRuns(batchSlice, evals)
+	baseline := evolution.EffectiveSOPScoreBaseline(policy, sopRuns)
+	latestMetrics := evolution.SummarizeSOPRunsWithScorer(batchSlice, baseline, policy.Assertions)
+	assertionCount := len(evolution.ActiveSOPAssertions(policy.Assertions))
 
 	var lastRun *domain.Run
 	var lastDetection *domain.RunEvalRecord
@@ -1233,10 +1244,13 @@ func (h *evolutionHandlers) computeSOPSummary(
 		SleepingUntil:     policy.SleepingUntil,
 		SleepReason:       policy.SleepReason,
 		AutoBlockReason:   autoBlockReason,
-		LastRunNote:       lastNote,
-		LatestMetrics:     latestMetrics,
-		ActiveProposalID:  activeID,
-		OpenFindings:      openFindings,
+		LastRunNote:        lastNote,
+		LatestMetrics:      latestMetrics,
+		AssertionCount:     assertionCount,
+		AutoReleaseAllowed: assertionCount > 0,
+		ScoreBaseline:      baseline,
+		ActiveProposalID:   activeID,
+		OpenFindings:       openFindings,
 	}
 	if summary.WorkflowName == "" {
 		summary.WorkflowName = wf.ID
@@ -1335,7 +1349,8 @@ func (h *evolutionHandlers) buildSOPGrayRounds(
 	projectID string,
 	wf domain.WorkflowDefinition,
 	proposals []domain.EvoProposal,
-	evals map[string]domain.RunEvalRecord,
+	baseline *domain.EvoSOPScoreBaseline,
+	assertions []domain.EvoSOPAssertion,
 ) []domain.EvoSOPGrayRound {
 	var canaryProps []domain.EvoProposal
 	for _, p := range proposals {
@@ -1380,11 +1395,6 @@ func (h *evolutionHandlers) buildSOPGrayRounds(
 			if !loaded || !domain.TerminalRunStatus(run.Status) || run.ExecutionContext.IsEvolutionReplay() || h.runProject(run) != projectID || run.WorkflowID != wf.ID {
 				continue
 			}
-			if _, ok := evals[run.ID]; !ok {
-				if rec, ok := h.repo.LatestRunEval(run.ID); ok && rec.Status == domain.RunEvalSucceeded && !rec.SOPDetection {
-					evals[run.ID] = rec
-				}
-			}
 			switch pin.Hash {
 			case p.BaseHash:
 				ctrlRuns = append(ctrlRuns, run)
@@ -1393,8 +1403,8 @@ func (h *evolutionHandlers) buildSOPGrayRounds(
 			}
 		}
 
-		ctrlMetrics := evolution.SummarizeSOPRuns(ctrlRuns, evals)
-		candMetrics := evolution.SummarizeSOPRuns(candRuns, evals)
+		ctrlMetrics := evolution.SummarizeSOPRunsWithScorer(ctrlRuns, baseline, assertions)
+		candMetrics := evolution.SummarizeSOPRunsWithScorer(candRuns, baseline, assertions)
 		if ctrlMetrics.Runs == 0 && candMetrics.Runs == 0 && p.Status != domain.EvoProposalCanary {
 			continue
 		}
@@ -1418,10 +1428,7 @@ func (h *evolutionHandlers) buildSOPGrayRounds(
 		}
 		recent := make([]domain.EvoSOPGrayRunEvent, 0, len(tagged))
 		for _, tr := range tagged {
-			s := evolution.ComputeRunHeuristicScore(tr.run)
-			if rec, ok := evals[tr.run.ID]; ok && rec.Status == domain.RunEvalSucceeded && !rec.SOPDetection {
-				s = rec.Score
-			}
+			s := evolution.ScoreRunProcess(tr.run, baseline).Score
 			recent = append(recent, domain.EvoSOPGrayRunEvent{
 				RunID:    tr.run.ID,
 				Group:    tr.group,

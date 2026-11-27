@@ -42,7 +42,7 @@ const { createDOM } = require('./hui_fake_dom');
     dom.load(path.join(__dirname, file));
   }
 
-  const api = dom.run('({evo, evoSOPState, evoHomeHTML, evoSOPDetailHTML, evoSOPOpenPrefDialog, evoSOPPrefMove, evoSOPPrefToggle, evoSOPPrefApplyPreset, evoSOPSyncPrefModelUI, evoSOPSavePolicy})');
+  const api = dom.run('({evo, evoSOPState, evoHomeHTML, evoSOPDetailHTML, evoSOPAssertDialogHTML, evoSOPOpenAssertDialog, evoSOPGenerateAssertions, evoSOPSaveAssertions, evoSOPOpenPrefDialog, evoSOPPrefMove, evoSOPPrefToggle, evoSOPPrefApplyPreset, evoSOPSyncPrefModelUI, evoSOPSavePolicy})');
   const { evo } = api;
   evo.projectId = 'p';
   evo.overview = {
@@ -267,7 +267,60 @@ const { createDOM } = require('./hui_fake_dom');
   dom.run('evoRender()');
   assert.ok(w.$('#evoSOPDetection'), 'must allow turning off already-enabled legacy project SOP detection');
 
-  console.log('evolution sop: clean home/detail, fixed switch scope, side-by-side diff, close icon, and standalone model picker passed');
+  // 6. Three-layer scorer UI: default-hidden assertion entry, process_v1 trace, and one-sentence generate+save dialog.
+  const staticDetail = {
+    ...detailPayload,
+    assertionCount: 0,
+    autoReleaseAllowed: false,
+    assertions: [],
+    latestMetrics: { ...detailPayload.latestMetrics, score: 86, scoreSource: 'process_v1', scorerVersion: 'v1.0', baselineReady: true, baselineScore: 77 },
+    versions: [
+      { version: 'v3', current: true, metrics: { ...detailPayload.latestMetrics, score: 86, scoreSource: 'process_v1', scorerVersion: 'v1.0', baselineReady: true, baselineScore: 77 } },
+    ],
+    latestScoreTrace: [
+      { dimension: 'tokens', label: '省 Token', delta: 6, reason: 'Token 140k（较基线 200k 降 30%），加 6 分' },
+      { dimension: 'tools', label: '重复调用', delta: -2, reason: '重复工具调用（read_file ×3），扣 2 分' },
+    ],
+  };
+  const staticHTML = api.evoSOPDetailHTML({ workflowId: 'wf-bug', tab: 'trend', scope: 'versions', metric: 'score', traceOpen: true, detail: staticDetail });
+  assert.match(staticHTML, /结果验收 · 未配置/, 'header shows compact assertion entry closed by default');
+  assert.doesNotMatch(staticHTML, /id="evoSopAssertPrompt"/, 'assertion form must stay hidden from default SOP detail view');
+  assert.match(staticHTML, /纯规则 v1\.0 · 基线 77/);
+  assert.match(staticHTML, /evo-sop-trace-strip/);
+  assert.match(staticHTML, /重复工具调用（read_file ×3），扣 2 分/);
+
+  api.evoSOPState.view = { workflowId: 'wf-bug', tab: 'trend', scope: 'versions', metric: 'score', detail: staticDetail, seq: 1 };
+  dom.html(`<section id="evolutionView" class="active"><div id="evolutionBody">${staticHTML}${api.evoSOPAssertDialogHTML()}</div></section>`);
+  api.evoSOPOpenAssertDialog('wf-bug');
+  const assertCalls = [];
+  w.api = async (url, options = {}) => {
+    assertCalls.push({ url, method: options.method || 'GET', body: options.body ? JSON.parse(options.body) : null });
+    if (url.includes('/assertions/generate')) {
+      return {
+        source: 'rule',
+        candidates: [{
+          assertion: { id: 'eva-1', kind: 'json_valid', name: '必须产出合法 triage.json', enabled: true, path: 'triage.json', expression: 'artifact("triage.json").isValidJSON()' },
+          expression: 'artifact("triage.json").isValidJSON()',
+          testedRuns: 3,
+          passedRuns: 3,
+          allPassed: true,
+        }],
+      };
+    }
+    if (url.includes('/assertions')) {
+      return { assertions: [{ id: 'eva-1', kind: 'json_valid', enabled: true }], assertionCount: 1, autoReleaseAllowed: true };
+    }
+    return staticDetail;
+  };
+  await api.evoSOPGenerateAssertions('必须生成 triage.json');
+  assert.equal(api.evoSOPState.assertTarget.candidates.length, 1);
+  assert.match(w.$('#evoSopAssertCandidates').textContent, /历史回测 3\/3 ✓/);
+  api.evoSOPState.assertTarget.assertions.push(api.evoSOPState.assertTarget.candidates[0].assertion);
+  const savedAssert = await api.evoSOPSaveAssertions();
+  assert.equal(savedAssert.autoReleaseAllowed, true);
+  assert.match(assertCalls.find(c => c.method === 'PUT').url, /\/api\/evolution\/sops\/wf-bug\/assertions$/);
+
+  console.log('evolution sop: clean home/detail, fixed switch scope, side-by-side diff, close icon, standalone model picker, and three-layer scorer passed');
 })().catch(error => {
   console.error(error);
   process.exitCode = 1;

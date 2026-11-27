@@ -613,6 +613,39 @@ func SplitSOPVersionsByAssetHistory(
 	runPinVersion map[string]int,
 	batchSize int,
 ) []domain.EvoSOPVersionPoint {
+	return splitSOPVersionsByAssetHistoryWith(wf, points, runs, asset, versions, runPinVersion, batchSize, func(group []domain.Run) domain.EvoSOPMetrics {
+		return SummarizeSOPRuns(group, evals)
+	})
+}
+
+// SplitSOPVersionsByAssetHistoryWithScorer is the Layer 1 deterministic scorer
+// variant of SplitSOPVersionsByAssetHistory.
+func SplitSOPVersionsByAssetHistoryWithScorer(
+	wf domain.WorkflowDefinition,
+	points []domain.EvoSOPVersionPoint,
+	runs []domain.Run,
+	baseline *domain.EvoSOPScoreBaseline,
+	assertions []domain.EvoSOPAssertion,
+	asset domain.EvoSOPAssetRef,
+	versions []domain.AssetVersion,
+	runPinVersion map[string]int,
+	batchSize int,
+) []domain.EvoSOPVersionPoint {
+	return splitSOPVersionsByAssetHistoryWith(wf, points, runs, asset, versions, runPinVersion, batchSize, func(group []domain.Run) domain.EvoSOPMetrics {
+		return SummarizeSOPRunsWithScorer(group, baseline, assertions)
+	})
+}
+
+func splitSOPVersionsByAssetHistoryWith(
+	wf domain.WorkflowDefinition,
+	points []domain.EvoSOPVersionPoint,
+	runs []domain.Run,
+	asset domain.EvoSOPAssetRef,
+	versions []domain.AssetVersion,
+	runPinVersion map[string]int,
+	batchSize int,
+	summarize func([]domain.Run) domain.EvoSOPMetrics,
+) []domain.EvoSOPVersionPoint {
 	if len(points) == 0 || len(versions) < 2 || strings.TrimSpace(asset.ID) == "" {
 		return points
 	}
@@ -724,7 +757,7 @@ func SplitSOPVersionsByAssetHistory(
 			AssetID:         asset.ID,
 			AssetName:       asset.Name,
 			RollbackVersion: rollbackVer,
-			Metrics:         SummarizeSOPRuns(group, evals),
+			Metrics:         summarize(group),
 		})
 	}
 
@@ -779,6 +812,35 @@ func SplitSOPVersionsWithExternalEdits(
 	evals map[string]domain.RunEvalRecord,
 	edits []domain.EvoSOPExternalEdit,
 	batchSize int,
+) []domain.EvoSOPVersionPoint {
+	return splitSOPVersionsWithExternalEditsWith(wf, points, runs, edits, batchSize, func(group []domain.Run) domain.EvoSOPMetrics {
+		return SummarizeSOPRuns(group, evals)
+	})
+}
+
+// SplitSOPVersionsWithExternalEditsWithScorer is the Layer 1 deterministic
+// scorer variant of SplitSOPVersionsWithExternalEdits.
+func SplitSOPVersionsWithExternalEditsWithScorer(
+	wf domain.WorkflowDefinition,
+	points []domain.EvoSOPVersionPoint,
+	runs []domain.Run,
+	baseline *domain.EvoSOPScoreBaseline,
+	assertions []domain.EvoSOPAssertion,
+	edits []domain.EvoSOPExternalEdit,
+	batchSize int,
+) []domain.EvoSOPVersionPoint {
+	return splitSOPVersionsWithExternalEditsWith(wf, points, runs, edits, batchSize, func(group []domain.Run) domain.EvoSOPMetrics {
+		return SummarizeSOPRunsWithScorer(group, baseline, assertions)
+	})
+}
+
+func splitSOPVersionsWithExternalEditsWith(
+	wf domain.WorkflowDefinition,
+	points []domain.EvoSOPVersionPoint,
+	runs []domain.Run,
+	edits []domain.EvoSOPExternalEdit,
+	batchSize int,
+	summarize func([]domain.Run) domain.EvoSOPMetrics,
 ) []domain.EvoSOPVersionPoint {
 	if len(points) == 0 || len(edits) == 0 {
 		return points
@@ -862,7 +924,7 @@ func SplitSOPVersionsWithExternalEdits(
 	}
 
 	out[curIdx].Current = false
-	out[curIdx].Metrics = SummarizeSOPRuns(before, evals)
+	out[curIdx].Metrics = summarize(before)
 	if prevAssetVer > 0 {
 		out[curIdx].AssetKind = latestEdit.AssetKind
 		out[curIdx].AssetID = latestEdit.AssetID
@@ -877,7 +939,7 @@ func SplitSOPVersionsWithExternalEdits(
 		AssetKind:  latestEdit.AssetKind,
 		AssetID:    latestEdit.AssetID,
 		AssetName:  latestEdit.AssetName,
-		Metrics:    SummarizeSOPRuns(after, evals),
+		Metrics:    summarize(after),
 	}
 	// Insert right after curIdx.
 	res := make([]domain.EvoSOPVersionPoint, 0, len(out)+1)

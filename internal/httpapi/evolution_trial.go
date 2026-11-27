@@ -213,6 +213,13 @@ func (h *evolutionHandlers) sweepCanary(p domain.EvoProposal, now time.Time) dom
 		p, _ = h.repo.EvoProposal(p.ID)
 	}
 	if p.Canary.Status == domain.EvoCanaryPassed && h.autoEvolution(asset) {
+		if allowed, reason := h.proposalAllowsAutoRelease(p); !allowed {
+			if p.AutoReleaseBlocked != reason {
+				p.AutoReleaseBlocked = reason
+				_ = h.repo.PutEvoProposal(p)
+			}
+			return p
+		}
 		released, err := h.releaseProposal(p, asset, 0, "L3 自动全量："+verdict, false)
 		if err != nil {
 			log.Printf("evolution trial %s auto release: %v", p.ID, err)

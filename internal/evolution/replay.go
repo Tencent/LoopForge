@@ -105,6 +105,9 @@ func SummarizeWithPreferences(replays []domain.EvoReplay, preferences []string) 
 			continue
 		}
 		s.Finished++
+		if r.AssertionReport != nil && r.AssertionReport.Configured && !r.AssertionReport.AllPassed {
+			s.AssertionsFailed++
+		}
 		switch r.Outcome {
 		case domain.EvoOutcomeFixed:
 			s.Fixed++
@@ -117,6 +120,11 @@ func SummarizeWithPreferences(replays []domain.EvoReplay, preferences []string) 
 		default:
 			s.Unchanged++
 		}
+	}
+	if hasProc, procBefore, procAfter, procDelta := evaluateReplayProcessScore(replays); hasProc {
+		s.ProcessBefore = procBefore
+		s.ProcessAfter = procAfter
+		s.ProcessDelta = procDelta
 	}
 	if s.Total == 0 {
 		s.Verdict = "没有可回放的样本"
@@ -141,6 +149,9 @@ func SummarizeWithPreferences(replays []domain.EvoReplay, preferences []string) 
 	goalLabel, goalCmp := formatGoalComparison(goalMetric, goalBefore, goalAfter, goalDeltaPct)
 
 	switch {
+	case s.AssertionsFailed > 0:
+		s.Passed = false
+		s.Verdict = fmt.Sprintf("未通过（L2 结果验收拦截）：%d 个回放样本未通过配置的结果断言", s.AssertionsFailed)
 	case judged == 0:
 		s.Verdict = "全部回放被人工节点或异常阻塞，无法判定"
 	case fixable == 0 && s.Regressed == 0 && hasGoal:
@@ -173,10 +184,40 @@ func SummarizeWithPreferences(replays []domain.EvoReplay, preferences []string) 
 	default:
 		s.Verdict = fmt.Sprintf("未通过：修好 %d，回归 %d", s.Fixed, s.Regressed)
 	}
+	if s.ProcessDelta != 0 && s.AssertionsFailed == 0 && judged > 0 {
+		sign := ""
+		if s.ProcessDelta > 0 {
+			sign = "+"
+		}
+		s.Verdict += fmt.Sprintf("；过程分 %.0f → %.0f（%s%.1f）", s.ProcessBefore, s.ProcessAfter, sign, s.ProcessDelta)
+	}
 	if s.Blocked > 0 {
 		s.Verdict += fmt.Sprintf("；%d 个样本被阻塞", s.Blocked)
 	}
 	return s
+}
+
+func evaluateReplayProcessScore(replays []domain.EvoReplay) (ok bool, before, after, delta float64) {
+	var sumBefore, sumAfter float64
+	count := 0
+	for _, r := range replays {
+		if r.Outcome == "" || r.Outcome == domain.EvoOutcomeBlocked {
+			continue
+		}
+		if r.SourceProcessScore == nil || r.ReplayProcessScore == nil {
+			continue
+		}
+		sumBefore += float64(r.SourceProcessScore.Score)
+		sumAfter += float64(r.ReplayProcessScore.Score)
+		count++
+	}
+	if count == 0 {
+		return false, 0, 0, 0
+	}
+	before = round1(sumBefore / float64(count))
+	after = round1(sumAfter / float64(count))
+	delta = round1(after - before)
+	return true, before, after, delta
 }
 
 func primaryEfficiencyPreference(preferences []string) string {
