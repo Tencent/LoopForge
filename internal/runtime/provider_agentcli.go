@@ -175,6 +175,12 @@ func agentCLICommand(kind string, o AgentCLICommandOptions, input *AgentCLIConve
 		binary = AgentCLIBinary(kind)
 	}
 	model := strings.TrimSpace(o.Model)
+	// "default" is an API sentinel, not a provider model ID. Let the CLI
+	// choose its own default (or let credential validation request a concrete
+	// model for custom endpoints) instead of emitting agentflow/default.
+	if model == "default" {
+		model = ""
+	}
 	effort := strings.TrimSpace(o.Effort)
 	resume := strings.TrimSpace(o.Resume)
 	prompt := o.Prompt

@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/repo"
+	"agentflow/internal/runtime"
 )
 
 func TestAssistantModelPickerOmitsCodeBuddyCLIDefault(t *testing.T) {
@@ -38,6 +40,32 @@ func TestAssistantModelPickerOmitsCodeBuddyCLIDefault(t *testing.T) {
 	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &unconfigured) != nil ||
 		unconfigured.Default != assistantDefaultModel || unconfigured.Models == nil || len(unconfigured.Models) != 0 {
 		t.Fatalf("unconfigured picker: %d %s", rec.Code, rec.Body)
+	}
+}
+
+func TestCustomExecutorModelPickerUsesPersonalModels(t *testing.T) {
+	h, user := workbenchFixture(t)
+	baseURL := "https://gateway.example/v1"
+	models := []domain.CLIModel{
+		{ID: "self-use-models", Name: "Self-Use-Models"},
+		{ID: "haid-use-models", Name: "Haid-Use-Models"},
+	}
+	user, err := h.repo.UpdateUserCredentials(user.ID, repo.UserCredentialUpdate{
+		AgentCLICredentials: map[string]repo.AgentCLICredentialUpdate{
+			runtime.AgentCLIPi: {APIKey: "fixture-pi-key", BaseURL: &baseURL, Models: &models},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, rec := workbenchContext(user, http.MethodGet, "/api/assistant/models?executor=pi", bytes.NewBuffer(nil))
+	h.models(c)
+	var catalog assistantModelCatalog
+	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &catalog) != nil {
+		t.Fatalf("personal CLI catalog: %d %s", rec.Code, rec.Body)
+	}
+	if len(catalog.Models) != 2 || catalog.Models[0].ID != "self-use-models" || catalog.Models[1].ID != "haid-use-models" {
+		t.Fatalf("personal models were dropped: %+v", catalog)
 	}
 }
 

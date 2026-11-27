@@ -396,6 +396,10 @@ func ApplyAgentCLICredential(kind string, cred ProviderCredential, options Agent
 		return nil, nil, fmt.Errorf("%s 需要在个人配置中填写 Base URL", AgentCLILabel(kind))
 	}
 	model := strings.TrimSpace(options.Model)
+	if model == "default" {
+		model = ""
+		options.Model = ""
+	}
 	if model == "" && !agentCLIModelOptional(kind, baseURL) {
 		return nil, nil, fmt.Errorf("%s 需要指定模型", AgentCLILabel(kind))
 	}
