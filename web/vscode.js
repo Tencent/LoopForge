@@ -24,7 +24,8 @@
   desktop.disabled = true;
   desktop.onclick = () => {
     const hex = value => Array.from(new TextEncoder().encode(value), byte => byte.toString(16).padStart(2, '0')).join('');
-    location.href = 'vscode://vscode-remote/ssh-remote+loopforge-' + hex(location.origin) + '-' + hex(runId) + '/workspace';
+    // The Run record embeds this toolbar under the platform's frame-src policy.
+    window.top.location.href = 'vscode://vscode-remote/ssh-remote+loopforge-' + hex(location.origin) + '-' + hex(runId) + '/workspace';
   };
   // Opening the IDE in its own window used to hide behind the status bar
   // corner; embedded views now offer it right in the toolbar.

@@ -69,7 +69,11 @@ async function openIDE({ status, readOnly = false, preparation, conversation = f
   const commands = [];
   let startWorkbench;
   window.URLSearchParams = URLSearchParams;
-  window.location = new URL('https://ide.test/vscode.html?run=test&embed=1');
+  window.TextEncoder = TextEncoder;
+  const workbenchLocation = new URL('https://ide.test/vscode.html?run=test&embed=1');
+  const topLocation = new URL('https://ide.test/');
+  window.location = workbenchLocation;
+  window.top = { location: topLocation };
   if (conversation) window.location.searchParams.set('source', 'conversation');
   window.require = (_modules, start) => {
     startWorkbench = () => start({
@@ -101,7 +105,7 @@ async function openIDE({ status, readOnly = false, preparation, conversation = f
     terminal: document.querySelector('button[aria-label="新建终端"]'),
     desktop: document.querySelector('button[aria-label^="在桌面 VS Code 打开"]'),
     status: document.querySelector('.vscode-toolbar-status'),
-    preparationMethods, commands, startWorkbench, settle: dom.settle
+    topLocation, workbenchLocation, preparationMethods, commands, startWorkbench, settle: dom.settle
   };
 }
 
@@ -112,6 +116,10 @@ async function openIDE({ status, readOnly = false, preparation, conversation = f
   warm.startWorkbench();
   assert.equal(warm.terminal.disabled, false);
   assert.equal(warm.desktop.disabled, false, 'a run record can still launch the desktop app');
+  warm.desktop.onclick();
+  const origin = Buffer.from('https://ide.test').toString('hex');
+  assert.equal(warm.topLocation.href, 'vscode://vscode-remote/ssh-remote+loopforge-' + origin + '-74657374/workspace');
+  assert.equal(warm.workbenchLocation.href, 'https://ide.test/vscode.html?run=test&embed=1');
   warm.terminal.onclick();
   assert.deepEqual(warm.commands, ['agentflow.newTerminal']);
 

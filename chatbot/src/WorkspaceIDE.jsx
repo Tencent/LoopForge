@@ -57,9 +57,11 @@ export function WorkspaceIDEPicker({ runId, desktopIDE, onOpenOnline }) {
         </span>
         <HarnessIcon name="chevron-right" className="workspace-ide-option-arrow" size={16} interactive={false} />
       </button>
+      {/* The platform's frame-src policy blocks custom schemes inside the chat iframe. */}
       <a
         className="workspace-ide-option"
         href={desktopURL || undefined}
+        target={desktopURL ? "_top" : undefined}
         role={desktopURL ? undefined : "link"}
         aria-disabled={!desktopURL || undefined}
         aria-labelledby="desktop-ide-label"

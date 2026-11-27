@@ -32,6 +32,7 @@ describe("side panel IDE tab", () => {
     const desktop = choices.getByRole("link", { name: "本地 Visual Studio Code" });
     const origin = Buffer.from(window.location.origin).toString("hex");
     expect(desktop).toHaveAttribute("href", `vscode://vscode-remote/ssh-remote+loopforge-${origin}-72756e2d39/workspace`);
+    expect(desktop).toHaveAttribute("target", "_top");
     expect(screen.queryByLabelText("VS Code")).not.toBeInTheDocument();
 
     fireEvent.click(choices.getByRole("button", { name: "在线 IDE" }));
@@ -62,6 +63,7 @@ describe("side panel IDE tab", () => {
     const desktop = screen.getByRole("link", { name: "本地 Visual Studio Code" });
     expect(desktop).toHaveAttribute("aria-disabled", "true");
     expect(desktop).not.toHaveAttribute("href");
+    expect(desktop).not.toHaveAttribute("target");
     expect(desktop).toHaveAccessibleDescription("桌面连接需要工作区编辑权限");
     expect(screen.getByRole("button", { name: "在线 IDE" })).toBeEnabled();
   });
