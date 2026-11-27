@@ -77,7 +77,7 @@ html[data-theme="dark"] {
  * 弹窗：#agentModal #customMcpModal #scheduleModal #requirementModal（新建需求向导，布局见 requirement-wizard.css）
  * #flowView 与工作区其他页面不在列表内。
  */
-:is(#issuesView, #assetsView, #approvalsView, #observabilityView, #obsExpand, .obs-source-dialog, #mcpView, #botsView, #assistantView, #aiSchedulesView, #projectCredentialsView, #scheduleModal, #sharedSchedulePublishModal, #sharedScheduleVersionModal, #evolutionView, #knowledgeView, #kbDrawer, #requirementModal, .hui-select-panel, .issue-action-popover) {
+:is(#issuesView, #assetsView, #approvalsView, #observabilityView, #obsExpand, .obs-source-dialog, #mcpView, #botsView, #assistantView, #aiSchedulesView, #projectCredentialsView, #scheduleModal, #sharedSchedulePublishModal, #sharedScheduleVersionModal, #evolutionView, #knowledgeView, #kbDrawer, #kbConnDrawer, #requirementModal, .hui-select-panel, .issue-action-popover) {
   font-family: var(--hui-sans);
   color: var(--hui-text);
   -webkit-font-smoothing: antialiased;
@@ -169,7 +169,7 @@ html[data-theme="dark"] {
 :is(#issuesView, #assetsView, #approvalsView, #mcpView, #botsView, #assistantView, #aiSchedulesView, #projectCredentialsView, #scheduleModal, #sharedSchedulePublishModal, #sharedScheduleVersionModal) .button.hui-icon-button { width: 32px; padding: 0; }
 
 :is(#issuesView, #assetsView, #approvalsView, #mcpView, #botsView, #assistantView, #aiSchedulesView, #projectCredentialsView, #scheduleModal, #sharedSchedulePublishModal, #sharedScheduleVersionModal, #settingsView, #projectsView, #runnersView, #agentsView, #metricsView, #businessDomainsView, #guideView, #platformView, #businessDomainManagementView, #agentModal, #customMcpModal, #requirementModal, .pw-root) .button,
-:is(#evolutionView, #knowledgeView, #kbDrawer) .kb-btn {
+:is(#evolutionView, #knowledgeView, #kbDrawer, #kbConnDrawer) .kb-btn {
   border: 1px solid var(--hui-border-strong);
   border-radius: 7px;
   background: var(--hui-surface);
@@ -180,7 +180,7 @@ html[data-theme="dark"] {
   transition: background-color .18s var(--hui-ease-flow), color .18s var(--hui-ease-flow), border-color .18s var(--hui-ease-flow);
 }
 :is(#issuesView, #assetsView, #approvalsView, #mcpView, #botsView, #assistantView, #aiSchedulesView, #projectCredentialsView, #scheduleModal, #sharedSchedulePublishModal, #sharedScheduleVersionModal, #settingsView, #projectsView, #runnersView, #agentsView, #metricsView, #businessDomainsView, #guideView, #platformView, #businessDomainManagementView, #agentModal, #customMcpModal, #requirementModal, .pw-root) .button:hover:not(:disabled),
-:is(#evolutionView, #knowledgeView, #kbDrawer) .kb-btn:hover:not(:disabled) {
+:is(#evolutionView, #knowledgeView, #kbDrawer, #kbConnDrawer) .kb-btn:hover:not(:disabled) {
   border-color: var(--hui-border-strong);
   background: var(--hui-canvas);
   color: var(--hui-text);
@@ -188,17 +188,17 @@ html[data-theme="dark"] {
   transform: none;
 }
 :is(#issuesView, #assetsView, #approvalsView, #mcpView, #botsView, #assistantView, #aiSchedulesView, #projectCredentialsView, #scheduleModal, #sharedSchedulePublishModal, #sharedScheduleVersionModal, #settingsView, #projectsView, #runnersView, #agentsView, #metricsView, #businessDomainsView, #guideView, #platformView, #businessDomainManagementView, #agentModal, #customMcpModal, #requirementModal, .pw-root) .button:focus-visible,
-:is(#evolutionView, #knowledgeView, #kbDrawer) .kb-btn:focus-visible,
+:is(#evolutionView, #knowledgeView, #kbDrawer, #kbConnDrawer) .kb-btn:focus-visible,
 .credential-btn:focus-visible {
   outline: 2px solid var(--hui-focus-ring);
   outline-offset: 1px;
 }
 :is(#issuesView, #assetsView, #approvalsView, #mcpView, #botsView, #assistantView, #aiSchedulesView, #projectCredentialsView, #scheduleModal, #sharedSchedulePublishModal, #sharedScheduleVersionModal, #settingsView, #projectsView, #runnersView, #agentsView, #metricsView, #businessDomainsView, #guideView, #platformView, #businessDomainManagementView, #agentModal, #customMcpModal, #requirementModal, .pw-root) .button:disabled,
-:is(#evolutionView, #knowledgeView, #kbDrawer) .kb-btn:disabled { opacity: .45; cursor: not-allowed; }
+:is(#evolutionView, #knowledgeView, #kbDrawer, #kbConnDrawer) .kb-btn:disabled { opacity: .45; cursor: not-allowed; }
 
 /* 实心强调：每页只有一个页面级主操作（弹窗/抽屉内另计） */
 :is(#issuesView, #assetsView, #approvalsView, #mcpView, #botsView, #assistantView, #aiSchedulesView, #projectCredentialsView, #scheduleModal, #sharedSchedulePublishModal, #sharedScheduleVersionModal, #settingsView, #projectsView, #runnersView, #agentsView, #metricsView, #businessDomainsView, #guideView, #platformView, #businessDomainManagementView, #agentModal, #customMcpModal, #requirementModal, .pw-root) :is(.button.primary, .button.dark),
-:is(#evolutionView, #knowledgeView, #kbDrawer) .kb-btn.primary,
+:is(#evolutionView, #knowledgeView, #kbDrawer, #kbConnDrawer) .kb-btn.primary,
 #issuesView #newIssue,
 .credential-btn.primary {
   border-color: var(--hui-accent);
@@ -206,7 +206,7 @@ html[data-theme="dark"] {
   color: var(--hui-on-accent);
 }
 :is(#issuesView, #assetsView, #approvalsView, #mcpView, #botsView, #assistantView, #aiSchedulesView, #projectCredentialsView, #scheduleModal, #sharedSchedulePublishModal, #sharedScheduleVersionModal, #settingsView, #projectsView, #runnersView, #agentsView, #metricsView, #businessDomainsView, #guideView, #platformView, #businessDomainManagementView, #agentModal, #customMcpModal, #requirementModal, .pw-root) :is(.button.primary, .button.dark):hover:not(:disabled),
-:is(#evolutionView, #knowledgeView, #kbDrawer) .kb-btn.primary:hover:not(:disabled),
+:is(#evolutionView, #knowledgeView, #kbDrawer, #kbConnDrawer) .kb-btn.primary:hover:not(:disabled),
 #issuesView #newIssue:hover,
 .credential-btn.primary:hover:not(:disabled) {
   border-color: var(--hui-accent-hover);
@@ -315,7 +315,7 @@ html[data-theme="dark"] {
 .hui-input,
 #botsContent :is(.input, .select),
 #projectCredentialsView :is(.input, .select),
-:is(#evolutionView, #knowledgeView, #kbDrawer) .kb-input,
+:is(#evolutionView, #knowledgeView, #kbDrawer, #kbConnDrawer) .kb-input,
 :is(#settingsView, #projectsView, #runnersView, #agentsView, #metricsView, #businessDomainsView, #guideView, #platformView, #businessDomainManagementView, #agentModal, #requirementModal, #sharedSchedulePublishModal, #sharedScheduleVersionModal, .pw-root, .credential-scrim) :is(.input, .select, .textarea) {
   border: 1px solid var(--hui-border-strong);
   border-radius: 8px;
@@ -324,11 +324,11 @@ html[data-theme="dark"] {
   box-shadow: none;
   transition: border-color .15s ease, box-shadow .15s ease;
 }
-:is(.hui-input, #botsContent .input, #projectCredentialsView .input, :is(#evolutionView, #knowledgeView, #kbDrawer) .kb-input, :is(#settingsView, #projectsView, #runnersView, #agentsView, #metricsView, #businessDomainsView, #guideView, #platformView, #businessDomainManagementView, #agentModal, #requirementModal, #sharedSchedulePublishModal, #sharedScheduleVersionModal, .pw-root, .credential-scrim) :is(.input, .select, .textarea))::placeholder { color: var(--hui-tertiary); }
+:is(.hui-input, #botsContent .input, #projectCredentialsView .input, :is(#evolutionView, #knowledgeView, #kbDrawer, #kbConnDrawer) .kb-input, :is(#settingsView, #projectsView, #runnersView, #agentsView, #metricsView, #businessDomainsView, #guideView, #platformView, #businessDomainManagementView, #agentModal, #requirementModal, #sharedSchedulePublishModal, #sharedScheduleVersionModal, .pw-root, .credential-scrim) :is(.input, .select, .textarea))::placeholder { color: var(--hui-tertiary); }
 .hui-input:focus,
 #botsContent :is(.input, .select):focus,
 #projectCredentialsView :is(.input, .select):focus,
-:is(#evolutionView, #knowledgeView, #kbDrawer) .kb-input:focus,
+:is(#evolutionView, #knowledgeView, #kbDrawer, #kbConnDrawer) .kb-input:focus,
 :is(#settingsView, #projectsView, #runnersView, #agentsView, #metricsView, #businessDomainsView, #guideView, #platformView, #businessDomainManagementView, #agentModal, #requirementModal, #sharedSchedulePublishModal, #sharedScheduleVersionModal, .pw-root, .credential-scrim) :is(.input, .select, .textarea):focus {
   outline: 0;
   border-color: var(--hui-accent);

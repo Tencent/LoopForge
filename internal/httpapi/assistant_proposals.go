@@ -451,7 +451,7 @@ func (h *assistantHandlers) decideProposal(c *gin.Context) {
 	if body.Decision != domain.AssistantProposalAccepted && draft.Proposal.Timing == assistantProposalStart {
 		followUp = &assistantProposalFollowUp{Text: assistantProposalDeclinedText}
 	}
-	c.JSON(200, gin.H{"session": stored, "followUp": followUp})
+	c.JSON(200, gin.H{"session": sanitizeAssistantSessionForViewer(stored, user.ID), "followUp": followUp})
 }
 
 const assistantProposalDeclinedText = "不走 LOOP，这件事由你直接完成。"
