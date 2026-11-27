@@ -1458,6 +1458,16 @@ func assistantPlanProse(line string) bool {
 	if assistantPlanTargetIn(line) {
 		return true
 	}
+	// "拿到 token 后调用接口", "扫描到本地目录后比较差异" or "等拿到权限再
+	// 部署" names what a step waits for: the 到 is a precondition, not
+	// something found. "部署完成后接口返回 200" turns out to report what
+	// followed, so it is no plan either.
+	if plan, matched := assistantPlanStatesPrecondition(line); matched {
+		if !plan {
+			return false
+		}
+		return !assistantPlanStatesTotal(line) && !assistantPlanStatesStatus(line)
+	}
 	// A plan lead-in ("先…", "最后…", "第一步：…", "Step 1: …") opens a step
 	// unless the line is one of the forms that report what was found: a
 	// report header, a stated total, a status that closes a clause, a
@@ -1467,11 +1477,6 @@ func assistantPlanProse(line string) bool {
 		if strings.HasPrefix(line, lead) {
 			return !assistantPlanStatesTotal(line) && !assistantPlanStatesStatus(line)
 		}
-	}
-	// "拿到 token 后调用接口" or "等拿到权限再部署" names what a step waits
-	// for: the 到 is a precondition, not something found.
-	if assistantPlanStatesPrecondition(line) {
-		return !assistantPlanStatesTotal(line) && !assistantPlanStatesStatus(line)
 	}
 	// An action word names a step only before any result it might be
 	// reporting ("接口看着正常" reports the state 正常). A line with a count
@@ -1556,35 +1561,64 @@ func assistantPlanStatusIsObject(before, status string) bool {
 	return false
 }
 
-// assistantPlanPrecondition matches a 到 the next step waits for, as in "拿到
-// token 后调用接口", "读到文件末尾后统计行数", "收到回调之后更新状态" or "等
-// 拿到权限再部署".
-var assistantPlanPrecondition = regexp.MustCompile(`(?:查|找|看|搜|拿|读|取|收|得)到[^，,。；;！!：:]*?(?:之后|以后|后|再|才)`)
+// assistantPlanPrecondition matches a condition the next step waits for, as in
+// "拿到 token 后调用接口", "扫描到本地目录后比较差异", "部署完成后验证接口是否
+// 正常" or "等拿到权限再部署". It is any verb with the completive 到 or a
+// completion (完成/结束/完毕) followed by a temporal 后/再/才.
+var assistantPlanPrecondition = regexp.MustCompile(`(?:\p{Han}到|完成|结束|完毕)[^，,。；;！!：:]*?(?:之后|以后|后|再|才)`)
+
+// assistantPlanEventStart is a past-tense event: "检查到一半后报错" reports
+// what happened, it does not plan a step after the 报错.
+var assistantPlanEventStart = []string{"报错", "崩溃", "挂掉", "挂了", "中断", "退出", "卡住", "卡死"}
 
 // assistantPlanFinding follows a precondition in a report of what it turned
 // up: "查到原因后发现是配置错误".
 var assistantPlanFinding = []string{"发现", "显示", "表明", "原因是", "结论", "确认是", "原来"}
 
+// assistantPlanCheckTarget is an interrogative tail: it asks about the state
+// the step checks ("验证接口是否正常") instead of reporting it.
+var assistantPlanCheckTarget = []string{"是否", "有没有", "能否", "会不会"}
+
+func assistantPlanCheckTargetIn(line string) bool {
+	for _, target := range assistantPlanCheckTarget {
+		if strings.Contains(line, target) {
+			return true
+		}
+	}
+	return false
+}
+
 // assistantPlanStatesPrecondition reports whether line plans a step after a
-// precondition it waits for. Words that start with 后 (后端, 后续…) do not
-// close one.
-func assistantPlanStatesPrecondition(line string) bool {
+// precondition it waits for. matched reports whether the line names such a
+// precondition at all, so a caller can rule the line out instead of judging it
+// by its action word. Words that start with 后 (后端, 后续…) do not close one.
+func assistantPlanStatesPrecondition(line string) (plan, matched bool) {
 	masked := line
 	for _, word := range []string{"后端", "后台", "后续", "后面", "后者", "后缀", "后果", "后门", "后来", "再次"} {
 		masked = strings.ReplaceAll(masked, word, strings.Repeat("·", utf8.RuneCountInString(word)))
 	}
 	loc := assistantPlanPrecondition.FindStringIndex(masked)
 	if loc == nil {
-		return false
+		return false, false
 	}
 	rest := masked[loc[1]:]
+	// "部署完成后验证接口是否正常" still asks rather than reports; "查到对
+	// 应提交后，确认是 abc123 引入的" reports what the check found.
+	if assistantPlanCheckTargetIn(rest) {
+		return true, true
+	}
+	for _, event := range assistantPlanEventStart {
+		if strings.HasPrefix(strings.TrimSpace(rest), event) {
+			return false, true
+		}
+	}
 	for _, finding := range assistantPlanFinding {
 		if strings.Contains(rest, finding) {
-			return false
+			return false, true
 		}
 	}
 	// "拿到 token 后接口返回 200" reports what followed.
-	return assistantPlanResultStart(rest, true) == len(rest)
+	return assistantPlanResultStart(rest, true) == len(rest), true
 }
 
 // assistantPlanResultStart returns where the first result word of line

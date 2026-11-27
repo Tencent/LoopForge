@@ -207,6 +207,9 @@ func TestAssistantMultiLinePlanBeforeToolsStillContinues(t *testing.T) {
 		{"status as object", "status-object-step", `我先看一下。\n先看日志，再定位报错。`},
 		{"clean complement", "clean-complement-step", `我先看一下。\n先把环境清干净，再跑测试。`},
 		{"run until", "run-until-step", `我先看一下。\n修到测试全部通过为止。`},
+		{"scan precondition", "scan-precondition-step", `我先看一下。\n扫描到本地目录后比较差异。`},
+		{"completion precondition", "completion-step", `我先看一下。\n下载完成后运行脚本。`},
+		{"completion check", "completion-check-step", `我先看一下。\n部署完成后验证接口是否正常。`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			runMultiLinePlanCase(t, tc.session, tc.plan, "2", "均在正常运行")
@@ -223,6 +226,7 @@ func TestAssistantPlanOpeningWithVerdictIsTheAnswer(t *testing.T) {
 	runMultiLinePlanCase(t, "found-answer", `我先查一下。\n查到 3 个失败用例。`, "1", "查到 3 个失败用例")
 	runMultiLinePlanCase(t, "status-answer", `我先看一下。\n接口超时。`, "1", "接口超时")
 	runMultiLinePlanCase(t, "clean-state-answer", `我先看一下。\n工作区已经干净。`, "1", "工作区已经干净")
+	runMultiLinePlanCase(t, "completion-answer", `我先看一下。\n部署完成后接口返回 200。`, "1", "接口返回 200")
 }
 
 func runMultiLinePlanCase(t *testing.T, session, plan, wantCalls, wantBody string) {
@@ -472,6 +476,18 @@ func TestAssistantProgressOnlyRequiresPlanLines(t *testing.T) {
 		{"我先看一下。\n先把工作区改干净再提交。", true},
 		{"我先看一下。\n修到测试全部通过为止。", true},
 		{"我先看一下。\n- 把临时文件删干净", true},
+		// Any verb with the completive 到, and a completion followed by 后/
+		// 再/才, names what the next step waits for.
+		{"我先看一下。\n扫描到本地目录后比较差异。", true},
+		{"我先看一下。\n下载完成后运行脚本。", true},
+		{"我先看一下。\n上传完成后对比差异。", true},
+		{"我先看一下。\n导入完成后重启服务。", true},
+		{"我先看一下。\n同步完成后再部署。", true},
+		{"我先看一下。\n构建完成后跑测试。", true},
+		{"我先看一下。\n部署完成后验证接口是否正常。", true},
+		{"我先看一下。\n安装完毕后再启动。", true},
+		{"我先看一下。\n部署完成后接口返回 200。", false},
+		{"我先看一下。\n检查到一半后报错。", false},
 		// The same words still report what was found.
 		{"我先看一下。\n查到 3 个失败用例。", false},
 		{"我先看一下。\n找到两个仓库：api 和 web。", false},
