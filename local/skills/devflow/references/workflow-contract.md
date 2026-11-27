@@ -13,7 +13,7 @@
 - 登记只读检索助手：`helper --state ... --stage <stage> --role <helper-role> --executor-type <adapter-research-executor> --executor-id <host-agent-id> --purpose <bounded-purpose> --dispatch-tool <adapter-dispatch-tool> [--team-name <workflow-team>]`
 - 开始阶段：`start --state artifacts/<slug>/workflow-state.json --stage <stage>`
 - 结束阶段：`finish --state ... --stage <stage> --result <completed|failed|overflow>`
-- 用户/手动门禁批准：`approve --state ... --stage <stage> [--user-confirmed]`。REQUIREMENT 必须在用户明确确认需求报告后传 `--user-confirmed`；不得由 Agent 自行推断确认。
+- 用户/手动门禁批准：`approve --state ... --stage <stage> [--user-confirmed] [--reason <为什么批准>] [--approver <谁批准>]`。REQUIREMENT 必须在用户明确确认需求报告后传 `--user-confirmed`；不得由 Agent 自行推断确认。每次批准都会往 `workflow-state.json` 的 `approvals` 里追加一条记录（时间、阶段、审批人、理由、执行者），只追加不改写旧记录；不传 `--reason` / `--approver` 也能批准，理由为空、审批人记为 `user`，老调用方不受影响。
 - 恢复建议：`resume --project-root . --slug <slug> [--fresh-team]`；也兼容 `resume --state ...`（只读返回下一动作，不重新初始化）
 - 升级旧 CodeBuddy 状态：`upgrade-team --state ...`（仅 policy v2 且尚未登记/执行任何中间阶段 Agent 时允许，原地切换为 Team v3）
 - 更换 Team 所有者：`rotate-team --state ...`（Team 拓扑恢复时直接放弃旧 executor 绑定，把旧 in-progress 阶段恢复为 pending，并返回新 Team 名）

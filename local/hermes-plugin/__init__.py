@@ -118,6 +118,13 @@ def _render(record: Optional[Tuple[Path, dict]]) -> str:
         lines.append(f"Awaiting approval: {state['awaiting_approval']}")
     if state.get("next_stage"):
         lines.append(f"Next stage: {state['next_stage']}")
+    approvals = state.get("approvals") or []
+    if approvals:
+        last = approvals[-1]
+        lines.append(
+            f"Approvals: {len(approvals)}; last: {last.get('stage')} by {last.get('approver')} at {last.get('at')}"
+            + (f" reason={last.get('reason')}" if last.get("reason") else "")
+        )
     return "\n".join(lines)
 
 
@@ -144,7 +151,7 @@ def _handle(raw: str) -> str:
     if command == "help":
         return (
             "Usage: /loopforge start <request> | status [slug] | result [slug] | "
-            "approve [stage] | help"
+            "approve [stage] [reason] | help"
         )
     if command == "status":
         return _render(_record(root, value or None))
@@ -161,7 +168,9 @@ def _handle(raw: str) -> str:
         if record is None:
             return "No LoopForge task is waiting for approval."
         state_path, state = record
-        stage = value.upper() if value else state.get("awaiting_approval")
+        parts = value.split(None, 1) if value else []
+        stage = parts[0].upper() if parts else state.get("awaiting_approval")
+        reason = parts[1].strip() if len(parts) > 1 else None
         if not stage:
             return "No approval stage is pending."
         if stage not in _APPROVAL_STAGES:
@@ -169,6 +178,8 @@ def _handle(raw: str) -> str:
         args = ["approve", "--state", str(state_path), "--stage", stage]
         if stage == "REQUIREMENT":
             args.append("--user-confirmed")
+        if reason:
+            args.extend(["--reason", reason])
         _run(root, script, *args)
         return f"Approved {stage}. Resume the Hermes workflow to continue."
     if not value:
@@ -209,5 +220,5 @@ def register(ctx) -> None:
         "loopforge",
         _handle,
         description="Start, inspect, and approve LoopForge Local workflows",
-        args_hint="[start <request>|status [slug]|result [slug]|approve [stage]|help]",
+        args_hint="[start <request>|status [slug]|result [slug]|approve [stage] [reason]|help]",
     )
