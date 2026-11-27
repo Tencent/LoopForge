@@ -529,6 +529,10 @@ html[data-theme="dark"] .issue-title-tag.tone-cyan{color:#67e8f9}
 .issue-description .markdown-body+.issue-description-images{margin-top:12px}
 .issue-description-images li{max-width:100%}
 .issue-description-images img{display:block;width:auto;height:auto;max-width:100%;max-height:240px;border:1px solid var(--line);border-radius:8px}
+.issue-description-files{display:flex;flex-wrap:wrap;gap:8px;list-style:none;margin:0;padding:0}
+.issue-description-files:not(:first-child){margin-top:12px}
+.issue-description-files li{max-width:100%}
+.issue-description-files a{overflow-wrap:anywhere;white-space:normal;text-align:left}
 .clarify-dim{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin-bottom:9px}
 .clarify-dim-head{display:flex;align-items:center;gap:8px;font-size:12px}
 .clarify-dim-head b{font-size:12.5px}

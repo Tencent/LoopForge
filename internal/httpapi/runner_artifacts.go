@@ -4,9 +4,11 @@ import (
 	"errors"
 	"net/http"
 	"slices"
+	"strings"
 	"time"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/repo"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -69,6 +71,10 @@ func (h *runnersHandlers) runnerTaskInputFile(c *gin.Context) {
 		if input.Path != path || input.ArtifactID == "" {
 			continue
 		}
+		if id, ok := strings.CutPrefix(input.ArtifactID, repo.IssueAttachmentInputPrefix); ok {
+			h.runnerIssueAttachment(c, task.RunID, input.Path, id)
+			return
+		}
 		art, body, err := h.repo.OpenArtifactContent(c.Request.Context(), task.RunID, input.ArtifactID)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "read task input artifact: " + err.Error()})
@@ -79,6 +85,30 @@ func (h *runnersHandlers) runnerTaskInputFile(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusNotFound, gin.H{"error": "file is not an input of this task"})
+}
+
+func (h *runnersHandlers) runnerIssueAttachment(c *gin.Context, runID, path, id string) {
+	run, err := h.repo.RunHeader(runID)
+	if err != nil {
+		respond(c, err)
+		return
+	}
+	issue, ok := h.repo.Issue(run.ExecutionContext.IssueID)
+	if !ok || domain.RunProjectID(run, issue.ProjectID) != issue.ProjectID {
+		c.JSON(http.StatusNotFound, gin.H{"error": "file is not an input of this task"})
+		return
+	}
+	file, err := h.repo.IssueAttachment(issue.ID, id)
+	if errors.Is(err, gorm.ErrRecordNotFound) || (err == nil && file.InputPath() != path) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "file is not an input of this task"})
+		return
+	}
+	if err != nil {
+		respond(c, err)
+		return
+	}
+	c.Header("Cache-Control", "private, no-store")
+	c.Data(http.StatusOK, "application/octet-stream", file.Data)
 }
 
 func (h *runnersHandlers) validateRunnerOutputTransfer(c *gin.Context, runnerID string, outputs *domain.RunnerTaskOutputs) bool {

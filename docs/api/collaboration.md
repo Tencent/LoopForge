@@ -119,7 +119,9 @@ curl -u "$AGENTFLOW_USER:$AGENTFLOW_PASS" -X POST \
 
 多仓库用 `repositoryBranches` 按仓库 ID 分别指定已有功能分支，例如 `{"repositoryIds":["api","web"],"repositoryBranches":{"api":"feature/api","web":"feature/web"}}`。该映射优先于 `baseBranch`；未指定或留空的仓库从各自配置的主分支新建工作分支。继续已有分支时，MR 仍以该仓库配置的主分支为目标。映射中的仓库必须已绑定，且不能直接在主分支或集成分支上开发。更新或重新导入 TAPD 时省略映射会保留仍绑定仓库的分支，显式 `{}` 清空全部选择；修改任一仓库分支会重置代码澄清会话并保留业务回答。
 
-新 Issue 必须绑定外部 tracker：若请求未带有效 `source/externalRef`，`syncTarget` 必须为 `gongfeng` 或 `tapd`，服务会同步创建后保存；工蜂还要求仓库。更新时多个空字段会继承原值。成功 `200` 返回 Issue；校验/同步错误通常为 `400`。
+新工作项默认在平台创建。指定 `syncTarget` 为 `gongfeng` 或 `tapd` 时，服务会同步创建后保存，工蜂还要求绑定仓库。更新时多个空字段会继承原值。成功返回 `200` 和 Issue，校验或同步错误通常返回 `400`。
+
+新建平台需求支持 `multipart/form-data`。`issue` 字段传入 JSON，`attachments` 可以重复提交文件。一次最多 8 个附件，单个最多 10 MiB，合计最多 20 MiB。图片支持在详情中预览。对话澄清和 LOOP 执行可以读取附件原件，远程执行需要 Runner 0.13.0 或更新版本。
 
 ### `GET /api/issues/{issueId}`
 
@@ -129,7 +131,7 @@ curl -u "$AGENTFLOW_USER:$AGENTFLOW_PASS" -X POST \
 {"issue":{"id":"issue-1","title":"..."},"comments":[{"id":"comment-1","body":"..."}]}
 ```
 
-Issue 不存在返回 `404`。
+Issue 不存在返回 `404`。有项目访问权限时，`attachments` 包含附件标识、名称和媒体类型，可通过 `GET /api/issues/{issueId}/attachments/{attachmentId}` 下载原件。
 
 ### `POST /api/issues/{issueId}/comments`
 

@@ -824,6 +824,7 @@ type RunnerInputFile struct {
 	ArtifactID string `json:"artifactId,omitempty"`
 	SHA256     string `json:"sha256,omitempty"`
 	Restore    bool   `json:"restore,omitempty"`
+	Image      bool   `json:"image,omitempty"`
 }
 
 // RunnerTaskOutputs is what a runner reports about the task workspace after

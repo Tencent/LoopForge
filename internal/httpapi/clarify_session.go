@@ -208,6 +208,7 @@ type clarifyCommandOpts struct {
 	Native                               bool
 	MCPConfig, Settings                  string
 	SubmitOnly                           bool
+	ImagePaths                           []string
 }
 
 func prepareClarifyCommand(bin, model, prompt, runID, sessionID string, resume bool) (runtime.CommandSpec, error) {
@@ -239,6 +240,9 @@ func prepareClarifyCommandWith(opts clarifyCommandOpts) (runtime.CommandSpec, er
 	}
 	if strings.TrimSpace(opts.MCPConfig) != "" {
 		command = command.WithMCPStartupWait(agentToolSessionMCPStartupWait)
+	}
+	if len(opts.ImagePaths) > 0 {
+		return withAssistantStreamInput(command, opts.Prompt, opts.ImagePaths, 0)
 	}
 	return runtime.PromptOnStdin(command, opts.Prompt), nil
 }

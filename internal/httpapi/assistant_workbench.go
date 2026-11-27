@@ -253,6 +253,7 @@ func (h *assistantHandlers) buildWorkbenchContext(c *gin.Context, req *assistant
 		return fmt.Errorf("会话过长，请开启新会话")
 	}
 	var context strings.Builder
+	linkedIssueID := ""
 	if s, ok := h.repo.AssistantSession(assistantStorageOwner(h.repo, req.SessionID, user.ID), req.SessionID); ok && s.IssueID != "" && req.RunID == "" {
 		if err := h.validateSessionIssue(c, req.ProjectID, s.IssueID, user.ID); err != nil {
 			return err
@@ -262,6 +263,7 @@ func (h *assistantHandlers) buildWorkbenchContext(c *gin.Context, req *assistant
 			return fmt.Errorf("关联需求不可用，请更换或解除关联：%w", err)
 		}
 		context.WriteString("当前会话关联的主需求（每轮从平台读取的最新数据）：" + data + "\n这是持续的需求上下文；其他 @需求只供本条消息参考。关联不会自动创建或派发运行，也不会改变会话可见范围。\n")
+		linkedIssueID = s.IssueID
 	}
 	context.WriteString("当前任务以 runId 为准；普通会话引用只提供上下文。@角色表示让该角色作为子 Agent 来做这件事。\n")
 	if branch, ok := h.repo.AssistantSession(assistantStorageOwner(h.repo, req.SessionID, user.ID), req.SessionID); ok && branch.ParentSessionID != "" {
@@ -276,6 +278,7 @@ func (h *assistantHandlers) buildWorkbenchContext(c *gin.Context, req *assistant
 		if !h.projectWriterAllowed(c, domain.RunProjectID(r, ""), user.ID) {
 			return fmt.Errorf("只读成员不能在任务会话中执行 Agent 或修改工作区")
 		}
+		linkedIssueID = r.ExecutionContext.IssueID
 		context.WriteString("当前 LOOP 运行：" + text + "\nLOOP 推进沿用既有暂停、审批、拒绝和重试接口。工作区工具用于停止后的修改与验证。\n")
 	}
 	var mentioned []domain.AgentDefinition
@@ -460,6 +463,15 @@ func (h *assistantHandlers) buildWorkbenchContext(c *gin.Context, req *assistant
 			context.WriteString("用户本轮 @ 的需求已绑定 SOP：" + sops.String() + "若用户要求执行、派发或推进该需求，必须通过 issues_dispatch（非完全权限模式先用 workbench_tool_schema 查参数后放入 submit_assistant_reply 的 drafts）发起真实 SOP 运行，严禁在当前对话内直接代跑 SOP（门禁与产物契约仅在 SOP 运行时装配与强制校验）。若用户只是围绕该需求提问、讨论，或希望结合关联知识库做概述与判断，该 SOP 节点/角色关联的个人知识库工具已自动挂载到本对话，先调用知识库检索/读取工具查阅真实文档后再回答。\n")
 		}
 	}
+	req.issueAttachments = nil
+	if req.ProjectID != "" {
+		issues := turnIssues(h.deps, req.ProjectID, linkedIssueID, lastMessageReferences(req.Messages))
+		files, err := readConversationIssueAttachments(h.repo.IssuesRepo, issues)
+		if err != nil {
+			return err
+		}
+		req.issueAttachments = files
+	}
 	if req.RunID == "" {
 		if note := h.linkMentionedIssue(req, user); note != "" {
 			context.WriteString(note + "\n")
@@ -481,13 +493,13 @@ func (h *assistantHandlers) buildWorkbenchContext(c *gin.Context, req *assistant
 // (node.KnowledgeRefs + node role agent.KnowledgeBase) or @需求 (issue.WorkflowID
 // expanded to its bound SOP) in the current turn's user message, following the
 // A-Union precedence rule:
-//   1) Session saved.KnowledgeRefs take highest priority per ConnectorID.
-//   2) @SOP node.KnowledgeRefs owned by userID come next (across multiple nodes in
-//      the same SOP, mode="all" wins over "allowlist", and multiple "allowlist"
-//      entries for the same ConnectorID union their Sources).
-//   3) Any remaining enabled connectors owned by userID are appended with mode="all"
-//      if an explicitly @-mentioned role (or an @-mentioned SOP's node role) has
-//      KnowledgeBase == true.
+//  1. Session saved.KnowledgeRefs take highest priority per ConnectorID.
+//  2. @SOP node.KnowledgeRefs owned by userID come next (across multiple nodes in
+//     the same SOP, mode="all" wins over "allowlist", and multiple "allowlist"
+//     entries for the same ConnectorID union their Sources).
+//  3. Any remaining enabled connectors owned by userID are appended with mode="all"
+//     if an explicitly @-mentioned role (or an @-mentioned SOP's node role) has
+//     KnowledgeBase == true.
 func (h *assistantHandlers) resolveMentionedKnowledgeRefs(userID int64, projectID string, saved assistantConversation, messages []assistantMessage) ([]domain.KnowledgeRef, bool) {
 	if saved.RunID != "" || saved.Shared || userID <= 0 || (saved.UserID > 0 && saved.UserID != userID) || h.deps == nil || h.deps.knowledgeSvc == nil || len(messages) == 0 {
 		return saved.KnowledgeRefs, false

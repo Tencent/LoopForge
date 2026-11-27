@@ -8,7 +8,7 @@ function reqDescription(){
   return ($('#chatInput')?.value||'').trim();
 }
 const reqImageTypes=new Set(['image/png','image/jpeg','image/webp','image/gif']);
-const reqImages=[];
+const reqAttachments=[];
 
 function setReqPreview(show){
   const preview=$('#reqMarkdownPreview');
@@ -18,23 +18,40 @@ function setReqPreview(show){
   if(show)preview.innerHTML=renderRequirementMarkdown(reqDescription())||'<p class="req-preview-empty">暂无文字描述</p>';
   else preview.replaceChildren();
 }
-function renderReqImages(){
-  const list=$('#reqImages');
-  list.hidden=!reqImages.length;
-  list.innerHTML=reqImages.map(({file,url},index)=>{
-    const name=escapeHTML(file.name||'图片');
-    return `<li><img src="${escapeHTML(url)}" alt="${name}"><button type="button" data-remove-req-image="${index}" aria-label="移除图片 ${name}">${reqIcon('close',12)}</button></li>`;
+function renderReqAttachments(){
+  const list=$('#reqAttachments');
+  list.hidden=!reqAttachments.length;
+  list.innerHTML=reqAttachments.map(({file,url})=>{
+    const name=escapeHTML(file.name||'附件');
+    const preview=url?`<img src="${escapeHTML(url)}" alt="${name}">`:`<span class="req-attachment-name" title="${name}">${name}</span>`;
+    return `<li>${preview}<button type="button" data-remove-req-attachment aria-label="移除附件 ${name}">${reqIcon('close',12)}</button></li>`;
   }).join('');
-  const buttons=list.querySelectorAll('[data-remove-req-image]');
+  const buttons=list.querySelectorAll('[data-remove-req-attachment]');
   buttons.forEach((button,index)=>button.onclick=()=>{
     if(requirementComposerBusy())return;
-    URL.revokeObjectURL(reqImages.splice(index,1)[0].url);
-    renderReqImages();
+    const [{url}]=reqAttachments.splice(index,1);
+    if(url)URL.revokeObjectURL(url);
+    renderReqAttachments();
     renderReqFooter();
-    const next=list.querySelectorAll('[data-remove-req-image]');
-    (next[index]||next[index-1]||($('#chatInput').hidden?$('#reqPreviewToggle'):$('#chatInput'))).focus();
+    const next=list.querySelectorAll('[data-remove-req-attachment]');
+    (next[index]||next[index-1]||$('#reqAttach')).focus();
   });
   hydrateReqIcons(list);
+}
+function addReqAttachments(files){
+  if(requirementComposerBusy())return;
+  let error='';
+  let bytes=reqAttachments.reduce((total,{file})=>total+file.size,0);
+  for(const file of files){
+    if(reqAttachments.length>=8){error='每条需求最多添加 8 个附件';break}
+    if(!file.size){error='无法添加空文件';continue}
+    if(file.size>10*1024*1024||bytes+file.size>20*1024*1024){error='单个附件最多 10 MB，合计最多 20 MB';continue}
+    reqAttachments.push({file,url:reqImageTypes.has(file.type)?URL.createObjectURL(file):''});
+    bytes+=file.size;
+  }
+  renderReqAttachments();
+  renderReqFooter();
+  if(error)toast(error,'err');
 }
 function onReqDescriptionPaste(event){
   const clipboard=event.clipboardData;
@@ -47,18 +64,8 @@ function onReqDescriptionPaste(event){
   const text=clipboard.getData('text/plain');
   const input=event.currentTarget;
   if(text)input.setRangeText(text,input.selectionStart,input.selectionEnd,'end');
-  let error='';
-  let bytes=reqImages.reduce((total,{file})=>total+file.size,0);
-  for(const file of images){
-    if(!reqImageTypes.has(file.type)){error='图片格式须为 PNG、JPEG、WebP 或 GIF';continue}
-    if(reqImages.length>=8){error='每条需求最多添加 8 张图片';break}
-    if(!file.size||file.size>10*1024*1024||bytes+file.size>20*1024*1024){error='单张图片最多 10 MB，合计最多 20 MB';continue}
-    reqImages.push({file,url:URL.createObjectURL(file)});
-    bytes+=file.size;
-  }
-  renderReqImages();
+  addReqAttachments(images);
   onReqDescriptionInput();
-  if(error)toast(error,'err');
 }
 function projectTAPDReady(project){
   project=project||currentProject();
@@ -241,9 +248,10 @@ function reqFooterNote(){
 }
 function renderReqFooter(){
   const creating=!!state.reqCreating;
-  const reason=reqDescription()||reqImages.length?'':'先写一句需求';
+  const reason=reqDescription()||reqAttachments.length?'':'填写需求描述或添加附件';
   $('#chatInput').readOnly=creating;
-  $$('#reqImages button').forEach(button=>{button.disabled=creating});
+  if($('#reqAttach'))$('#reqAttach').disabled=creating;
+  $$('#reqAttachments button').forEach(button=>{button.disabled=creating});
   const create=$('#reqCreate'),chat=$('#reqCreateChat');
   if(create){
     create.disabled=creating||!!reason;
@@ -307,7 +315,7 @@ function requirementComposerBusy(){
   return !!state.reqCreating;
 }
 function requirementComposerDirty(){
-  return requirementComposerBusy()||!!reqDescription();
+  return requirementComposerBusy()||!!reqDescription()||reqAttachments.length>0;
 }
 function persistRequirementComposer(){
   const modal=$('#requirementModal');
@@ -335,8 +343,8 @@ function clearRequirementComposer(){
 function resetRequirementComposer(){
   Object.assign(state,{reqCreating:'',reqTarget:'local',reqDelivery:'sop'});
   ['#reqBaseBranch','#chatInput'].forEach(id=>{const el=$(id);if(el)el.value=''});
-  reqImages.splice(0).forEach(({url})=>URL.revokeObjectURL(url));
-  renderReqImages();
+  reqAttachments.splice(0).forEach(({url})=>{if(url)URL.revokeObjectURL(url)});
+  renderReqAttachments();
   setReqPreview(false);
   renderReqContext();
   renderReqTarget();
@@ -451,7 +459,7 @@ async function createIssueFromChat(target,mode){
   const toChat=mode==='chat';
   if(target!=='local'&&target!=='tapd')return toast('请选择平台或 TAPD');
   const draft=collectRequirementDraft();
-  if(!draft.description&&!reqImages.length){$('#chatInput')?.focus();return toast('先写一句需求')}
+  if(!draft.description&&!reqAttachments.length){$('#chatInput')?.focus();return toast('填写需求描述或添加附件')}
   if(target==='tapd'&&!projectTAPDReady())return toast('当前项目未配置 TAPD');
   if(state.reqCreating)return toast('正在建单，请勿重复点击');
   const useSOP=reqUsesSOP();
@@ -472,14 +480,14 @@ async function createIssueFromChat(target,mode){
       repositoryIds:selectedReqRepositoryIds(),
       baseBranch:selectedReqBaseBranch(),
       assigneeUserId:Number(state.currentUser?.id)||0,
-      title:draft.title||'新工作项',
+      title:draft.title||Array.from(reqAttachments[0]?.file.name||'').slice(0,80).join('').trim()||'新工作项',
       description:draft.description,
       priority:'medium',
     });
-    if(reqImages.length){
+    if(reqAttachments.length){
       const form=new FormData();
       form.append('issue',body);
-      for(const {file} of reqImages)form.append('images',file,file.name||'image');
+      for(const {file} of reqAttachments)form.append('attachments',file,file.name||'attachment');
       body=form;
     }
     let issue=await api('/api/issues',{method:'POST',body});

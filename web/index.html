@@ -986,7 +986,7 @@
           <div class="req-chat-composer">
             <textarea id="chatInput" aria-label="需求描述" aria-describedby="reqMarkdownHint" placeholder="要做什么？例如：个人主页增加徽章，需要兼容现有成就体系。" rows="6"></textarea>
             <div id="reqMarkdownPreview" class="req-markdown-preview markdown-body" aria-label="需求描述预览" hidden></div>
-            <ul id="reqImages" class="req-images" aria-label="已粘贴的图片" hidden></ul>
+            <ul id="reqAttachments" class="req-attachments" aria-label="需求附件" hidden></ul>
             <div class="req-composer-toolbar">
               <div id="reqRepoChip" class="req-ghost-sel">
                 <button type="button" id="reqRepoChipToggle" class="req-ghost-trigger" aria-haspopup="dialog" aria-expanded="false" aria-controls="reqRepoPopover"><svg class="agent-icon harness-icon" data-icon="folder" width="13" height="13" aria-hidden="true"></svg><span id="reqRepoChipLabel" class="req-ghost-value"></span><svg class="agent-icon harness-icon req-chev" data-icon="chevron-down" width="13" height="13" aria-hidden="true"></svg></button>
@@ -1006,6 +1006,8 @@
               </div>
               <span class="req-toolbar-sp"></span>
               <span id="reqMarkdownHint" class="req-markdown-hint">支持 Markdown 和粘贴图片</span>
+              <input type="file" id="reqFiles" multiple hidden>
+              <button type="button" id="reqAttach" class="button quiet small">添加附件</button>
               <button type="button" id="reqPreviewToggle" class="button quiet small" aria-pressed="false" aria-controls="reqMarkdownPreview">预览</button>
               <span id="reqCharCount" class="req-count"></span>
             </div>
@@ -1031,8 +1033,8 @@
       </div>
       <footer id="reqFooter" class="req-wizard-foot">
         <span id="reqComposerHint" class="req-foot-note" aria-live="polite"></span>
-        <button id="reqCreate" type="button" class="button" title="先写一句需求">创建需求</button>
-        <button id="reqCreateChat" type="button" class="button primary" title="先写一句需求"><svg class="agent-icon harness-icon" data-icon="chat" width="13" height="13" aria-hidden="true"></svg>创建并去对话澄清</button>
+        <button id="reqCreate" type="button" class="button" title="填写需求描述或添加附件">创建需求</button>
+        <button id="reqCreateChat" type="button" class="button primary" title="填写需求描述或添加附件"><svg class="agent-icon harness-icon" data-icon="chat" width="13" height="13" aria-hidden="true"></svg>创建并去对话澄清</button>
       </footer>
     </div>
   </div>

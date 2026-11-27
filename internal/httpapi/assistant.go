@@ -90,6 +90,7 @@ type assistantRequest struct {
 	skills           []domain.SkillDefinition
 	attachmentIDs    map[string]bool
 	attachmentOwners map[string]int64
+	issueAttachments []conversationIssueAttachment
 	workspaceMode    bool
 	MCPServerIDs     []string           `json:"mcpServerIds,omitempty"`
 	Messages         []assistantMessage `json:"messages"`

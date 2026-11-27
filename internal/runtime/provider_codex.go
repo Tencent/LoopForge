@@ -37,6 +37,9 @@ func (codexProvider) Prepare(in providerInvocation) (CommandSpec, error) {
 		// sandbox cannot create another user namespace inside them.
 		argv = withCodexSandboxMode(argv, "danger-full-access")
 	}
+	for _, path := range in.Options.ImagePaths {
+		argv = append(argv, "--image", path)
+	}
 	if sessionID := strings.TrimSpace(in.Options.ResumeSessionID); sessionID != "" {
 		// `resume` is a subcommand of `codex exec`; all exec options must precede it.
 		argv = append(argv, "resume", sessionID)

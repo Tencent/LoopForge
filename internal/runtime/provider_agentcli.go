@@ -78,7 +78,7 @@ func (p agentCLIProvider) Prepare(in providerInvocation) (CommandSpec, error) {
 		Binary: in.Executor.Binary, Model: in.Executor.Model, Effort: in.Executor.Effort,
 		Resume: in.Options.ResumeSessionID, Prompt: positionalPrompt(in),
 		SystemPrompt: in.Compiled.SystemPrompt, SystemPromptFile: systemFile, Extra: in.Executor.Args,
-		RunnerLogin: in.Options.RunnerLogin,
+		RunnerLogin: in.Options.RunnerLogin, ImagePaths: in.Options.ImagePaths,
 	})
 	command.CredentialBindings = []CredentialBinding{BindAgentCLI, BindGit, BindMCP}
 	command.PrivateHome = true
@@ -92,7 +92,7 @@ type AgentCLICommandOptions struct {
 	// Resume is the CLI's own session ID to continue; empty starts one.
 	Resume string
 	Prompt string
-	// ImagePaths are already staged in the conversation's attachment directory.
+	// ImagePaths are already staged in the execution workspace.
 	ImagePaths []string
 	// Historical images remain available through the session journal or path.
 	ImageInput bool

@@ -244,7 +244,7 @@ func (h issuesHandlers) issues(c *gin.Context) {
 			return
 		}
 		if len(files) > 0 && (v.ID != "" || (req.SyncTarget != "" && !strings.EqualFold(req.SyncTarget, "local"))) {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "图片只能随新需求一起保存到平台"})
+			c.JSON(http.StatusBadRequest, gin.H{"error": "附件只能随新需求一起保存到平台"})
 			return
 		}
 		// Clients such as the AI assistant echo a fetched issue back. Resending
@@ -357,11 +357,11 @@ func (h issuesHandlers) issues(c *gin.Context) {
 		}
 		var err error
 		if len(files) > 0 {
-			images, ok := readIssueImages(c, files)
+			attachments, ok := readIssueAttachments(c, files)
 			if !ok {
 				return
 			}
-			err = h.repo.CreateIssueWithImages(v, images)
+			err = h.repo.CreateIssueWithAttachments(v, attachments)
 		} else {
 			err = h.repo.PutIssue(v)
 		}
@@ -457,20 +457,21 @@ type issueRoute struct {
 }
 
 var issueRoutes = map[string]issueRoute{
-	"/api/issues/:id":                     {handle: issuesHandlers.issueDetail, methods: []string{http.MethodGet, http.MethodDelete}},
-	"/api/issues/:id/images/:imageId":     {handle: issuesHandlers.issueImage, methods: []string{http.MethodGet}},
-	"/api/issues/:id/comments":            {handle: issuesHandlers.addIssueComment, methods: []string{http.MethodPost}},
-	"/api/issues/:id/runs":                {handle: issuesHandlers.issueRuns, methods: []string{http.MethodGet}},
-	"/api/issues/:id/clarification":       {handle: issuesHandlers.submitIssueClarification, methods: []string{http.MethodPost}},
-	"/api/issues/:id/chat-clarify":        {handle: issuesHandlers.chatClarifyIssue, methods: []string{http.MethodGet, http.MethodPost}},
-	"/api/issues/:id/clarify-models":      {handle: issuesHandlers.clarifyModels, methods: []string{http.MethodGet}},
-	"/api/issues/:id/chat-clarify/cancel": {handle: issuesHandlers.cancelChatClarifyIssue, methods: []string{http.MethodPost}},
-	"/api/issues/:id/reopen":              {handle: issuesHandlers.reopenIssue, methods: []string{http.MethodPost}},
-	"/api/issues/:id/close":               {handle: issuesHandlers.closeIssue, methods: []string{http.MethodPost}},
-	"/api/issues/:id/resync-tapd":         {handle: issuesHandlers.resyncTAPDIssue, methods: []string{http.MethodPost}},
-	"/api/issues/:id/requirement":         {handle: issuesHandlers.issueRequirement, methods: []string{http.MethodGet}},
-	"/api/issues/:id/sops":                {handle: issuesHandlers.issueSOPs, methods: []string{http.MethodGet, http.MethodPut}},
-	"/api/issues/:id/dispatch":            {handle: issuesHandlers.dispatchIssueRoute, methods: []string{http.MethodPost}},
+	"/api/issues/:id":                           {handle: issuesHandlers.issueDetail, methods: []string{http.MethodGet, http.MethodDelete}},
+	"/api/issues/:id/images/:imageId":           {handle: issuesHandlers.issueImage, methods: []string{http.MethodGet}},
+	"/api/issues/:id/attachments/:attachmentId": {handle: issuesHandlers.issueAttachment, methods: []string{http.MethodGet}},
+	"/api/issues/:id/comments":                  {handle: issuesHandlers.addIssueComment, methods: []string{http.MethodPost}},
+	"/api/issues/:id/runs":                      {handle: issuesHandlers.issueRuns, methods: []string{http.MethodGet}},
+	"/api/issues/:id/clarification":             {handle: issuesHandlers.submitIssueClarification, methods: []string{http.MethodPost}},
+	"/api/issues/:id/chat-clarify":              {handle: issuesHandlers.chatClarifyIssue, methods: []string{http.MethodGet, http.MethodPost}},
+	"/api/issues/:id/clarify-models":            {handle: issuesHandlers.clarifyModels, methods: []string{http.MethodGet}},
+	"/api/issues/:id/chat-clarify/cancel":       {handle: issuesHandlers.cancelChatClarifyIssue, methods: []string{http.MethodPost}},
+	"/api/issues/:id/reopen":                    {handle: issuesHandlers.reopenIssue, methods: []string{http.MethodPost}},
+	"/api/issues/:id/close":                     {handle: issuesHandlers.closeIssue, methods: []string{http.MethodPost}},
+	"/api/issues/:id/resync-tapd":               {handle: issuesHandlers.resyncTAPDIssue, methods: []string{http.MethodPost}},
+	"/api/issues/:id/requirement":               {handle: issuesHandlers.issueRequirement, methods: []string{http.MethodGet}},
+	"/api/issues/:id/sops":                      {handle: issuesHandlers.issueSOPs, methods: []string{http.MethodGet, http.MethodPut}},
+	"/api/issues/:id/dispatch":                  {handle: issuesHandlers.dispatchIssueRoute, methods: []string{http.MethodPost}},
 }
 
 func (h issuesHandlers) issue(c *gin.Context) {

@@ -100,6 +100,8 @@ type InvocationOptions struct {
 	GateResultPath  string
 	Repositories    []domain.RepositoryContext
 	RunnerLogin     bool
+	// ImagePaths are staged, workspace-relative inputs for this invocation.
+	ImagePaths []string
 	// BrowserMCP is resolved on the executing host, never sent to a runner.
 	BrowserMCP *domain.MCPServerDefinition `json:"-"`
 	// DisableBrowser keeps restricted validation runs from gaining an

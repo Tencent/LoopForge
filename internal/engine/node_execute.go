@@ -604,9 +604,19 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 	}
 	var reported *reportedOutputs
 	artifactContext := ""
+	requirementFiles, err := e.requirementAttachments(current)
+	if err != nil {
+		failNode(fmt.Errorf("读取需求附件：%w", err), nodeRejects(node))
+		return
+	}
+	if runnerFound && len(requirementFiles) > 0 && !runner.SupportsArtifactTransfer() {
+		failNode(fmt.Errorf("带附件的需求需要 Runner %s 或更新版本", domain.RunnerVersionArtifactTransfer), nodeRejects(node))
+		return
+	}
 	if runnerFound && runner.SupportsReportedOutputs() {
 		var inputs []domain.RunnerInputFile
 		artifactContext, inputs = runnerArtifactInputs(wf, node, current, runner.SupportsArtifactTransfer())
+		inputs = append(inputs, runnerRequirementInputs(requirementFiles)...)
 		reported = sb.beginReportedOutputs(node.ID, inputs)
 		reported.transfer = runner.SupportsArtifactTransfer()
 		reported.openBlob = func(id string) (io.ReadCloser, error) {
@@ -629,6 +639,10 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 		}
 		if err := writeHumanContextFile(sb.Workspace(), current.HumanContext); err != nil {
 			failNode(fmt.Errorf("write human context: %w", err), nodeRejects(node))
+			return
+		}
+		if err := e.materializeRequirementAttachments(sb.Workspace(), current.ExecutionContext.IssueID, requirementFiles); err != nil {
+			failNode(err, nodeRejects(node))
 			return
 		}
 	}
@@ -870,6 +884,7 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 			if repositoryFallback != "" {
 				prompt = runtime.GitPreparationFallbackPrompt(current.RepositoryContexts(), repositoryFallback) + prompt
 			}
+			prompt += requirementAttachmentPrompt(requirementFiles, ex.Kind)
 			prompt += projectCredentialNote
 			if current.ExecutionContext.SharedScheduleID != "" {
 				version, assetErr := e.repo.SharedScheduleVersion(current.ExecutionContext.SharedScheduleID, current.ExecutionContext.SharedScheduleVersion)
@@ -919,6 +934,7 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 				}
 			}
 			options := runtime.InvocationOptions{RunID: runID, NodeID: node.ID, ResumeSessionID: resumeSessionID, Repositories: current.RepositoryContexts()}
+			options.ImagePaths = requirementImagePaths(requirementFiles)
 			options.DisableBrowser = current.ExecutionContext.IsEvolutionReplay()
 			if requiresSubmit {
 				options.GateResultPath = gateResultPath(nodeControlKey(current, node.ID), attempt)

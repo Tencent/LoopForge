@@ -898,6 +898,12 @@ func (d *Daemon) executeInvocation(ctx context.Context, task domain.RunnerTask) 
 	if !inv.DisableBrowser && runtime.BrowserWantedForExecutor(executor.Kind) {
 		browserMCP = runtime.EnsureSandboxBrowser(ctx, sandbox, workspace, inv.RunID, nil)
 	}
+	var imagePaths []string
+	for _, input := range inv.Inputs {
+		if input.Image {
+			imagePaths = append(imagePaths, input.Path)
+		}
+	}
 	prepared, err := d.executor.PrepareRemote(workspace, runtime.RemoteInvocation{
 		InvocationID: inv.InvocationID,
 		Executor:     executor,
@@ -908,7 +914,7 @@ func (d *Daemon) executeInvocation(ctx context.Context, task domain.RunnerTask) 
 			RunID: inv.RunID, NodeID: inv.NodeID, ResumeSessionID: inv.ResumeSessionID,
 			GateResultPath: inv.GateResultPath, Repositories: invocationRepositoryContexts(inv),
 			BrowserMCP: browserMCP, RunnerLogin: inv.CredentialSource == domain.RuntimeAuthLocal,
-			DisableBrowser: inv.DisableBrowser,
+			DisableBrowser: inv.DisableBrowser, ImagePaths: imagePaths,
 		},
 		Driver: driver,
 	})

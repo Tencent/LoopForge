@@ -45,6 +45,7 @@ const ctx = {
       {id: "r2", projectId: "p", name: "Web", defaultBranch: "main"},
     ], issues: [], tasks: []},
   },
+  reqAttachments: [],
   $: selector => elements[selector],
   currentProject: () => ({id: "p", defaultRepositoryId: "r1"}),
   escapeHTML: s => String(s).replace(/[&<>"]/g, c => ({"&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;"}[c])),
@@ -153,7 +154,7 @@ assert.equal(elements["#chatInput"].value, "继续开发已有分支");
   const blank = requests.length;
   await ctx.createIssueFromChat(undefined, "chat");
   assert.equal(requests.length, blank, "a blank description creates nothing");
-  assert.equal(notices.at(-1), "先写一句需求");
+  assert.equal(notices.at(-1), "填写需求描述或添加附件");
 
   input.value = "";
   elements["#chatInput"].value = "空分支";
