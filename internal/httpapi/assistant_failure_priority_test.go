@@ -57,6 +57,24 @@ func TestAssistantDiagnosticPrefersNewestStructuredErrorOverStderrText(t *testin
 	}
 }
 
+func TestAssistantDiagnosticPrefersStructuredFailureOverEarlierDiskWarning(t *testing.T) {
+	g := domain.AssistantGeneration{ID: "structured-disk-turn", SessionID: "s", Status: "running", StartedAt: time.Now().UTC()}
+	d := newAssistantDiagnosticsCollector(g)
+	a := d.begin("codex", "model", false, domain.User{})
+	a.recordEvent(domain.AssistantDiagnosticEvent{Kind: "provider.error", Message: "invalid api key", StatusCode: 401})
+	err := errors.New("exit status 1; stderr=warning: no space left on device")
+	if f := d.fail(context.Background(), err, domain.User{}); f.Code != "AUTHENTICATION_FAILED" {
+		t.Fatalf("earlier disk warning outranked the structured failure: %+v", f)
+	}
+
+	d = newAssistantDiagnosticsCollector(g)
+	a = d.begin("codex", "model", false, domain.User{})
+	a.recordEvent(domain.AssistantDiagnosticEvent{Kind: "provider.error", Message: "invalid api key", StatusCode: 401})
+	if f := d.fail(context.Background(), errors.New("write failed: no space left on device"), domain.User{}); f.Code != "DISK_FULL" {
+		t.Fatalf("explicit disk failure was overridden: %+v", f)
+	}
+}
+
 func TestAssistantDiagnosticEndpointKeepsOnlySchemeAndHost(t *testing.T) {
 	g := domain.AssistantGeneration{ID: "endpoint-turn", SessionID: "s", Status: "running", StartedAt: time.Now().UTC()}
 	d := newAssistantDiagnosticsCollector(g)
