@@ -135,6 +135,13 @@ func (d deps) requireProjectReader(c *gin.Context, projectIDs ...string) bool {
 	return true
 }
 
+func (d deps) workflowVisible(wf domain.WorkflowDefinition, allowedProjects map[string]bool, restricted bool) bool {
+	if !restricted || wf.Generic || wf.Shared || strings.TrimSpace(wf.ProjectID) == "" {
+		return true
+	}
+	return allowedProjects[wf.ProjectID]
+}
+
 var guardedRunWrites = map[string]bool{
 	"/api/runs/:id":                    true,
 	"/api/runs/:id/approve":            true,
@@ -189,9 +196,18 @@ func (d deps) runWriteGuard() gin.HandlerFunc {
 		}
 		projectID := domain.RunProjectID(run, issueProject)
 		if c.Request.Method == http.MethodGet || !guardedRunWrites[path] {
-			if !run.IsPersonalWorkspace() && !d.requireProjectReader(c, projectID) {
-				c.Abort()
-				return
+			if !run.IsPersonalWorkspace() {
+				if projectID != "" {
+					if !d.requireProjectReader(c, projectID) {
+						c.Abort()
+						return
+					}
+				} else if authRequired() && !d.isPlatformAdmin(c.Request) {
+					if user, ok := d.requestUser(c.Request, true); ok && run.ExecutionContext.ResponsibleUserID != user.ID {
+						c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "只有项目成员、项目 Owner 或平台管理员可以查看该项目的内容"})
+						return
+					}
+				}
 			}
 			c.Next()
 			return

@@ -277,10 +277,22 @@ func TestProjectContentReadsRequireMembership(t *testing.T) {
 	if err := s.PutIssue(domain.Issue{ID: "i2", ProjectID: "shared", Title: "Shared issue"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.PutRun(domain.Run{ID: "r1", Status: "succeeded", ExecutionContext: domain.TelemetryContext{ProjectID: "p1", IssueID: "i1"}, Nodes: map[string]*domain.NodeRun{}}); err != nil {
+	if err := s.PutRun(domain.Run{ID: "r1", WorkflowID: "wf-priv", Status: "succeeded", ExecutionContext: domain.TelemetryContext{ProjectID: "p1", IssueID: "i1"}, Nodes: map[string]*domain.NodeRun{}}); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.PutTask(domain.Task{ID: "t1", IssueID: "i1", RunID: "r1", Status: "completed"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.PutWorkflow(domain.WorkflowDefinition{ID: "wf-priv", Name: "Private SOP", ProjectID: "p1", Description: "Secret steps"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.PutWorkflow(domain.WorkflowDefinition{ID: "wf-shared", Name: "Shared SOP", ProjectID: "p1", Shared: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.PutRun(domain.Run{ID: "r-orphan", Status: "succeeded", ExecutionContext: domain.TelemetryContext{ResponsibleUserID: ownerUser.ID}, Nodes: map[string]*domain.NodeRun{}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.PutTask(domain.Task{ID: "t-orphan", RunID: "r-orphan", Status: "completed"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -306,13 +318,17 @@ func TestProjectContentReadsRequireMembership(t *testing.T) {
 			p1Summary = &allProjects[i]
 		}
 	}
-	if p1Summary == nil || !p1Summary.Restricted || len(p1Summary.Members) != 0 || p1Summary.TAPDWorkspaceID != "" || p1Summary.WorkflowID != "" {
+	if p1Summary == nil || !p1Summary.Restricted || p1Summary.Description != "" || len(p1Summary.Members) != 0 || p1Summary.TAPDWorkspaceID != "" || p1Summary.WorkflowID != "" {
 		t.Fatalf("expected redacted summary for non-member in scope=all, got %+v", p1Summary)
+	}
+	if w := request(other, "GET", "/api/projects?scope=all"); bytes.Contains(w.Body.Bytes(), []byte("Internal work")) || bytes.Contains(w.Body.Bytes(), []byte("0001-01-01")) {
+		t.Fatalf("scope=all leaked description or zero timestamp: %s", w.Body.String())
 	}
 
 	var boot struct {
-		Projects     []domain.Project    `json:"projects"`
-		Repositories []domain.Repository `json:"repositories"`
+		Projects     []domain.Project            `json:"projects"`
+		Repositories []domain.Repository         `json:"repositories"`
+		Workflows    []domain.WorkflowDefinition `json:"workflows"`
 	}
 	if w := request(other, "GET", "/api/bootstrap"); w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &boot) != nil {
 		t.Fatalf("other /api/bootstrap: %d %s", w.Code, w.Body.String())
@@ -327,9 +343,24 @@ func TestProjectContentReadsRequireMembership(t *testing.T) {
 			t.Fatalf("non-member should not see repo1 in /api/bootstrap")
 		}
 	}
+	for _, wf := range boot.Workflows {
+		if wf.ID == "wf-priv" {
+			t.Fatalf("non-member should not see private workflow in /api/bootstrap")
+		}
+	}
 
-	// Direct GET on private project, repo, issue, run, task is forbidden for non-members.
-	for _, path := range []string{"/api/projects/p1", "/api/repositories/repo1", "/api/issues/i1", "/api/runs/r1", "/api/tasks/t1"} {
+	// Direct GET on private project, repo, issue, run, task, workflow, analytics, and orphaned run/task is forbidden for non-members.
+	for _, path := range []string{
+		"/api/projects/p1",
+		"/api/repositories/repo1",
+		"/api/issues/i1",
+		"/api/runs/r1",
+		"/api/tasks/t1",
+		"/api/workflows/wf-priv",
+		"/api/workflows/wf-priv/revisions",
+		"/api/workflow-metrics?projectId=p1",
+		"/api/analytics?projectId=p1",
+	} {
 		if w := request(other, "GET", path); w.Code != 403 {
 			t.Fatalf("non-member GET %s: want 403, got %d %s", path, w.Code, w.Body.String())
 		}
@@ -339,6 +370,48 @@ func TestProjectContentReadsRequireMembership(t *testing.T) {
 		if w := request(admin, "GET", path); w.Code != 200 {
 			t.Fatalf("admin GET %s: want 200, got %d %s", path, w.Code, w.Body.String())
 		}
+	}
+	for _, path := range []string{"/api/workflows/wf-priv/agents", "/api/workflows/wf-priv/executor-requirements"} {
+		if w := request(other, "GET", path); w.Code != 403 {
+			t.Fatalf("non-member GET %s: want 403, got %d %s", path, w.Code, w.Body.String())
+		}
+	}
+	// Shared workflows stay readable to non-members; orphaned runs/tasks stay hidden from non-owners.
+	if w := request(other, "GET", "/api/workflows/wf-shared"); w.Code != 200 {
+		t.Fatalf("non-member GET shared workflow: want 200, got %d", w.Code)
+	}
+	for _, path := range []string{"/api/runs/r-orphan", "/api/tasks/t-orphan"} {
+		if w := request(other, "GET", path); w.Code != 403 {
+			t.Fatalf("non-owner GET %s: want 403, got %d", path, w.Code)
+		}
+		if w := request(owner, "GET", path); w.Code != 200 {
+			t.Fatalf("owner GET %s: want 200, got %d", path, w.Code)
+		}
+	}
+	var otherWorkflows []domain.WorkflowDefinition
+	if w := request(other, "GET", "/api/workflows"); w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &otherWorkflows) != nil {
+		t.Fatalf("other /api/workflows: %d %s", w.Code, w.Body.String())
+	}
+	for _, wf := range otherWorkflows {
+		if wf.ID == "wf-priv" {
+			t.Fatalf("non-member should not see wf-priv in /api/workflows")
+		}
+	}
+	var otherMetrics []domain.WorkflowMetrics
+	if w := request(other, "GET", "/api/workflow-metrics"); w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &otherMetrics) != nil {
+		t.Fatalf("other /api/workflow-metrics: %d %s", w.Code, w.Body.String())
+	}
+	for _, m := range otherMetrics {
+		if m.WorkflowID == "wf-priv" {
+			t.Fatalf("non-member should not see wf-priv in /api/workflow-metrics")
+		}
+	}
+	var otherAnalytics domain.AnalyticsSnapshot
+	if w := request(other, "GET", "/api/analytics"); w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &otherAnalytics) != nil {
+		t.Fatalf("other /api/analytics: %d %s", w.Code, w.Body.String())
+	}
+	if otherAnalytics.Activity.Requirements > 1 {
+		t.Fatalf("non-member /api/analytics should exclude private project requirements, got %d", otherAnalytics.Activity.Requirements)
 	}
 
 	// List endpoints filter out unjoined project data for non-members.

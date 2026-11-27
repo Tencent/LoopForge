@@ -23,6 +23,7 @@ func (h *tasksHandlers) tasks(c *gin.Context) {
 	h.syncTasks()
 	tasks := h.repo.Tasks()
 	if allowedProjects, restricted := h.visibleProjectIDSet(c.Request); restricted {
+		user, authenticated := h.requestUser(c.Request, true)
 		issueProjects := map[string]string{}
 		for _, issue := range h.repo.Issues() {
 			issueProjects[issue.ID] = issue.ProjectID
@@ -30,9 +31,26 @@ func (h *tasksHandlers) tasks(c *gin.Context) {
 		visible := make([]domain.Task, 0, len(tasks))
 		for _, task := range tasks {
 			projectID := issueProjects[task.IssueID]
-			if projectID == "" || allowedProjects[projectID] {
-				visible = append(visible, publicTask(task))
+			if projectID != "" {
+				if !allowedProjects[projectID] {
+					continue
+				}
+			} else if task.RunID != "" {
+				run, err := h.repo.RunHeader(task.RunID)
+				if err != nil || run.ID == "" {
+					continue
+				}
+				if rp := domain.RunProjectID(run, ""); rp != "" {
+					if !allowedProjects[rp] {
+						continue
+					}
+				} else if !authenticated || user.ID <= 0 || run.ExecutionContext.ResponsibleUserID != user.ID {
+					continue
+				}
+			} else {
+				continue
 			}
+			visible = append(visible, publicTask(task))
 		}
 		c.JSON(200, visible)
 		return
@@ -50,8 +68,28 @@ func (h *tasksHandlers) task(c *gin.Context) {
 		c.JSON(http.StatusNotFound, map[string]string{"error": "task not found"})
 		return
 	}
-	if issue, found := h.repo.Issue(task.IssueID); found && !h.requireProjectReader(c, issue.ProjectID) {
-		return
+	if issue, found := h.repo.Issue(task.IssueID); found && strings.TrimSpace(issue.ProjectID) != "" {
+		if !h.requireProjectReader(c, issue.ProjectID) {
+			return
+		}
+	} else if _, restricted := h.visibleProjectIDSet(c.Request); restricted {
+		allowed := false
+		if task.RunID != "" {
+			if run, err := h.repo.RunHeader(task.RunID); err == nil && run.ID != "" {
+				if rp := domain.RunProjectID(run, ""); rp != "" {
+					if !h.requireProjectReader(c, rp) {
+						return
+					}
+					allowed = true
+				} else if user, ok := h.requestUser(c.Request, true); ok && user.ID > 0 && run.ExecutionContext.ResponsibleUserID == user.ID {
+					allowed = true
+				}
+			}
+		}
+		if !allowed {
+			c.JSON(http.StatusForbidden, gin.H{"error": "只有项目成员、项目 Owner 或平台管理员可以查看该项目的内容"})
+			return
+		}
 	}
 	c.JSON(http.StatusOK, publicTask(task))
 }

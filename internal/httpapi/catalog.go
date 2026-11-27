@@ -1017,12 +1017,16 @@ func (h *catalogHandlers) workflows(c *gin.Context) {
 		projectID := strings.TrimSpace(c.Query("projectId"))
 		needle := strings.ToLower(strings.TrimSpace(c.Query("q")))
 		all := h.repo.Workflows()
-		if projectID == "" && needle == "" {
+		allowedProjects, restricted := h.visibleProjectIDSet(c.Request)
+		if !restricted && projectID == "" && needle == "" {
 			c.JSON(200, all)
 			return
 		}
 		out := make([]domain.WorkflowDefinition, 0, len(all))
 		for _, wf := range all {
+			if !h.workflowVisible(wf, allowedProjects, restricted) {
+				continue
+			}
 			if projectID != "" && wf.ProjectID != projectID && !wf.Generic {
 				continue
 			}
@@ -1187,6 +1191,9 @@ func (h *catalogHandlers) workflow(c *gin.Context) {
 	v, ok := h.repo.Workflow(id)
 	if !ok {
 		c.JSON(404, map[string]string{"error": "workflow not found"})
+		return
+	}
+	if (c.Request.Method == http.MethodGet || c.FullPath() == "/api/workflows/:id/clone") && !v.Generic && !v.Shared && !h.requireProjectReader(c, v.ProjectID) {
 		return
 	}
 	if c.Request.Method != http.MethodGet && workflowHasNotifications(v) && !h.notifications.access(c, v.ProjectID, true) {

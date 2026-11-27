@@ -91,7 +91,7 @@ function filterAdminProjects(projects,repos,query,filter,userId){
   return (projects||[]).filter(p=>{
     const own=(repos||[]).filter(r=>r.projectId===p.id);
     if(filter==='setup'&&(p.restricted||own.length))return false;
-    if(filter==='mine'&&(p.restricted||!(projectJoinOpen(p)||(uid&&(Number(p.ownerId)===uid||(p.members||[]).some(m=>Number(m.userId)===uid))))))return false;
+    if(filter==='mine'&&(p.restricted||!(uid&&(Number(p.ownerId)===uid||(p.members||[]).some(m=>Number(m.userId)===uid)))))return false;
     if(!q)return true;
     return [p.name,p.id,p.key,...(p.restricted?[]:own.flatMap(r=>[r.name,r.gongfengProjectId,r.webUrl]))].some(v=>String(v||'').toLowerCase().includes(q));
   });
@@ -125,7 +125,7 @@ function projectCardHTML(p,ctx={}){
     const ownerAvatar=p.ownerId?`<span class="pa-av" title="${escapeHTML(owner?userDisplay(owner):String(p.ownerId))}">${userAvatarHTML(owner||p.ownerId,48)}</span>`:'';
     return `<article class="pa-card is-restricted" data-project-restricted="${escapeHTML(p.id)}" aria-label="未加入的项目 ${escapeHTML(p.name||p.id)}">
     <div class="pa-card-top"><span class="pa-mark" style="background:${safeColor(p.color)}">${escapeHTML(key.slice(0,2).toUpperCase())}</span><div class="pa-card-m"><h3><span title="${escapeHTML(p.name||'')}">${escapeHTML(p.name||p.id)}</span></h3><div class="pa-card-sub" title="${escapeHTML(p.id)} · ${escapeHTML(p.key||'')}">${escapeHTML(p.id)} · ${escapeHTML(p.key||'—')}</div></div></div>
-    <p class="pa-card-desc${p.description?'':' none'}">${escapeHTML(p.description||'暂无项目说明')}</p>
+    <p class="pa-card-desc none">仅项目成员可见项目详情</p>
     <div class="pa-facts"><span class="pa-fact"><span>未加入 · 申请通过后可见详情</span></span>${join.fact}</div>
     <div class="pa-card-foot"><div class="pa-avs">${ownerAvatar}</div>${join.action}</div>
   </article>`;
@@ -146,6 +146,7 @@ function projectCardHTML(p,ctx={}){
 }
 function projectAdminEmptyHTML(icon,title,text,action){return `<div class="pa-empty"><div class="pa-empty-ic">${paIcon(icon,22)}</div><b>${title}</b><p>${text}</p>${action||''}</div>`}
 function defaultProjectAdminFilter(){
+  if(isPlatformAdmin())return 'all';
   return state.currentUser?.id&&!state.currentUser?.isGuest?'mine':'all';
 }
 let projectDirectoryRefresh=null;

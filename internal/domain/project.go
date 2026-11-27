@@ -38,8 +38,8 @@ type Project struct {
 	CodeBuddyInternetEnvironment string    `json:"-"`
 	TAPDWorkspaceID              string    `json:"tapdWorkspaceId,omitempty"`
 	TAPDIterationID              string    `json:"tapdIterationId,omitempty"`
-	CreatedAt                    time.Time `json:"createdAt"`
-	UpdatedAt                    time.Time `json:"updatedAt"`
+	CreatedAt                    time.Time `json:"createdAt,omitzero"`
+	UpdatedAt                    time.Time `json:"updatedAt,omitzero"`
 	// ArchivedAt marks a deleted project. It is hidden from project lists and
 	// syncs but its requirements, runs and settings are kept so it can be
 	// restored; the id stays taken.
@@ -61,17 +61,16 @@ func PublicProject(p Project) Project {
 }
 
 // PublicProjectSummary returns the minimal card fields needed to discover and
-// request to join a project without exposing members, repositories, SOPs, or
-// tracker configuration to non-members.
+// request to join a project without exposing description, members,
+// repositories, SOPs, or tracker configuration to non-members.
 func PublicProjectSummary(p Project) Project {
 	return Project{
-		ID:          p.ID,
-		Key:         p.Key,
-		Name:        p.Name,
-		Description: p.Description,
-		Color:       p.Color,
-		OwnerID:     p.OwnerID,
-		Restricted:  true,
+		ID:         p.ID,
+		Key:        p.Key,
+		Name:       p.Name,
+		Color:      p.Color,
+		OwnerID:    p.OwnerID,
+		Restricted: true,
 	}
 }
 

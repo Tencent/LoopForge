@@ -876,6 +876,13 @@ func (s *Server) bootstrap(c *gin.Context) {
 			}
 		}
 		repositories = visibleRepos
+		visibleWorkflows := make([]domain.WorkflowDefinition, 0, len(workflows))
+		for _, wf := range workflows {
+			if s.workflowVisible(wf, allowedProjects, true) {
+				visibleWorkflows = append(visibleWorkflows, wf)
+			}
+		}
+		workflows = visibleWorkflows
 	}
 	mcpServers = domain.PublicMCPServers(withMarketIcons(visibleMCPServersForUser(mcpServers, currentUserID)))
 	sharedModels := s.repo.SharedCodeBuddyModels()
