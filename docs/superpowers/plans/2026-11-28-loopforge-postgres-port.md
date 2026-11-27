@@ -294,7 +294,7 @@ git commit -m "feat(db): 支持 Postgres 连接与 DSN 分流
   - `func (d postgresDialector) DataTypeOf(field *schema.Field) string`
   - `func (d postgresDialector) Migrator(db *gorm.DB) gorm.Migrator`
 
-背景：模型列 tag 是 MySQL 味的——`type:json` 46 处、`type:mediumblob` 2 处（`internal/repo/models.go:177,189`）、`type:longblob` 1 处（`models.go:502`）、`type:mediumtext` 1 处（`models.go:435`）。gorm 的 postgres 驱动对认不出的类型名直接透传（`getSchemaCustomType`），所以 AutoMigrate 会去建 `mediumblob` / `longblob` / `mediumtext` 列——Postgres 没有这些类型，`CREATE TABLE` 直接失败；而 `json` 类型没有等值运算符，upsert 与等值查询会失效。
+背景：模型列 tag 是 MySQL 味的——`type:json` 62 处、`type:mediumblob` 7 处、`type:longblob` 1 处、`type:mediumtext` 3 处（分布在 `internal/repo/` 下的 models.go、evolution.go、notifications.go、assistant_generations.go、bot_chat.go 等十来个文件；实施期间按全仓 grep 重新统计，旧稿里的 46/2/1/1 是漏算）。gorm 的 postgres 驱动对认不出的类型名直接透传（`getSchemaCustomType`），所以 AutoMigrate 会去建 `mediumblob` / `longblob` / `mediumtext` 列——Postgres 没有这些类型，`CREATE TABLE` 直接失败；而 `json` 类型没有等值运算符，upsert 与等值查询会失效。
 
 **因此类型必须在建表那一刻就是 Postgres 类型，不能等 AutoMigrate 之后再 ALTER**（那样建表就已经失败了）。
 
@@ -905,10 +905,12 @@ git commit -m "feat(db): JSON 调用点增加 Postgres 分支
 
 **Files:**
 - Modify: `internal/repo/payload.go:82-107`（`insertIgnore`）
+- Modify: `internal/repo/payload.go:59-80`（`upsert`/`upsertColumns` 的冲突目标）
 - Modify: `internal/repo/integration_lock.go:20-62`（`GET_LOCK`）
 - Modify: `internal/repo/assistant_generations.go:152,171,179`（`UTC_TIMESTAMP`/`INTERVAL`）
 - Modify: `internal/repo/workspace_checkpoints.go:470,488`（同上）
 - Modify: `internal/repo/catalog.go:481`（COLLATE 模拟）
+- Modify: `internal/repo/catalog.go:80`（`CAST(payload AS CHAR)` 等值比较）
 - Modify: `internal/repo/run_evals.go:120`（`LIMIT 18446744073709551615`）
 - Modify: `internal/repo/rooms.go:114`（`CAST(payload AS CHAR)`）
 - Test: `internal/repo/postgres_mysqlisms_test.go`（集成测试）
@@ -923,6 +925,8 @@ git commit -m "feat(db): JSON 调用点增加 Postgres 分支
 | --- | --- | --- |
 | `payload.go:96` | 列名用反引号 `` `name` `` | Postgres 用双引号；MySQL/sqlite 保持反引号 → 按方言选引号 |
 | `payload.go:100-103` | `INSERT IGNORE` | `ON CONFLICT DO NOTHING`（Postgres）；sqlite `INSERT OR IGNORE`、mysql `INSERT IGNORE` 保持 |
+| `payload.go:68,79` | `clause.OnConflict{DoUpdates: ...}`（无冲突目标） | Postgres 必须给冲突目标，否则 `ON CONFLICT DO UPDATE` 缺 inference specification 直接报 42601 → `ON CONFLICT ON CONSTRAINT <table>_pkey DO UPDATE`（gorm AutoMigrate 建出的主键约束名恒为 `<table>_pkey`；已在真实库核对 106/106 张表都是这个命名）。MySQL/sqlite 的 clause 保持原样 |
+| `catalog.go:80` | `CAST(payload AS CHAR) = CAST(? AS CHAR)` | Postgres 用 `payload = ?::jsonb`：`CAST(x AS CHAR)` 在 Postgres 是 `bpchar(1)`，只比首字符，会把「乐观并发」守卫退化成几乎恒真、静默丢失并发更新；jsonb 规范化也会让文本等值不成立（键序/空白被重排） |
 | `integration_lock.go:37` | `SELECT GET_LOCK(?, ?)` | `SELECT pg_try_advisory_lock(?)` 循环直到超时 |
 | `integration_lock.go:46` | `SELECT RELEASE_LOCK(?)` | `SELECT pg_advisory_unlock(?)` |
 | `assistant_generations.go:152,179` | `UTC_TIMESTAMP(3)` | `now()`（用 `d.nowMillisLiteral()`） |
@@ -969,9 +973,52 @@ func insertIgnore(db *gorm.DB, table string, values map[string]any) (bool, error
 }
 ```
 
-`integration_lock.go` 的 Postgres 写法：
+`upsert`/`upsertColumns` 的 Postgres 写法：
 
 ```go
+// upsert inserts a row, replacing every column when the primary key already
+// exists. Callers pass the full desired row; CreatedAt preservation is the
+// caller's responsibility (it copies the old value before writing).
+func upsert(db *gorm.DB, table string, values map[string]any) error {
+	cols := make([]string, 0, len(values))
+	for name := range values {
+		cols = append(cols, name)
+	}
+	sort.Strings(cols)
+	cl := clause.OnConflict{DoUpdates: clause.AssignmentColumns(cols)}
+	if db.Dialector.Name() == dialectPostgres {
+		// Postgres requires a conflict target for DO UPDATE. gorm's AutoMigrate
+		// names the primary key constraint of every table "<table>_pkey".
+		cl.OnConstraint = table + "_pkey"
+	}
+	if err := db.Table(table).Clauses(cl).Create(values).Error; err != nil {
+		return fmt.Errorf("%s write: %w", table, err)
+	}
+	return nil
+}
+```
+
+`upsertColumns` 同样只加 `cl.OnConstraint = table + "_pkey"`（Postgres 分支），MySQL/sqlite 一行不改。
+
+为什么用 `ON CONSTRAINT <table>_pkey` 而不是 `ON CONFLICT (列名)`：upsert 的调用点有 50 多处，主键各不相同（`id`、`user_id`、`space_id+user_id`、`mcp_id+path`、`artifact_id+version`…），逐个传列名要改几十个调用点；而 Postgres 把表级主键约束统一命名为 `<table>_pkey`（真实库里 106/106 张表核对一致），约束名可以从表名直接推出来。
+
+与 MySQL 的行为差异（要写进 Task 5 的报告）：MySQL 的 `ON DUPLICATE KEY UPDATE` 撞**任意**唯一键都算冲突并更新那一行；Postgres 的 `ON CONFLICT ON CONSTRAINT <table>_pkey` 只处理主键冲突，撞到别的唯一索引（`users.uq_users_login`、`run_previews.uq_run_previews_run`、`preview_sessions.uq_preview_sessions_hash` 等 11 个）会报唯一约束冲突而不是静默改别人的行。这是更安全的方向，但属于行为差异，必须在集成测试里显式覆盖。
+
+`catalog.go:80` 的 Postgres 写法：
+
+```go
+	// Postgres 的 CAST(x AS CHAR) 是 bpchar(1)，只保留首字符；jsonb 的文本表示
+	// 还会被规范化（键序、空白重排），文本等值不可靠。用 jsonb 语义等值。
+	where := "id = ? AND CAST(payload AS CHAR) = CAST(? AS CHAR)"
+	args := []any{id, string(original)}
+	if tx.Dialector.Name() == dialectPostgres {
+		where = "id = ? AND payload = ?::jsonb"
+	}
+	result := tx.Table(table).Where(where, args...).Updates(map[string]any{"payload": payload, "updated_at": timePtr(now)})
+```
+
+`integration_lock.go` 的 Postgres 写法：
+
 锁的 key 由 Postgres 内置的 `hashtext()` 在 SQL 里算，Go 侧不自己实现哈希（Postgres 的 `hashtext` 是内部函数，算法没有稳定性承诺，Go 侧复刻更容易失配）。
 
 ```go
@@ -1021,15 +1068,15 @@ Task 5 是第一个需要真实 Postgres 的任务，所以测试基建在这里
 1. 在 `internal/repo/opentest.go` 追加：
 
 ```go
-// OpenPostgresTest opens a store against AGENTFLOW_TEST_POSTGRES_DSN and
+// OpenPostgresTest opens a store against AGENTFLOW_TEST_POSTGRES_URL and
 // skips the test when the variable is unset. The database must exist before
 // the test runs; the store creates its schema through the same incremental
 // DDL the platform uses.
 func OpenPostgresTest(t *testing.T) *Store {
 	t.Helper()
-	dsn := strings.TrimSpace(os.Getenv("AGENTFLOW_TEST_POSTGRES_DSN"))
+	dsn := strings.TrimSpace(os.Getenv("AGENTFLOW_TEST_POSTGRES_URL"))
 	if dsn == "" {
-		t.Skip("AGENTFLOW_TEST_POSTGRES_DSN is not set")
+		t.Skip("AGENTFLOW_TEST_POSTGRES_URL is not set")
 	}
 	store, err := Open(dsn)
 	if err != nil {
@@ -1082,6 +1129,25 @@ func TestPostgresInsertIgnoreKeepsExistingRow(t *testing.T) {
 	}
 }
 
+func TestPostgresUpsertUpdatesExistingRow(t *testing.T) {
+	store := OpenPostgresTest(t)
+	values := map[string]any{"id": "pg-upsert", "name": "first", "payload": []byte(`{"v":1}`)}
+	if err := upsert(store.DB, "generic_templates", values); err != nil {
+		t.Fatalf("first upsert: %v", err)
+	}
+	values["name"] = "second"
+	if err := upsert(store.DB, "generic_templates", values); err != nil {
+		t.Fatalf("second upsert: %v", err)
+	}
+	var name string
+	if err := store.DB.Table("generic_templates").Select("name").Where("id = ?", "pg-upsert").Scan(&name).Error; err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if name != "second" {
+		t.Fatalf("upsert did not update the row: name=%q", name)
+	}
+}
+
 func TestPostgresIntegrationLockSerializes(t *testing.T) {
 	store := OpenPostgresTest(t)
 	unlock, err := store.DeliveryRepo.LockIntegration(t.Context(), "pg-lock-repo", 2*time.Second)
@@ -1111,12 +1177,12 @@ func TestPostgresIntegrationLockSerializes(t *testing.T) {
 
 - [ ] **Step 3: 跑测试确认失败**
 
-Run: `AGENTFLOW_TEST_POSTGRES_DSN='postgres://postgres.cesar:'"$POSTGRES_PASSWORD"'@127.0.0.1:5432/loopforge_test?sslmode=disable' go test ./internal/repo/ -run TestPostgresInsertIgnore`
-Expected: FAIL（当前实现仍走 MySQL 分支，`INSERT IGNORE` 在 Postgres 上是语法错误）
+Run: `AGENTFLOW_TEST_POSTGRES_URL='postgres://postgres.cesar:'"$POSTGRES_PASSWORD"'@127.0.0.1:5432/loopforge_test?sslmode=disable' go test ./internal/repo/ -run 'TestPostgresInsertIgnore|TestPostgresUpsert'`
+Expected: FAIL（`INSERT IGNORE` 在 Postgres 上是语法错误；`upsert` 缺冲突目标，报 `ON CONFLICT DO UPDATE requires inference specification or constraint name`）
 
 - [ ] **Step 4: 实现改写**
 
-按上表逐处改写 7 个文件。
+按上表逐处改写 9 个文件。
 
 - [ ] **Step 5: 编译 + 既有测试**
 
@@ -1589,7 +1655,7 @@ func TestPostgresSmoke(t *testing.T) {
 
 ```bash
 cd /Users/caijinhai/Documents/services/supabase && set -a && source .env && set +a && \
-AGENTFLOW_TEST_POSTGRES_DSN="postgres://postgres.cesar:${POSTGRES_PASSWORD}@127.0.0.1:5432/loopforge_test?sslmode=disable" \
+AGENTFLOW_TEST_POSTGRES_URL="postgres://postgres.cesar:${POSTGRES_PASSWORD}@127.0.0.1:5432/loopforge_test?sslmode=disable" \
 go test ./internal/repo/ -run TestPostgresSmoke -v
 ```
 
@@ -1599,7 +1665,7 @@ Expected: PASS
 
 ```bash
 cd /Users/caijinhai/Documents/services/supabase && set -a && source .env && set +a && \
-AGENTFLOW_TEST_POSTGRES_DSN="postgres://postgres.cesar:${POSTGRES_PASSWORD}@127.0.0.1:5432/loopforge_test?sslmode=disable" \
+AGENTFLOW_TEST_POSTGRES_URL="postgres://postgres.cesar:${POSTGRES_PASSWORD}@127.0.0.1:5432/loopforge_test?sslmode=disable" \
 go test ./internal/repo/... ./internal/httpapi/...
 ```
 
