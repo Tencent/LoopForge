@@ -346,7 +346,7 @@ func TestMCPClientPreservesInputSchema(t *testing.T) {
 		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{}}`))
 	}))
 	t.Cleanup(srv.Close)
-	tools, err := mcpclient.New(srv.URL, nil).ListTools()
+	tools, err := mcpclient.New(srv.URL, nil).WithTransport(srv.Client().Transport).ListTools()
 	if err != nil || len(tools) != 1 {
 		t.Fatalf("list: %v %+v", err, tools)
 	}
@@ -461,5 +461,99 @@ func TestConversationMCPFollowsApprovalModeOnly(t *testing.T) {
 		if got := mcpCallMayWrite("gongfeng", assistantMCPCall{Tool: name}); got != want {
 			t.Fatalf("mcpCallMayWrite(%s)=%v", name, got)
 		}
+	}
+}
+
+func TestAgentToolGatewayToolListOmitsOutputSchema(t *testing.T) {
+	resetAgentToolSessionsForTest()
+	resetAgentToolCatalogCacheForTest()
+	st, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(st.Close)
+	user, ok := st.UserByLoginName("demo-owner")
+	if !ok {
+		t.Fatal("seed user")
+	}
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var req struct {
+			Method string `json:"method"`
+		}
+		_ = json.Unmarshal(body, &req)
+		w.Header().Set("Content-Type", "application/json")
+		switch req.Method {
+		case "initialize", "notifications/initialized", "ping":
+			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{}}`))
+		case "tools/list":
+			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":2,"result":{"tools":[
+				{"name":"query_space_list","description":"list spaces","inputSchema":{"type":"object"},"outputSchema":{"type":"object","properties":{"spaces":{"type":"array"}}},"annotations":{"readOnlyHint":true}}
+			]}}`))
+		case "tools/call":
+			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":3,"result":{"content":[{"type":"text","text":"{\"spaces\":[]}"}],"structuredContent":{"spaces":[]}}}`))
+		default:
+			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{}}`))
+		}
+	}))
+	t.Cleanup(upstream.Close)
+	server := domain.MCPServerDefinition{ID: "docs-p", Name: "Docs", ProjectID: "platform", Scope: "project", Transport: "http", URL: upstream.URL}
+	if err := st.PutMCPServer(server); err != nil {
+		t.Fatal(err)
+	}
+	handler := New(st, engine.New(st, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
+	session := &AgentToolSession{
+		UserID:     user.ID,
+		ProjectID:  "platform",
+		Mode:       AgentToolAssistant,
+		ExpiresAt:  time.Now().Add(time.Minute),
+		MCPServers: []domain.MCPServerDefinition{server},
+		User:       user,
+		Final:      make(chan AgentTerminalResult, 1),
+	}
+	if err := agentToolSessions.create(session); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/internal/agent-tools/"+session.Token+"/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("tools/list status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		Result struct {
+			Tools []map[string]any `json:"tools"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	var matchedName string
+	for _, tool := range resp.Result.Tools {
+		name, _ := tool["name"].(string)
+		if strings.HasSuffix(name, "query_space_list") {
+			matchedName = name
+			if _, hasOutputSchema := tool["outputSchema"]; hasOutputSchema {
+				t.Fatalf("toolList must omit outputSchema for %s, got %#v", name, tool["outputSchema"])
+			}
+		}
+	}
+	if matchedName == "" {
+		t.Fatalf("expected query_space_list in tools/list, got %d tools", len(resp.Result.Tools))
+	}
+
+	callPayload, _ := json.Marshal(map[string]any{
+		"jsonrpc": "2.0",
+		"id":      2,
+		"method":  "tools/call",
+		"params":  map[string]any{"name": matchedName, "arguments": map[string]any{}},
+	})
+	callReq := httptest.NewRequest(http.MethodPost, "/internal/agent-tools/"+session.Token+"/mcp", bytes.NewReader(callPayload))
+	callReq.Header.Set("Content-Type", "application/json")
+	callRec := httptest.NewRecorder()
+	handler.ServeHTTP(callRec, callReq)
+	if callRec.Code != http.StatusOK || !strings.Contains(callRec.Body.String(), `\"spaces\":[]`) {
+		t.Fatalf("tools/call status=%d body=%s", callRec.Code, callRec.Body.String())
 	}
 }

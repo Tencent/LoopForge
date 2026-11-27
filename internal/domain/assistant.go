@@ -51,6 +51,7 @@ type AssistantActivityEvent struct {
 }
 
 type AssistantMessage struct {
+	KnowledgeReads []KnowledgeRead          `json:"knowledgeReads,omitempty"`
 	Assets         []AssistantAssetRef      `json:"assets,omitempty"`
 	RunIDs         []string                 `json:"runIds,omitempty"`
 	Activity       []AssistantActivityEvent `json:"activity,omitempty"`
@@ -179,6 +180,8 @@ func (s AssistantSession) Mode() string {
 }
 
 type AssistantSession struct {
+	KnowledgeRestricted   bool                      `json:"knowledgeRestricted,omitempty"`
+	KnowledgeRefs         []KnowledgeRef            `json:"knowledgeRefs,omitempty"`
 	ExecutionTarget       *AssistantExecutionTarget `json:"executionTarget,omitempty"`
 	ExecutionTargetLocked bool                      `json:"executionTargetLocked"`
 	RuntimeMode           string                    `json:"runtimeMode,omitempty"`

@@ -57,6 +57,68 @@ test('knowledge: usage and candidates answer for the project', async () => {
   assert.ok(await get(`/api/knowledge/candidates?projectId=${P}`));
 });
 
+test('knowledge: personal connector CRUD, secret masking, isolation and check', async () => {
+  const me = await tokenOwner();
+  await api('POST', '/api/knowledge/connectors', { name: '', type: 'mcp', endpoint: 'http://127.0.0.1:1/mcp' }, { expect: 400 });
+  await api('POST', '/api/knowledge/connectors', { name: uid('kb-bad'), type: 'no-such-type', endpoint: 'http://127.0.0.1:1/mcp' }, { expect: 400 });
+
+  const secret = `e2e-secret-${cfg.runTag}`;
+  const createdRes = await api('POST', '/api/knowledge/connectors', {
+    name: `E2E 知识连接器 ${cfg.runTag}`,
+    type: 'mcp',
+    endpoint: 'http://127.0.0.1:1/mcp',
+    token: secret,
+    config: { timeoutSec: 3 },
+  }, { expect: 201, raw: true });
+  const conn = createdRes.data;
+  assert.ok(conn.id);
+  track(`knowledge connector ${conn.id}`, () => del(`/api/knowledge/connectors/${conn.id}`));
+  assert.equal(conn.ownerUserId, me.id);
+  assert.equal(conn.secretConfigured, true);
+  assert.ok(!createdRes.text.includes(secret), 'connector response must never echo the secret');
+
+  const fetched = await api('GET', `/api/knowledge/connectors/${conn.id}`, undefined, { raw: true });
+  assert.equal(fetched.data.id, conn.id);
+  assert.ok(!fetched.text.includes(secret), 'connector detail must never echo the secret');
+  assert.ok(list(await get('/api/knowledge/connectors')).some(c => c.id === conn.id));
+  assert.ok(list(await get('/api/knowledge/reference-options')).some(c => c.id === conn.id));
+
+  if (cfg.tokenB) {
+    assert.ok(!list(await get('/api/knowledge/connectors', asB())).some(c => c.id === conn.id), 'another user must not list private connectors');
+    await api('GET', `/api/knowledge/connectors/${conn.id}`, undefined, asB({ expect: 404 }));
+    await api('PUT', `/api/knowledge/connectors/${conn.id}`, { name: 'hijacked', type: 'mcp', endpoint: 'http://127.0.0.1:1/mcp' }, asB({ expect: 404 }));
+    await api('DELETE', `/api/knowledge/connectors/${conn.id}`, undefined, asB({ expect: 404 }));
+  }
+
+  const updated = await put(`/api/knowledge/connectors/${conn.id}`, {
+    name: `E2E 知识连接器（改） ${cfg.runTag}`,
+    type: 'mcp',
+    endpoint: 'http://127.0.0.1:1/mcp',
+    config: { timeoutSec: 3 },
+  });
+  assert.equal(updated.name, `E2E 知识连接器（改） ${cfg.runTag}`);
+  assert.equal(updated.secretConfigured, true, 'omitting secret on update must preserve stored credentials');
+
+  const cleared = await put(`/api/knowledge/connectors/${conn.id}`, {
+    name: updated.name,
+    type: 'mcp',
+    endpoint: 'http://127.0.0.1:1/mcp',
+    clearSecret: true,
+    config: { timeoutSec: 3 },
+  });
+  assert.equal(cleared.secretConfigured, false);
+
+  const check = await post(`/api/knowledge/connectors/${conn.id}/check`, {});
+  assert.equal(check.ok, false);
+  assert.ok(check.error, 'unreachable check must report an error reason');
+
+  const reset = await api('DELETE', `/api/knowledge/usage?connectorId=${encodeURIComponent(conn.id)}`, undefined, { expect: 200 });
+  assert.equal(reset.ok, true);
+
+  await del(`/api/knowledge/connectors/${conn.id}`, { expect: [200, 204] });
+  await api('GET', `/api/knowledge/connectors/${conn.id}`, undefined, { expect: 404 });
+});
+
 test('rooms: create, message, and turn a message into a dispatched requirement', { timeout: 300_000 }, async () => {
   await api('GET', '/api/rooms', undefined, { expect: 400 });
   await api('POST', '/api/rooms', { projectId: P }, { expect: 400 });

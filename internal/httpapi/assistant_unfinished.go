@@ -32,8 +32,16 @@ func turnTranscriptMessage(g domain.AssistantGeneration, model string, stopped b
 	var activity []domain.AssistantActivityEvent
 	var text string
 	if g.Stream != nil {
-		activity = g.Stream.Activity
-		text = assistantVisibleReply(g.Stream.Answer, activity)
+		if len(g.Stream.Activity) > 0 {
+			activity = make([]domain.AssistantActivityEvent, len(g.Stream.Activity))
+			copy(activity, g.Stream.Activity)
+		}
+		text = domain.StripKnowledgeCitationMarkers(assistantVisibleReply(g.Stream.Answer, activity))
+		for i := range activity {
+			if (activity[i].Kind == "text" || activity[i].Kind == "narration") && strings.Contains(activity[i].Text, "[[knowledge:") {
+				activity[i].Text = domain.StripKnowledgeCitationMarkers(activity[i].Text)
+			}
+		}
 	}
 	if !transcriptWorthKeeping(text, activity) && g.Failure == nil {
 		return domain.AssistantMessage{}, false
