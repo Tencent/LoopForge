@@ -317,6 +317,26 @@ func TestJobDueCron(t *testing.T) {
 	}
 }
 
+func TestJobDueWaitsForFirstCronOccurrence(t *testing.T) {
+	// 10:30 and 18:00 in the scheduler's UTC+8 timezone.
+	created := time.Date(2026, time.November, 23, 2, 30, 0, 0, time.UTC)
+	firstRun := time.Date(2026, time.November, 23, 10, 0, 0, 0, time.UTC)
+	job := domain.ScheduleJob{Enabled: true, Cron: "0 18 * * *", CreatedAt: created, UpdatedAt: created}
+	if jobDue(job, created.Add(15*time.Second)) {
+		t.Fatal("a new 18:00 cron job must not start on the first scheduler tick after saving at 10:30")
+	}
+	if !jobDue(job, firstRun) {
+		t.Fatal("the new cron job should run at its first scheduled 18:00 occurrence")
+	}
+
+	// Saving or enabling an unrun cron job does not replay occurrences from
+	// its prior disabled configuration.
+	job.CreatedAt = created.AddDate(0, 0, -1)
+	if jobDue(job, created.Add(15*time.Second)) {
+		t.Fatal("a newly enabled cron job must not run a previous day's occurrence")
+	}
+}
+
 func TestMatchingIssuesUsesCurrentProject(t *testing.T) {
 	st, err := repo.OpenTest()
 	if err != nil {
@@ -767,8 +787,10 @@ func TestCronDropsOccurrencesDuringRun(t *testing.T) {
 			if _, err := svc.claimJob(job.ID, start.Add(180*time.Minute)); err != nil {
 				t.Fatalf("next cron must run: err=%v", err)
 			}
-			// Another job's run does not delay a job that never ran.
-			if _, err := svc.claimJob(neverRun.ID, finish); err != nil {
+			// Another job's run does not delay a job's first scheduled occurrence.
+			stored, _ := st.ScheduleJob(neverRun.ID)
+			firstDue := stored.UpdatedAt.Truncate(time.Hour).Add(time.Hour)
+			if _, err := svc.claimJob(neverRun.ID, firstDue); err != nil {
 				t.Fatalf("other job must not wait for this one: err=%v", err)
 			}
 			got, _ := st.ScheduleJob(job.ID)
@@ -815,7 +837,8 @@ func TestTimerRunsAsyncAndSkipsOverlap(t *testing.T) {
 		return "ok", nil
 	})
 	returned := make(chan struct{})
-	go func() { svc.runDueJobs(); close(returned) }()
+	firstDue := time.Now().UTC().Truncate(time.Minute).Add(time.Minute)
+	go func() { svc.runDueJobsAt(firstDue); close(returned) }()
 	select {
 	case <-returned:
 	case <-time.After(2 * time.Second):

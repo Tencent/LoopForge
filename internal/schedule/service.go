@@ -196,10 +196,19 @@ func jobDue(job domain.ScheduleJob, now time.Time) bool {
 		return false
 	}
 	if cron := strings.TrimSpace(job.Cron); cron != "" {
-		if job.LastRunAt.IsZero() {
-			return true
+		after := job.LastRunAt
+		if after.IsZero() {
+			// Before the first run, respect the schedule from its last save or enable.
+			after = job.UpdatedAt
+			if after.IsZero() {
+				after = job.CreatedAt
+			}
+			if after.IsZero() {
+				// A legacy row without timestamps can still run on a matching minute.
+				after = now.Add(-time.Minute)
+			}
 		}
-		next, err := cronexpr.Next(cron, job.LastRunAt)
+		next, err := cronexpr.Next(cron, after)
 		return err == nil && !next.After(now)
 	}
 	interval := time.Duration(job.IntervalSec) * time.Second
