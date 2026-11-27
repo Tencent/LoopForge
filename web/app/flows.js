@@ -1107,7 +1107,8 @@ function renderProperties(){
     const scriptPane=n.type==='script'?`<div class="fd-row2"><div class="fd-field"><label>脚本语言</label><select class="select" data-p="scriptLanguage"><option value="shell" ${n.scriptLanguage!=='python'?'selected':''}>Shell</option><option value="python" ${n.scriptLanguage==='python'?'selected':''}>Python</option></select></div><div class="fd-field"><label>执行范围</label><select class="select" data-p="executionScope"><option value="run" ${n.executionScope!=='repositories'?'selected':''}>Run 工作区</option><option value="repositories" ${n.executionScope==='repositories'?'selected':''}>每个代码仓库</option></select></div></div><div class="fd-field"><label>脚本内容</label><button type="button" class="script-editor-launch-btn btn-open-code-editor" id="openScriptNodeEditor"><span>${flowPalette.icon('code',14)} 打开代码编辑器编写脚本</span><span class="script-btn-badge">${scriptCountText}</span></button>${scriptPreview}<p class="prop-hint">逐仓库执行时会自动进入每个仓库根目录，无需手写 cd。</p></div>`:'';
     const approvalPane=n.type==='approval'?`<div class="fd-field"><label>需要确认什么（可选）</label><textarea class="input" rows="4" data-p="taskPrompt" placeholder="例如：检查 MR 的改动范围和测试结果，确认可以上线">${escapeHTML(n.taskPrompt||'')}</textarea><p class="prop-hint">确认步骤会停在「待我确认」，批准后才继续；这段说明会和上下游一起展示给确认人。</p></div>`:'';
     const knowledgeBtn=n.type==='agent'&&!nodeUsesManagedAgent(n)?`<div class="fd-field"><button type="button" id="nodeKnowledgeRefs" class="fd-btn ghost sm">${flowPalette.icon('layers',13)}<span>关联知识库 · ${(n.knowledgeRefs||[]).length}</span></button><p class="prop-hint">为当前节点指定要检索的个人知识库连接器（若角色开启了「接入我的知识库」则自动取并集，同一连接器以节点指定的子知识库范围为准），引用会标记在产物里。</p></div>`:'';
-    const managedKnowledgeHint=n.type==='agent'&&nodeUsesManagedAgent(n)?`<div class="fd-field"><p class="prop-hint">${(n.knowledgeRefs||[]).length?`该步骤的托管 Agent 不会使用节点知识库，本次运行会明确失败；请清空已关联的 ${(n.knowledgeRefs||[]).length} 个知识库，或换用 CLI 执行器。`:'托管 Agent（WMA / A2A）在服务端检索，不支持节点关联知识库；需要知识库请换用 CLI 执行器。'}</p></div>`:'';
+    const staleKnowledge=(n.knowledgeRefs||[]).length;
+    const managedKnowledgeHint=n.type==='agent'&&nodeUsesManagedAgent(n)?`<div class="fd-field"><p class="prop-hint">${staleKnowledge?`该步骤的托管 Agent 不会使用节点知识库，本次运行会明确失败；请清空已关联的 ${staleKnowledge} 个知识库，或换用 CLI 执行器。`:'托管 Agent（WMA / A2A）在服务端检索，不支持节点关联知识库；需要知识库请换用 CLI 执行器。'}</p>${staleKnowledge?`<button type="button" id="clearNodeKnowledgeRefs" class="fd-btn ghost sm">${flowPalette.icon('trash',13)}<span>清空已关联的 ${staleKnowledge} 个知识库</span></button>`:''}</div>`:'';
     const main=`<section class="fd-sec"><div class="fd-sec-h"><span class="fd-sec-t">主配置</span></div><div class="fd-sec-b">${n.type==='agent'?agentBindCard(n)+knowledgeBtn+managedKnowledgeHint:''}${sopSelect}${scriptPane}${approvalPane}</div></section>`;
     const gates=n.type==='agent'?flowFold('gates','校验顺序',`${effectiveNodeArtifacts(n,workflowAgent(n.agentId)).length} 产物 · ${roleGates(workflowAgent(n.agentId)).length} 门禁`,nodeGatePane(n),false):'';
     const wantReject=state.flowWantReject??(n.onFailure==='reject');
@@ -1121,6 +1122,12 @@ function renderProperties(){
       if(flowReadOnly() || !state.workflow?.nodes.includes(n))throw new Error('流程版本已切换，请重新选择知识库');
       flowHistory.record();n.knowledgeRefs=refs;dirty();renderProperties();
     }));
+    // Managed roles hide 关联知识库, so a binding left over from a CLI role
+    // (or an older save) needs its own way out instead of a role round-trip.
+    host.querySelector('#clearNodeKnowledgeRefs')?.addEventListener('click',()=>{
+      if(flowReadOnly() || !state.workflow?.nodes.includes(n))return;
+      flowHistory.record();n.knowledgeRefs=[];dirty();renderProperties();
+    });
   }
   host.querySelector('#closeNodeDrawer')?.addEventListener('click',closeNodeDrawer);
   const del=host.querySelector('#deletePropertyNode');if(del)del.onclick=()=>removeNode(n.id);
