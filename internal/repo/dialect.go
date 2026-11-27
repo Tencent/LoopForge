@@ -186,6 +186,11 @@ func (d *deps) jsonTextLiteral(column, path string) string {
 // jsonTextParam extracts a text value at a path bound as a parameter. The
 // bound parameter keeps the MySQL path form ("$.runId"); the Postgres branch
 // converts it to a path array in SQL, so the call sites do not change.
+//
+// The conversion only understands dot-separated paths. A bound path with an
+// array subscript ("$.messages[0].content") would become the key
+// "messages[0]" and match nothing, so a call site that needs one must use
+// jsonTextLiteral with a code-constant path instead.
 func (d *deps) jsonTextParam(column string) string {
 	if d.isPostgres() {
 		return column + "::jsonb #>> string_to_array(ltrim(?, '$.'), '.')"
@@ -196,12 +201,15 @@ func (d *deps) jsonTextParam(column string) string {
 	return "json_extract(" + column + ", ?)"
 }
 
-// jsonLengthLiteral counts the elements of the JSON array at a path. A
-// missing or non-array value counts as zero.
+// jsonLengthLiteral measures the JSON value at a path the way MySQL's
+// JSON_LENGTH does: an array counts its elements, an object counts its
+// members, a scalar counts as one, and a missing path or a JSON null has no
+// length. A missing value counts as zero, which is what every caller of the
+// MySQL expression gets from its COALESCE wrapper.
 func (d *deps) jsonLengthLiteral(column, path string) string {
 	if d.isPostgres() {
 		inner := column + "::jsonb #> '" + jsonPathToPGArray(path) + "'"
-		return "COALESCE(CASE WHEN jsonb_typeof(" + inner + ") = 'array' THEN jsonb_array_length(" + inner + ") END, 0)"
+		return "COALESCE(CASE WHEN " + inner + " IS NULL THEN NULL WHEN jsonb_typeof(" + inner + ") = 'array' THEN jsonb_array_length(" + inner + ") WHEN jsonb_typeof(" + inner + ") = 'object' THEN (SELECT count(*) FROM jsonb_object_keys(" + inner + ")) WHEN jsonb_typeof(" + inner + ") = 'null' THEN NULL ELSE 1 END, 0)"
 	}
 	if d.isMySQL() {
 		return "JSON_LENGTH(JSON_EXTRACT(" + column + ", '" + path + "'))"
@@ -209,11 +217,15 @@ func (d *deps) jsonLengthLiteral(column, path string) string {
 	return "json_array_length(" + column + ", '" + path + "')"
 }
 
-// jsonTypeLiteral names the JSON type at a path ("STRING", "OBJECT", ...).
+// jsonTypeLiteral names the JSON type at a path the way MySQL's JSON_TYPE
+// does: "STRING", "INTEGER", "DOUBLE", "BOOLEAN", "OBJECT", "ARRAY" or
+// "NULL".
 func (d *deps) jsonTypeLiteral(column, path string) string {
 	if d.isPostgres() {
 		inner := column + "::jsonb #> '" + jsonPathToPGArray(path) + "'"
-		return "CASE WHEN jsonb_typeof(" + inner + ") IS NULL THEN NULL WHEN jsonb_typeof(" + inner + ") = 'string' THEN 'STRING' WHEN jsonb_typeof(" + inner + ") = 'number' THEN 'INTEGER' WHEN jsonb_typeof(" + inner + ") = 'boolean' THEN 'BOOLEAN' WHEN jsonb_typeof(" + inner + ") = 'object' THEN 'OBJECT' WHEN jsonb_typeof(" + inner + ") = 'array' THEN 'ARRAY' ELSE 'NULL' END"
+		// jsonb keeps every number as a numeric, so an integer has to be
+		// recognised by its text form to tell MySQL's INTEGER from DOUBLE.
+		return "CASE WHEN " + inner + " IS NULL THEN NULL WHEN jsonb_typeof(" + inner + ") = 'string' THEN 'STRING' WHEN jsonb_typeof(" + inner + ") = 'number' THEN (CASE WHEN (" + inner + ")::text ~ '^-?[0-9]+$' THEN 'INTEGER' ELSE 'DOUBLE' END) WHEN jsonb_typeof(" + inner + ") = 'boolean' THEN 'BOOLEAN' WHEN jsonb_typeof(" + inner + ") = 'object' THEN 'OBJECT' WHEN jsonb_typeof(" + inner + ") = 'array' THEN 'ARRAY' ELSE 'NULL' END"
 	}
 	if d.isMySQL() {
 		return "JSON_TYPE(JSON_EXTRACT(" + column + ", '" + path + "'))"
@@ -243,9 +255,19 @@ func (d *deps) likeOperator() string {
 }
 
 // nowMillisLiteral returns the current timestamp in milliseconds.
+//
+// MySQL's UTC_TIMESTAMP(3) is the wall clock at the moment the statement runs.
+// Postgres' now() is the transaction timestamp — frozen when the transaction
+// started — so a write that commits much later would be stamped with the
+// transaction's start time. clock_timestamp() is the wall clock and advances
+// inside a transaction, which is what the commit-time clock needs.
+//
+// Only MySQL and Postgres use this expression; the sqlite branch exists so
+// the helper stays dialect-shaped rather than silently handing sqlite a
+// function it does not have.
 func (d *deps) nowMillisLiteral() string {
 	if d.isPostgres() {
-		return "now()"
+		return "clock_timestamp()"
 	}
 	return "UTC_TIMESTAMP(3)"
 }
