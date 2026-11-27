@@ -4,7 +4,7 @@
 
 ## 平台配置
 
-在平台进程设置 `AGENTFLOW_WORKSPACE_SSH_ENABLED=true`。Compose 安装可以在部署的 `.env` 设置同名变量并重建平台容器。HTTPS 代理需允许 WebSocket upgrade，并把桌面和 Runner 的 SSH 路由交给同一个 API 进程。Runner 工作区需要同一版本的 Runner 和 Linux helper。
+受支持的工作区默认提供桌面连接。HTTPS 代理需允许 WebSocket upgrade，并把桌面和 Runner 的 SSH 路由交给同一个 API 进程。Runner 工作区需要同一版本的 Runner 和 Linux helper。
 
 首版支持 API 本地执行和通过 Runner 执行的 Docker 工作区。Runner 使用共享工作区布局。API 与执行引擎分离部署时，绑定在其他平台进程的工作区暂不可连接。入口遵循现有的工作区写权限，个人工作区仅向所有者开放。会话保活会刷新工作区的使用时间，工作区回收或权限失效会结束连接。
 
@@ -21,7 +21,7 @@
    unset loopforge_desktop_token
    ~~~
 
-3. 在 LoopForge 打开可编辑的 Docker 工作区，等工作区准备完成，再点 IDE 工具栏的「在 VS Code 打开」。VS Code 会打开沙箱中的 `/workspace`。
+3. 在 LoopForge 会话的右侧面板点击「IDE」，再选「本地 Visual Studio Code」。VS Code 会打开沙箱中的 `/workspace`。从 LOOP 运行详情打开工作区时，可以使用工作区工具栏的「在 VS Code 打开」。
 
 桌面连接程序通过平台验证 Run 的 SSH 主机密钥。Token 用于 HTTPS 请求，保存在本机权限为 `0600` 的配置文件中。浏览器启动链接只包含平台来源和运行 ID。
 

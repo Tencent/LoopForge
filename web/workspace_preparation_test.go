@@ -53,7 +53,7 @@ func TestIDEStartupReusesPreparedEnvironment(t *testing.T) {
 const assert = require('node:assert/strict');
 const { createDOM } = require('./hui_fake_dom.js');
 
-async function openIDE({ status, readOnly = false, preparation }) {
+async function openIDE({ status, readOnly = false, preparation, conversation = false }) {
   const dom = createDOM();
   const { document, window } = dom;
   const host = dom.html('<div id="workbench"></div>');
@@ -70,6 +70,7 @@ async function openIDE({ status, readOnly = false, preparation }) {
   let startWorkbench;
   window.URLSearchParams = URLSearchParams;
   window.location = new URL('https://ide.test/vscode.html?run=test&embed=1');
+  if (conversation) window.location.searchParams.set('source', 'conversation');
   window.require = (_modules, start) => {
     startWorkbench = () => start({
       create() {},
@@ -83,7 +84,7 @@ async function openIDE({ status, readOnly = false, preparation }) {
     const response = body => ({ ok: true, json: async () => body });
     switch (url) {
       case '/api/runs/test/workspace':
-        return response({ available: true, readOnly });
+        return response({ available: true, readOnly, desktopSSH: !readOnly });
       case '/api/runs/test/workspace/use':
         return response({});
       case '/api/runs/test/workspace/preparation':
@@ -98,6 +99,7 @@ async function openIDE({ status, readOnly = false, preparation }) {
   assert.equal(typeof startWorkbench, 'function', 'the workbench should load in parallel with preparation');
   return {
     terminal: document.querySelector('button[aria-label="新建终端"]'),
+    desktop: document.querySelector('button[aria-label^="在桌面 VS Code 打开"]'),
     status: document.querySelector('.vscode-toolbar-status'),
     preparationMethods, commands, startWorkbench, settle: dom.settle
   };
@@ -109,8 +111,12 @@ async function openIDE({ status, readOnly = false, preparation }) {
   assert.equal(warm.terminal.disabled, true, 'the terminal command needs the workbench');
   warm.startWorkbench();
   assert.equal(warm.terminal.disabled, false);
+  assert.equal(warm.desktop.disabled, false, 'a run record can still launch the desktop app');
   warm.terminal.onclick();
   assert.deepEqual(warm.commands, ['agentflow.newTerminal']);
+
+  const conversation = await openIDE({ status: 'ready', conversation: true });
+  assert.equal(conversation.desktop, null, 'the conversation panel owns the desktop IDE choice');
 
   let finishPreparation;
   const preparation = new Promise(resolve => { finishPreparation = resolve; });

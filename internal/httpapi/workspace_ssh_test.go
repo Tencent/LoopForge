@@ -28,7 +28,6 @@ func issueWorkspaceSSHTestToken(t *testing.T, store *repo.Store, userID int64) s
 }
 
 func TestWorkspaceSSHChecksEditPermission(t *testing.T) {
-	t.Setenv("AGENTFLOW_WORKSPACE_SSH_ENABLED", "true")
 	t.Setenv("AGENTFLOW_SESSION_SECRET", "desktop-ssh-test-secret")
 	a, owner, peer, outsider, _ := sharedWorkbenchFixture(t)
 	project, _ := a.repo.Project("workbench")

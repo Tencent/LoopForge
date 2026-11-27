@@ -38,7 +38,6 @@ func TestDesktopSSHReachesSameDockerWorkspace(t *testing.T) {
 func testDesktopSSHWorkspace(t *testing.T, binary, execution string) {
 	t.Helper()
 	t.Setenv("AGENTFLOW_SESSION_SECRET", rand.Text())
-	t.Setenv("AGENTFLOW_WORKSPACE_SSH_ENABLED", "true")
 	t.Setenv("AGENTFLOW_AUTH_REQUIRED", "true")
 	bootstrap := rand.Text()
 	t.Setenv("AGENTFLOW_RUNNER_BOOTSTRAP_TOKEN", bootstrap)
@@ -111,6 +110,28 @@ func testDesktopSSHWorkspace(t *testing.T, binary, execution string) {
 		t.Fatal(err)
 	}
 	token := issueWorkspaceSSHTestToken(t, a.repo, owner.ID)
+	readWorkspace := func(suffix string, value any) {
+		t.Helper()
+		request, err := http.NewRequestWithContext(ctx, http.MethodGet, server.URL+"/api/runs/"+run.ID+"/workspace"+suffix, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		request.Header.Set("Authorization", "Bearer "+token)
+		response, err := server.Client().Do(request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer response.Body.Close()
+		if err := json.NewDecoder(response.Body).Decode(value); err != nil || response.StatusCode != http.StatusOK {
+			t.Fatalf("workspace %q: %d, %v", suffix, response.StatusCode, err)
+		}
+	}
+	var metadata struct{ DesktopSSH bool }
+	readWorkspace("", &metadata)
+	if !metadata.DesktopSSH {
+		t.Fatal("desktop IDE must be available before opening the online IDE")
+	}
+
 	keyPath := filepath.Join(t.TempDir(), "id_ed25519")
 	if out, err := exec.CommandContext(ctx, "ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", keyPath).CombinedOutput(); err != nil {
 		t.Fatalf("ssh-keygen: %v: %s", err, out)
@@ -158,18 +179,9 @@ func testDesktopSSHWorkspace(t *testing.T, binary, execution string) {
 	if err != nil || len(mapped) != 0 {
 		t.Fatalf("sandbox published a host port: %v: %s", err, mapped)
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, server.URL+"/api/runs/"+run.ID+"/workspace/file?path=ssh-marker.txt", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	request.Header.Set("Authorization", "Bearer "+token)
-	response, err := server.Client().Do(request)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer response.Body.Close()
 	var file struct{ Content string }
-	if err := json.NewDecoder(response.Body).Decode(&file); err != nil || response.StatusCode != http.StatusOK || file.Content != "desktop-edit" {
-		t.Fatalf("workspace file after SSH edit: %d, %q, %v", response.StatusCode, file.Content, err)
+	readWorkspace("/file?path=ssh-marker.txt", &file)
+	if file.Content != "desktop-edit" {
+		t.Fatalf("workspace file after SSH edit: %q", file.Content)
 	}
 }

@@ -2,6 +2,7 @@
   const params = new URLSearchParams(location.search);
   const runId = String(params.get('run') || '').trim();
   const embedded = params.get('embed') === '1';
+  const hasIDEPicker = embedded && params.get('source') === 'conversation';
   const host = document.getElementById('workbench') || document.body;
   if (embedded) document.body.classList.add('embed');
   const toolbar=document.createElement('header');toolbar.className='vscode-toolbar';
@@ -158,7 +159,7 @@
       currentInfo = info;
       workspaceReadOnly = info.readOnly !== false;
       editing = !workspaceReadOnly;
-      if (editing && info.desktopSSH && /^[A-Za-z0-9_.-]{1,128}$/.test(runId) && !['.', '..'].includes(runId)) {
+      if (!hasIDEPicker && editing && info.desktopSSH && /^[A-Za-z0-9_.-]{1,128}$/.test(runId) && !['.', '..'].includes(runId)) {
         terminal.after(desktop);
       }
       paintToolbar();

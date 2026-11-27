@@ -75,10 +75,7 @@ func (r *workspaceSSHRelay) claim(ticket, runnerID string) *workspaceSSHAttachme
 }
 
 func workspaceSSHSecret() string {
-	if raw := os.Getenv("AGENTFLOW_WORKSPACE_SSH_ENABLED"); raw == "1" || strings.EqualFold(raw, "true") {
-		return strings.TrimSpace(os.Getenv("AGENTFLOW_SESSION_SECRET"))
-	}
-	return ""
+	return strings.TrimSpace(os.Getenv("AGENTFLOW_SESSION_SECRET"))
 }
 
 func (h *runsHandlers) workspaceSSHAvailable(run domain.Run) bool {
@@ -90,10 +87,6 @@ func (h *runsHandlers) workspaceSSHAvailable(run domain.Run) bool {
 }
 
 func (h *runsHandlers) workspaceSSHActor(c *gin.Context) (domain.Run, int64, bool) {
-	if workspaceSSHSecret() == "" {
-		c.JSON(http.StatusNotFound, gin.H{"error": "桌面 IDE 连接未启用"})
-		return domain.Run{}, 0, false
-	}
 	// The desktop companion uses a personal token. A web page with only
 	// a browser session cannot open a raw desktop SSH socket.
 	if _, bearer := bearerToken(c.Request); !bearer {

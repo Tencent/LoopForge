@@ -10,6 +10,28 @@ afterEach(() => {
   delete document.hidden;
 });
 
+test("reads desktop IDE availability independently of the diff and scopes it to the current run", async () => {
+  const pendingDiff = new Promise(() => {});
+  vi.stubGlobal("fetch", vi.fn(async (path) => {
+    if (path.endsWith("/diff")) return pendingDiff;
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({ available: true, desktopSSH: path.includes("/r1/"), changes: [] }),
+    };
+  }));
+
+  const { result, rerender } = renderHook(({ runId }) => useWorkspaceChanges(runId), {
+    initialProps: { runId: "r1" },
+  });
+  await waitFor(() => expect(result.current.desktopIDE?.available).toBe(true));
+  expect(result.current.status).toBe("loading");
+
+  rerender({ runId: "r2" });
+  expect(result.current.desktopIDE).toBeNull();
+  await waitFor(() => expect(result.current.desktopIDE?.available).toBe(false));
+});
+
 test("a hidden tab stops polling so the workspace can still go idle", async () => {
   let hidden = false;
   Object.defineProperty(document, "hidden", {
