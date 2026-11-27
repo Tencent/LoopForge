@@ -16,6 +16,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"agentflow/internal/application"
 	"agentflow/internal/domain"
@@ -1234,7 +1235,9 @@ var assistantPlanLeadIn = []string{"首先", "先", "第一步", "第二步", "�
 
 // assistantPlanVerb is an action a plan step is made of, without the
 // perfective 了 ("先确认分支" plans the check; "先确认了分支" reports it).
-var assistantPlanVerb = []string{"读", "看", "查", "搜", "运行", "执行", "检查", "确认", "汇总", "整理", "对比", "分析", "测试", "验证", "修改", "实现", "记录", "列出", "定位", "复现", "关注", "核对", "排查", "梳理"}
+// 测试 is left out: as a noun it opens reports ("测试失败 3 个", "测试挂在
+// 网络超时"), and a step that runs tests names 跑/运行 as well.
+var assistantPlanVerb = []string{"读", "看", "查", "搜", "跑", "运行", "执行", "检查", "确认", "汇总", "整理", "对比", "分析", "验证", "修改", "实现", "记录", "列出", "定位", "复现", "关注", "核对", "排查", "梳理"}
 
 // assistantPlanVerbEN is the English counterpart of assistantPlanVerb, matched
 // as whole words: "It reads the config on start." describes the code, it does
@@ -1246,13 +1249,20 @@ var assistantPlanVerbEN = regexp.MustCompile(`(?i)\b(?:review|read|check|run|tes
 // carrying it without a check intent is an answer.
 var assistantPlanVerdictMark = []string{"全过", "都过", "通过", "没问题", "没有问题", "无异常", "没有异常", "干净"}
 
-// assistantPlanCheckIntent marks a verdict as still to be verified, as in
-// "确认测试都通过" or "看看有没有异常".
-var assistantPlanCheckIntent = []string{"确认", "检查", "验证", "看看", "看下", "看一下", "是否", "有没有", "能否", "会不会"}
+// assistantPlanCheckIntent marks a verdict as still to be verified or
+// reached, as in "确认测试都通过", "看看有没有异常", "改代码，让测试通过" or
+// "跑测试直到全部通过".
+var assistantPlanCheckIntent = []string{"确认", "检查", "验证", "看看", "看下", "看一下", "是否", "有没有", "能否", "会不会", "让", "确保", "保证", "直到", "使得", "使其"}
 
 // assistantPlanPassSubject is what 通过 can be a verdict about. "再通过 API
 // 拉取提交记录" uses 通过 as "via" and stays a step.
-var assistantPlanPassSubject = []string{"测试", "单测", "用例", "检查", "审核", "校验", "构建", "CI", "ci", "门禁", "lint"}
+var assistantPlanPassSubject = []string{"测试", "单测", "用例", "构建", "CI", "ci", "门禁", "lint"}
+
+// assistantPlanPassActSubject is a check that can also be the verb before a
+// "via" 通过: "检查通过，工作区干净。" states the verdict, "检查通过 API 拿到
+// 的数据" plans a check. It is the verdict's subject only when 通过 closes
+// the clause.
+var assistantPlanPassActSubject = []string{"检查", "审核", "校验"}
 
 // assistantPlanCleanupVerb precedes 干净 in a step ("把临时目录清理干净")
 // rather than describing a state ("lint 也干净").
@@ -1314,13 +1324,20 @@ func assistantPlanPassVerdict(line string) (string, bool) {
 			}
 		}
 		after := line[j+len("通过"):]
+		rest := strings.TrimSpace(after)
+		next, _ := utf8.DecodeRuneInString(rest)
+		closes := rest == "" || strings.ContainsRune("，,。.；;！!、", next)
 		for _, subject := range assistantPlanPassSubject {
 			if strings.HasSuffix(before, subject) {
 				return strings.TrimSuffix(before, subject) + after, true
 			}
 		}
-		rest := strings.TrimSpace(after)
-		if rest == "" || strings.ContainsAny(rest[:1], "，,。.；;！!、") {
+		for _, subject := range assistantPlanPassActSubject {
+			if closes && strings.HasSuffix(before, subject) {
+				return strings.TrimSuffix(before, subject) + after, true
+			}
+		}
+		if closes {
 			return line[:j] + after, true
 		}
 		i = j + len("通过")
@@ -1329,25 +1346,60 @@ func assistantPlanPassVerdict(line string) (string, bool) {
 
 // assistantPlanResultMark is a word a plan line does not carry: it reports
 // what was found (conclusions) instead of what is next.
-var assistantPlanResultMark = []string{"结论", "结果", "如下", "共", "只有", "一致", "返回", "显示", "分别", "目前", "已经", "完成", "失败", "正常"}
+var assistantPlanResultMark = []string{"结论", "结果", "如下", "共", "只有", "一致", "返回", "显示", "分别", "已经", "完成", "失败", "正常"}
+
+// assistantPlanResultNoun is a noun that contains a result mark without
+// reporting anything ("把返回值和文档核对" plans a check).
+var assistantPlanResultNoun = []string{"返回值"}
+
+// assistantPlanFound matches a verb with the completive 到 that reports
+// what a step turned up, as in "查到 3 个失败用例", "找到两个仓库" or
+// "读取到的配置是 v2".
+var assistantPlanFound = regexp.MustCompile(`\p{Han}?(?:查|找|看|搜|拿|读|取|收|得)到`)
+
+// assistantPlanReportHeader opens a report under a header such as
+// "检查结果：" or "最后结论：", which no plan step uses.
+var assistantPlanReportHeader = regexp.MustCompile(`(?:结论|结果|如下)\s*[：:]`)
 
 // assistantPlanCJKNumber matches counts written as Chinese numerals, as in
 // "项目里有两个 LOOP".
 var assistantPlanCJKNumber = regexp.MustCompile(`[一二两三四五六七八九十][个条位项次]`)
 
 // assistantPlanDigitsOrDate matches numbers, dates and versions.
-var assistantPlanDigitsOrDate = regexp.MustCompile(`\d|月|日|号`)
+// 月/日/号 count only after a numeral: "日志" and "号码" are plain words.
+var assistantPlanDigitsOrDate = regexp.MustCompile(`\d|[一二三四五六七八九十][月日号]`)
 
 // assistantPlanPerfective matches the perfective 了 that reports a step as
 // done. 了解/除了/为了 are plain words, not completions.
 var assistantPlanPerfective = regexp.MustCompile(`了`)
 
+// assistantPlanQuestion opens an embedded question whose 了 belongs to what
+// is being looked into, as in "看看为什么测试挂了" or "看看改了哪些文件".
+var assistantPlanQuestion = []string{"为什么", "为何", "怎么", "哪", "什么", "是否", "有没有", "多少"}
+
 func assistantPlanHasPerfective(line string) bool {
 	for _, word := range []string{"了解", "除了", "为了"} {
 		line = strings.ReplaceAll(line, word, "")
 	}
-	return assistantPlanPerfective.MatchString(line)
+	for _, clause := range assistantPlanClause.Split(line, -1) {
+		if !assistantPlanPerfective.MatchString(clause) {
+			continue
+		}
+		question := false
+		for _, word := range assistantPlanQuestion {
+			if strings.Contains(clause, word) {
+				question = true
+				break
+			}
+		}
+		if !question {
+			return true
+		}
+	}
+	return false
 }
+
+var assistantPlanClause = regexp.MustCompile(`[，,。；;！!]`)
 
 // assistantPlanProse reports whether a line after a plan opening continues
 // the plan in prose: it opens with a plan lead-in or names a step to take,
@@ -1357,7 +1409,7 @@ func assistantPlanProse(line string) bool {
 	if line == "" {
 		return false
 	}
-	if assistantReportsDoneWork(strings.TrimSpace(line)) || assistantPlanHasPerfective(line) || assistantPlanStatesVerdict(line) {
+	if assistantReportsDoneWork(strings.TrimSpace(line)) || assistantPlanHasPerfective(line) || assistantPlanStatesVerdict(line) || assistantPlanReportHeader.MatchString(line) {
 		return false
 	}
 	// A plan lead-in opens a step even when the line goes on to name a state
@@ -1370,12 +1422,14 @@ func assistantPlanProse(line string) bool {
 			return limit == len(rest) || assistantPlanNamesAction(rest[:limit])
 		}
 	}
-	// A count makes a line a report, as in "项目里有 4 个 LOOP，都在运行。".
-	if assistantPlanCJKNumber.MatchString(line) || assistantPlanDigitsOrDate.MatchString(line) {
-		return false
-	}
 	// An action word names a step only before any result it might be
-	// reporting ("接口看着正常" reports the state 正常).
+	// reporting ("接口看着正常" reports the state 正常). A line with a count
+	// or date is a step only when it opens with the action, as in "重点关注
+	// 最近 3 次提交" or "读一下 v2 的配置"; "项目里有 4 个 LOOP，都在运
+	// 行。" reports what was found.
+	if assistantPlanCJKNumber.MatchString(line) || assistantPlanDigitsOrDate.MatchString(line) {
+		return assistantPlanOpensWithAction(line) && assistantPlanNamesAction(line[:assistantPlanResultStart(line, true)])
+	}
 	return assistantPlanNamesAction(line[:assistantPlanResultStart(line, false)])
 }
 
@@ -1385,9 +1439,23 @@ func assistantPlanProse(line string) bool {
 func assistantPlanResultStart(line string, counts bool) int {
 	limit := len(line)
 	for _, mark := range assistantPlanResultMark {
-		if i := strings.Index(line, mark); i >= 0 && i < limit {
-			limit = i
+		for from := 0; from < limit; {
+			i := strings.Index(line[from:], mark)
+			if i < 0 {
+				break
+			}
+			i += from
+			if !assistantPlanResultNounAt(line, i) {
+				if i < limit {
+					limit = i
+				}
+				break
+			}
+			from = i + len(mark)
 		}
+	}
+	if loc := assistantPlanFound.FindStringIndex(line); loc != nil && loc[0] < limit {
+		limit = loc[0]
 	}
 	if counts {
 		for _, re := range []*regexp.Regexp{assistantPlanCJKNumber, assistantPlanDigitsOrDate} {
@@ -1397,6 +1465,29 @@ func assistantPlanResultStart(line string, counts bool) int {
 		}
 	}
 	return limit
+}
+
+// assistantPlanOpensWithAction reports whether line starts with an action,
+// after an adverb such as 重点 or 逐项.
+func assistantPlanOpensWithAction(line string) bool {
+	for _, adverb := range []string{"重点", "逐项", "逐个", "分别", "也", "还要", "需要"} {
+		line = strings.TrimPrefix(line, adverb)
+	}
+	for _, verb := range assistantPlanVerb {
+		if strings.HasPrefix(line, verb) {
+			return true
+		}
+	}
+	return false
+}
+
+func assistantPlanResultNounAt(line string, i int) bool {
+	for _, noun := range assistantPlanResultNoun {
+		if strings.HasPrefix(line[i:], noun) {
+			return true
+		}
+	}
+	return false
 }
 
 // assistantPlanNamesAction reports whether text names a step to take.
@@ -1427,7 +1518,19 @@ func assistantReportsDoneWork(rest string) bool {
 	for _, prefix := range []string{"我先", "我会先", "让我先"} {
 		rest = strings.TrimPrefix(rest, prefix)
 	}
-	return assistantDoneWork.MatchString(strings.ReplaceAll(rest, "了解", "理解"))
+	done := assistantDoneWork.FindString(strings.ReplaceAll(rest, "了解", "理解"))
+	if done == "" {
+		return false
+	}
+	// "看看改了哪些文件" looks into what changed; "检查了配置" and "检查完了"
+	// report a check.
+	verb := strings.TrimSuffix(done, "了")
+	for _, intent := range []string{"看看", "看下", "查看", "确认", "检查"} {
+		if rest, ok := strings.CutPrefix(verb, intent); ok && rest != "" && !strings.ContainsAny(rest, "完好过到掉") {
+			return false
+		}
+	}
+	return true
 }
 
 func recoverNativeAssistantReply(raw, projectID string) (assistantReply, bool) {

@@ -199,6 +199,10 @@ func TestAssistantMultiLinePlanBeforeToolsStillContinues(t *testing.T) {
 	}{
 		{"numbered list", "multi-line-plan", `我先查看项目里的 LOOP：\n1. 读取工作流配置\n2. 汇总节点状态`},
 		{"prose steps", "prose-plan", `我先看一下仓库：\n先确认分支，再读取提交记录。`},
+		{"step with a count", "count-step", `我先看一下仓库。\n重点关注最近 3 次提交。`},
+		{"goal clause", "goal-step", `我先看一下报错的用例。\n然后修改代码，让测试通过。`},
+		{"check via", "check-via", `我先看一下数据。\n先检查通过 API 拿到的数据，再对比数据库。`},
+		{"embedded question", "question-step", `我先看一下测试。\n先看看为什么测试挂了，再修复。`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			runMultiLinePlanCase(t, tc.session, tc.plan, "2", "均在正常运行")
@@ -210,6 +214,8 @@ func TestAssistantMultiLinePlanBeforeToolsStillContinues(t *testing.T) {
 // answer: it is delivered as is, without running the CLI again.
 func TestAssistantPlanOpeningWithVerdictIsTheAnswer(t *testing.T) {
 	runMultiLinePlanCase(t, "verdict-answer", `我先跑测试。\n测试全过。`, "1", "测试全过")
+	runMultiLinePlanCase(t, "check-verdict-answer", `我先跑一下检查。\n检查通过，工作区干净。`, "1", "工作区干净")
+	runMultiLinePlanCase(t, "report-header-answer", `我先跑一下检查。\n检查结果：共 3 处告警，都在 store 包。`, "1", "都在 store 包")
 }
 
 func runMultiLinePlanCase(t *testing.T, session, plan, wantCalls, wantBody string) {
@@ -368,6 +374,51 @@ func TestAssistantProgressOnlyRequiresPlanLines(t *testing.T) {
 		{"我先看一下仓库。\n确认检查通过。", true},
 		{"我先看一下仓库。\n检查测试是否通过。", true},
 		{"Let me first look around.\nCheck the config, then run the tests.", true},
+		// Steps written without a whitelisted lead-in still plan when an
+		// action comes before any count or result; purpose clauses (让/确保/
+		// 保证/直到 … 通过|干净|没问题) are goals, not verdicts; 检查 before a
+		// "via" 通过 is the step's verb; 了 inside an embedded question is
+		// what the step looks into.
+		{"我先看一下仓库。\n重点关注最近 3 次提交。", true},
+		{"我先看一下团队。\n查看两个小组的成员。", true},
+		{"我先看一下测试。\n先看看为什么测试挂了，再修复。", true},
+		{"我先看一下改动。\n然后看看改了哪些文件。", true},
+		{"我先看一下仓库。\n目前只需要读取配置和日志。", true},
+		{"我先看一下接口。\n把返回值和文档逐项核对。", true},
+		{"我先确认一下。\n读一下 v2 的配置。", true},
+		{"我先看一下报错的用例。\n然后修改代码，让测试通过。", true},
+		{"我先整理一下。\n先改代码，确保 lint 干净。", true},
+		{"我先看一下接口。\n修改后确保接口没问题。", true},
+		{"我先看一下报错。\n先修复报错，保证构建通过。", true},
+		{"我先修一下。\n- 改配置\n- 跑测试直到全部通过", true},
+		{"我先看一下数据。\n先检查通过 API 拿到的数据，再对比数据库。", true},
+		{"我先看一下流程。\n检查通过 MCP 调用工具的流程。", true},
+		{"我先看一下提交。\n然后检查通过 webhook 推送的事件。", true},
+		{"我先看一下。\n看看日志里有没有报错。", true},
+		{"我先查一下。\n对比 main 和 dev 两个分支的差异。", true},
+		{"我先看一下。\n- 看看改了哪些文件\n- 运行测试", true},
+		// Lines reporting what was found stay answers.
+		{"我先跑一下检查。\n测试都通过，可以合并。", false},
+		{"我先跑一下检查。\n检查通过，工作区干净。", false},
+		{"我先跑一下检查。\n检查结果：共 3 处告警，都在 store 包。", false},
+		{"我先查一下仓库。\n首先，仓库有两个分支：main 和 dev。", false},
+		{"我先查一下。\n最后结论：可以合并。", false},
+		{"我先查一下。\n查到 3 个失败用例，都在 store 包。", false},
+		{"我先查一下。\n找到两个仓库：demo 和 web。", false},
+		{"我先看一下。\n查看了日志，没有异常。", false},
+		{"我先看一下。\n看了下日志，接口返回 200。", false},
+		{"我先查一下。\n读取到的配置是 v2。", false},
+		{"我先看一下。\n日志显示接口超时。", false},
+		{"我先看一下仓库。\n仓库里没有 README。", false},
+		{"我先查一下。\n确认过了，配置没问题。", false},
+		{"我先跑一下测试。\n运行结果：2 个失败。", false},
+		{"我先跑一下测试。\n测试结果如下：\n- 2 个失败", false},
+		{"我先查一下。\n先检查完了再说。", false},
+		{"我先看一下测试。\n测试失败 3 个，都在 store 包。", false},
+		{"我先看一下测试。\n测试挂在网络超时。", false},
+		{"我先看一下日志。\n11 月 26 日的任务失败了两次。", false},
+		{"我先看一下仓库。\n仓库有 2 个分支，查看 main 即可。", false},
+		{"我先看一下。\n日志里先看报错，再读配置。", true},
 		{"", false},
 		{"   \n\n  ", false},
 	}
