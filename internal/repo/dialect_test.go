@@ -56,3 +56,15 @@ func TestPostgresDSNKeepsTLSSForRemoteHosts(t *testing.T) {
 		t.Fatalf("postgresDSN disabled TLS for a remote host: %s", got)
 	}
 }
+
+func TestPostgresDSNStripsPoolParamsFromUnparsableDSN(t *testing.T) {
+	// A DSN the URL parser rejects cannot connect anyway, but a pool_*
+	// parameter must still not reach the server as a startup parameter.
+	got := postgresDSN("postgres://u:p%zz@127.0.0.1:5432/d?pool_max_conns=4&application_name=loopforge")
+	if strings.Contains(got, "pool_") {
+		t.Fatalf("postgresDSN kept pgxpool-only params: %s", got)
+	}
+	if want := "application_name=loopforge"; !strings.Contains(got, want) {
+		t.Fatalf("postgresDSN dropped an unrelated param: %s", got)
+	}
+}

@@ -25,7 +25,7 @@ func autoMigrateIncremental(db *gorm.DB) error {
 			create := m
 			// Bot chat may contain supplementary Unicode (emoji).
 			// Do not inherit a legacy database utf8mb3 default for these tables.
-			if needsUTF8MB4Table(model) && db.Dialector.Name() == "mysql" {
+			if needsUTF8MB4Table(model) && db.Dialector.Name() == dialectMySQL {
 				create = db.Set("gorm:table_options", "ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci").Migrator()
 			}
 			if err := create.CreateTable(model); err != nil {

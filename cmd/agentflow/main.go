@@ -142,6 +142,8 @@ func main() {
 	dsn, deprecated := resolveDatabaseURL(*databaseURL, *mysqlDSN)
 	if deprecated {
 		log.Printf("-mysql-dsn is deprecated; use -database-url or AGENTFLOW_DATABASE_URL")
+	} else if strings.TrimSpace(*mysqlDSN) != "" {
+		log.Printf("-mysql-dsn ignored: -database-url or AGENTFLOW_DATABASE_URL takes precedence")
 	}
 	s, err := repo.Open(dsn)
 	if err != nil {

@@ -18,7 +18,6 @@ import (
 const (
 	dialectMySQL    = "mysql"
 	dialectPostgres = "postgres"
-	dialectSQLite   = "sqlite"
 )
 
 // dsnDialect classifies a DSN by its scheme. Postgres URLs start with
@@ -75,7 +74,12 @@ func isLoopbackHost(dsn string) bool {
 // stripPoolParams removes the pgxpool-only pool parameters from a DSN.
 func stripPoolParams(dsn string) string {
 	parsed, err := url.Parse(dsn)
-	if err != nil || parsed.RawQuery == "" {
+	if err != nil {
+		// An unparsable URL cannot connect anyway, but a caller-supplied
+		// pool_* key must still not survive into the startup parameters.
+		return stripPoolParamsTextually(dsn)
+	}
+	if parsed.RawQuery == "" {
 		return dsn
 	}
 	values := parsed.Query()
@@ -91,6 +95,28 @@ func stripPoolParams(dsn string) string {
 	}
 	parsed.RawQuery = values.Encode()
 	return parsed.String()
+}
+
+// stripPoolParamsTextually drops pool_* parameters from a DSN whose URL
+// cannot be parsed, by editing the raw query string.
+func stripPoolParamsTextually(dsn string) string {
+	base, query, found := strings.Cut(dsn, "?")
+	if !found || query == "" {
+		return dsn
+	}
+	parts := strings.Split(query, "&")
+	kept := make([]string, 0, len(parts))
+	for _, part := range parts {
+		key, _, _ := strings.Cut(part, "=")
+		if strings.HasPrefix(strings.ToLower(key), "pool_") {
+			continue
+		}
+		kept = append(kept, part)
+	}
+	if len(kept) == len(parts) {
+		return dsn
+	}
+	return base + "?" + strings.Join(kept, "&")
 }
 
 // openDB opens the gorm handle for the DSN's dialect.
