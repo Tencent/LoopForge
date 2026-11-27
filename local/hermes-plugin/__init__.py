@@ -12,6 +12,7 @@ import os
 import re
 import subprocess
 import sys
+import uuid
 from pathlib import Path
 from typing import List, Optional, Tuple
 
@@ -174,6 +175,8 @@ def _handle(raw: str) -> str:
     if not value:
         return "A request is required: /loopforge start <request>"
     slug = re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-")[:48] or "hermes-task"
+    if (root / "artifacts" / slug).exists():
+        slug += "-" + uuid.uuid4().hex[:12]
     state_path = root / "artifacts" / slug / "workflow-state.json"
     output = _run(
         root,
