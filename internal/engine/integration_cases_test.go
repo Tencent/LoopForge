@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/gitwork"
 )
 
 func TestRunnerIntegrateAndConversationPushCanceled(t *testing.T) {
@@ -45,8 +46,13 @@ func TestRunnerIntegrateAndConversationPushCanceled(t *testing.T) {
 	if _, err := e.PushConversationWorkspace(context.Background(), "missing", 0, "", "", "", ""); err == nil {
 		t.Fatal("missing run pushed")
 	}
-	if _, err := e.PushConversationWorkspace(context.Background(), run.ID, 0, "", "", "", ""); err == nil {
-		t.Fatal("missing token pushed")
+	run.Repositories[0].Provider = domain.RepositoryProviderForgejo
+	run.Repositories[0].CloneURL = "ssh://git@forge.example.org/team/repo.git"
+	if err := st.PutRun(run); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.PushConversationWorkspace(ctx, run.ID, 0, "", "", "", ""); !errors.Is(err, gitwork.ErrSSHKeyRequired) {
+		t.Fatalf("Forgejo push without SSH key: %v", err)
 	}
 	noRepos := run
 	noRepos.ID = "push-no-repos"
