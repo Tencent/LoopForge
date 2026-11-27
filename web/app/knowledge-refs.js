@@ -92,6 +92,7 @@ window.editKnowledgeRefs = async function editKnowledgeRefs(project, refs, save)
       enabled.type = 'checkbox';
       const previous = (refs || []).find(r => getRefId(r) === s.id);
       enabled.checked = !!previous;
+      srvTitle.dataset.i18nData = '';
       srvTitle.append(enabled, document.createTextNode(s.name || s.id));
       const srvId = document.createElement('span');
       srvId.className = 'kr-service-id';
@@ -135,7 +136,8 @@ window.editKnowledgeRefs = async function editKnowledgeRefs(project, refs, save)
       const sourcesInput = document.createElement('input');
       sourcesInput.className = 'kr-control';
       sourcesInput.placeholder = '来源 ID，以逗号分隔';
-      sourcesInput.setAttribute('aria-label', (s.name || s.id) + '允许的来源 ID');
+      sourcesInput.dataset.i18nData = '';
+      sourcesInput.setAttribute('aria-label', lfT(`${s.name || s.id}允许的来源 ID`, `Allowed source IDs for ${s.name || s.id}`));
       sourcesInput.value = (previous?.sources || []).join(', ');
       adv.append(advSum, sourcesInput);
 
@@ -163,7 +165,7 @@ window.editKnowledgeRefs = async function editKnowledgeRefs(project, refs, save)
             allowCount.textContent = '请选择至少一个子知识库';
             allowCount.className = 'kr-count warn';
           } else {
-            allowCount.textContent = `已选 ${ids.size} 个子知识库`;
+            allowCount.textContent = lfT(`已选 ${ids.size} 个子知识库`, `${ids.size} ${ids.size === 1 ? 'sub-source' : 'sub-sources'} selected`);
             allowCount.className = 'kr-count ok';
           }
         } else {
@@ -203,10 +205,12 @@ window.editKnowledgeRefs = async function editKnowledgeRefs(project, refs, save)
               box.className = 'kr-source-info';
               const nm = document.createElement('span');
               nm.className = 'kr-source-name';
+              nm.dataset.i18nData = '';
               nm.textContent = info.name;
               const meta = document.createElement('span');
               meta.className = 'kr-source-meta';
-              meta.textContent = info.space ? `空间：${info.space}` : source.id;
+              meta.dataset.i18nData = '';
+              meta.textContent = info.space ? lfT(`空间：${info.space}`, `Space: ${info.space}`) : source.id;
               box.append(nm, meta);
               row.append(cb, box);
 
@@ -248,7 +252,7 @@ window.editKnowledgeRefs = async function editKnowledgeRefs(project, refs, save)
         const selected = mode.value === 'allowlist' ? [...selectedSet()] : [];
         if (mode.value === 'allowlist' && !selected.length) {
           if (silent) return { error: '请选择至少一个子知识库' };
-          throw new Error(`请为「${s.name || s.id}」选择至少一个子知识库`);
+          throw new Error(lfT(`请为「${s.name || s.id}」选择至少一个子知识库`, `Select at least one sub-source for “${s.name || s.id}”`));
         }
         return { connectorId: s.id, mode: mode.value, sources: selected };
       });

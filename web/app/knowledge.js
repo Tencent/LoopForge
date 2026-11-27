@@ -505,7 +505,7 @@
     const toolsHTML = tools.length
       ? `<div class="kb-chip-row"><span class="kb-muted">只读工具：</span>${tools.map(t => `<code class="kb-chip">${kbEsc(t)}</code>`).join('')}</div>`
       : '';
-    const srcNote = sources.length ? ` · 发现 ${sources.length} 个子知识库` : '';
+    const srcNote = sources.length ? lfT(` · 发现 ${sources.length} 个子知识库`, ` · ${sources.length} sub-sources found`) : '';
     return `
       <div class="kb-check-banner ok">
         <div><strong>探测通过 · 连接正常</strong> · ${latency} ms${srcNote}</div>
@@ -521,12 +521,12 @@
     }
     return `
       <div class="kb-sources-box">
-        <div class="kb-sources-head"><strong>可用子知识库</strong><span>共 ${sources.length} 项</span></div>
+        <div class="kb-sources-head"><strong>可用子知识库</strong><span>${lfT(`共 ${sources.length} 项`, `${sources.length} total`)}</span></div>
         <div class="kb-sources-grid">
           ${sources.map(src => `
             <div class="kb-source-pill">
-              <div class="kb-source-title">${kbEsc(src.name || src.id)}</div>
-              <div class="kb-source-sub"><code>${kbEsc(src.id)}</code>${src.docCount != null ? ` · ${Number(src.docCount)} 篇文档` : ''}</div>
+              <div class="kb-source-title" data-i18n-data>${kbEsc(src.name || src.id)}</div>
+              <div class="kb-source-sub"><code>${kbEsc(src.id)}</code>${src.docCount != null ? ` · ${lfT(`${Number(src.docCount)} 篇文档`, `${Number(src.docCount)} docs`)}` : ''}</div>
             </div>
           `).join('')}
         </div>
@@ -687,7 +687,7 @@
     const typeOptions = types.map(t => `<option value="${kbEsc(t.type)}" ${t.type === initialType ? 'selected' : ''}>${kbEsc(t.name)} (${kbEsc(t.type)})</option>`).join('');
 
     const guideHTML = vendorMeta?.guide
-      ? `<div class="kb-vendor-guide"><strong>${kbEsc(vendorMeta.name)}接入指引（${kbEsc(vendorMeta.badge)}）</strong><span>${kbEsc(vendorMeta.guide)}</span></div>`
+      ? `<div class="kb-vendor-guide"><strong>${lfT(`${kbEsc(vendorMeta.name)}接入指引（${kbEsc(vendorMeta.badge)}）`, `Setup guide: ${kbEsc(vendorMeta.name)} (${kbEsc(vendorMeta.badge)})`)}</strong><span>${kbEsc(vendorMeta.guide)}</span></div>`
       : '';
 
     const bodyHTML = `
@@ -870,12 +870,12 @@
       <article class="sh-card kb-card" data-kb-card="${kbEsc(conn.id)}" data-connector-id="${kbEsc(conn.id)}">
         <div class="kb-card-top">
           <div class="kb-card-title-group">
-            <h3>${kbEsc(conn.name)}</h3>
+            <h3 data-i18n-data>${kbEsc(conn.name)}</h3>
             <div class="kb-card-badges">
               <span class="hui-badge" data-size="sm" data-tone="neutral">${kbEsc(meta?.name || conn.type)}</span>
               <span class="hui-badge" data-size="sm" data-tone="${conn.enabled ? 'success' : 'neutral'}">${conn.enabled ? '已启用' : '已停用'}</span>
               ${renderConnectorAuthBadgeHTML(conn)}
-              ${kbState.usage ? `<button type="button" class="hui-badge kb-usage-badge-btn" data-size="sm" data-tone="neutral" data-kb-conn-calls="${kbEsc(conn.id)}" title="查看该连接器的调用明细">调用 ${callCount} 次</button>` : ''}
+              ${kbState.usage ? `<button type="button" class="hui-badge kb-usage-badge-btn" data-size="sm" data-tone="neutral" data-kb-conn-calls="${kbEsc(conn.id)}" title="查看该连接器的调用明细">${lfT(`调用 ${callCount} 次`, `${callCount} ${callCount === 1 ? 'call' : 'calls'}`)}</button>` : ''}
             </div>
           </div>
           <div class="kb-row-actions">
@@ -891,7 +891,7 @@
         <div class="kb-card-meta">
           <div class="kb-endpoint-line"><span>服务地址：</span><code>${kbEsc(conn.endpoint)}</code></div>
           <span class="kb-muted">ID: <code>${kbEsc(conn.id)}</code></span>
-          ${conn.config?.timeoutSec ? `<span class="kb-muted">超时: ${Number(conn.config.timeoutSec)}s</span>` : ''}
+          ${conn.config?.timeoutSec ? `<span class="kb-muted">${lfT('超时', 'Timeout')}: ${Number(conn.config.timeoutSec)}s</span>` : ''}
         </div>
         ${renderConnectorExtraHTML(conn, meta)}
         ${checkRes ? renderCheckBannerHTML(checkRes) : ''}
@@ -930,7 +930,7 @@
                 ${statusBadgeHTML}
               </div>
               <p class="kb-vendor-desc">${kbEsc(v.desc)}</p>
-              ${isConfigured ? `<div class="kb-vendor-meta">已绑定连接器：${kbEsc(conn.name)}</div>` : ''}
+              ${isConfigured ? `<div class="kb-vendor-meta">已绑定连接器：<span data-i18n-data>${kbEsc(conn.name)}</span></div>` : ''}
             </div>
           </div>
           <div class="kb-vendor-actions">
@@ -982,11 +982,11 @@
   function formatUsageCallerKindLabel(kind) {
     switch (String(kind || '').toLowerCase()) {
       case 'sop': return 'SOP';
-      case 'space': return '协作空间';
-      case 'clarify': return '需求澄清';
-      case 'scheduled': return '定时任务';
-      case 'report': return '分析报告';
-      default: return '个人对话';
+      case 'space': return lfT('协作空间', 'Shared space');
+      case 'clarify': return lfT('需求澄清', 'Clarification');
+      case 'scheduled': return lfT('定时任务', 'Scheduled job');
+      case 'report': return lfT('分析报告', 'Analysis report');
+      default: return lfT('个人对话', 'Personal chat');
     }
   }
 
@@ -1003,25 +1003,39 @@
     const kind = String(c.kind || 'chat').toLowerCase();
     const kindLabel = formatUsageCallerKindLabel(kind);
     if (kind === 'sop') {
-      const label = c.workflowName || c.workflowId || 'SOP 运行';
+      const label = c.workflowName || c.workflowId || lfT('SOP 运行', 'SOP run');
       const subParts = [];
       if (c.agentName || c.agentId) subParts.push(c.agentName || c.agentId);
       if (c.nodeName || c.nodeId) subParts.push(c.nodeName || c.nodeId);
-      return { kind, kindLabel, label, subLabel: subParts.join(' · ') };
+      return { kind, kindLabel, label, subLabel: callerSubLabel(subParts.join(' · '), kind) };
     }
     if (kind === 'space') {
-      return { kind, kindLabel, label: c.spaceTitle || c.spaceId || '协作空间', subLabel: '' };
+      return { kind, kindLabel, label: c.spaceTitle || c.spaceId || kindLabel, subLabel: '' };
     }
     if (kind === 'clarify') {
-      return { kind, kindLabel, label: c.issueTitle || c.sessionTitle || c.issueId || '需求澄清', subLabel: '' };
+      return { kind, kindLabel, label: c.issueTitle || c.sessionTitle || c.issueId || kindLabel, subLabel: '' };
     }
     if (kind === 'scheduled') {
-      return { kind, kindLabel, label: c.sessionTitle || '定时任务', subLabel: '' };
+      return { kind, kindLabel, label: c.sessionTitle || kindLabel, subLabel: '' };
     }
     if (kind === 'report') {
-      return { kind, kindLabel, label: c.sessionTitle || c.issueTitle || '分析报告', subLabel: '' };
+      return { kind, kindLabel, label: c.sessionTitle || c.issueTitle || kindLabel, subLabel: '' };
     }
-    return { kind, kindLabel, label: c.sessionTitle || '个人对话', subLabel: '' };
+    return { kind, kindLabel, label: c.sessionTitle || kindLabel, subLabel: '' };
+  }
+
+  // The caller badge already names the kind, and built-in LOOPs often give the
+  // role and the node the same name, so drop parts that would only repeat
+  // ("开发实现 · 开发实现", or the server's "个人对话" next to the 个人对话 badge).
+  const CALLER_KIND_ZH = { space: '协作空间', clarify: '需求澄清', scheduled: '定时任务', report: '分析报告', chat: '个人对话' };
+  function callerSubLabel(subLabel, kind) {
+    const kindNames = [formatUsageCallerKindLabel(kind), kind === 'sop' ? '' : (CALLER_KIND_ZH[kind] || CALLER_KIND_ZH.chat)];
+    const parts = [];
+    for (const part of String(subLabel || '').split(' · ').map(p => p.trim())) {
+      if (!part || parts.includes(part) || kindNames.includes(part)) continue;
+      parts.push(part);
+    }
+    return parts.join(' · ');
   }
 
   function callerJumpAttrs(target) {
@@ -1102,13 +1116,14 @@
       <div class="kb-usage-caller-pills">
         ${callers.map(c => {
           const kindLabel = formatUsageCallerKindLabel(c.kind);
+          const subLabel = callerSubLabel(c.subLabel, String(c.kind || 'chat').toLowerCase());
           const countText = Number(c.callCount || 0) > 1 ? ` ×${Number(c.callCount)}` : '';
-          const titleText = c.subLabel ? `${kindLabel} · ${c.label} (${c.subLabel})` : `${kindLabel} · ${c.label}`;
+          const titleText = subLabel ? `${kindLabel} · ${c.label} (${subLabel})` : `${kindLabel} · ${c.label}`;
           const jumpAttr = callerJumpAttrs(c);
           if (jumpAttr) {
-            return `<button type="button" class="kb-usage-caller-pill is-link" ${jumpAttr} title="${kbEsc(titleText)}"><span class="kb-usage-caller-tag">${kbEsc(kindLabel)}</span><span class="kb-usage-caller-name">${kbEsc(c.label)}${c.subLabel ? ` · ${kbEsc(c.subLabel)}` : ''}</span>${countText ? `<span class="kb-usage-caller-cnt">${kbEsc(countText)}</span>` : ''}</button>`;
+            return `<button type="button" class="kb-usage-caller-pill is-link" ${jumpAttr} title="${kbEsc(titleText)}" data-i18n-data><span class="kb-usage-caller-tag">${kbEsc(kindLabel)}</span><span class="kb-usage-caller-name">${kbEsc(c.label)}${subLabel ? ` · ${kbEsc(subLabel)}` : ''}</span>${countText ? `<span class="kb-usage-caller-cnt">${kbEsc(countText)}</span>` : ''}</button>`;
           }
-          return `<span class="kb-usage-caller-pill" title="${kbEsc(titleText)}"><span class="kb-usage-caller-tag">${kbEsc(kindLabel)}</span><span class="kb-usage-caller-name">${kbEsc(c.label)}${c.subLabel ? ` · ${kbEsc(c.subLabel)}` : ''}</span>${countText ? `<span class="kb-usage-caller-cnt">${kbEsc(countText)}</span>` : ''}</span>`;
+          return `<span class="kb-usage-caller-pill" title="${kbEsc(titleText)}" data-i18n-data><span class="kb-usage-caller-tag">${kbEsc(kindLabel)}</span><span class="kb-usage-caller-name">${kbEsc(c.label)}${subLabel ? ` · ${kbEsc(subLabel)}` : ''}</span>${countText ? `<span class="kb-usage-caller-cnt">${kbEsc(countText)}</span>` : ''}</span>`;
         }).join('')}
       </div>
     `;
@@ -1141,11 +1156,11 @@
                 <tr class="kb-usage-doc-row" data-kb-usage-doc="${kbEsc(doc.documentId)}" data-kb-usage-doc-conn="${kbEsc(doc.connectorId)}" data-kb-usage-doc-label="${kbEsc(docLabel)}">
                   <td>
                     <button type="button" class="kb-usage-doc-link" data-kb-filter-doc="${kbEsc(doc.documentId)}" data-kb-filter-conn="${kbEsc(doc.connectorId)}" data-kb-filter-label="${kbEsc(docLabel)}" title="查看该文档的调用明细">
-                      <span class="kb-usage-doc-title">${kbEsc(docLabel)}</span>
+                      <span class="kb-usage-doc-title" data-i18n-data>${kbEsc(docLabel)}</span>
                     </button>
-                    ${subLabel ? `<div class="kb-muted kb-usage-doc-sub">${kbEsc(subLabel)}</div>` : ''}
+                    ${subLabel ? `<div class="kb-muted kb-usage-doc-sub" data-i18n-data>${kbEsc(subLabel)}</div>` : ''}
                   </td>
-                  <td>${kbEsc(connLabel)}</td>
+                  <td data-i18n-data>${kbEsc(connLabel)}</td>
                   <td>${renderTopCallersHTML(doc.topCallers)}</td>
                   <td>${Number(doc.searchHitCount || 0)}</td>
                   <td>${Number(doc.readCount || 0)}</td>
@@ -1167,7 +1182,7 @@
     const hasFilter = Boolean(f.connectorId || f.documentId || f.callerKind || f.query);
 
     const connOptions = kbState.connectors.map(c =>
-      `<option value="${kbEsc(c.id)}"${f.connectorId === c.id ? ' selected' : ''}>${kbEsc(c.name)}</option>`
+      `<option value="${kbEsc(c.id)}"${f.connectorId === c.id ? ' selected' : ''} data-i18n-data>${kbEsc(c.name)}</option>`
     ).join('');
 
     const filterBarHTML = `
@@ -1183,7 +1198,7 @@
           <option value="chat"${f.callerKind === 'chat' ? ' selected' : ''}>对话 / 助手</option>
         </select>
         <input type="search" class="kb-input kb-usage-search" data-kb-usage-filter="query" value="${kbEsc(f.query)}" placeholder="搜索文档、调用方或检索词…" aria-label="搜索调用明细">
-        ${f.documentId ? `<span class="kb-usage-doc-chip"><span>文档：${kbEsc(f.documentLabel || f.documentId)}</span><button type="button" class="kb-usage-chip-close" data-kb-clear-doc-filter aria-label="清除文档筛选">×</button></span>` : ''}
+        ${f.documentId ? `<span class="kb-usage-doc-chip"><span>文档：<span data-i18n-data>${kbEsc(f.documentLabel || f.documentId)}</span></span><button type="button" class="kb-usage-chip-close" data-kb-clear-doc-filter aria-label="清除文档筛选">×</button></span>` : ''}
         ${hasFilter ? '<button type="button" class="kb-btn xs" data-kb-clear-usage-filters>重置筛选</button>' : ''}
       </div>
     `;
@@ -1215,8 +1230,8 @@
                 const jumpAttr = callerJumpAttrs(ev.caller);
                 const actionLabel = ev.action === 'read' ? '正文读取' : '检索命中';
                 const callerLabelHTML = jumpAttr
-                  ? `<button type="button" class="kb-usage-caller-jump" ${jumpAttr}><span class="kb-usage-caller-main">${kbEsc(callerInfo.label)}</span>${callerInfo.subLabel ? `<span class="kb-muted kb-usage-doc-sub">${kbEsc(callerInfo.subLabel)}</span>` : ''}</button>`
-                  : `<div class="kb-usage-caller-main">${kbEsc(callerInfo.label)}</div>${callerInfo.subLabel ? `<div class="kb-muted kb-usage-doc-sub">${kbEsc(callerInfo.subLabel)}</div>` : ''}`;
+                  ? `<button type="button" class="kb-usage-caller-jump" ${jumpAttr} data-i18n-data><span class="kb-usage-caller-main">${kbEsc(callerInfo.label)}</span>${callerInfo.subLabel ? `<span class="kb-muted kb-usage-doc-sub">${kbEsc(callerInfo.subLabel)}</span>` : ''}</button>`
+                  : `<div data-i18n-data><div class="kb-usage-caller-main">${kbEsc(callerInfo.label)}</div>${callerInfo.subLabel ? `<div class="kb-muted kb-usage-doc-sub">${kbEsc(callerInfo.subLabel)}</div>` : ''}</div>`;
                 return `
                   <tr data-kb-usage-event="${kbEsc(String(ev.id || ''))}">
                     <td class="kb-usage-time">${kbEsc(formatUsageTime(ev.calledAt))}</td>
@@ -1227,8 +1242,8 @@
                       </div>
                     </td>
                     <td>
-                      <div class="kb-usage-doc-title">${kbEsc(docLabel)}</div>
-                      ${docSub ? `<div class="kb-muted kb-usage-doc-sub">${kbEsc(docSub)}</div>` : ''}
+                      <div class="kb-usage-doc-title" data-i18n-data>${kbEsc(docLabel)}</div>
+                      ${docSub ? `<div class="kb-muted kb-usage-doc-sub" data-i18n-data>${kbEsc(docSub)}</div>` : ''}
                     </td>
                     <td>
                       <div class="kb-usage-action-badges">
@@ -1244,7 +1259,7 @@
           </table>
         </div>
         <div class="kb-usage-events-foot">
-          <span class="kb-muted">已显示 ${items.length} / 共 ${Number(events.total || items.length)} 条（单用户保留最近 30 天内最多 2000 条）</span>
+          <span class="kb-muted">${lfT(`已显示 ${items.length} / 共 ${Number(events.total || items.length)} 条（单用户保留最近 30 天内最多 2000 条）`, `Showing ${items.length} of ${Number(events.total || items.length)} (up to 2,000 records from the last 30 days are kept per user)`)}</span>
           ${events.hasMore ? `<button type="button" class="kb-btn xs" data-kb-usage-load-more${kbState.usageEventsLoading ? ' disabled' : ''}>${kbState.usageEventsLoading ? '加载中…' : '加载更多'}</button>` : ''}
         </div>
       `;
@@ -1271,7 +1286,7 @@
         <div class="kb-usage-head">
           <div>
             <h2>知识库与文档调用统计</h2>
-            <p class="kb-muted">累计调用 ${totalCalls} 次 · 文档命中/读取 ${totalDocCalls} 次 · 已引用 ${totalCited} 次</p>
+            <p class="kb-muted">${lfT(`累计调用 ${totalCalls} 次 · 文档命中/读取 ${totalDocCalls} 次 · 已引用 ${totalCited} 次`, `${totalCalls} calls in total · ${totalDocCalls} document hits/reads · cited ${totalCited} times`)}</p>
           </div>
           <div class="kb-usage-head-actions">
             <div class="kb-usage-tabs" role="tablist" aria-label="统计视图">
@@ -1330,8 +1345,8 @@
 
     const notice = `
       <div class="kb-notice">
-        <span><strong>个人隔离</strong>：连接器与凭据仅归属当前账号，其他成员无法查看或调用。</span>
-        <span><strong>只读安全代理</strong>：密钥 AES-GCM 加密托管，沙箱通过无状态代理检索并标注出处，支持按工具白名单精准放行只读工具。</span>
+        <span>${lfT('<strong>个人隔离</strong>：连接器与凭据仅归属当前账号，其他成员无法查看或调用。', '<strong>Private to you</strong>: connectors and credentials belong to your account only; other members cannot view or use them.')}</span>
+        <span>${lfT('<strong>只读安全代理</strong>：密钥 AES-GCM 加密托管，沙箱通过无状态代理检索并标注出处，支持按工具白名单精准放行只读工具。', '<strong>Read-only secure proxy</strong>: keys are stored with AES-GCM encryption; the sandbox searches through a stateless proxy that labels every source, and a tool allowlist can admit only the read-only tools you choose.')}</span>
       </div>
     `;
 
@@ -1421,7 +1436,7 @@
           });
           kbState.checksByConn[id] = res;
           if (Array.isArray(res?.sources)) kbState.sourcesByConn[id] = res.sources;
-          kbToast(res.ok ? `连接正常（${res.latencyMs || 0} ms）` : (res.error || '连接失败'), !res.ok);
+          kbToast(res.ok ? lfT(`连接正常（${res.latencyMs || 0} ms）`, `Connection OK (${res.latencyMs || 0} ms)`) : (res.error || '连接失败'), !res.ok);
           renderKnowledgeView();
         } catch (err) {
           kbState.checksByConn[id] = { ok: false, error: err.message };
