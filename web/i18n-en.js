@@ -1095,3 +1095,10 @@ Object.assign(window.LF_I18N_EN, {
   "在对话里澄清和改代码": "Clarify and change code in chat",
   "这条需求不使用 LOOP，在对话里澄清需求、直接改代码；定时任务不会自动认领它。": "This requirement uses no LOOP: clarify and change code in chat; scheduled jobs won't pick it up.",
 });
+Object.assign(window.LF_I18N_EN, {
+  "项目默认 SOP": "Project default SOP",
+  "新需求使用默认流程，已关联需求保留原绑定": "New requirements use the default; issues already bound to an SOP keep their binding",
+  "查看模板": "View template",
+  "团队共享 · 来自 ": "Team shared · from ",
+  "当前项目还没有自建或复制的 SOP。可以新建，或从共享模板 / 通用模板复制一份后修改；项目默认 SOP 不在本列表单独占卡。": "No self-created or copied SOPs in this project yet. Create one, or copy from shared / general templates and edit it; the project default SOP does not get its own card here.",
+});
