@@ -127,8 +127,8 @@ func (h *assistantHandlers) conversationExecutor(s *AgentToolSession, root strin
 			if !ok {
 				return "", fmt.Errorf("工作区不存在")
 			}
-			if run.ExecutionContext.ExecutionRunnerID != s.ExecutionRunnerID {
-				return "", fmt.Errorf("工作区与会话不在同一执行机器")
+			if run.ExecutionContext.ExecutionRunnerID != s.ExecutionRunnerID || run.ExecutionContext.ExecutionClusterID != s.ExecutionClusterID {
+				return "", fmt.Errorf("工作区与会话的执行位置不一致")
 			}
 			if !run.IsWorkspace() && !sopStopped(run) {
 				return "", fmt.Errorf("LOOP 正在执行，请先暂停后接管工作区")

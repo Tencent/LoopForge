@@ -152,7 +152,8 @@ type CommandSpec struct {
 	// Only the selected managed installation is exposed beneath bwrap's /tmp.
 	managedCLIInstall string
 	// Conversation preparation binds credentials before acknowledging start.
-	bindingsPrepared bool
+	bindingsPrepared        bool
+	openSandboxConversation *openSandboxConversation
 	// Runner-owned authentication state never enters serialized invocations.
 	runnerLogin           *runnerLoginLease
 	runnerLoginPrompt     string

@@ -91,6 +91,9 @@ func (h *agentToolGateway) conversationSandboxChoices(s *AgentToolSession) ([]do
 		nativeAvailable = runner.SupportsNativeSandbox
 	}
 	choices = slices.DeleteFunc(choices, func(profile domain.SandboxProfile) bool {
+		if s.ExecutionClusterID != "" {
+			return runtime.ValidateExecutionClusterProfile(profile) != nil
+		}
 		return conversationSandboxKind(profile) == domain.SandboxDriverNative && !nativeAvailable(profile.Driver)
 	})
 	prefer := h.repo.AssistantPreferences(s.UserID).WorkspaceDriver
@@ -511,6 +514,9 @@ func (h *agentToolGateway) bindConversationWorkspace(ctx context.Context, s *Age
 	if !binding.Run.IsWorkspace() && !h.speakerProjectWriter(s.ProjectID, s.User, s.UserID) {
 		return binding, fmt.Errorf("只读成员不能接入或进入 LOOP 运行 %s 的工作区：工作区写入需要项目成员、项目 Owner 或平台管理员权限", binding.Run.ID)
 	}
+	if binding.Run.ExecutionContext.ExecutionClusterID != conv.Execution().ClusterID {
+		return binding, fmt.Errorf("工作区 %s 与当前对话的执行集群不一致", binding.Run.ID)
+	}
 	if runRunner := h.workspaceExecutionRunner(binding.Run); runRunner != conv.Execution().RunnerID {
 		srcMachine := h.executionMachineLabel(runRunner)
 		convMachine := h.executionMachineLabel(conv.Execution().RunnerID)
@@ -592,7 +598,7 @@ func (h *agentToolGateway) startConversationWorkspace(s *AgentToolSession, conv 
 	target := conv.Execution()
 	return h.engine.StartConversationWorkspace(title, domain.TelemetryContext{
 		ProjectID: s.ProjectID, ResponsibleUserID: s.UserID,
-		ExecutionPinned: true, ExecutionMode: target.Pool, ExecutionRunnerID: target.RunnerID,
+		ExecutionPinned: true, ExecutionMode: target.Pool, ExecutionRunnerID: target.RunnerID, ExecutionClusterID: target.ClusterID,
 	}, sandbox.ID)
 }
 

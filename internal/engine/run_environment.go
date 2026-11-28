@@ -183,6 +183,7 @@ func (e *Engine) acquireRunEnvironment(ctx context.Context, run domain.Run, prof
 		profile, resources = spec.Profile, sandboxResourcesFromSnapshot(spec)
 	}
 	ctx = runtime.WithPrivilegedSandboxSetting(ctx, e.repo.PlatformRunnerPrivilegedSandbox)
+	resources.ClusterID, resources.ProjectID = current.ExecutionContext.ExecutionClusterID, current.ExecutionContext.ProjectID
 	sandbox, err := e.sandboxes.AcquireRunIn(ctx, run.ID, workspaceRunID(current), profile, requirements, credentials, resources)
 	if err != nil {
 		return nil, false, err

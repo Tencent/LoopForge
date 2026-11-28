@@ -5,7 +5,7 @@ import { executionLocked } from "./execution-target";
 import { sandboxDriverPresentation } from "./SandboxPicker";
 import "./execution-machine-picker.css";
 
-export default function ExecutionMachinePicker({ chat, onManage }) {
+export default function ExecutionMachinePicker({ chat, onManage, onManageClusters }) {
   const trigger = useRef(null);
   const [open, setOpen] = useState(false);
   const locked = executionLocked(chat.session);
@@ -22,6 +22,10 @@ export default function ExecutionMachinePicker({ chat, onManage }) {
   }, [disabled, locked]);
 
   const execution = chat.session?.executionTarget;
+  const clusterId = locked ? execution?.clusterId : chat.selectedClusterId;
+  const cluster = chat.availableClusters?.find((row) => row.id === clusterId);
+  const clusterAuto = !locked && chat.effectiveExecutionPool === "cluster-auto";
+  const machineAuto = !locked && chat.effectiveExecutionPool === "machine-auto";
   const runnerId = locked
     ? execution?.pool === "cloud"
       ? ""
@@ -32,21 +36,27 @@ export default function ExecutionMachinePicker({ chat, onManage }) {
   const loadError = locked ? "" : chat.machineError;
   const label = !known
     ? loadError
-      ? "执行机器加载失败"
-      : "加载执行机器…"
-    : runnerId
+      ? "执行位置加载失败"
+      : "加载执行位置…"
+    : clusterId
+      ? cluster?.name || chat.workspace?.execution?.executionClusterName || clusterId
+      : clusterAuto
+      ? "K8S 自动分配"
+      : machineAuto
+      ? "机器自动分配"
+      : runnerId
       ? machine?.name || runnerId
       : "LoopForge 云端";
   const online =
     known &&
-    (runnerId
+    !clusterId && !clusterAuto && !machineAuto && (runnerId
       ? machine?.status === "online"
       : chat.cloudPool?.configured
         ? chat.cloudPool.online > 0
         : true);
   const title = locked
-    ? loadError || `当前会话执行机器：${label}。会话已绑定，后续运行始终使用此机器。`
-    : chat.machineError || "选择执行机器，发送首条消息后固定";
+    ? loadError || `当前会话执行位置：${label}。后续对话继续使用此位置。`
+    : chat.machineError || "选择执行位置，发送首条消息后固定";
   const sandbox = chat.workspaceSandbox;
   const sandboxType = sandboxDriverPresentation(sandbox?.driver);
   const sandboxLabel = sandbox?.id ? `${sandboxType.label}-${sandbox.id}` : "";
@@ -55,7 +65,7 @@ export default function ExecutionMachinePicker({ chat, onManage }) {
     return (
       <span className={`machine-context machine-fixed${sandboxLabel ? " has-sandbox" : ""}`}>
         <span className="machine-name" title={title}>
-          <HarnessIcon name="server" size={13} interactive={false} />
+          <HarnessIcon name={clusterId ? "layers" : "server"} size={13} interactive={false} />
           <span>{label}</span>
           <HarnessIcon name="lock" size={11} interactive={false} />
         </span>
@@ -73,8 +83,12 @@ export default function ExecutionMachinePicker({ chat, onManage }) {
 
   const options = chat.machinesReady
     ? [
+        ...(chat.executionProjectId ? [
+          { id: "project", label: "按项目调度", icon: "workflow" },
+          { id: "machine-auto", label: "自动分配执行机器", icon: "server" },
+        ] : []),
         {
-          id: "",
+          id: "cloud",
           label: "LoopForge 云端",
           icon: "server",
           description:
@@ -83,13 +97,22 @@ export default function ExecutionMachinePicker({ chat, onManage }) {
               : "平台自动分配",
         },
         ...(chat.availableMachines || []).map((row) => ({
-          id: row.id,
+          id: "runner:" + row.id,
           label: row.name || row.id,
           icon: "monitor",
           description: [
             row.ownerUserId && row.ownerUserId !== chat.user?.id ? "项目共享" : "",
             row.status === "online" ? "在线" : "离线，执行前需启动",
           ].filter(Boolean).join(" · "),
+        })),
+        ...(chat.availableClusters?.length ? [
+          { id: "cluster-auto", label: "自动分配 K8S 集群", icon: "layers" },
+        ] : []),
+        ...(chat.availableClusters || []).map((row) => ({
+          id: "cluster:" + row.id,
+          label: row.name,
+          icon: "layers",
+          description: "K8S 集群",
         })),
       ]
     : [];
@@ -101,7 +124,7 @@ export default function ExecutionMachinePicker({ chat, onManage }) {
         type="button"
         className="context-pill machine-picker"
         title={title}
-        aria-label={`执行机器：${label}`}
+        aria-label={`执行位置：${label}`}
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-busy={chat.machineSaving || undefined}
@@ -111,18 +134,18 @@ export default function ExecutionMachinePicker({ chat, onManage }) {
           setOpen(!open);
         }}
       >
-        <HarnessIcon name="server" size={13} interactive={false} />
+        <HarnessIcon name={clusterId || clusterAuto ? "layers" : "server"} size={13} interactive={false} />
         <span>{label}</span>
-        <i
+        {!clusterId && !clusterAuto && !machineAuto ? <i
           className={`connection-dot${online ? " online" : ""}`}
           aria-hidden="true"
-        />
+        /> : null}
         <HarnessIcon name="chevron-down" size={12} interactive={false} />
       </button>
       <SelectMenu
         open={open}
-        label="会话执行机器"
-        value={chat.defaultRunnerId || ""}
+        label="会话执行位置"
+        value={chat.executionSelection || ""}
         options={options}
         onSelect={(id) => void chat.selectMachine(id)}
         onClose={() => setOpen(false)}
@@ -130,15 +153,15 @@ export default function ExecutionMachinePicker({ chat, onManage }) {
         searchable
         emptyText={
           chat.machinesReady
-            ? "没有匹配的执行机器"
+            ? "没有匹配的执行位置"
             : chat.machineError
-              ? "执行机器加载失败，请重试"
-              : "正在加载执行机器"
+              ? "执行位置加载失败，请重试"
+              : "正在加载执行位置"
         }
         actions={[
           {
             id: "refresh-machines",
-            label: chat.machineError ? "重新加载" : "刷新机器列表",
+            label: chat.machineError ? "重新加载" : "刷新执行位置",
             icon: "refresh",
             onSelect: chat.refreshMachines,
           },
@@ -152,6 +175,12 @@ export default function ExecutionMachinePicker({ chat, onManage }) {
                 },
               ]
             : []),
+          ...(onManageClusters ? [{
+            id: "manage-clusters",
+            label: "管理 K8S 集群",
+            icon: "layers",
+            onSelect: onManageClusters,
+          }] : []),
         ]}
       />
     </span>

@@ -13,6 +13,8 @@ import (
 // profile's environment variables.
 type SandboxResources struct {
 	Dockerfile domain.DockerfileDefinition
+	ClusterID  string
+	ProjectID  string
 }
 
 func catalogDirName(id string) (string, error) {

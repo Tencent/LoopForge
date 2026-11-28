@@ -9,6 +9,7 @@ import (
 	"agentflow/internal/apperr"
 	"agentflow/internal/domain"
 	"agentflow/internal/repo"
+	"agentflow/internal/runtime"
 )
 
 // assignWorkBranches gives every repository without a branch the first
@@ -153,6 +154,11 @@ func (e *Engine) startWorkflowDefinitionSeeded(ctx context.Context, wf domain.Wo
 	}
 	var workspaceSandboxID string
 	var parent domain.Run
+	requested := executionContext.RequestedExecution
+	executionContext.RequestedExecution = nil
+	if requested != nil && (!requested.ValidSelection() || executionContext.ExecutionClusterID != "") {
+		return domain.Run{}, apperr.New(apperr.Invalid, "请选择一个有效的执行位置")
+	}
 	if executionContext.ParentRunID != "" {
 		var ok bool
 		parent, ok = e.repo.RunState(executionContext.ParentRunID)
@@ -162,14 +168,19 @@ func (e *Engine) startWorkflowDefinitionSeeded(ctx context.Context, wf domain.Wo
 		if wf.AutoSelectSandbox {
 			workspaceSandboxID = parent.WorkflowSnapshot.SandboxProfileID
 		}
-		if target := parent.ExecutionContext; target.ExecutionPool == domain.ExecutionPoolProjectAuto {
+		if target := parent.ExecutionContext; target.ExecutionPool == domain.ExecutionPoolProjectAuto || target.ExecutionClusterID != "" {
 			executionContext.ExecutionPool = target.ExecutionPool
 			executionContext.ExecutionMode = target.ExecutionMode
 			executionContext.ExecutionRunnerID = target.ExecutionRunnerID
+			executionContext.ExecutionClusterID = target.ExecutionClusterID
+			executionContext.ExecutionClusterName = target.ExecutionClusterName
 			executionContext.RunnerWorkspaceLayout = target.RunnerWorkspaceLayout
 		}
 	}
 	if !workspace && executionContext.ParentRunID == "" && executionContext.WorkspaceRunID != "" {
+		if requested != nil && requested.Pool != domain.ExecutionTargetProject {
+			return domain.Run{}, apperr.New(apperr.Conflict, "复用对话工作区时需使用原执行位置")
+		}
 		owner, err := e.sopConversationWorkspace(executionContext)
 		if err != nil {
 			return domain.Run{}, err
@@ -178,6 +189,11 @@ func (e *Engine) startWorkflowDefinitionSeeded(ctx context.Context, wf domain.Wo
 			return domain.Run{}, fmt.Errorf("对话工作区已结束")
 		}
 		workspaceSandboxID = owner.WorkflowSnapshot.SandboxProfileID
+		if executionContext.ExecutionClusterID != "" && executionContext.ExecutionClusterID != owner.ExecutionContext.ExecutionClusterID {
+			return domain.Run{}, apperr.New(apperr.Conflict, "复用对话工作区时需使用原执行位置")
+		}
+		executionContext.ExecutionClusterID = owner.ExecutionContext.ExecutionClusterID
+		executionContext.ExecutionClusterName = owner.ExecutionContext.ExecutionClusterName
 		executionContext.ExecutionRunnerID = e.defaultExecutionRunner(owner)
 		if executionContext.ExecutionRunnerID != "" {
 			runner, ok := e.repo.Runner(executionContext.ExecutionRunnerID)
@@ -194,7 +210,23 @@ func (e *Engine) startWorkflowDefinitionSeeded(ctx context.Context, wf domain.Wo
 		executionContext.ExecutionPinned = true
 		executionContext.ExecutionPool = ""
 	}
-	autoAssign := e.selectSOPExecutionTarget(&executionContext, !workspace)
+	var target domain.ExecutionTarget
+	if !workspace && !executionContext.ExecutionPinned && parent.ID == "" && executionContext.ExecutionClusterID == "" {
+		target, err = e.resolveLOOPExecution(ctx, requested, executionContext)
+		if err != nil {
+			return domain.Run{}, err
+		}
+		executionContext.ExecutionClusterID = target.ClusterID
+	}
+	if id := executionContext.ExecutionClusterID; id != "" {
+		newPlacement := parent.ID == "" && (workspace || executionContext.WorkspaceRunID == "")
+		cluster, err := e.repo.AllowedExecutionCluster(ctx, id, executionContext.ProjectID, newPlacement)
+		if err != nil {
+			return domain.Run{}, err
+		}
+		executionContext.ExecutionClusterName = cluster.Name
+	}
+	autoAssign := e.selectSOPExecutionTarget(&executionContext, !workspace, target)
 	if len(wf.ProjectCredentialIDs) > 0 {
 		if _, err := e.ResolveRunProjectCredentialEnv(context.Background(), domain.Run{WorkflowSnapshot: wf, ExecutionContext: executionContext}); err != nil {
 			return domain.Run{}, err
@@ -218,6 +250,11 @@ func (e *Engine) startWorkflowDefinitionSeeded(ctx context.Context, wf domain.Wo
 	}
 	if err != nil {
 		return domain.Run{}, err
+	}
+	if executionContext.ExecutionClusterID != "" {
+		if err := runtime.ValidateExecutionClusterProfile(profile); err != nil {
+			return domain.Run{}, apperr.New(apperr.Conflict, err.Error())
+		}
 	}
 	sandbox, err := resolveSandbox(profile)
 	if err != nil {
@@ -344,12 +381,31 @@ func (e *Engine) startWorkflowDefinitionSeeded(ctx context.Context, wf domain.Wo
 	return r, nil
 }
 
-func (e *Engine) selectSOPExecutionTarget(executionContext *domain.TelemetryContext, allowAuto bool) bool {
+func (e *Engine) selectSOPExecutionTarget(executionContext *domain.TelemetryContext, allowAuto bool, target domain.ExecutionTarget) bool {
+	if executionContext.ExecutionClusterID != "" || target.Pool == domain.ExecutionTargetClusterAuto {
+		executionContext.ExecutionPinned = true
+		executionContext.ExecutionMode = domain.ExecutionModeCloud
+		executionContext.ExecutionRunnerID = ""
+		executionContext.ExecutionPool = ""
+		executionContext.RunnerWorkspaceLayout = ""
+		return false
+	}
 	if executionContext.ParentRunID != "" && executionContext.ExecutionPool == domain.ExecutionPoolProjectAuto {
 		return false
 	}
 	if executionContext.ParentRunID == "" && !executionContext.ExecutionPinned {
-		defaults := e.repo.ResolveRunnerDefaults(executionContext.ResponsibleUserID, executionContext.ProjectID)
+		var defaults repo.RunnerDefaults
+		switch target.Pool {
+		case domain.ExecutionModeRunner:
+			defaults.Runner.ID = target.RunnerID
+		case domain.ExecutionTargetMachineAuto:
+			defaults.ProjectRunnerMode = domain.RunnerSelectionModeAuto
+		case domain.ExecutionModeCloud:
+		case domain.ExecutionTargetPersonal:
+			defaults.Runner = e.repo.PersonalExecutionRunner(executionContext.ResponsibleUserID, executionContext.ProjectID, false)
+		default:
+			defaults = e.repo.ResolveRunnerDefaults(executionContext.ResponsibleUserID, executionContext.ProjectID)
+		}
 		if allowAuto && executionContext.WorkspaceRunID == "" && executionContext.ProjectID != "" &&
 			defaults.ProjectRunnerMode == domain.RunnerSelectionModeAuto {
 			executionContext.ExecutionPool = domain.ExecutionPoolProjectAuto

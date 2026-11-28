@@ -12,8 +12,9 @@ import (
 )
 
 type Manager struct {
-	root  string
-	slots chan struct{}
+	root              string
+	slots             chan struct{}
+	openSandboxSource func(context.Context, string, string) (domain.OpenSandboxConnection, error)
 }
 
 func NewManager(root string) *Manager { return NewManagerWithLimit(root, 8) }
@@ -79,10 +80,22 @@ func (m *Manager) open(ctx context.Context, id, dir string, profile domain.Sandb
 		_ = unlockFile(lock)
 		return nil, err
 	}
-	if profile.Driver, err = domain.ResolveSandboxDriver(profile.Driver, goruntime.GOOS); err != nil {
+	backend, err := m.openSandboxCluster(ctx, resources)
+	if err != nil {
 		return fail(err)
 	}
+	if backend == nil {
+		if profile.Driver, err = domain.ResolveSandboxDriver(profile.Driver, goruntime.GOOS); err != nil {
+			return fail(err)
+		}
+	}
 	workspace := filepath.Join(m.root, dir)
+	if backend != nil {
+		workspace, err = filepath.Abs(workspace)
+		if err != nil {
+			return fail(err)
+		}
+	}
 	if wipe {
 		if err := RemoveWorkspaceTree(workspace); err != nil {
 			return fail(fmt.Errorf("clean sandbox workspace: %w", err))
@@ -91,7 +104,12 @@ func (m *Manager) open(ctx context.Context, id, dir string, profile domain.Sandb
 	if err := os.MkdirAll(workspace, 0o700); err != nil {
 		return fail(err)
 	}
-	sandbox, err := createDriverSandbox(ctx, "sandbox", id, workspace, profile, requirements, resources.Dockerfile)
+	var sandbox Sandbox
+	if backend != nil {
+		sandbox, err = m.newOpenSandbox(backend, id, workspace, profile, requirements, resources.Dockerfile)
+	} else {
+		sandbox, err = createDriverSandbox(ctx, "sandbox", id, workspace, profile, requirements, resources.Dockerfile)
+	}
 	if err != nil {
 		return fail(err)
 	}
@@ -112,7 +130,9 @@ func (m *Manager) DestroyRun(runID string) error {
 	// Removing the directory alone leaves the container running against a bind
 	// that no longer exists. Docker reports such a container as active, so no
 	// prune can reclaim its writable layer afterwards.
-	removeDockerSandbox(context.Background(), dockerContainerName(id), tempDockerImageName(id))
+	if m.dockerMaintenanceAvailable() {
+		removeDockerSandbox(context.Background(), dockerContainerName(id), tempDockerImageName(id))
+	}
 	_, err := m.removeMatching(func(name string) bool {
 		return name == id || strings.HasPrefix(name, id+"-") || name == "persist-"+id || strings.HasPrefix(name, "persist-"+id+"-")
 	})
@@ -123,7 +143,7 @@ func (m *Manager) DestroyRun(runID string) error {
 // workspace. A rerun needs the existing git checkout; it does not need the
 // writable layer the previous attempt filled with installs and caches.
 func (m *Manager) DiscardRunContainer(ctx context.Context, runID string) {
-	if m == nil {
+	if m == nil || !m.dockerMaintenanceAvailable() {
 		return
 	}
 	if id := safeID(runID); id != "" {
@@ -134,7 +154,7 @@ func (m *Manager) DiscardRunContainer(ctx context.Context, runID string) {
 // RunsWithIdleDockerSandbox narrows runIDs to those that still have a sandbox
 // container on this host and whose workspace no process currently holds open.
 func (m *Manager) RunsWithIdleDockerSandbox(ctx context.Context, runIDs []string) ([]string, error) {
-	if m == nil || strings.TrimSpace(m.root) == "" || len(runIDs) == 0 {
+	if m == nil || strings.TrimSpace(m.root) == "" || len(runIDs) == 0 || !m.dockerMaintenanceAvailable() {
 		return nil, nil
 	}
 	found, err := dockerSandboxesUnder(ctx, m.root)
@@ -175,7 +195,7 @@ func (m *Manager) RunsWithIdleDockerSandbox(ctx context.Context, runIDs []string
 // earlier process: a deploy restart drops every sandbox handle while the
 // containers keep running.
 func (m *Manager) ReclaimDockerSandboxes(ctx context.Context, liveRunIDs []string) (int, error) {
-	if m == nil || strings.TrimSpace(m.root) == "" {
+	if m == nil || strings.TrimSpace(m.root) == "" || !m.dockerMaintenanceAvailable() {
 		return 0, nil
 	}
 	found, err := dockerSandboxesUnder(ctx, m.root)
@@ -200,7 +220,7 @@ func (m *Manager) ReclaimDockerSandboxes(ctx context.Context, liveRunIDs []strin
 // Dockerfile still produces and that no container is using. Live recipes and
 // in-flight sandboxes keep their tags so the next run does not rebuild.
 func (m *Manager) ReclaimCachedDockerImages(ctx context.Context, dockerfiles []domain.DockerfileDefinition) (int, error) {
-	if m == nil || !dockerAvailable() {
+	if m == nil || !dockerAvailable() || !m.dockerMaintenanceAvailable() {
 		return 0, nil
 	}
 	keep := make(map[string]struct{}, len(dockerfiles))
@@ -211,6 +231,11 @@ func (m *Manager) ReclaimCachedDockerImages(ctx context.Context, dockerfiles []d
 		keep[cachedDockerImageName(dockerfile)] = struct{}{}
 	}
 	return reclaimCachedDockerImages(ctx, keep)
+}
+
+// Leave legacy Docker cleanup enabled when a daemon remains reachable.
+func (m *Manager) dockerMaintenanceAvailable() bool {
+	return m.openSandboxSource == nil || DockerReady()
 }
 
 // staleSandboxContainers narrows container -> workspace pairs to those whose
@@ -364,9 +389,12 @@ func (s *managedSandbox) Close(ctx context.Context) error {
 	return err
 }
 
-// Detach drops the workspace flock without docker rm. Deploy drain parks the
-// run so the next worker can reuse the same bind-mounted container.
+// Detach drops the workspace flock so the next worker can resume the run.
+// OpenSandbox keeps the synchronized local files and releases the instance.
 func (s *managedSandbox) Detach() error {
+	if _, ok := s.Sandbox.(*openSandbox); ok {
+		return s.Close(context.Background())
+	}
 	s.once.Do(func() {
 		_ = unlockFile(s.lock)
 	})

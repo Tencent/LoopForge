@@ -102,10 +102,12 @@ func (h *runsHandlers) runs(c *gin.Context) {
 	}
 	if r.Method == http.MethodPost {
 		var req struct {
-			WorkflowID    string                 `json:"workflowId"`
-			Input         string                 `json:"input"`
-			ProjectID     string                 `json:"projectId"`
-			KnowledgeRefs *[]domain.KnowledgeRef `json:"knowledgeRefs,omitempty"`
+			WorkflowID         string                  `json:"workflowId"`
+			Input              string                  `json:"input"`
+			ProjectID          string                  `json:"projectId"`
+			ExecutionClusterID string                  `json:"executionClusterId"`
+			ExecutionTarget    *domain.ExecutionTarget `json:"executionTarget"`
+			KnowledgeRefs      *[]domain.KnowledgeRef  `json:"knowledgeRefs,omitempty"`
 		}
 		if !decode(c, &req) {
 			return
@@ -136,7 +138,8 @@ func (h *runsHandlers) runs(c *gin.Context) {
 		if !h.requireProjectWriter(c, req.ProjectID, workflowProject) {
 			return
 		}
-		executionContext := domain.TelemetryContext{ProjectID: req.ProjectID, ResponsibleUserID: project.OwnerID}
+		executionContext := domain.TelemetryContext{ProjectID: req.ProjectID, ResponsibleUserID: project.OwnerID,
+			ExecutionClusterID: strings.TrimSpace(req.ExecutionClusterID), RequestedExecution: req.ExecutionTarget}
 		if current, ok := h.requestUser(r, true); ok {
 			executionContext.ResponsibleUserID = current.ID
 			executionContext.WorkspaceRunID = dispatchConversationWorkspace(h.deps, r, current.ID, req.ProjectID)

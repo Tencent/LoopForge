@@ -16,6 +16,7 @@ const (
 	PlatformAdmissionBucketKey = "platform"
 	projectAutoBucketPrefix    = "project-auto:"
 	runnerBucketPrefix         = "runner:"
+	clusterBucketPrefix        = "cluster:"
 	legacyProjectBucketPrefix  = "project:"
 )
 
@@ -85,6 +86,9 @@ func canonicalAdmissionBucketKey(key string) string {
 }
 
 func runAdmissionBucketKey(run domain.Run) string {
+	if id := run.ExecutionContext.ExecutionClusterID; id != "" {
+		return clusterBucketPrefix + id
+	}
 	if unboundProjectAutoRun(run) {
 		return projectAutoBucketPrefix + strings.TrimSpace(run.ExecutionContext.ProjectID)
 	}
@@ -159,6 +163,9 @@ func (s *admissionScope) exempt(run domain.Run) (bool, error) {
 
 // limit returns the bucket's slot count; 0 means unlimited.
 func (s *admissionScope) limit(key string) (int, error) {
+	if strings.HasPrefix(key, clusterBucketPrefix) {
+		return 0, nil
+	}
 	if id, ok := strings.CutPrefix(key, runnerBucketPrefix); ok {
 		info, err := s.runner(id)
 		return info.limit, err
@@ -335,6 +342,8 @@ func (r *RunsRepo) prepareRunAdmission(tx *gorm.DB, run *domain.Run, current run
 	s := newAdmissionScope(tx)
 	if exists {
 		cur := runFromRow(current)
+		run.ExecutionContext.ExecutionClusterID = cur.ExecutionContext.ExecutionClusterID
+		run.ExecutionContext.ExecutionClusterName = cur.ExecutionContext.ExecutionClusterName
 		if cur.ExecutionContext.ExecutionPool == domain.ExecutionPoolProjectAuto {
 			// Promotion is the only write that may bind a project-auto run.
 			run.ExecutionContext.ExecutionPool = cur.ExecutionContext.ExecutionPool

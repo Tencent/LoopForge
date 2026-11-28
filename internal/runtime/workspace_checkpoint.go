@@ -541,6 +541,11 @@ type checkpointDirectory struct {
 }
 
 func unpackWorkspaceCheckpoint(base *os.Root, source io.Reader) ([]checkpointDirectory, error) {
+	return unpackWorkspaceArchive(context.Background(), base, source, nil)
+}
+
+func unpackWorkspaceArchive(ctx context.Context, base *os.Root, source io.Reader, transferSkip func(string) bool) ([]checkpointDirectory, error) {
+	transfer := transferSkip != nil
 	compressed := &io.LimitedReader{R: source, N: WorkspaceCheckpointArchiveMaxBytes + 1}
 	zipped, err := gzip.NewReader(compressed)
 	if err != nil {
@@ -551,8 +556,11 @@ func unpackWorkspaceCheckpoint(base *os.Root, source io.Reader) ([]checkpointDir
 	reader := tar.NewReader(limited)
 	var expanded int64
 	var directories []checkpointDirectory
-	seen := map[string]bool{}
+	seen := map[string]byte{}
 	for {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		header, err := reader.Next()
 		if err == io.EOF {
 			break
@@ -560,17 +568,33 @@ func unpackWorkspaceCheckpoint(base *os.Root, source io.Reader) ([]checkpointDir
 		if err != nil {
 			return nil, err
 		}
+		// GNU tar includes the workspace directory itself as the first entry.
+		if transfer && len(seen) == 0 && header.Typeflag == tar.TypeDir && (header.Name == "." || header.Name == "./") {
+			continue
+		}
 		path, err := checkpointPath(header.Name)
 		if err != nil {
 			return nil, err
 		}
-		if checkpointRestoreExcluded(path) || seen[path] {
+		if transfer && transferSkip(path) {
+			continue
+		}
+		if (!transfer && checkpointRestoreExcluded(path)) || seen[path] != 0 {
 			return nil, fmt.Errorf("invalid checkpoint entry: %s", path)
+		}
+		if transfer {
+			parent := filepath.Dir(path)
+			if parent != "." && seen[parent] != tar.TypeDir {
+				return nil, fmt.Errorf("invalid workspace entry parent: %s", path)
+			}
+			if header.Typeflag == tar.TypeSymlink && !workspaceTransferLinkIsLocal(path, header.Linkname) {
+				return nil, fmt.Errorf("link leaves workspace: %s", path)
+			}
 		}
 		if len(seen) >= 100000 {
 			return nil, fmt.Errorf("checkpoint exceeds file count limit")
 		}
-		seen[path] = true
+		seen[path] = header.Typeflag
 		expanded += header.Size
 		if header.Size < 0 || expanded > workspaceCheckpointExpandedMax {
 			return nil, fmt.Errorf("checkpoint expanded size exceeds limit")
@@ -580,6 +604,13 @@ func unpackWorkspaceCheckpoint(base *os.Root, source io.Reader) ([]checkpointDir
 		}
 		if header.Typeflag == tar.TypeDir {
 			directories = append(directories, checkpointDirectory{path: path, mode: fs.FileMode(header.Mode) & 0777})
+		} else if transfer && header.Typeflag == tar.TypeReg {
+			if err := base.Chmod(path, fs.FileMode(header.Mode)&0777); err != nil {
+				return nil, err
+			}
+			if err := base.Chtimes(path, header.ModTime, header.ModTime); err != nil {
+				return nil, err
+			}
 		}
 	}
 	// Finish validating the gzip checksum before exposing any restored files.

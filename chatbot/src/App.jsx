@@ -1659,7 +1659,7 @@ export default function App() {
         <div className="header-actions">
           {chat.session ? (
             <>
-              {conversationStarted ? <ExecutionMachinePicker chat={chat} onManage={() => navigate("runners")} /> : null}
+              {conversationStarted ? <ExecutionMachinePicker chat={chat} onManage={() => navigate("runners")} onManageClusters={() => navigate("executionClusters")} /> : null}
               {projectName ? (
                 <div className="menu-anchor conversation-project-anchor">
                   {/* The conversation's project; picking another one opens a
@@ -2564,7 +2564,7 @@ export default function App() {
               >
                 {!conversationStarted ? (
                 <div className="composer-context">
-                  <ExecutionMachinePicker chat={chat} onManage={() => navigate("runners")} />
+                  <ExecutionMachinePicker chat={chat} onManage={() => navigate("runners")} onManageClusters={() => navigate("executionClusters")} />
                   <ChevronRightSmall />
                   <div className="menu-anchor">
                     <button

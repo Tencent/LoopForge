@@ -9,7 +9,8 @@ async function startRun(){
   try{
     if($('#flowView').classList.contains('active')&&workflowId===state.workflow?.id&&!catalogForeign(state.workflow.projectId)&&(!catalogGeneric(state.workflow)||isPlatformAdmin()))await saveWorkflow();
     button.textContent=sopSandboxPendingText(workflowId)||'正在启动…';
-    const payload={workflowId,input:$('#runInput').value.trim(),projectId};
+    const executionTarget=executionTargetFromValue($('#runExecutionCluster').value);
+    const payload={workflowId,input:$('#runInput').value.trim(),projectId,executionTarget};
     if(Array.isArray(state.runModalKnowledgeRefs))payload.knowledgeRefs=state.runModalKnowledgeRefs;
     const run=await api('/api/runs',{method:'POST',body:JSON.stringify(payload)});
     state.runModalKnowledgeRefs=null;
@@ -2615,6 +2616,9 @@ async function loadRunMachineMetadata(r){
 }
 function runExecutionChipHTML(r){
   const ec=r.executionContext||{};
+  if(ec.executionClusterId){
+    return `<span class="run-meta-chip" data-run-execution-chip>${escapeHTML(ec.executionClusterName||ec.executionClusterId)}</span>`;
+  }
   const auto=ec.executionPool==='project-auto';
   if(ec.executionMode!=='runner'&&!auto)return '';
   const id=ec.executionRunnerId||'';

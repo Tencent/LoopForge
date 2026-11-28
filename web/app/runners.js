@@ -25,6 +25,7 @@ function openRunModal(workflowId){
   if(resetBtn)resetBtn.onclick=()=>{state.runModalKnowledgeRefs=null;syncRunModalKnowledgeSummary()};
   $('#confirmRun').disabled=!workflows.length;
   $('#runModal').classList.add('open');
+  void loadRunExecutionTargets(currentProject()?.id||'');
   setTimeout(()=>$('#runInput').focus(),0);
 }
 
@@ -254,7 +255,6 @@ function platformRunnerCardHTML(runner,isDefault,canSetDefault){
       <span class="runner-platform-sep" aria-hidden="true"></span>
       ${limit}
       ${runnerPrivilegedSandboxHTML(runner,runner.canEditLimit,true)}
-      ${canSetDefault?`<button type="button" class="button small ${isDefault?'ghost runner-text-button':'hui-btn-soft'}" data-runner-platform-default>${isDefault?'清除项目默认':'设为项目默认'}</button>`:''}
     </div>
   </article>`;
 }
@@ -301,17 +301,6 @@ function renderRunnersView(){
       ?lfT('已开启自动分配：新建顶层 LOOP 将在「平台机器」和兼容的「可用机器」间自动调度。','Auto-assign is on: new top-level LOOPs are scheduled across the platform machine and compatible available runners.')
       :lfT('开启「自动分配」后，新建顶层 LOOP 将在「平台机器」和兼容的「可用机器」间自动调度；也可在下方指定单台机器为项目默认。','Turn on Auto-assign to schedule new top-level LOOPs across the platform machine and compatible available runners, or set a single runner below as the project default.');
   }
-  const autoAssign=$('#runnerAutoAssign');
-  if(autoAssign){
-    const active=projectMode==='auto';
-    autoAssign.hidden=!canSetMode;
-    autoAssign.classList.toggle('hui-btn-soft',active);
-    autoAssign.classList.toggle('ghost',!active);
-    autoAssign.setAttribute('aria-pressed',String(active));
-    autoAssign.textContent=active?lfT('已开启自动分配','Auto-assign on'):lfT('自动分配','Auto-assign');
-    autoAssign.title=lfT('自动分配涵盖平台机器与兼容的可用机器','Auto-assign covers the platform machine and compatible available runners');
-    autoAssign.onclick=()=>setDefaultRunner('',projectId,active?'':'auto');
-  }
   const poolStatus=$('#runnerPoolStatus');
   if(poolStatus){
     const def=runners.find(r=>r.id===defaultId),pool=state.cloudPool;
@@ -342,7 +331,6 @@ function renderRunnersView(){
   const focusedUpdate=document.activeElement?.dataset.runnerCheckUpdate;
   const focusedShare=document.activeElement?.dataset.runnerShare;
   const focusedPrivilege=document.activeElement?.dataset.runnerPrivilegedSandbox;
-  const focusedPlatform=document.activeElement?.hasAttribute('data-runner-platform-default');
   closeRunnerRuntimeMenu();
   const platformSection=$('#platformRunnerSection');
   const platformHost=$('#platformRunnerHost');
@@ -356,7 +344,6 @@ function renderRunnersView(){
     const shared=!own(r);
     const isPersonalDefault=r.id===personalDefaultId;
     const isProjectDefault=r.id===projectDefaultId;
-    const canSetProjectDefault=projectLoaded&&projectId&&r.canUseInProject&&!isProjectDefault;
     const cliRows=discoveredCLIs.map(rt=>runnerRuntimeHTML(r,rt,shared)).join('');
     const cliSection=cliRows||`<div class="runner-runtime-empty">${lfT('未发现支持的 Agent CLI','No supported Agent CLI found')}</div>`;
     const osLabel=runnerOSLabels[r.os]||r.os||'?';
@@ -384,23 +371,13 @@ function renderRunnersView(){
         ${isPersonalDefault?'<button class="button ghost small runner-text-button" type="button" data-set-default="">清除个人默认</button>':''}
         ${shared||r.status==='online'?'':`<button class="button ghost small runner-text-button" type="button" data-remove-runner="${escapeHTML(r.id)}" title="机器已不再使用时移除绑定">移除</button>`}
         ${!shared&&!isPersonalDefault?`<button class="button hui-btn-soft small" type="button" ${defaultBlocker?`disabled title="${escapeHTML(defaultBlocker)}"`:''} data-set-default="${escapeHTML(r.id)}">设为个人默认</button>`:''}
-        ${isProjectDefault?'<button class="button ghost small runner-text-button" type="button" data-set-project-default="">清除项目默认</button>':''}
-        ${canSetProjectDefault?`<button class="button hui-btn-soft small" type="button" ${defaultBlocker?`disabled title="${escapeHTML(defaultBlocker)}"`:''} data-set-project-default="${escapeHTML(r.id)}">设为项目默认</button>`:''}
       </div>
     </article>`;
   }).join('');
   list.innerHTML=runnerCards||`<div class="runner-empty"><b>${lfT('还没有机器','No runners yet')}</b><span>${lfT('执行上方命令后自动出现','Runners appear here after you run the command above')}</span></div>`;
-  const platformDefault=platformHost?.querySelector('[data-runner-platform-default]');
-  if(platformDefault){
-    platformDefault.onclick=()=>setDefaultRunner('',projectId,projectMode==='platform'?'':'platform');
-    if(focusedPlatform)platformDefault.focus({preventScroll:true});
-  }
   // Bind click handlers via JS (CSP blocks inline onclick attributes).
   list.querySelectorAll('[data-set-default]').forEach(btn=>btn.onclick=()=>{
     setDefaultRunner(btn.dataset.setDefault||'');
-  });
-  list.querySelectorAll('[data-set-project-default]').forEach(btn=>{
-    btn.onclick=()=>setDefaultRunner(btn.dataset.setProjectDefault,projectId);
   });
   list.querySelectorAll('[data-runner-share]').forEach(btn=>{
     btn.onclick=()=>editRunnerSharing(runners.find(r=>r.id===btn.dataset.runnerShare));
@@ -499,9 +476,8 @@ function runnerVersionAtLeast(have,want){
   for(let i=0;i<w.length;i++){const hv=h[i]||0;if(hv!==w[i])return hv>w[i]}
   return true;
 }
-function runnerDefaultBlocker(r){
+function runnerDefaultBlocker(r,min=state.minRunnerVersion||''){
   if(r.status!=='online')return lfT('机器离线','Runner offline');
-  const min=state.minRunnerVersion||'';
   if(min&&!runnerVersionAtLeast(r.runnerVersion,min))return lfT(`执行机器版本 ${r.runnerVersion||'未知'} 过低，需升级至 ${min} 及以上`,`Runner version ${r.runnerVersion||'unknown'} is too old; upgrade to ${min} or later`);
   return '';
 }
@@ -512,6 +488,7 @@ async function setDefaultRunner(runnerId,projectId='',mode=''){
   try{
     const query=projectId?`?projectId=${encodeURIComponent(projectId)}`:'';
     const out=await api('/api/runners/default'+query,{method:'PUT',body:JSON.stringify(mode?{mode}:{runnerId,mode})});
+    notifyExecutionSettingsChanged();
     toast(out?.message||'已更新','ok');await refreshRunners(true);
   }catch(err){toast(err.message)}
   finally{runnerPreferenceSaving=false}

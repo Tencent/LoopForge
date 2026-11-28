@@ -65,6 +65,7 @@ func (e *Engine) acquireConversationEnvironment(ctx context.Context, run domain.
 	}
 	credentials := e.resolveRunCredentials(run)
 	ctx = runtime.WithPrivilegedSandboxSetting(ctx, e.repo.PlatformRunnerPrivilegedSandbox)
+	resources.ClusterID, resources.ProjectID = run.ExecutionContext.ExecutionClusterID, run.ExecutionContext.ProjectID
 	sb, err := e.sandboxes.AcquireRunIn(ctx, run.ID, workspaceRunID(run), profile, requirements, credentials, resources)
 	if err != nil {
 		return nil, err

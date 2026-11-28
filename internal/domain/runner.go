@@ -51,6 +51,15 @@ type PlatformRunnerStatus struct {
 	AllowPrivilegedSandbox bool `json:"allowPrivilegedSandbox"`
 }
 
+// OpenSandboxConnection is an execution cluster's connection. The
+// persisted key is entered by an administrator and never returned to clients.
+type OpenSandboxConnection struct {
+	URL          string `json:"url"`
+	SecureAccess bool   `json:"secureAccess,omitempty"`
+	HasAPIKey    bool   `json:"hasApiKey"`
+	APIKey       string `json:"-"`
+}
+
 // RunnerTask states. LEASED sits between QUEUED and RUNNING so a claim that
 // never starts is still recoverable through lease expiry.
 const (

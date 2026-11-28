@@ -173,6 +173,12 @@ func SandboxEnvironmentIdentity(ctx context.Context, sandbox Sandbox) (string, e
 	switch s := sandbox.(type) {
 	case *managedSandbox:
 		return SandboxEnvironmentIdentity(ctx, s.Sandbox)
+	case *openSandbox:
+		instance, err := s.ensure(ctx)
+		if err != nil {
+			return "", err
+		}
+		return "opensandbox:" + instance.ID(), nil
 	case *dockerSandbox:
 		if err := s.ensureStarted(ctx); err != nil {
 			return "", err
@@ -200,6 +206,8 @@ func ReadSandboxEnvironmentIdentity(ctx context.Context, sandbox Sandbox) (strin
 	switch s := sandbox.(type) {
 	case *managedSandbox:
 		return ReadSandboxEnvironmentIdentity(ctx, s.Sandbox)
+	case *openSandbox:
+		return s.environmentIdentity()
 	case *dockerSandbox:
 		output, err := exec.CommandContext(ctx, "docker", "inspect", "--format", "{{.State.Running}}|{{.Id}}|{{.State.StartedAt}}", s.name).Output()
 		if err != nil {

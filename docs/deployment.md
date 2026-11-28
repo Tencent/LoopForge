@@ -105,6 +105,18 @@ The installer and `./start.sh pull` configure `AGENTFLOW_PROJECT_CREDENTIAL_KEY`
 
 Use a project-specific name for any credential that would otherwise share a variable name with a platform executor, Git authentication, or proxy setting. Runners receive only the variables selected for the current execution. Remote execution of these bindings requires Runner 0.12.1 or later.
 
+### K8s clusters
+
+Configure OpenSandbox on each Kubernetes cluster. The worker needs access to that cluster's OpenSandbox lifecycle service and the execd endpoints the service returns. This integration uses OpenSandbox 1.2.1 or a compatible release with the command API, file API and execd access tokens. [OpenSandbox Kubernetes deployment](https://open-sandbox.ai/deployment/)
+
+A platform administrator can open **Settings → K8s clusters** and add a named entry for each OpenSandbox service URL and API key. Limit access using shared projects. With no project selection, the entry is available to all projects and personal workspaces. **Test connection** verifies the lifecycle API and credentials. Register a new entry for a different service address so existing workspaces retain their original connection.
+
+Use **Project scheduling** from either **Execution machines** or **K8s clusters** to select a single project-wide policy. The machine and K8s pools each support automatic assignment and a fixed target. K8s auto-assignment checks enabled clusters shared with the project, prefers a reachable cluster with fewer active sandboxes, and breaks ties randomly. New LOOPs and conversations follow the project policy unless the launch selects another location. Retries and follow-up turns use the original assignment. Disabling a cluster removes it from new assignments and preserves access for existing workspaces.
+
+LoopForge uses the built-in execution image, or the installation's image set through `AGENTFLOW_ISOLATED_IMAGE`. It supports the default Docker and native sandbox profiles. Each active LOOP or conversation workspace uses its own sandbox. The worker synchronizes files and conversation CLI state through execd without a shared volume. Workspace snapshots are capped at 512 MiB compressed and 2 GiB expanded. The worker's filesystem must support atomic exchange of sibling directories to publish files. A renewable two-hour lease also covers abandoned sandboxes. Interactive workspace terminals require a backend with terminal support.
+
+To preserve the settings from the single-connection development preview, start this build once to create the new tables, then apply `migrations/050_import_opensandbox_preview.sql`. This imports the saved connection as **OpenSandbox 试用连接**. The imported cluster can then be selected for new executions.
+
 ### Docker sandboxes
 
 The platform exposes a built-in default sandbox (`generic-docker`, built from its own Dockerfile) even when the catalog SQL has not been installed. It is an in-memory fallback and does not insert database rows. An existing saved `generic-docker` profile takes priority, including its configured driver and environment. The default cannot be deleted; edit its configuration or create another profile to change how tasks run. LOOPs that do not choose a sandbox run in it. The full installer still imports starter LOOPs and the welcome project; the seeded `generic-docker` Dockerfile matches the platform image, so Compose sandboxes reuse `AGENTFLOW_ISOLATED_IMAGE` instead of building. Without the catalog SQL, the first run builds the built-in Dockerfile once.

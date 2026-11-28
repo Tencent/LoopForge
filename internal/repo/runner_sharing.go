@@ -215,21 +215,30 @@ func (r *RunnersRepo) resolveRunnerDefaults(userID int64, projectID string, conv
 			return defaults
 		}
 	}
-	if defaults.PersonalRunnerID == "" {
-		return defaults
+	defaults.Runner = r.personalExecutionRunner(defaults.PersonalRunnerID, userID, projectID, conversation)
+	return defaults
+}
+
+func (r *RunnersRepo) PersonalExecutionRunner(userID int64, projectID string, conversation bool) domain.Runner {
+	return r.personalExecutionRunner(r.DefaultRunner(userID), userID, projectID, conversation)
+}
+
+func (r *RunnersRepo) personalExecutionRunner(id string, userID int64, projectID string, conversation bool) domain.Runner {
+	if id == "" {
+		return domain.Runner{}
 	}
-	if runner, ok := r.Runner(defaults.PersonalRunnerID); ok {
+	if runner, ok := r.Runner(id); ok {
 		// A personal LOOP can still use a legacy ownerless default.
 		switch {
 		case conversation:
 			if runner.SupportsConversationCLI() && r.CanUseConversationRunner(runner, projectID, userID) {
-				defaults.Runner = runner
+				return runner
 			}
 		case (projectID == "" && runner.OwnerUserID == 0) || r.CanUseRunner(runner, projectID, userID):
-			defaults.Runner = runner
+			return runner
 		}
 	}
-	return defaults
+	return domain.Runner{}
 }
 
 func (r *RunnersRepo) SetProjectDefaultRunner(userID int64, projectID, runnerID string) error {

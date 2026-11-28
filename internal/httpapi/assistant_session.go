@@ -454,7 +454,8 @@ func (h *assistantHandlers) session(c *gin.Context) {
 			conv.ExecutionTarget = existing.ExecutionTarget
 		} else {
 			var targetErr error
-			conv.ExecutionTarget, targetErr = h.newExecutionTarget(current.ID, conv.ProjectID, draftExecutionTarget(existing, conv.ExecutionTarget))
+			provider, _ := assistantModelEngine(assistantRequestModel(conv.Executor, conv.Model))
+			conv.ExecutionTarget, targetErr = h.newExecutionTarget(c.Request.Context(), current.ID, conv.ProjectID, draftExecutionTarget(existing, conv.ExecutionTarget), provider, len(conv.Messages) > 0)
 			if targetErr != nil {
 				c.JSON(400, gin.H{"error": targetErr.Error()})
 				return

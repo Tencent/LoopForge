@@ -183,10 +183,10 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 		c.JSON(409, gin.H{"error": "会话执行记录已更新，请重新打开后发送"})
 		return
 	}
+	req.Model = h.assistantChatRequestModel(req, old, stored)
 	if !h.bindTurnExecutionTarget(c, &req, stored.ID, old) {
 		return
 	}
-	req.Model = h.assistantChatRequestModel(req, old, stored)
 	cliEngine, _ := assistantModelEngine(req.Model)
 	loginRunner := h.assistantLoginRunner(stored.ID, req.ExecutionTarget, cliEngine)
 	runnerLogin := loginRunner.ID != ""
@@ -361,6 +361,7 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 		sess.ChatOwnerID = ownerID
 		sess.turnMessages = append([]assistantMessage(nil), req.Messages...)
 		sess.ExecutionRunnerID = savedConversation.Execution().RunnerID
+		sess.ExecutionClusterID = savedConversation.Execution().ClusterID
 		sess.runnerLogin = runnerLogin
 		sess.RuntimeMode = savedConversation.Mode()
 		sess.projectCredentialIDs = projectCredentialIDs

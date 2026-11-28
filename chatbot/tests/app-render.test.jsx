@@ -480,26 +480,27 @@ describe("App", () => {
     const previous = { ...chat };
     const selectMachine = vi.fn();
     Object.assign(chat, {
-      machinesReady: true, defaultRunnerId: "mac", machines: [{ id: "mac", name: "开发 Mac", status: "online" }],
+      machinesReady: true, defaultRunnerId: "mac", executionSelection: "runner:mac",
+      machines: [{ id: "mac", name: "开发 Mac", status: "online" }],
       selectMachine, refreshMachines: vi.fn(),
     });
     const user = userEvent.setup();
     let view;
     try {
       view = render(<App />);
-      let trigger = screen.getByRole("button", { name: "执行机器：开发 Mac" });
+      const trigger = screen.getByRole("button", { name: "执行位置：开发 Mac" });
       expect(trigger.closest(".composer-context")).not.toBeNull();
       trigger.getBoundingClientRect = () => ({ top: 500, bottom: 528, left: 200, right: 400, width: 200, height: 28 });
       await user.click(trigger);
       await user.click(screen.getByRole("option", { name: /LoopForge 云端/ }));
-      expect(selectMachine).toHaveBeenCalledWith("");
+      expect(selectMachine).toHaveBeenCalledWith("cloud");
       Object.assign(chat, { activeId: "s1", session: { id: "s1", messages: [] } });
       view.rerender(<App />);
-      expect(screen.getAllByRole("button", { name: "执行机器：开发 Mac" })).toHaveLength(1);
+      expect(screen.getAllByRole("button", { name: "执行位置：开发 Mac" })).toHaveLength(1);
       chat.session.messages = [{ role: "user", content: "检查项目" }];
       chat.session.executionTarget = {pool:"runner",runnerId:"mac"};
       view.rerender(<App />);
-      expect(screen.queryByRole("button", { name: "执行机器：开发 Mac" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "执行位置：开发 Mac" })).not.toBeInTheDocument();
       expect(screen.getByText("开发 Mac").closest(".header-actions")).not.toBeNull();
     } finally {
       view?.unmount();

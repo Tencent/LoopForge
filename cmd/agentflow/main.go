@@ -138,10 +138,15 @@ func main() {
 	if err := runtime.SetRepositoryCacheRoot(root); err != nil {
 		log.Printf("repository cache disabled: %v", err)
 	}
+	sandboxes := runtime.NewManagerWithLimit(root, *workerConcurrency)
 	s, err := repo.Open(strings.TrimSpace(*mysqlDSN))
 	if err != nil {
 		log.Fatal(err)
 	}
+	if err := s.ExecutionClustersRepo.ConfigureOpenSandboxEncryption(os.Getenv("AGENTFLOW_SESSION_SECRET")); err != nil {
+		log.Fatal(err)
+	}
+	sandboxes.SetOpenSandboxSource(s.ExecutionClustersRepo.OpenSandboxClusterConnection)
 	keyring, err := credcrypt.FromEnv()
 	if err != nil {
 		log.Fatal(err)
@@ -159,7 +164,7 @@ func main() {
 		log.Printf("bot credential keyring current_kid=%s", keyring.CurrentKID())
 	}
 	log.Printf("storage driver=%v database=%v role=%s", s.StorageInfo()["driver"], s.StorageInfo()["database"], role)
-	e := engine.New(s, runtime.NewManagerWithLimit(root, *workerConcurrency))
+	e := engine.New(s, sandboxes)
 	host, _ := os.Hostname()
 	instanceID := strings.TrimSpace(os.Getenv("AGENTFLOW_INSTANCE_ID"))
 	if instanceID == "" {

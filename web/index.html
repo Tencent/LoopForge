@@ -160,6 +160,7 @@
       <button class="nav" data-view="evolution"><span class="nav-icon"><svg class="agent-icon harness-icon" data-icon="sparkles" data-icon-motion="idle" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M12 3l1.6 4.4L18 9l-4.4 1.6L12 15l-1.6-4.4L6 9l4.4-1.6z"/><path d="M19 14l.8 2.2L22 17l-2.2.8L19 20l-.8-2.2L16 17l2.2-.8z"/></svg></span><span class="nav-label">RSI工作台</span></button>
       <p>运行环境</p>
       <button class="nav" data-view="runners"><span class="nav-icon"><svg class="agent-icon harness-icon" data-icon="server" data-icon-motion="idle" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="3" y="3" width="18" height="7" rx="2"/><rect x="3" y="14" width="18" height="7" rx="2"/><path d="M7 6.5h.01"/><path d="M7 17.5h.01"/></svg></span><span class="nav-label">执行机器</span></button>
+      <button class="nav" data-view="executionClusters" data-nav-icon="layers"><span class="nav-icon"><svg class="agent-icon harness-icon" data-icon="layers" data-icon-motion="idle" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M12 3l9 5-9 5-9-5z"/><path d="M3 13l9 5 9-5"/></svg></span><span class="nav-label">K8S 集群</span></button>
       <button class="nav" data-view="sandboxes" data-nav-icon="layers"><span class="nav-icon"><svg class="agent-icon harness-icon" data-icon="layers" data-icon-motion="idle" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M12 3l9 5-9 5-9-5z"/><path d="M3 13l9 5 9-5"/></svg></span><span class="nav-label">沙箱管理</span></button>
       <p>开放与平台</p>
       <button class="nav" data-view="guide"><span class="nav-icon"><svg class="agent-icon harness-icon" data-icon="key" data-icon-motion="idle" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="8" cy="15" r="4"/><path d="M10.8 12.2 20 3"/><path d="M16 7l3 3"/><path d="M18 5l2 2"/></svg></span><span class="nav-label">访问密钥</span></button>
@@ -803,8 +804,10 @@
         <div class="heading-actions"><button id="refreshRunners" class="button ghost" type="button">刷新</button></div>
       </div>
 
-      <div class="runner-onboarding panel">
-        <div class="panel-heading"><h2>接入新机器</h2><span class="runner-platforms">macOS / Linux</span></div>
+      <div id="runnerProjectExecution" data-project-execution class="execution-policy" hidden></div>
+
+      <details class="runner-onboarding panel">
+        <summary class="panel-heading"><span class="runner-onboarding-title">接入新机器</span><span class="runner-platforms">macOS / Linux</span></summary>
         <ol class="runner-steps">
           <li><span class="runner-step-no">1</span><div><b>安装 CLI</b><small>claude / codex 等</small></div></li>
           <li><span class="runner-step-no">2</span><div><b>执行接入命令</b><small>绑定码 10 分钟有效</small></div></li>
@@ -824,7 +827,7 @@
             </div>
           </details>
         </div>
-      </div>
+      </details>
 
       <div id="runnerDispatchBar" class="runner-dispatch-bar panel">
         <div class="runner-dispatch-copy">
@@ -834,7 +837,6 @@
           </div>
           <p class="runner-dispatch-hint" id="runnerDispatchHint" hidden></p>
         </div>
-        <button type="button" class="button ghost small" id="runnerAutoAssign" aria-pressed="false" hidden>自动分配</button>
       </div>
 
       <div id="platformRunnerSection" class="runner-platform-section" hidden>
@@ -844,6 +846,15 @@
 
       <div class="runner-list-heading"><h2>可用机器</h2><span class="runner-count" id="runnerCount">0</span></div>
       <div id="runnersList" class="runner-grid"></div>
+    </section>
+
+    <section id="executionClustersView" class="view page-view">
+      <div class="page-heading">
+        <div><h1>K8S 集群</h1><p>通过 OpenSandbox 为 LOOP 和对话工作区按需创建沙箱。</p></div>
+        <button id="addExecutionCluster" class="button primary" type="button" hidden>添加集群</button>
+      </div>
+      <div id="clusterProjectExecution" data-project-execution class="execution-policy" hidden></div>
+      <div id="executionClusterList" class="execution-cluster-list" aria-live="polite"></div>
     </section>
 
     <!-- 开放与平台：访问密钥 -->
@@ -1039,7 +1050,30 @@
 
   <div id="importTAPDModal" class="modal"><form id="importTAPDForm" class="modal-card"><button type="button" class="modal-close import-tapd-close">×</button><p class="eyebrow">外部需求</p><h2>导入 TAPD 工作项</h2><p class="modal-hint">支持 TAPD 需求、缺陷或任务链接，也可以粘贴「标题 + 链接」。导入时将读取 TAPD 最新标题和描述并写入当前项目。</p><label for="importTAPDURL">TAPD 链接或分享文本</label><textarea id="importTAPDURL" class="input" required rows="3" placeholder="【工作项标题】&#10;https://www.tapd.cn/tapd_fe/…/story/detail/…"></textarea><label>LOOP 流程</label><select id="importTAPDWorkflow" class="select"></select><label>代码仓库（可多选）</label><div id="importTAPDRepository" class="repo-picker"></div><p class="modal-hint">从下拉框添加仓库，点击标签可移除。导入前必须至少选择一个仓库。</p><label for="importTAPDBaseBranch">继续开发分支（可选）</label><input id="importTAPDBaseBranch" class="input" placeholder="留空从配置主分支新建工作分支" aria-describedby="importTAPDBaseBranchHint" autocomplete="off"><div id="importTAPDRepositoryBranches" class="repository-branches" hidden></div><p id="importTAPDBaseBranchHint" class="modal-hint">留空从配置主分支新建工作分支；填写时直接继续该已有分支，不新建。</p><div class="modal-actions"><button type="button" class="button ghost import-tapd-close">取消</button><button id="confirmImportTAPD" type="submit" class="button primary">导入</button></div></form></div>
 
-  <div id="runModal" class="modal"><div class="modal-card"><button class="modal-close">×</button><p class="eyebrow">手动运行</p><h2>发起流程运行</h2><p>选择 LOOP 并提供任务输入，内容会注入使用 <code>{{input}}</code> 的 Agent 节点。</p><label class="modal-label" for="runWorkflowChoice">LOOP 流程</label><select id="runWorkflowChoice" class="select"></select><label class="modal-label" for="runInput">任务输入</label><textarea id="runInput" placeholder="例如：实现用户登录接口，并补充单元测试"></textarea><div class="modal-knowledge-row"><button id="runKnowledgeRefsBtn" type="button" class="button ghost small">关联我的知识库</button><button id="runKnowledgeRefsResetBtn" type="button" class="button ghost small" hidden>恢复默认</button><span id="runKnowledgeRefsSummary" class="modal-hint">默认按节点或角色配置</span></div><div class="modal-actions"><button class="button ghost modal-close">取消</button><button id="confirmRun" class="button primary">开始运行</button></div></div></div>
+  <div id="executionClusterModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="executionClusterFormTitle">
+    <form id="executionClusterForm" class="modal-card execution-cluster-form">
+      <button class="modal-close" data-close-execution-cluster type="button" aria-label="关闭">×</button>
+      <h2 id="executionClusterFormTitle">添加 K8S 集群</h2>
+      <fieldset class="execution-cluster-fields">
+        <label>集群名称<input class="input" name="name" type="text" required maxlength="100" placeholder="例如：研发 TKE"></label>
+        <label>OpenSandbox 服务地址<input class="input" name="url" type="url" required maxlength="2048" placeholder="https://sandbox.example.com"></label>
+        <label>API Key<input class="input" name="apiKey" type="password" autocomplete="new-password" maxlength="4096"></label>
+        <details id="executionClusterSharing" class="execution-cluster-sharing">
+          <summary><span>使用范围</span><small id="executionClusterShareSummary"></small></summary>
+          <div id="executionClusterShareOptions"></div>
+        </details>
+        <label class="execution-cluster-enabled"><input name="enabled" type="checkbox" checked>允许用于新任务</label>
+        <p id="executionClusterFeedback" role="status" hidden></p>
+        <div class="modal-actions">
+          <button class="button ghost" data-close-execution-cluster type="button">取消</button>
+          <button id="testExecutionCluster" class="button ghost" type="button">测试连接</button>
+          <button class="button primary" type="submit">保存</button>
+        </div>
+      </fieldset>
+    </form>
+  </div>
+
+  <div id="runModal" class="modal"><div class="modal-card"><button class="modal-close">×</button><p class="eyebrow">手动运行</p><h2>发起流程运行</h2><p>选择 LOOP 并提供任务输入，内容会注入使用 <code>{{input}}</code> 的 Agent 节点。</p><label class="modal-label" for="runWorkflowChoice">LOOP 流程</label><select id="runWorkflowChoice" class="select"></select><label class="modal-label" for="runExecutionCluster">执行位置</label><select id="runExecutionCluster" class="select"></select><label class="modal-label" for="runInput">任务输入</label><textarea id="runInput" placeholder="例如：实现用户登录接口，并补充单元测试"></textarea><div class="modal-knowledge-row"><button id="runKnowledgeRefsBtn" type="button" class="button ghost small">关联我的知识库</button><button id="runKnowledgeRefsResetBtn" type="button" class="button ghost small" hidden>恢复默认</button><span id="runKnowledgeRefsSummary" class="modal-hint">默认按节点或角色配置</span></div><div class="modal-actions"><button class="button ghost modal-close">取消</button><button id="confirmRun" class="button primary">开始运行</button></div></div></div>
 
   <div id="genericTemplateModal" class="modal"><div class="modal-card generic-template-card"><button class="modal-close generic-template-close">×</button><p class="eyebrow">内置 LOOP</p><h2 id="genericTemplateTitle">使用通用模板</h2><p id="genericTemplateIntro" class="modal-hint"></p><div id="genericTemplateStructure" class="generic-structure"></div><div class="generic-requirement-head"><b>运行依赖</b><span>复制不检查依赖；未配置时对应节点会在运行中降级或失败。凭证按任务责任人注入。</span></div><div id="genericTemplateRequirements" class="generic-requirements"></div><div class="modal-actions"><button type="button" class="button ghost generic-template-close">取消</button><button id="runGenericTemplateDirect" type="button" class="button ghost">直接运行</button><button id="confirmGenericTemplate" type="button" class="button primary">复制到本项目</button></div></div></div>
 
@@ -1451,6 +1485,7 @@
   <script src="/app/mcp.js"></script>
   <script src="/app/assets.js"></script>
   <script src="/app/skillhub.js"></script>
+  <script src="/app/execution-clusters.js"></script>
   <script src="/app/runners.js"></script>
   <script src="/app/runs.js"></script>
   <script src="/app/run-activation.js"></script>

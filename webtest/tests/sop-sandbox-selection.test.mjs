@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {loadApp} from '../lib/load-app.mjs';
+import {loadApp, settle} from '../lib/load-app.mjs';
 
 async function submit(app) {
   await app.evaluate('createSOPFromWizard').call(null, {
@@ -84,6 +84,7 @@ test('issue dispatch shows sandbox selection until admission returns', async t=>
   const reply=Promise.withResolvers();
   app.router.post('/api/issues/issue-1/dispatch',()=>reply.promise);
   const pending=app.evaluate(`dispatchIssueById('issue-1')`);
+  await settle();
   const notice=[...app.document.querySelectorAll('#toastContainer .toast-item')]
     .find(item=>item.querySelector('.toast-item-msg')?.textContent==='正在选择沙箱…');
   assert.ok(notice);
@@ -92,6 +93,23 @@ test('issue dispatch shows sandbox selection until admission returns', async t=>
   await pending;
   assert.equal(notice.classList.contains('leaving'),true);
   assert.match(app.document.querySelector('#toastContainer').textContent,/Dispatch failed/);
+});
+
+test('issue dispatch sends the selected execution cluster', async t=>{
+  const app=await loadApp();t.after(app.close);
+  app.router.get('/api/execution-clusters',{status:200,body:{
+    available:[{id:'cluster-a',name:'Cluster A'},{id:'cluster-b',name:'Cluster B'}],
+    projectTarget:{pool:'cluster',clusterId:'cluster-a'},
+  }});
+  app.router.post('/api/issues/issue-1/dispatch',{status:400,body:{error:'Dispatch failed'}});
+  const pending=app.evaluate(`dispatchIssueById('issue-1')`);
+  await settle();
+  assert.equal(app.evaluate(`$('#issueExecutionTarget').value`),'');
+  assert.equal(app.document.querySelector('#confirmPromptInput').hidden,true);
+  app.evaluate(`$('#issueExecutionTarget').value='cluster-auto';$('#confirmOkBtn').click()`);
+  await pending;
+  const call=app.router.calls.find(call=>call.method==='POST'&&call.path==='/api/issues/issue-1/dispatch');
+  assert.deepEqual(call.body.executionTarget,{pool:'cluster-auto'});
 });
 
 test('missing sandboxes block submission and refresh keeps the entered LOOP fields', async t=>{

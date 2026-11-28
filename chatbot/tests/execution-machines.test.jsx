@@ -40,7 +40,7 @@ describe("personal execution machine selection", () => {
     expect(result.current.machines).toEqual(machines);
     expect(result.current.defaultRunnerId).toBe("mac");
     expect(apiMock).toHaveBeenCalledWith("/api/runners?mine=1");
-    await act(() => result.current.selectMachine(""));
+    await act(() => result.current.selectMachine("cloud"));
     expect(bindMock).toHaveBeenCalledWith("");
     expect(writeMock).not.toHaveBeenCalled();
     expect(result.current.defaultRunnerId).toBe("");
@@ -56,13 +56,13 @@ describe("personal execution machine selection", () => {
     bindMock.mockReturnValueOnce(save.promise);
     let saving;
     act(() => {
-      saving = result.current.selectMachine("");
+      saving = result.current.selectMachine("cloud");
     });
     expect(result.current.machineSaving).toBe(true);
     expect(result.current.machineSavingRef.current).toBe(true);
     expect(result.current.defaultRunnerId).toBe("mac");
     await act(async () =>
-      expect(await result.current.selectMachine("other")).toBe(false),
+      expect(await result.current.selectMachine("runner:mac")).toBe(false),
     );
     expect(bindMock).toHaveBeenCalledTimes(1);
     await act(async () => {
@@ -87,7 +87,7 @@ describe("personal execution machine selection", () => {
     act(() => {
       refreshing = result.current.refreshMachines();
     });
-    await act(() => result.current.selectMachine(""));
+    await act(() => result.current.selectMachine("cloud"));
     await act(async () => {
       stale.resolve({ runnerId: "mac" });
       await refreshing;
@@ -131,9 +131,9 @@ describe("personal execution machine selection", () => {
     await waitFor(() => expect(result.current.machinesReady).toBe(true));
     expect(result.current.availableMachines).toEqual([owned, shared]);
     expect(result.current.defaultRunnerId).toBe(owned.id);
-    await act(async () => expect(await result.current.selectMachine(owned.id)).toBe(true));
+    await act(async () => expect(await result.current.selectMachine("runner:" + owned.id)).toBe(true));
     expect(bindMock).toHaveBeenLastCalledWith(owned.id);
-    await act(() => result.current.selectMachine(shared.id));
+    await act(() => result.current.selectMachine("runner:" + shared.id));
     expect(result.current.defaultRunnerId).toBe(shared.id);
 
     rerender({ projectId: "two" });
@@ -181,18 +181,42 @@ describe("personal execution machine selection", () => {
     await waitFor(() => expect(result.current.defaultRunnerId).toBe("chat"));
     expect(result.current.availableMachines).toEqual([chatRunner]);
     expect(apiMock).toHaveBeenCalledWith("/api/runners/default?projectId=one&conversation=1");
-    await act(async () => expect(await result.current.selectMachine(oldRunner.id)).toBe(false));
+    await act(async () => expect(await result.current.selectMachine("runner:" + oldRunner.id)).toBe(false));
     expect(bindMock).not.toHaveBeenCalled();
+  });
+
+  test("returns to project scheduling when the chosen cluster becomes unavailable", async () => {
+    const cluster = { id: "test-cluster", name: "Test cluster" };
+    let available = [cluster];
+    apiMock.mockImplementation(async (path) => {
+      if (path.startsWith("/api/execution-clusters")) return { available, projectTarget: { pool: "cloud" } };
+      if (path.startsWith("/api/runners?")) return [];
+      return { runnerId: "" };
+    });
+    const { result } = renderHook(() =>
+      useExecutionMachines(1, false, false, vi.fn(), bindMock, null, "one"),
+    );
+    await waitFor(() => expect(result.current.machinesReady).toBe(true));
+    await act(() => result.current.selectMachine("cluster:" + cluster.id));
+    expect(result.current.draftExecutionTarget).toEqual({ pool: "cluster", clusterId: cluster.id });
+
+    available = [];
+    await act(() => result.current.refreshMachines());
+    expect(result.current.draftExecutionTarget).toEqual({ pool: "project" });
+
+    available = [cluster];
+    await act(() => result.current.refreshMachines());
+    expect(result.current.draftExecutionTarget).toEqual({ pool: "project" });
   });
 
   test("keeps an explicit cloud choice through refresh, and resets only for a new draft", async () => {
     const { result } = renderHook(() => useExecutionMachines(1, false, false, vi.fn(), bindMock));
     await waitFor(() => expect(result.current.machinesReady).toBe(true));
-    await act(() => result.current.selectMachine(""));
+    await act(() => result.current.selectMachine("cloud"));
     await act(() => result.current.refreshMachines());
     expect(result.current.defaultRunnerId).toBe("");
-    await act(() => result.current.selectMachine("mac"));
-    await act(() => result.current.selectMachine(""));
+    await act(() => result.current.selectMachine("runner:mac"));
+    await act(() => result.current.selectMachine("cloud"));
     expect(writeMock).not.toHaveBeenCalled();
     act(() => result.current.resetMachine());
     expect(result.current.defaultRunnerId).toBe("mac");

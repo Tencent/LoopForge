@@ -71,36 +71,37 @@ func (d deps) getAuthClient() *auth.Client {
 // 对所有领域可见；需要跨领域协作的领域（issues → tasks/stream）显式注入。
 type Server struct {
 	*deps
-	auth            *authHandlers // auth.go
-	github          *githubHandlers
-	users           *usersHandlers // users.go
-	sshHostTrust    *sshHostTrustHandlers
-	httpsHostTrust  *httpsHostTrustHandlers
-	platformSetting *platformSettingsHandlers
-	httpHostTrust   *gitHTTPHostTrustHandlers
-	projects        *projectsHandlers
-	credentials     *projectCredentialsHandlers
-	insights        *insightsHandlers
-	businessDomains *businessDomainsHandlers
-	catalog         *catalogHandlers  // catalog.go
-	mcp             *mcpHandlers      // mcp.go
-	market          *marketHandlers   // mcp_market.go
-	skillhub        *skillhubHandlers // skillhub_market.go
-	issues          *issuesHandlers   // issues.go（依赖 tasks/stream）
-	tasks           *tasksHandlers    // tasks.go
-	runs            *runsHandlers     // runs.go
-	previews        *previewsHandlers // run_preview.go
-	browser         *browserHandlers  // browser.go
-	stream          *streamHandlers   // stream.go
-	runners         *runnersHandlers  // runners.go
-	schedule        *scheduleHandlers // schedule.go（align.go 并入）
-	tokens          *tokenHandlers    // auth_tokens.go
-	syncAPI         *syncHandlers     // tracker.go
-	notifications   *notificationHandlers
-	botInteractions *botInteractionHandlers
-	botIdentities   *botIdentityHandlers
-	know            *knowledgeHandlers // knowledge.go / knowledge_proxy.go
-	evolution       *evolutionHandlers // evolution.go / evolution_jobs.go
+	auth              *authHandlers // auth.go
+	github            *githubHandlers
+	users             *usersHandlers // users.go
+	sshHostTrust      *sshHostTrustHandlers
+	httpsHostTrust    *httpsHostTrustHandlers
+	platformSetting   *platformSettingsHandlers
+	httpHostTrust     *gitHTTPHostTrustHandlers
+	projects          *projectsHandlers
+	credentials       *projectCredentialsHandlers
+	insights          *insightsHandlers
+	businessDomains   *businessDomainsHandlers
+	catalog           *catalogHandlers  // catalog.go
+	mcp               *mcpHandlers      // mcp.go
+	market            *marketHandlers   // mcp_market.go
+	skillhub          *skillhubHandlers // skillhub_market.go
+	issues            *issuesHandlers   // issues.go（依赖 tasks/stream）
+	tasks             *tasksHandlers    // tasks.go
+	runs              *runsHandlers     // runs.go
+	previews          *previewsHandlers // run_preview.go
+	browser           *browserHandlers  // browser.go
+	stream            *streamHandlers   // stream.go
+	runners           *runnersHandlers  // runners.go
+	executionClusters *executionClusterHandlers
+	schedule          *scheduleHandlers // schedule.go（align.go 并入）
+	tokens            *tokenHandlers    // auth_tokens.go
+	syncAPI           *syncHandlers     // tracker.go
+	notifications     *notificationHandlers
+	botInteractions   *botInteractionHandlers
+	botIdentities     *botIdentityHandlers
+	know              *knowledgeHandlers // knowledge.go / knowledge_proxy.go
+	evolution         *evolutionHandlers // evolution.go / evolution_jobs.go
 }
 
 func New(s *repo.Store, e *engine.Engine, syncSvc *tracker.Service, basicUser, basicPass string) *gin.Engine {
@@ -163,35 +164,36 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 		e.ConfigureKnowledge(knowledgeExec)
 	}
 	api := &Server{
-		deps:            d,
-		notifications:   &notificationHandlers{deps: d, service: notifications},
-		auth:            &authHandlers{deps: d},
-		github:          newGitHubHandlers(d),
-		users:           &usersHandlers{deps: d},
-		sshHostTrust:    &sshHostTrustHandlers{deps: d, hosts: s.SSHHostTrustRepo, runnerControls: runnerControls},
-		httpsHostTrust:  &httpsHostTrustHandlers{deps: d, hosts: s.HTTPSHostTrustRepo, lookupIP: net.DefaultResolver.LookupNetIP},
-		platformSetting: &platformSettingsHandlers{deps: d, envPublicURL: func() string { return notifications.PublicURL }},
-		httpHostTrust:   &gitHTTPHostTrustHandlers{deps: d, hosts: s.GitHTTPHostTrustRepo},
-		catalog:         &catalogHandlers{deps: d},
-		businessDomains: &businessDomainsHandlers{deps: d},
-		insights:        &insightsHandlers{deps: d},
-		projects:        &projectsHandlers{deps: d},
-		credentials:     &projectCredentialsHandlers{deps: d},
-		mcp:             &mcpHandlers{deps: d},
-		market:          &marketHandlers{deps: d},
-		skillhub:        &skillhubHandlers{deps: d, client: newSkillhubClientFromEnv()},
-		issues:          &issuesHandlers{deps: d, tasks: tasks, stream: stream},
-		tasks:           tasks,
-		runs:            &runsHandlers{deps: d, runnerControls: runnerControls, evalJobs: newRunEvalHub()},
-		previews:        &previewsHandlers{deps: d},
-		browser:         &browserHandlers{deps: d, runnerControls: runnerControls},
-		stream:          stream,
-		runners:         &runnersHandlers{deps: d, runnerWaiters: newRunnerWaiterRegistry(), runnerControls: runnerControls, runnerBindCodes: map[string]runnerBindCode{}},
-		schedule:        &scheduleHandlers{deps: d},
-		tokens:          &tokenHandlers{deps: d},
-		syncAPI:         &syncHandlers{deps: d},
-		know:            &knowledgeHandlers{deps: d, svc: knowledgeSvc, exec: knowledgeExec, legacy: knowledge.NewLegacyService(s, randomID), activity: &knowledgeActivityLog{}},
-		evolution:       newEvolutionHandlers(d),
+		deps:              d,
+		notifications:     &notificationHandlers{deps: d, service: notifications},
+		auth:              &authHandlers{deps: d},
+		github:            newGitHubHandlers(d),
+		users:             &usersHandlers{deps: d},
+		sshHostTrust:      &sshHostTrustHandlers{deps: d, hosts: s.SSHHostTrustRepo, runnerControls: runnerControls},
+		httpsHostTrust:    &httpsHostTrustHandlers{deps: d, hosts: s.HTTPSHostTrustRepo, lookupIP: net.DefaultResolver.LookupNetIP},
+		platformSetting:   &platformSettingsHandlers{deps: d, envPublicURL: func() string { return notifications.PublicURL }},
+		httpHostTrust:     &gitHTTPHostTrustHandlers{deps: d, hosts: s.GitHTTPHostTrustRepo},
+		catalog:           &catalogHandlers{deps: d},
+		businessDomains:   &businessDomainsHandlers{deps: d},
+		insights:          &insightsHandlers{deps: d},
+		projects:          &projectsHandlers{deps: d},
+		credentials:       &projectCredentialsHandlers{deps: d},
+		mcp:               &mcpHandlers{deps: d},
+		market:            &marketHandlers{deps: d},
+		skillhub:          &skillhubHandlers{deps: d, client: newSkillhubClientFromEnv()},
+		issues:            &issuesHandlers{deps: d, tasks: tasks, stream: stream},
+		tasks:             tasks,
+		runs:              &runsHandlers{deps: d, runnerControls: runnerControls, evalJobs: newRunEvalHub()},
+		previews:          &previewsHandlers{deps: d},
+		browser:           &browserHandlers{deps: d, runnerControls: runnerControls},
+		stream:            stream,
+		runners:           &runnersHandlers{deps: d, runnerWaiters: newRunnerWaiterRegistry(), runnerControls: runnerControls, runnerBindCodes: map[string]runnerBindCode{}},
+		executionClusters: &executionClusterHandlers{deps: d, clusters: s.ExecutionClustersRepo},
+		schedule:          &scheduleHandlers{deps: d},
+		tokens:            &tokenHandlers{deps: d},
+		syncAPI:           &syncHandlers{deps: d},
+		know:              &knowledgeHandlers{deps: d, svc: knowledgeSvc, exec: knowledgeExec, legacy: knowledge.NewLegacyService(s, randomID), activity: &knowledgeActivityLog{}},
+		evolution:         newEvolutionHandlers(d),
 	}
 	e.WorkspaceActive = func(run domain.Run) bool { return api.runs.terminals.HasRunScope(run.ID) }
 	api.catalog.notifications = api.notifications
@@ -422,6 +424,7 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.PUT("/api/projects", api.projects.projects)
 	g.POST("/api/projects", api.projects.projects)
 	g.GET("/api/projects/:id", api.projects.project)
+	g.PUT("/api/projects/:id/execution", api.projects.setExecutionTarget)
 	g.GET("/api/projects/:id/credentials", api.credentials.list)
 	g.POST("/api/projects/:id/credentials", api.credentials.save)
 	g.PUT("/api/projects/:id/credentials/:credentialId", api.credentials.save)
@@ -688,6 +691,11 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.DELETE("/api/runners/:id", api.runners.runnerRemove)
 	g.PUT("/api/runners/platform/run-limit", api.runners.platformRunnerRunLimitSet)
 	g.PUT("/api/runners/platform/privileged-sandbox", api.runners.platformRunnerPrivilegedSandboxSet)
+	g.GET("/api/execution-clusters", api.executionClusters.list)
+	g.POST("/api/execution-clusters", api.executionClusters.save)
+	g.PUT("/api/execution-clusters/:id", api.executionClusters.save)
+	g.POST("/api/execution-clusters/test", api.executionClusters.test)
+	g.PUT("/api/execution-clusters/default", api.executionClusters.setDefault)
 	g.PUT("/api/runners/:id/run-limit", api.runners.runnerRunLimitSet)
 	g.PUT("/api/runners/:id/privileged-sandbox", api.runners.runnerPrivilegedSandboxSet)
 	g.PUT("/api/runners/:id/shared-projects", api.runners.runnerSharedProjectsSet)
