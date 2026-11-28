@@ -354,23 +354,36 @@ function issueExternallyDone(i){
 function deliveryMRLinked(i){return deliveryMRList(i).length>0}
 // 待处理 MR：已创建但还没合入的 MR（opened/reopened）。状态未知的历史 MR 不计入，避免数字虚高。
 function pendingDeliveryMRCount(i){return deliveryMRList(i).filter(m=>['opened','reopened'].includes(String(m.state||'').toLowerCase())).length}
+// 需求绑定的仓库，主仓库在前；一个都没绑时按项目默认仓库算。需求列表和详情概览共用。
+function issueBoundRepositories(i,project){
+  const ids=i?.repositoryIds||[],main=i?.repositoryId;
+  const bound=(state.data.repositories||[]).filter(x=>ids.includes(x.id)||x.id===main||(!(ids.length||main)&&x.id===project?.defaultRepositoryId));
+  return [bound.find(x=>x.id===main),...bound.filter(x=>x.id!==main)].filter(Boolean);
+}
 // 多仓库交付每个仓库一个 MR；旧数据只有 deliveryMrUrl。
 function deliveryMRList(i){
-  const withRef=m=>{const hit=String(m.url).match(/^https?:\/\/[^/]+\/(.+?)(?:\/-)?\/merge_requests\/(\d+)/);return{...m,project:m.project||hit?.[1]||'',iid:m.iid||Number(hit?.[2])||0}};
+  // GitHub PR 的仓库键与后端一致写成 github:owner/repo（domain.ParseGongfengMRs）。
+  const withRef=m=>{const url=String(m.url),hit=url.match(/^https?:\/\/[^/]+\/(.+?)(?:\/-)?\/merge_requests\/(\d+)/),pull=url.match(/^https?:\/\/github\.com\/([^/]+\/[^/]+)\/pull\/(\d+)/i);return{...m,project:m.project||hit?.[1]||(pull?`github:${pull[1]}`:''),iid:m.iid||Number(hit?.[2]||pull?.[2])||0}};
   const list=(i?.deliveryMrs||[]).filter(m=>String(m?.url||'').trim());
   if(list.length)return list.map(withRef);
   const url=String(i?.deliveryMrUrl||'').trim();
   return url?[withRef({url,state:i?.deliveryMrState||''})]:[];
 }
 const deliveryMRStateText={merged:'已合入',integrated:'已合入基线',opened:'待合入',reopened:'待合入',closed:'已关闭'};
+// GitHub 的合并请求叫 PR、编号写 #3；工蜂叫 MR、编号写 !3。GitHub 仓库在平台里存成 github:owner/repo。
+function deliveryMRIsPR(mr){return /\/pull\/\d+/.test(String(mr?.url||''))||String(mr?.project||'').startsWith('github:')}
+function deliveryMRWord(mr){return deliveryMRIsPR(mr)?'PR':'MR'}
+function deliveryMRRef(mr){const iid=Number(mr?.iid)||0;return iid?`${deliveryMRIsPR(mr)?'#':'!'}${iid}`:''}
+// 仓库路径给人看时去掉平台内部的 github: 前缀。
+function repoPathLabel(project){return String(project||'').replace(/^github:/,'')}
 function deliveryMRButtons(issue,{cls='button ghost small'}={}){
   const list=deliveryMRList(issue);
   return list.map(mr=>{
-    const iid=mr.iid||String(mr.url).match(/merge_requests\/(\d+)/)?.[1]||'';
-    const repo=mr.repository||String(mr.project||'').split('/').pop();
-    const label=list.length>1?`打开 MR · ${repo||'仓库'}${iid?` !${iid}`:''}`:'打开 MR';
+    const ref=deliveryMRRef(mr),word=deliveryMRWord(mr);
+    const repo=mr.repository||repoPathLabel(mr.project).split('/').pop();
+    const label=list.length>1?`打开 ${word} · ${repo||'仓库'}${ref?` ${ref}`:''}`:`打开 ${word}`;
     const st=deliveryMRStateText[String(mr.state||'').toLowerCase()];
-    return `<a class="${cls}" href="${escapeHTML(safeURL(mr.url))}" target="_blank" rel="noopener noreferrer" title="${escapeHTML([mr.project,st].filter(Boolean).join(' · ')||mr.url)}">${escapeHTML(label)} ↗</a>`;
+    return `<a class="${cls}" href="${escapeHTML(safeURL(mr.url))}" target="_blank" rel="noopener noreferrer" title="${escapeHTML([repoPathLabel(mr.project),st].filter(Boolean).join(' · ')||mr.url)}">${escapeHTML(label)} ↗</a>`;
   }).join('');
 }
 function deliveryLockedLabel(i){

@@ -26,10 +26,20 @@ func withConversationSession(ctx context.Context, sessionID string) context.Cont
 	return context.WithValue(ctx, conversationSessionKey{}, strings.TrimSpace(sessionID))
 }
 
+// conversationSessionFrom returns the conversation a browser-confirmed tool
+// call was drafted in, or "" for ordinary API and MCP calls.
+func conversationSessionFrom(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	id, _ := ctx.Value(conversationSessionKey{}).(string)
+	return id
+}
+
 // requestConversation returns the ordinary conversation of
 // projectID a request was made from.
 func requestConversation(d *deps, r *http.Request, userID int64, projectID string) (domain.AssistantSession, bool) {
-	id, _ := r.Context().Value(conversationSessionKey{}).(string)
+	id := conversationSessionFrom(r.Context())
 	if id == "" {
 		id = strings.TrimSpace(r.Header.Get(chatSessionHeader))
 	}
