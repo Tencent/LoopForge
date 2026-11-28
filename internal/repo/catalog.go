@@ -1016,7 +1016,15 @@ func (r *CatalogRepo) RestoreWorkflowRevision(id string) (domain.WorkflowDefinit
 	if err := json.Unmarshal(rev.Payload, &wf); err != nil {
 		return domain.WorkflowDefinition{}, err
 	}
-	current, found := r.Workflow(wf.ID)
+	// A generic template lives in generic_templates, and UpdateGenericWorkflow
+	// snapshots it under the same id. Restoring it must rewrite the template,
+	// not add a workflows row that the template id would shadow.
+	if template, generic := r.GenericTemplateByWorkflow(wf.ID); generic {
+		wf.Revision = template.Workflow.Revision
+		wf.Version = max(wf.Version, template.Workflow.Version)
+		return r.UpdateGenericWorkflow(wf)
+	}
+	current, found := r.storedWorkflow(wf.ID)
 	if !found {
 		return domain.WorkflowDefinition{}, fmt.Errorf("workflow %s not found", wf.ID)
 	}
@@ -1031,7 +1039,7 @@ func (r *CatalogRepo) RestoreWorkflowRevision(id string) (domain.WorkflowDefinit
 	// Return the stored row: PutWorkflow assigns the new revision, published
 	// marker and timestamps, and an editor that adopts this definition sends
 	// that revision back on its next save.
-	stored, ok := r.Workflow(wf.ID)
+	stored, ok := r.storedWorkflow(wf.ID)
 	if !ok {
 		return domain.WorkflowDefinition{}, fmt.Errorf("workflow %s not found", wf.ID)
 	}

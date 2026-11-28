@@ -701,6 +701,43 @@ func TestPlatformAdminCanEditGenericTemplate(t *testing.T) {
 	}
 }
 
+func TestGenericTemplateRevisionRestoreIsAdminOnlyAndRewritesTemplate(t *testing.T) {
+	t.Setenv("AGENTFLOW_PLATFORM_ADMINS", "example-admin")
+	t.Setenv("AGENTFLOW_SESSION_SECRET", "generic-admin-session-secret")
+	h, s := newGenericTemplateServer(t)
+	for _, login := range []string{"example-admin", "alice"} {
+		if err := s.PutUser(domain.User{LoginName: login, ChineseName: login}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	admin, _ := s.UserByLoginName("example-admin")
+	alice, _ := s.UserByLoginName("alice")
+	base := "/api/workflows/" + repo.GenericBackendDeliveryWorkflowID
+	original := requestJSONAuthed[domain.WorkflowDefinition](t, h, admin, http.MethodGet, base, nil, http.StatusOK)
+	edited := original
+	edited.Description = "admin patched the platform template"
+	requestJSONAuthed[domain.WorkflowDefinition](t, h, admin, http.MethodPut, "/api/workflows", edited, http.StatusOK)
+	revisions := requestJSONAuthed[[]domain.DefinitionRevision](t, h, admin, http.MethodGet, base+"/revisions", nil, http.StatusOK)
+	if len(revisions) == 0 {
+		t.Fatal("expected a revision of the template before the edit")
+	}
+	restorePath := base + "/revisions/" + revisions[0].ID + "/restore"
+	requestJSONAuthed[map[string]string](t, h, alice, http.MethodPost, restorePath, map[string]any{}, http.StatusConflict)
+	if workflowRowExists(t, s, repo.GenericBackendDeliveryWorkflowID) {
+		t.Fatal("a rejected restore must not write a workflows row")
+	}
+	restored := requestJSONAuthed[domain.WorkflowDefinition](t, h, admin, http.MethodPost, restorePath, map[string]any{}, http.StatusOK)
+	current := requestJSONAuthed[domain.WorkflowDefinition](t, h, admin, http.MethodGet, base, nil, http.StatusOK)
+	if restored.Description != original.Description || current.Description != original.Description || restored.Revision != current.Revision {
+		t.Fatalf("restore returned %q r%d, template %q r%d, want %q", restored.Description, restored.Revision, current.Description, current.Revision, original.Description)
+	}
+	if workflowRowExists(t, s, repo.GenericBackendDeliveryWorkflowID) {
+		t.Fatal("restoring a generic template must stay in generic_templates")
+	}
+	restored.Description = "edited after restore"
+	requestJSONAuthed[domain.WorkflowDefinition](t, h, admin, http.MethodPut, "/api/workflows", restored, http.StatusOK)
+}
+
 func TestGenericTemplateAgentsAreNotTheCurrentProjectCatalog(t *testing.T) {
 	t.Setenv("AGENTFLOW_PLATFORM_ADMINS", "example-admin")
 	t.Setenv("AGENTFLOW_SESSION_SECRET", "generic-admin-session-secret")

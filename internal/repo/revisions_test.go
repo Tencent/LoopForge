@@ -161,3 +161,40 @@ func TestAgentRevisionRestore(t *testing.T) {
 		t.Fatalf("restore returned v%d (%s), stored v%d (%s)", restored.Version, restored.UpdatedAt, got.Version, got.UpdatedAt)
 	}
 }
+
+func TestGenericWorkflowRevisionRestoreRewritesTemplate(t *testing.T) {
+	s := testStoreWithGenericTemplates(t)
+	before, ok := s.GenericWorkflowByID(GenericBackendDeliveryWorkflowID)
+	if !ok {
+		t.Fatal("backend template missing")
+	}
+	edited := before
+	edited.Description = "admin edit"
+	if _, err := s.UpdateGenericWorkflow(edited); err != nil {
+		t.Fatal(err)
+	}
+	revs := s.Revisions("workflow", GenericBackendDeliveryWorkflowID)
+	if len(revs) == 0 {
+		t.Fatal("expected a snapshot of the template before the edit")
+	}
+	restored, err := s.RestoreWorkflowRevision(revs[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _ := s.GenericWorkflowByID(GenericBackendDeliveryWorkflowID)
+	if restored.Description != before.Description || got.Description != before.Description {
+		t.Fatalf("restore returned %q, template is %q, want %q", restored.Description, got.Description, before.Description)
+	}
+	if !got.Generic || restored.Revision != got.Revision || !restored.UpdatedAt.Equal(got.UpdatedAt) {
+		t.Fatalf("restore returned revision %d (%s), template %d (%s)", restored.Revision, restored.UpdatedAt, got.Revision, got.UpdatedAt)
+	}
+	// The template id stays out of the workflows table.
+	if _, shadow := s.storedWorkflow(GenericBackendDeliveryWorkflowID); shadow {
+		t.Fatal("restoring a generic template wrote a workflows row")
+	}
+	// The designer saves its next edit with the returned revision.
+	restored.Description = "after restore"
+	if _, err := s.UpdateGenericWorkflow(restored); err != nil {
+		t.Fatalf("saving an edit right after restore: %v", err)
+	}
+}

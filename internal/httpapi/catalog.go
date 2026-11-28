@@ -1235,6 +1235,11 @@ func (h *catalogHandlers) workflow(c *gin.Context) {
 			c.JSON(400, gin.H{"error": "invalid workflow revision"})
 			return
 		}
+		// Restoring a generic template rewrites it, like PUT /api/workflows.
+		if v.Generic && !h.isPlatformAdmin(c.Request) {
+			c.JSON(http.StatusConflict, map[string]string{"error": "通用模板为只读，请先复制到本项目再修改"})
+			return
+		}
 		if workflowHasNotifications(restored) && !h.notifications.access(c, v.ProjectID, true) {
 			return
 		}
