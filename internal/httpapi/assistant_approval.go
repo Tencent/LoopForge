@@ -138,6 +138,18 @@ func assistantGlobalSaveTool(tool string) bool {
 	}
 }
 
+// assistantDraftHasName 报告保存的资源是否以 name 字段命名。需求用 title，
+// 澄清和同步配置没有名称；给它们补 name=id 不会被保存端点使用，却会让
+// 确认卡片的「名称」显示成内部 ID（如 issue-179…）。
+func assistantDraftHasName(tool string) bool {
+	switch strings.TrimSpace(tool) {
+	case "issues_save", "issues_clarification_save", "sync_config_save":
+		return false
+	default:
+		return true
+	}
+}
+
 // injectAssistantDraftProjectID 给保存类草稿补上缺失的 projectId 与 name。
 // 模型有时省略这些字段（校验只在字段存在时才比对），平台保存端点却必填；
 // 自动执行前注入可避免必然失败的写入。平台级资源不归属会话所在项目：
@@ -165,7 +177,7 @@ func injectAssistantDraftProjectID(tool string, body json.RawMessage, projectID 
 			changed = true
 		}
 	}
-	if raw, exists := obj["name"]; !exists || func() bool { s, _ := raw.(string); return strings.TrimSpace(s) == "" }() {
+	if raw, exists := obj["name"]; assistantDraftHasName(tool) && (!exists || func() bool { s, _ := raw.(string); return strings.TrimSpace(s) == "" }()) {
 		if id, _ := obj["id"].(string); strings.TrimSpace(id) != "" {
 			obj["name"] = id
 			changed = true

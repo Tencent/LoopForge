@@ -903,6 +903,12 @@ function nodesInExecutionOrder(wf){
   }
   return out;
 }
+// An approval node is itself the human gate and runs no commands; only the
+// parts that apply are joined, so no row ends in or repeats a bare separator.
+function acceptanceGateSummary(g){
+  const n=g.commands;
+  return [g.isApproval?lfT('人工门禁','Human gate'):lfT(`${n} 项命令`,`${n} ${n===1?'command':'commands'}`),g.manual?lfT('需人工','Needs human'):'',g.rejectTo?lfT('可打回','Can send back'):''].filter(Boolean).join(' · ');
+}
 function acceptancePane(issue,data){
   const run=data.run;
   if(conversationWorkspaceIssue(issue,run)){
@@ -917,9 +923,9 @@ function acceptancePane(issue,data){
     if(nr.status==='waiting_approval')verdict=turnsExhausted(nr)?'等待确认是否重试':(isApproval?'等待人工判断':'等待人工验收');
     if(nr.status==='failed')verdict='门禁失败';
     if(nr.status==='running')verdict='执行中';
-    return {name:n.name||n.id,status:nr.status||'pending',verdict,commands:commands.length,manual,rejectTo:n.rejectTo,nodeId:n.id,nr,node:n};
+    return {name:n.name||n.id,status:nr.status||'pending',verdict,commands:commands.length,manual,isApproval,rejectTo:n.rejectTo,nodeId:n.id,nr,node:n};
   });
-  const rows=gates.map(g=>`<div class="node-progress-row"><span class="node-name">${escapeHTML(g.name)}</span><span class="pill">${g.commands} 项命令 · ${g.manual?'需人工':''}${g.rejectTo?' · 可打回':''}</span><div style="flex:1"></div><span class="status ${g.status}">${escapeHTML(g.verdict)}</span></div>${g.status==='waiting_approval'?humanDecisionPanelHTML(run.id,g.nodeId,g.nr,g.node,nodes):''}`).join('');
+  const rows=gates.map(g=>`<div class="node-progress-row"><span class="node-name">${escapeHTML(g.name)}</span><span class="pill">${acceptanceGateSummary(g)}</span><div style="flex:1"></div><span class="status ${g.status}">${escapeHTML(g.verdict)}</span></div>${g.status==='waiting_approval'?humanDecisionPanelHTML(run.id,g.nodeId,g.nr,g.node,nodes):''}`).join('');
   return `<div class="detail-section"><h3>验收门禁<span class="sub">节点自动验证与人工门禁，失败可打回指定节点</span></h3>${rows||'<div class="detail-empty">该流程没有配置验证门禁</div>'}</div>`;
 }
 function formatActivityTime(ts){

@@ -122,7 +122,7 @@ export function collectArtifacts(session) {
       const resource = draft.savedResult?.data || draft.savedResult;
       artifacts.push({
         id: `draft-${messageIndex}-${index}`,
-        name: draft.body?.name || draft.body?.title || actionName(draft.tool),
+        name: draft.body?.title || draft.body?.name || actionName(draft.tool),
         kind,
         resourceKey:
           draft.saved && resource?.id && ["sop", "role"].includes(kind)

@@ -61,18 +61,20 @@ func TestGitHubImportPreservesLocalWorkAndMergeChecksConfirmation(t *testing.T) 
 		t.Fatalf("import: %d %v", n, err)
 	}
 	issue, ok := st.Issue("gh-github-repo-2")
-	if !ok || issue.Source != "github" {
+	if !ok || issue.Source != "github" || issue.Priority != "medium" {
 		t.Fatalf("issue: %+v", issue)
 	}
 	issue.Description = "Locally clarified requirement"
 	issue.Status = "in_progress"
+	// GitHub has no priority: the one set on the platform must survive pulls.
+	issue.Priority = "urgent"
 	if err := st.PutIssue(issue); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.pullGitHubIssues(st, r); err != nil {
 		t.Fatal(err)
 	}
-	if got, _ := st.Issue(issue.ID); got.Description != issue.Description || got.Status != "in_progress" {
+	if got, _ := st.Issue(issue.ID); got.Description != issue.Description || got.Status != "in_progress" || got.Priority != "urgent" {
 		t.Fatalf("local work overwritten: %+v", got)
 	}
 	if _, err := s.EnsureAndMergeBranchMR(r.GongfengProjectID, "feature/work", "main", "Title", ""); err == nil {

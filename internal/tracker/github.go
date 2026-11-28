@@ -292,6 +292,11 @@ func (s *Service) pullGitHubIssues(store IssueStoreAdapter, repo domain.Reposito
 			}
 			if old, ok := store.Issue(id); ok {
 				applyExistingIssue(&issue, old)
+				// GitHub issues carry no priority, so the one set on the
+				// platform is the only one; a pull must not reset it to medium.
+				if strings.TrimSpace(old.Priority) != "" {
+					issue.Priority = old.Priority
+				}
 				if old.Clarification.Status != "" || (old.ExternalRef != nil && githubBodyHash(old.Description) != old.ExternalRef.SourceContentHash) {
 					issue.Description = old.Description
 				}

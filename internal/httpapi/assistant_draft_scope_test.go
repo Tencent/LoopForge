@@ -89,3 +89,31 @@ func TestAssistantDraftScopeCoversEveryWriteTool(t *testing.T) {
 		t.Fatalf("no-project chat injected a project: %s", got)
 	}
 }
+
+// A draft names its target only through the field the resource really has.
+// Requirements are titled, not named: injecting name=<id> into an issues_save
+// draft made the confirmation card show 「名称 issue-179…」 instead of the title.
+func TestAssistantDraftNameInjectedOnlyForNamedResources(t *testing.T) {
+	untitled := map[string]bool{"issues_save": true, "issues_clarification_save": true, "sync_config_save": true}
+	for tool := range assistantDraftScope {
+		got := map[string]any{}
+		if err := json.Unmarshal(injectAssistantDraftProjectID(tool, json.RawMessage(`{"id":"x"}`), "p"), &got); err != nil {
+			t.Fatalf("%s: %v", tool, err)
+		}
+		_, named := got["name"]
+		if untitled[tool] && named {
+			t.Errorf("%s: injected name %v into a resource without a name field", tool, got["name"])
+		}
+		if !untitled[tool] && tool != "assistant_tasks_save" && got["name"] != "x" {
+			t.Errorf("%s: name = %v, want the id", tool, got["name"])
+		}
+	}
+	got := map[string]any{}
+	body := `{"id":"issue-1","title":"split_bill 合计不等于总额","priority":"high"}`
+	if err := json.Unmarshal(injectAssistantDraftProjectID("issues_save", json.RawMessage(body), "p"), &got); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := got["name"]; ok || got["title"] != "split_bill 合计不等于总额" || got["projectId"] != "p" {
+		t.Fatalf("issues_save draft = %v", got)
+	}
+}

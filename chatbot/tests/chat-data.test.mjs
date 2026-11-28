@@ -90,3 +90,31 @@ test("reply duration uses recorded timestamps without inventing missing history 
     null,
   );
 });
+test("a requirement draft artifact is listed under its title even when the draft carries name=<id>", () => {
+  const session = {
+    id: "chat-3",
+    messages: [
+      {
+        role: "assistant",
+        content: JSON.stringify({
+          message: "已准备好",
+          drafts: [
+            {
+              tool: "issues_save",
+              body: {
+                id: "issue-1795",
+                name: "issue-1795",
+                title: "format_currency 负数格式",
+              },
+            },
+            { tool: "agents_save", body: { id: "a", name: "评审员" } },
+          ],
+        }),
+      },
+    ],
+  };
+  assert.deepEqual(
+    collectArtifacts(session).map((x) => x.name),
+    ["format_currency 负数格式", "评审员"],
+  );
+});
