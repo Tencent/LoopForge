@@ -237,7 +237,7 @@ func TestBotDeleteClearsErrorAndIgnoresRepeat(t *testing.T) {
 	script := `
 const assert=require('node:assert/strict'),vm=require('node:vm'),fs=require('node:fs');
 const calls=[];let fail=true,release;
-const ctx={escapeHTML:String,state:{authRequired:false,projectFilter:'p1'},$:()=>null,toast(){},afConfirm:async()=>true,nodeBotCache:new Map(),
+const ctx={escapeHTML:String,lfT:zh=>zh,state:{authRequired:false,projectFilter:'p1'},$:()=>null,toast(){},afConfirm:async()=>true,nodeBotCache:new Map(),
  api:async(url,opts)=>{calls.push(opts?.method);if(fail)throw new Error('删除失败（模拟）');await new Promise(r=>release=r)}};
 vm.createContext(ctx);vm.runInContext(fs.readFileSync('app/bots.js','utf8'),ctx);
 vm.runInContext('loadBots=()=>{};botUI.projectId="p1";botUI.items=[{id:"b2",name:"夜间"}]',ctx);

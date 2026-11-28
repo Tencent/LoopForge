@@ -287,12 +287,19 @@ func (d deps) allowStoredAsset(c *gin.Context, kind, id string) bool {
 // first JSON value, so json.Unmarshal (which rejects trailing data and leaves
 // v empty) would let `{"projectId":"other"} {}` skip the guard while the
 // handler still writes to "other".
+//
+// Only the first jsonBodyLimit+1 bytes are buffered, which is all decode()
+// accepts; the rest stays unread for the handler, whose own limit rejects it.
 func peekJSON(c *gin.Context, v any) {
 	if c.Request.Body == nil {
 		return
 	}
-	raw, err := io.ReadAll(c.Request.Body)
-	c.Request.Body = io.NopCloser(bytes.NewReader(raw))
+	body := c.Request.Body
+	raw, err := io.ReadAll(io.LimitReader(body, jsonBodyLimit+1))
+	c.Request.Body = struct {
+		io.Reader
+		io.Closer
+	}{io.MultiReader(bytes.NewReader(raw), body), body}
 	if err == nil {
 		_ = json.NewDecoder(bytes.NewReader(raw)).Decode(v)
 	}

@@ -3,9 +3,11 @@ package httpapi
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -15,6 +17,8 @@ import (
 	"agentflow/internal/repo"
 	"agentflow/internal/runtime"
 	"agentflow/internal/tracker"
+
+	"github.com/gin-gonic/gin"
 )
 
 // authorizationTestServer wires a full API server with authentication turned
@@ -216,5 +220,52 @@ func TestWriteGuardsIgnoreTrailingBodyData(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+// countingReader serves n bytes of filler after a prefix and records how much was read.
+type countingReader struct {
+	prefix []byte
+	left   int
+	read   int
+}
+
+func (r *countingReader) Read(p []byte) (int, error) {
+	if len(r.prefix) > 0 {
+		n := copy(p, r.prefix)
+		r.prefix = r.prefix[n:]
+		r.read += n
+		return n, nil
+	}
+	if r.left == 0 {
+		return 0, io.EOF
+	}
+	n := min(len(p), r.left)
+	for i := range n {
+		p[i] = ' '
+	}
+	r.left -= n
+	r.read += n
+	return n, nil
+}
+
+func TestPeekJSONBuffersOnlyWhatDecodeAccepts(t *testing.T) {
+	prefix := `{"projectId":"auth-p"}`
+	src := &countingReader{prefix: []byte(prefix), left: 8 << 20}
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/skillhub/install", src)
+	var body struct {
+		ProjectID string `json:"projectId"`
+	}
+	peekJSON(c, &body)
+	if body.ProjectID != "auth-p" {
+		t.Fatalf("peeked projectId=%q", body.ProjectID)
+	}
+	if src.read > jsonBodyLimit+1 {
+		t.Fatalf("peekJSON buffered %d bytes, want at most %d", src.read, jsonBodyLimit+1)
+	}
+	rest, err := io.ReadAll(c.Request.Body)
+	if err != nil || len(rest) != len(prefix)+8<<20 || !strings.HasPrefix(string(rest), prefix) {
+		t.Fatalf("handler body: len=%d err=%v", len(rest), err)
 	}
 }

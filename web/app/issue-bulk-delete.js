@@ -102,7 +102,9 @@ async function deleteSelectedIssues(){
   if(!issues.length)return toast('请先选择可删除的需求');
   const scope=issueSelectionFilterKey(),external=issues.some(i=>i.source==='tapd'||i.source==='gongfeng');
   const forceIDs=new Set(issues.filter(i=>i.deletionRequiresForce===true).map(i=>i.id));
-  const names=issues.slice(0,5).map(i=>`「${i.title||i.id}」`).join('、')+(issues.length>5?'等':'');
+  const shown=issues.slice(0,5).map(i=>i.title||i.id),more=issues.length>5;
+  const names=shown.map(n=>`「${n}」`).join('、')+(more?'等':'');
+  const namesEn=shown.map(n=>`"${n}"`).join(', ')+(more?', and more':'');
   const forceNotice=forceIDs.size?`其中 ${forceIDs.size} 条已有执行记录或已完成，将强制删除。`:'';
   const forceNoticeEn=forceIDs.size?` ${forceIDs.size} of them already have run records or are completed and will be force-deleted.`:'';
   state.issueBulkDeleting=true;
@@ -110,7 +112,7 @@ async function deleteSelectedIssues(){
   try{
     const action=forceIDs.size?'确认强制删除':'确认删除';
     const actionEn=forceIDs.size?'Force delete':'Delete';
-    if(!await afConfirm({title:lfT('批量删除需求','Delete requirements'),message:lfT(`确定删除选中的 ${issues.length} 条需求（${names}）？${forceNotice}${issueDeletionWarning(forceIDs.size>0,external)}`,`Delete ${issues.length} selected requirement(s) (${names})?${forceNoticeEn}${issueDeletionWarningEn(forceIDs.size>0,external)}`),messageData:true,danger:true,confirmText:`${action} ${issues.length} 条需求`}))return;
+    if(!await afConfirm({title:lfT('批量删除需求','Delete requirements'),message:lfT(`确定删除选中的 ${issues.length} 条需求（${names}）？${forceNotice}${issueDeletionWarning(forceIDs.size>0,external)}`,`Delete ${issues.length} selected requirement(s) (${namesEn})?${forceNoticeEn} ${issueDeletionWarningEn(forceIDs.size>0,external)}`),messageData:true,danger:true,confirmText:`${action} ${issues.length} 条需求`}))return;
     if(scope!==issueSelectionFilterKey())return toast('筛选条件已变化，请重新选择需求','info');
     const result={deleted:0,failures:[]};
     state.issueBulkDeleteResult=result;

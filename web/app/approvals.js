@@ -262,7 +262,7 @@ async function passFailedNode(runId,nodeId,fromEl){
   const run=cachedRun(runId);
   const node=run?.workflowSnapshot?.nodes?.find(n=>n.id===nodeId);
   if(!isScriptWorkflowNode(node))return toast('只有失败的脚本节点可以手动通过，AI 节点请补充信息后重试','err');
-  if(!await afConfirm({title:'手动通过确认',message:`确定将「${node?.name||nodeId}」视为通过并继续下游？该节点不会重新执行。`,confirmText:'确认通过'}))return;
+  if(!await afConfirm({title:'手动通过确认',message:lfT(`确定将「${node?.name||nodeId}」视为通过并继续下游？该节点不会重新执行。`,`Mark "${node?.name||nodeId}" as passed and continue downstream? The node will not run again.`),messageData:true,confirmText:'确认通过'}))return;
   try{
     await api(`/api/runs/${encodeURIComponent(runId)}/pass`,{method:'POST',body:JSON.stringify(withHumanContext({nodeId,context:readHumanContext(fromEl)}))});
     toast('已手动通过，流程继续','ok');
