@@ -314,9 +314,11 @@ func payloadContainsExpr(db *gorm.DB) string {
 // transaction's start time. clock_timestamp() is the wall clock and advances
 // inside a transaction, which is what the commit-time clock needs.
 //
-// Only MySQL and Postgres use this expression; the sqlite branch exists so
-// the helper stays dialect-shaped rather than silently handing sqlite a
-// function it does not have.
+// The sqlite branch returns the same expression, but no call site reaches
+// it: the only caller returns for sqlite before it asks for the literal
+// (see AssistantRepo.heartbeatNow), because sqlite has no UTC_TIMESTAMP.
+// The branch is kept so the helper stays dialect-shaped; a call site that
+// did reach it would hand sqlite a function sqlite does not have.
 func (d *deps) nowMillisLiteral() string {
 	if d.isPostgres() {
 		return "clock_timestamp()"

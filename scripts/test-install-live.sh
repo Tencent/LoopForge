@@ -28,7 +28,7 @@ actors=(root nonroot without-compose)
 for actor in "${actors[@]}"; do
   fixture="$task_dir/$actor"
   mkdir -p "$fixture/scripts" "$fixture/migrations/seed" "$fixture/user-home"
-  cp scripts/{install.sh,configure.sh,docker-access.sh,ghcr-mirror.sh,install-address.py,install-compose.py,install-observability-schema.sh,install-schema-extensions.sh,install-schema-extensions-pg.sh} "$fixture/scripts/"
+  cp scripts/{install.sh,configure.sh,docker-access.sh,ghcr-mirror.sh,install-address.py,install-compose.py,install-observability-schema.sh,install-schema-extensions.sh,install-schema-extensions-pg.sh,pg-connection-env.sh,pg-connection-env.py} "$fixture/scripts/"
   cp migrations/001_run_obs_generated_columns.sql \
     migrations/001_run_obs_generated_columns.pg.sql \
     migrations/033_generic_sop_mr_node.sql \

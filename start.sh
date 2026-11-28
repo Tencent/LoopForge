@@ -70,9 +70,15 @@ PY
     [[ -n "${AGENTFLOW_PROJECT_CREDENTIAL_KEY:-}" ]] || unset AGENTFLOW_PROJECT_CREDENTIAL_KEY
     # The database decides which schema extensions are replayed. The .env holds
     # the DSN; it is sourced here so both paths see the same configuration.
+    # The .env is sourced with 'set +u': a hand-written .env may reference a
+    # variable that is not set, and an unbound reference would abort the
+    # script under 'set -u'. 'set -e' stays on, so a command in the .env that
+    # really fails still stops the script.
+    set +u
     set -a
     source .env
     set +a
+    set -u
     if ! mirror_published_ghcr always; then
       compose pull --ignore-buildable --policy always
     fi

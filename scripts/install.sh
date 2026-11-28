@@ -11,6 +11,7 @@ fail() { printf '\n✗ %s\n' "$1" >&2; exit 1; }
 step() { printf '\n▸ %s\n' "$1"; }
 source scripts/docker-access.sh
 source scripts/ghcr-mirror.sh
+source scripts/pg-connection-env.sh
 
 confirm() {
   [[ "${LOOPFORGE_YES:-}" == 1 ]] && return 0
@@ -128,11 +129,24 @@ requested_public_url="${LOOPFORGE_PUBLIC_URL:-}"
 [[ ! -e .env || -r .env ]] || fail 'The existing .env is not readable by this user. Use the installation owner or ask an administrator to correct its ownership.'
 bash scripts/configure.sh
 [[ -r .env ]] || fail 'The existing .env is not readable by this user. Use the installation owner or ask an administrator to correct its ownership.'
-set -a; source .env; set +a
+# The .env is sourced with 'set +u': docs/deployment.md asks the operator to
+# write the .env by hand, and a hand-written .env may reference a variable
+# that is not set. An unbound reference would abort the installer under
+# 'set -u' even though the rest of the .env is fine. 'set -e' stays on, so a
+# command in the .env that really fails still stops the installer.
+set +u
+set -a
+source .env
+set +a
+set -u
 export LOOPFORGE_BIND="${LOOPFORGE_BIND:-0.0.0.0}"
 if [[ -n "$requested_public_url" ]]; then export LOOPFORGE_PUBLIC_URL="$requested_public_url"; fi
 python3 scripts/install-address.py --prepare "${AGENTFLOW_HTTP_PORT:-8090}"
-set -a; source .env; set +a
+set +u
+set -a
+source .env
+set +a
+set -u
 if [[ -z "${LOOPFORGE_DOCKER_SOCKET:-}" ]]; then
   docker_host="${DOCKER_HOST:-$(docker_access context inspect --format '{{(index .Endpoints "docker").Host}}' 2>/dev/null || true)}"
   case "$docker_host" in
@@ -202,8 +216,11 @@ python3 scripts/install-address.py "$port"
 users=0
 if database_is_postgres; then
   # The database is the operator's own Postgres; the host client answers
-  # whether an administrator account exists already.
-  users=$(psql "$AGENTFLOW_DATABASE_URL" -tAc 'select count(*) from users' 2>/dev/null || echo 0)
+  # whether an administrator account exists already. The connection travels
+  # in the libpq environment variables, so the password does not appear on
+  # the command line where every local user could read it.
+  users=$(pg_connection_env "$AGENTFLOW_DATABASE_URL" \
+    && psql -w -tAc 'select count(*) from users' 2>/dev/null || echo 0)
 fi
 if [[ "${users//[^0-9]/}" == 0 ]]; then
   printf '  Open it in your browser and create the administrator account.\n'

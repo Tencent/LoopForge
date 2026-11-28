@@ -1,6 +1,7 @@
 package repo
 
 import (
+	"net/url"
 	"strings"
 	"testing"
 
@@ -37,6 +38,67 @@ func TestPostgresDSNNormalizes(t *testing.T) {
 	kept := postgresDSN("postgres://u:p@h:5432/d?sslmode=require")
 	if !strings.Contains(kept, "sslmode=require") {
 		t.Fatalf("postgresDSN overwrote caller params: %s", kept)
+	}
+}
+
+// TestPostgresDSNWithEncodedPassword pins the DSN shape that
+// scripts/configure.sh writes: the userinfo is percent-encoded, so a
+// password with a URL reserved character ('#' '?' '/' ':' '@') cannot end
+// the userinfo early, and the Supavisor tenant segment ('postgres.cesar')
+// stays byte-identical — the pooler routes on 'user.tenant'.
+func TestPostgresDSNWithEncodedPassword(t *testing.T) {
+	dsn := "postgres://postgres.cesar:p%40ss%26w%23d%2Fr%3Ax@127.0.0.1:5432/loopforge?sslmode=disable"
+	parsed, err := url.Parse(dsn)
+	if err != nil {
+		t.Fatalf("url.Parse(%q) failed: %v", dsn, err)
+	}
+	if got := parsed.User.Username(); got != "postgres.cesar" {
+		t.Fatalf("user = %q, want %q", got, "postgres.cesar")
+	}
+	password, ok := parsed.User.Password()
+	if !ok {
+		t.Fatal("the DSN carries no password")
+	}
+	if want := "p@ss&w#d/r:x"; password != want {
+		t.Fatalf("password = %q, want %q", password, want)
+	}
+	if got := parsed.Hostname(); got != "127.0.0.1" {
+		t.Fatalf("host = %q, want %q", got, "127.0.0.1")
+	}
+	if got := parsed.Port(); got != "5432" {
+		t.Fatalf("port = %q, want %q", got, "5432")
+	}
+	if got := parsed.Path; got != "/loopforge" {
+		t.Fatalf("path = %q, want %q", got, "/loopforge")
+	}
+	if got := parsed.Query().Get("sslmode"); got != "disable" {
+		t.Fatalf("sslmode = %q, want %q", got, "disable")
+	}
+	if !strings.Contains(dsn, "postgres://postgres.cesar:") {
+		t.Fatalf("the tenant segment changed: %s", dsn)
+	}
+	// The normalized DSN keeps the userinfo and the query as they are.
+	if got := postgresDSN(dsn); got != dsn {
+		t.Fatalf("postgresDSN changed the DSN: %s", got)
+	}
+	// The pool-parameter path rewrites the URL, and url.URL.String() escapes
+	// the userinfo again: the characters RFC 3986 forbids there ('@' '/' '?'
+	// ':') are escaped, the sub-delimiters ('&' '=' ...) are left as they are.
+	// The password that comes out is the same one.
+	rewritten := postgresDSN(dsn + "&pool_max_conns=4")
+	if strings.Contains(rewritten, "pool_") {
+		t.Fatalf("postgresDSN kept pgxpool-only params: %s", rewritten)
+	}
+	reparsed, err := url.Parse(rewritten)
+	if err != nil {
+		t.Fatalf("url.Parse(%q) failed: %v", rewritten, err)
+	}
+	rewrittenPassword, ok := reparsed.User.Password()
+	if !ok {
+		t.Fatal("the rewritten DSN carries no password")
+	}
+	if want := "p@ss&w#d/r:x"; rewrittenPassword != want {
+		t.Fatalf("password after the rewrite = %q, want %q", rewrittenPassword, want)
 	}
 }
 

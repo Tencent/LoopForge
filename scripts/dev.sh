@@ -3,9 +3,15 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 bash scripts/configure.sh
+# The .env is sourced with 'set +u': a hand-written .env may reference a
+# variable that is not set, and an unbound reference would abort the script
+# under 'set -u'. 'set -e' stays on, so a command in the .env that really
+# fails still stops the script.
+set +u
 set -a
 source .env
 set +a
+set -u
 mkdir -p .local/bin .local/workspaces
 # The DSN decides the dialect. AGENTFLOW_DATABASE_URL accepts a Postgres URL
 # and a MySQL DSN alike, so the presence of the variable is not enough.

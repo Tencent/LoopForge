@@ -18,6 +18,7 @@
 # installation will not pick up their effects when the seed is updated.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+source scripts/pg-connection-env.sh
 
 # The .env holds the runtime DSN. The caller may point the installer at
 # another database — the scratch test database of docs/testing/postgres.md —
@@ -51,10 +52,17 @@ if ! command -v psql >/dev/null 2>&1; then
   exit 1
 fi
 
+# The DSN becomes the libpq environment variables, so that the password
+# travels in PGPASSWORD instead of on the command line: 'ps' shows the
+# command line of every process on the machine, but the environment of a
+# process is readable only by its owner and by root. This mirrors the
+# upstream MySQL path, which passes its password in MYSQL_PWD.
+pg_connection_env "$dsn"
+
 apply_sql() {
   local file="$1"
   printf 'Applying %s\n' "$file"
-  if ! psql "$dsn" -v ON_ERROR_STOP=1 --single-transaction -f "$file"; then
+  if ! psql -w -v ON_ERROR_STOP=1 --single-transaction -f "$file"; then
     printf 'Failed to apply %s\n' "$file" >&2
     exit 1
   fi

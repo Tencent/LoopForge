@@ -3,6 +3,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 python3 - "$@" <<'PY'
 import os,secrets,pathlib,shlex,base64,datetime,re,stat,sys,tempfile
+from urllib.parse import quote
 p=pathlib.Path('.env')
 data_dir=os.path.abspath(os.environ.get('LOOPFORGE_DATA_DIR','.data'))
 project_key_name='AGENTFLOW_PROJECT_CREDENTIAL_KEY'
@@ -82,7 +83,16 @@ def pg_password(text=''):
  return ''
 
 def pg_dsn(password):
- return f'postgres://{pg_user}:{password}@{pg_host}:{pg_port}/{pg_database}?sslmode=disable'
+ # The userinfo is percent-encoded. A password with a URL reserved character
+ # ('#' '?' '/' ':' '@') would otherwise end the userinfo early: url.Parse and
+ # pgx's parseURLSettings would read the rest of the password as the host or
+ # as the query, and pgx's redactPW only hides the text up to the first '@',
+ # so part of the password would reach the platform logs.
+ #
+ # RFC 3986 keeps '.' in the unreserved set, so the Supavisor tenant segment
+ # ('postgres.cesar') survives the encoding byte for byte — the pooler routes
+ # on 'user.tenant' and needs the tenant verbatim.
+ return f'postgres://{quote(pg_user, safe="")}:{quote(password, safe="")}@{pg_host}:{pg_port}/{pg_database}?sslmode=disable'
 
 def split_hostport(hostport):
  # An IPv6 literal is bracketed, so the colons inside it do not end the host.

@@ -34,7 +34,7 @@ class InstallerTests(unittest.TestCase):
         self.root = Path(self.temp.name)
         (self.root / 'scripts').mkdir()
         (self.root / 'migrations/seed/pg').mkdir(parents=True)
-        for name in ('install.sh', 'configure.sh', 'docker-access.sh', 'ghcr-mirror.sh', 'install-address.py', 'install-compose.py', 'install-schema-extensions-pg.sh', 'install-schema-extensions.sh', 'install-observability-schema.sh'):
+        for name in ('install.sh', 'configure.sh', 'docker-access.sh', 'ghcr-mirror.sh', 'install-address.py', 'install-compose.py', 'install-schema-extensions-pg.sh', 'install-schema-extensions.sh', 'install-observability-schema.sh', 'pg-connection-env.sh', 'pg-connection-env.py'):
             shutil.copyfile(ROOT / 'scripts' / name, self.root / 'scripts' / name)
         shutil.copyfile(ROOT / 'start.sh', self.root / 'start.sh')
         (self.root / 'migrations/001_run_obs_generated_columns.pg.sql').write_text(
@@ -71,7 +71,9 @@ if [[ "$*" == *'exec -T mysql'* ]]; then
 fi
 ''')
         # The Postgres client the schema extension script and the installer use.
-        # The connection string is deliberately not written to the log.
+        # The connection string is deliberately not written to the log; the
+        # command line and the libpq environment are logged next to it, so a
+        # test can see what the client was given.
         self.executable('psql', '''#!/usr/bin/env bash
 file=""
 previous=""
@@ -79,6 +81,13 @@ for argument in "$@"; do
   if [[ "$previous" == '-f' ]]; then file="$argument"; fi
   previous="$argument"
 done
+{
+  printf 'argv:'
+  for argument in "$@"; do printf ' %s' "$argument"; done
+  printf '\\n'
+  printf 'env: PGHOST=%s PGPORT=%s PGUSER=%s PGDATABASE=%s PGSSLMODE=%s PGPASSWORD=%s\\n' \\
+    "${PGHOST:-}" "${PGPORT:-}" "${PGUSER:-}" "${PGDATABASE:-}" "${PGSSLMODE:-}" "${PGPASSWORD:+set}"
+} >> "$MOCK_PSQL_LOG.argv"
 if [[ -z "$file" ]]; then
   printf 'psql query\\n' >> "$MOCK_LOG"
   printf 'query\\n' >> "$MOCK_PSQL_LOG"
@@ -148,6 +157,11 @@ exec "$@"
         env = self.root / '.env'
         env.write_text(text + self.DSN_LINES)
         env.chmod(0o600)
+
+    def env_value(self, env, name):
+        match = re.search(r'(?m)^' + re.escape(name) + r'=(.*)$', env)
+        self.assertIsNotNone(match, env)
+        return shlex.split(match.group(1), comments=True)[0]
 
     def assert_success(self, result):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -598,6 +612,55 @@ esac
         psql_log = self.root / 'psql.log'
         self.assertEqual(psql_log.read_text() if psql_log.exists() else '', '')
         self.assertNotIn('LOOPFORGE_COMPOSE_DATABASE_URL', env.read_text())
+
+    def test_psql_never_receives_the_dsn_on_the_command_line(self):
+        # 'ps' shows the command line of every process on the machine, so the
+        # DSN with its password must not travel on it. The connection travels
+        # in the libpq environment variables instead, the way the upstream
+        # MySQL path passes its password in MYSQL_PWD.
+        self.assert_success(self.install())
+        argv = (self.root / 'psql.log.argv').read_text()
+        self.assertNotIn('postgres://', argv)
+        self.assertNotIn(':fixture-password@', argv)
+        # The password is still there, in the environment of the client.
+        self.assertIn('PGPASSWORD=set', argv)
+        self.assertIn('PGUSER=postgres.cesar', argv)
+        self.assertIn('PGHOST=127.0.0.1', argv)
+        self.assertIn('PGPORT=5432', argv)
+        self.assertIn('PGDATABASE=loopforge', argv)
+        self.assertIn('PGSSLMODE=disable', argv)
+        # The flags are still on the command line.
+        self.assertIn('argv: -w -v ON_ERROR_STOP=1 --single-transaction -f', argv)
+        self.assertIn('argv: -w -tAc select count(*) from users', argv)
+
+    def test_configure_percent_encodes_the_dsn_password(self):
+        # A password with a URL reserved character ('#' '?' '/' ':' '@') must
+        # not end the userinfo early: the DSN is percent-encoded, so url.Parse
+        # and pgx read the password back unchanged. RFC 3986 keeps '.' in the
+        # unreserved set, so the Supavisor tenant segment stays byte-identical
+        # — the pooler routes on 'user.tenant'.
+        result = subprocess.run([self.shell(), 'scripts/configure.sh'], cwd=self.root,
+                                env=dict(self.environ, LOOPFORGE_PG_PASSWORD='p@ss&w#d/r:x'),
+                                text=True, capture_output=True, stdin=subprocess.DEVNULL, timeout=15)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        env = (self.root / '.env').read_text()
+        dsn = self.env_value(env, 'AGENTFLOW_DATABASE_URL')
+        self.assertEqual(dsn, 'postgres://postgres.cesar:p%40ss%26w%23d%2Fr%3Ax@127.0.0.1:5432/loopforge?sslmode=disable')
+        self.assertIn('postgres://postgres.cesar:', dsn)
+        # The Compose DSN is the same DSN with another host, so the encoded
+        # userinfo survives the split into its parts.
+        compose = self.env_value(env, 'LOOPFORGE_COMPOSE_DATABASE_URL')
+        self.assertEqual(compose, 'postgres://postgres.cesar:p%40ss%26w%23d%2Fr%3Ax@host.docker.internal:5432/loopforge?sslmode=disable')
+
+    def test_env_with_an_undefined_variable_reference_does_not_abort(self):
+        # docs/deployment.md asks the operator to write the .env by hand, and
+        # a hand-written .env may reference a variable that is not set. The
+        # installer sources it, and an unbound reference must not abort the
+        # installation.
+        self.write_env('LOOPFORGE_TEST_UNDEFINED=${LOOPFORGE_NEVER_SET}\n')
+        self.assert_success(self.install())
+        result = self.pull()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_start_pull_reapplies_schema_extensions_after_containers_are_up(self):
         self.assert_success(self.install())

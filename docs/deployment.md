@@ -45,9 +45,11 @@ This fork runs the platform against the operator's own Postgres — a local Supa
 - A database for the platform and one for the integration tests:
 
 ```bash
-psql "$SUPABASE_DB_URL" -c 'CREATE DATABASE loopforge;'
-psql "$SUPABASE_DB_URL" -c 'CREATE DATABASE loopforge_test;'
+PGPASSWORD="$POSTGRES_PASSWORD" psql -h 127.0.0.1 -p 5432 -U postgres.cesar -d postgres -c 'CREATE DATABASE loopforge;'
+PGPASSWORD="$POSTGRES_PASSWORD" psql -h 127.0.0.1 -p 5432 -U postgres.cesar -d postgres -c 'CREATE DATABASE loopforge_test;'
 ```
+
+`ps` shows the command line of every process on the machine, so a connection string with a password never travels on one — not in the scripts either, which pass the password in `PGPASSWORD` the way the MySQL path passes it in `MYSQL_PWD`.
 
 `loopforge_test` is the scratch database the Postgres integration tests use. It is created separately, and it is emptied before each run.
 
@@ -69,6 +71,8 @@ bash scripts/configure.sh
 ```
 
 The password never leaves `.env`. It is written single-quoted, so `set -a; . ./.env` keeps a password containing `&` or `#` literal.
+
+The password is percent-encoded in the userinfo of the DSN, so a password that contains a URL reserved character (`#` `?` `/` `:` `@`) stays inside the password instead of ending the userinfo early. RFC 3986 keeps `.` in the unreserved set, so the tenant segment is written byte for byte: `postgres.cesar` is never altered.
 
 `scripts/configure.sh` assembles the DSN from `LOOPFORGE_PG_HOST` (`127.0.0.1`), `LOOPFORGE_PG_PORT` (`5432`), `LOOPFORGE_PG_USER` (`postgres.cesar`) and `LOOPFORGE_PG_DATABASE` (`loopforge`) when those are set in the environment.
 
