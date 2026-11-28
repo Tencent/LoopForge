@@ -2,6 +2,7 @@ package schedule
 
 import (
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -45,8 +46,10 @@ func TestExecutionsRecordEachRunWithTrace(t *testing.T) {
 		t.Fatal(err)
 	}
 	fail = true
+	// A single requirement that cannot start is recorded in LastError and the
+	// round continues; it no longer aborts every later requirement.
 	second, err := svc.RunJob(job.ID)
-	if err == nil || second.LastStatus != "failed" {
+	if err != nil || second.LastStatus != "failed" || !strings.Contains(second.LastError, "engine down") {
 		t.Fatalf("second run = %+v, %v", second, err)
 	}
 	if second.LastTraceID == "" || second.LastTraceID == first.LastTraceID {
@@ -58,7 +61,7 @@ func TestExecutionsRecordEachRunWithTrace(t *testing.T) {
 		t.Fatalf("executions = %+v", got)
 	}
 	failed, ok := got[0], got[1]
-	if failed.TraceID != second.LastTraceID || failed.Status != "failed" || failed.Error != "engine down" || failed.TriggerOrigin != "timer" || failed.FinishedAt == nil || failed.JobKind != "trigger" {
+	if failed.TraceID != second.LastTraceID || failed.Status != "failed" || !strings.Contains(failed.Error, "engine down") || failed.TriggerOrigin != "timer" || failed.FinishedAt == nil || failed.JobKind != "trigger" {
 		t.Fatalf("failed execution = %+v", failed)
 	}
 	if ok.TraceID != first.LastTraceID || ok.Status != "success" || ok.Dispatched != 2 || ok.TriggerOrigin != "manual_run" || len(ok.Runs) != 2 || ok.Runs[0].RunID == "" || ok.Runs[0].IssueTitle == "" {

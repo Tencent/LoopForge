@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/repo"
 )
 
 // A dispatch whose LOOP cannot start must not leave the requirement blocked or
@@ -66,8 +67,18 @@ func TestDispatchUnknownWorkflowLeavesNoTrace(t *testing.T) {
 // and the reservation is released so a later dispatch is not treated as a rerun.
 func TestDispatchStartFailureReleasesReservation(t *testing.T) {
 	f := cvBNewHTTPFixture(t)
+	// The fixture has no default LOOP. Create one on the fixture's own native
+	// sandbox: the LOOP is valid, and the start fails deterministically because
+	// the engine no longer accepts runs (Drain below), which is the same
+	// user-visible situation: reserved, then no run exists.
 	if _, ok := f.s.Workflow("default"); !ok {
-		t.Skip("fixture has no default workflow")
+		if err := f.s.PutWorkflow(domain.WorkflowDefinition{
+			ID: "default", Name: "Default", ProjectID: "platform", Status: "published",
+			SandboxProfileID: repo.TestNativeSandboxID,
+			Nodes:            []domain.WorkflowNode{{ID: "step", Name: "Step", Type: "script", ScriptLanguage: "shell", Script: "true"}},
+		}); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if err := f.s.PutIssue(domain.Issue{ID: "start-fail", ProjectID: "platform", Title: "启动失败", Status: "todo", Kind: "issue", AssigneeUserID: f.user.ID, WorkflowID: "default"}); err != nil {
 		t.Fatal(err)
@@ -77,7 +88,7 @@ func TestDispatchStartFailureReleasesReservation(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := dispatchIssue(d, dispatchRequest{IssueID: "start-fail"}); err == nil {
-		t.Fatal("dispatch succeeded while the engine drains")
+		t.Fatal("dispatch succeeded with a missing sandbox profile")
 	}
 	stored, _ := f.s.Issue("start-fail")
 	if stored.Status != "todo" || stored.LatestTaskID != "" {

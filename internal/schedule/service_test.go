@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/engine"
 	"agentflow/internal/repo"
 	"agentflow/internal/tracker"
 )
@@ -872,4 +873,73 @@ func TestStartAfterDefersInterruptedJobRecoveryUntilGateCloses(t *testing.T) {
 	}
 	svc.Stop()
 	svc.Stop()
+}
+
+// A requirement that cannot start (deleted LOOP, missing sandbox) must not
+// stop the ones behind it. Because a failed start leaves no task behind, such a
+// requirement stays eligible and is retried on every round; aborting the round
+// at the first error turned it into a permanent head-of-line block.
+func TestRunJobContinuesAfterARequirementFailsToStart(t *testing.T) {
+	st, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(st.Close)
+	for i, id := range []string{"broken", "following", "also-following"} {
+		if err := st.PutIssue(domain.Issue{ID: id, ProjectID: "platform", Title: "需求 " + id, Status: "todo", Number: 100 - i}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	job := domain.ScheduleJob{ID: "job", ProjectID: "platform", WorkflowID: "wf"}
+	if err := st.PutScheduleJob(job); err != nil {
+		t.Fatal(err)
+	}
+	var dispatched []string
+	svc := New(st, tracker.NewService(), func(_ domain.ScheduleJob, issue domain.Issue, _ string) error {
+		if issue.ID == "broken" {
+			return errors.New("LOOP broken 不存在或已被删除")
+		}
+		dispatched = append(dispatched, issue.ID)
+		return nil
+	})
+	result, err := svc.RunJob(job.ID)
+	if err != nil {
+		t.Fatalf("a single failing requirement aborted the round: %v", err)
+	}
+	if strings.Join(dispatched, ",") != "following,also-following" {
+		t.Fatalf("dispatched=%v, want the requirements behind the broken one", dispatched)
+	}
+	if result.LastStatus != "failed" || result.LastDispatched != 2 || !strings.Contains(result.LastError, "broken") {
+		t.Fatalf("result=%+v, want failed status with the broken requirement in LastError", result)
+	}
+}
+
+// Execution being disabled on the instance is global: every later requirement
+// would fail the same way, so that one still stops the round.
+func TestRunJobStopsWhenExecutionIsDisabled(t *testing.T) {
+	st, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(st.Close)
+	for i, id := range []string{"first", "second"} {
+		if err := st.PutIssue(domain.Issue{ID: id, ProjectID: "platform", Status: "todo", Number: 100 - i}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	job := domain.ScheduleJob{ID: "job", ProjectID: "platform", WorkflowID: "wf"}
+	if err := st.PutScheduleJob(job); err != nil {
+		t.Fatal(err)
+	}
+	dispatched := 0
+	svc := New(st, tracker.NewService(), func(domain.ScheduleJob, domain.Issue, string) error {
+		dispatched++
+		return engine.ErrExecutionDisabled
+	})
+	if _, err := svc.RunJob(job.ID); !errors.Is(err, engine.ErrExecutionDisabled) {
+		t.Fatalf("err=%v, want ErrExecutionDisabled", err)
+	}
+	if dispatched != 1 {
+		t.Fatalf("dispatched %d requirements, want the round to stop at the first", dispatched)
+	}
 }
