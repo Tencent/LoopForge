@@ -105,6 +105,13 @@
   const punct = [[/，/g, ', '], [/。/g, '. '], [/：/g, ': '], [/；/g, '; '], [/、/g, ', '], [/！/g, '! '], [/？/g, '? '], [/（/g, ' ('], [/）/g, ') '], [/「|」/g, '"'], [/『|』/g, '"']];
   const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   const UNITS = {次: ['time', 'times'], 步: ['step', 'steps'], 个: ['', ''], 台: ['', ''], 条: ['', ''], 篇: ['doc', 'docs']};
+  // Translate counted nouns before a fragment such as 个任务 can hide the number.
+  const countedNouns = [
+    [/(?:共\s*)?(\d+)\s*个自定义模型/g, (_, n) => `${n} custom model${n === '1' ? '' : 's'}`],
+    [/(?:共\s*)?(\d+)\s*个模型/g, (_, n) => `${n} model${n === '1' ? '' : 's'}`],
+    [/(?:共\s*)?(\d+)\s*个任务/g, (_, n) => `${n} task${n === '1' ? '' : 's'}`],
+    [/每\s*(\d+)\s*次/g, (_, n) => `Every ${n} run${n === '1' ? '' : 's'}`],
+  ];
   const patterns = [
     [/第\s*(\d+)\s*(?:阶段|Stage)/g, 'Stage $1'],
     [/第\s*(\d+)\s*(?:轮|Round)/g, 'Round $1'],
@@ -112,15 +119,9 @@
     [/入\s*(\d+)\s*\/\s*出\s*(\d+)/g, 'In $1 / Out $2'],
     [/(\d{4})年(\d{1,2})月/g, (_, y, m) => `${MONTHS[m - 1] || m} ${y}`],
     [/(^|[^\d])(\d{1,2})月(?![\u3400-\u9fff])/g, (_, pre, m) => pre + (MONTHS[m - 1] || m)],
-    // Before the "共 N 个" rule below, which would otherwise eat the counter and
-    // leave the noun ("共 3 个任务" -> "3 items任务").
-    [/(?:共\s*)?(\d+)\s*个自定义模型/g, (_, n) => `${n} custom model${n === '1' ? '' : 's'}`],
-    [/(?:共\s*)?(\d+)\s*个模型/g, (_, n) => `${n} model${n === '1' ? '' : 's'}`],
-    [/(?:共\s*)?(\d+)\s*个任务/g, (_, n) => `${n} task${n === '1' ? '' : 's'}`],
     [/共\s*(\d+)\s*(?=[A-Za-z])/g, '$1 '],
-    [/共\s*(\d+)\s*(条|个|项)/g, (_, n) => `${n} ${Number(n) === 1 ? 'item' : 'items'}`],
     [/Last\s*1\s*times?\s*·\s*/g, 'Last run · '],
-    [/每\s*(\d+)\s*次/g, (_, n) => `Every ${n} run${n === '1' ? '' : 's'}`],
+    [/共\s*(\d+)\s*(条|个|项)/g, (_, n) => `${n} ${Number(n) === 1 ? 'item' : 'items'}`],
     [/(\d{4}-\d{2}-\d{2})\s*至\s*(\d{4}-\d{2}-\d{2})/g, '$1 – $2'],
     [/(\d+(?:\.\d+)?)\s*(次|步|个|台|条|篇)(?![\u3400-\u9fff])/g, (_, n, u) => {
       const word = UNITS[u][Number(n) === 1 ? 0 : 1];
@@ -196,7 +197,9 @@
     if (Object.prototype.hasOwnProperty.call(dict, trimmed)) {
       out = text.replace(trimmed, dict[trimmed]);
     } else {
-      out = fragmentRE ? text.replace(fragmentRE, m => dict[m]) : text;
+      out = text;
+      for (const [re, rep] of countedNouns) out = out.replace(re, rep);
+      if (fragmentRE) out = out.replace(fragmentRE, m => dict[m]);
       if (sentenceRE && HAN.test(out)) out = out.replace(sentenceRE, m => dict[m]);
       for (const [re, rep] of patterns) out = out.replace(re, rep);
     }

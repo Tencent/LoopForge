@@ -73,6 +73,8 @@ test('English mode translates the copy on knowledge, bots, schedules, evolution,
   assert.equal(window.lfTranslate('最近 1 次 · 一次成功，未发现异常'), 'Last run · all succeeded, no anomalies');
   assert.equal(window.lfTranslate('最近 1 次 · 节点打回返工、评测得分偏低'), 'Last run · Node rework, Low evaluation score');
   assert.equal(window.lfTranslate('可选强度'), 'Effort (optional)');
+  assert.equal(window.lfTranslate('一次成功'), 'First-pass success');
+  assert.equal(window.lfTranslate('使用 该 CLI 自带的模型'), "Use this CLI's built-in models");
 });
 
 test('English mode pluralises the counts these pages render', async (t) => {
