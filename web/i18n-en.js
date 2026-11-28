@@ -811,10 +811,6 @@ Object.assign(window.LF_I18N_EN,{
   "绑定已登录 Claude Code、Codex 或 Antigravity 的机器，选「账号登录」即可用订阅额度运行对话和 LOOP，无需 API Key。":"Connect a machine where you are signed in to Claude Code, Codex, or Antigravity. Select Account login to use your subscription for chats and LOOPs without an API key.",
   "配置执行机器":"Configure runners",
   "Claude Code、Codex 和 Antigravity 可用账号登录":"Account login for Claude Code, Codex and Antigravity",
-  "Claude Code、Codex 和 Antigravity 可以使用运行 Runner 的系统账号在这台机器上的已有登录，对话与 LOOP 的 native、Docker 沙箱均可复用。共享对话中，只有机器所有者发言时会使用此登录。":"Claude Code, Codex and Antigravity can reuse the login of the system user running the Runner, in both native and Docker sandboxes for chats and LOOPs. In a shared chat, that login applies to messages from the machine owner.",
-  "API Key 说明":"API Key help",
-  "GLM Coding Plan 的 API Key 配合套餐专用地址可使用订阅额度，请在「个人配置」中填写。Start Plan 额度需要登录 ZCode 账号，无法通过 API Key 使用。":"Enter the GLM Coding Plan API key and its dedicated endpoint in Personal Settings to use your subscription allowance. Start Plan allowance requires signing in to ZCode.",
-  "该 CLI 支持 API Key。使用服务商订阅套餐提供的 Key，执行用量会计入对应的套餐额度。请在「个人配置」中填写 API Key。":"This CLI supports API keys. With a key included in your provider's subscription, usage counts toward that plan's allowance. Enter the API key in Personal Settings."
 });
 Object.assign(window.LF_I18N_EN,{"查看其他项目共享的技能；共享技能只读，会自动装入平台上所有对话和定时任务，也可绑定到本项目角色。": "Skills shared by other projects. Shared Skills are read-only, are installed automatically into every conversation and scheduled task on the platform, and can be bound to Roles in this project.", "共享后，这个技能会自动装入平台上所有用户的对话和定时任务（包括其他项目和无项目的对话），模型可以直接调用。继续？": "Once shared, this Skill is installed automatically into every user's conversations and scheduled tasks on the platform (including other projects and conversations without a project), and the model can call it directly. Continue?", "共享这个角色会同时共享它绑定的技能：": "Sharing this Role also shares the Skills bound to it: ", "已共享，所有对话和定时任务会自动装入": "Shared. Every conversation and scheduled task will install it automatically", "其他项目可在「共享角色」里选用；绑定的本项目技能会一起共享，并自动装入所有对话": "Other projects can pick it under Shared roles; the project Skills bound to it are shared too and installed into every conversation automatically", "共享技能": "Share Skill"});
 Object.assign(window.LF_I18N_EN, {
@@ -1094,4 +1090,25 @@ Object.assign(window.LF_I18N_EN, {
   "对话处理": "Handled in chat",
   "在对话里澄清和改代码": "Clarify and change code in chat",
   "这条需求不使用 LOOP，在对话里澄清需求、直接改代码；定时任务不会自动认领它。": "This requirement uses no LOOP: clarify and change code in chat; scheduled jobs won't pick it up.",
+});
+// 执行机器 page: static copy in index.html. runners.js renders its dynamic copy with lfT.
+Object.assign(window.LF_I18N_EN, {
+  "连接电脑或 CVM，可将机器共享给多个项目。": "Connect a computer or CVM and share it with multiple projects.",
+  "安装 CLI": "Install a CLI",
+  "claude / codex 等": "claude, codex, etc.",
+  "绑定码 10 分钟有效": "The bind code is valid for 10 minutes",
+  "仅主动连接平台，不开放本机端口": "Connects out to the platform only; opens no local ports",
+  "自动分配": "Auto-assign",
+  "可用机器": "Available runners",
+  // PUT /api/runners/default success messages, shown as toasts.
+  "已设为默认执行机器，你的任务和沙箱将在这台机器上执行": "Set as your default runner; your tasks and sandboxes will run on this machine",
+  "已切回云端执行": "Switched back to cloud execution",
+  "已设为你在此项目的默认执行机器": "Set as your default runner for this project",
+  "已开启此项目 LOOP 自动分配": "Auto-assign is on for this project's LOOPs",
+  "已设为此项目使用平台执行机器": "This project now uses the platform runner",
+  "已清除此项目的默认执行机器": "Cleared this project's default runner",
+  // Run list and run detail labels for the auto-assigned runner (runs.js).
+  "自动分配 · 等待可用机器": "Auto-assign · waiting for a runner",
+  "自动分配 · 平台云端": "Auto-assign · platform cloud",
+  "自动分配失败": "Auto-assign failed",
 });
