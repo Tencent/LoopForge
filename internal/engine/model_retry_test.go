@@ -31,17 +31,19 @@ func TestModelFailureRetryAndCredentialGate(t *testing.T) {
 			if err := store.PutRun(run); err != nil {
 				t.Fatal(err)
 			}
+			before := time.Now().UTC()
 			e.nodeFailedAt(run.ID, node, 1, 1, &runtime.ModelError{Class: tc.class, Err: errors.New("provider failure")}, false, 7)
+			after := time.Now().UTC()
 			got, _ := store.RunState(run.ID)
 			n := got.Nodes["n"]
 			if n.Status != tc.want || n.Attempt != 1 || n.ResumeSessionID != "session" {
 				t.Fatalf("node: %+v", n)
 			}
 			if tc.want == "waiting_retry" {
-				if n.TransientRetries != 1 || !n.RetrySameAttempt || n.NextRetryAt.Before(time.Now().Add(11*time.Second)) || n.NextRetryAt.After(time.Now().Add(16*time.Second)) {
+				if n.TransientRetries != 1 || !n.RetrySameAttempt || n.NextRetryAt.Before(before.Add(11250*time.Millisecond)) || n.NextRetryAt.After(after.Add(15*time.Second)) {
 					t.Fatalf("retry: %+v", n)
 				}
-				if modelRetryDue(got, time.Now()) {
+				if modelRetryDue(got, before) || modelRetryDue(got, n.NextRetryAt.Add(-time.Millisecond)) {
 					t.Fatal("retry became due early")
 				}
 				if !promoteDueModelRetries(&got, n.NextRetryAt) || got.Nodes["n"].Status != "pending" {
@@ -360,6 +362,48 @@ func TestUnconfiguredModelErrorsKeepOrdinaryFailureBehavior(t *testing.T) {
 	}
 }
 
+func TestUnconfiguredModelErrorKeepsLoopHumanGate(t *testing.T) {
+	e, store := newRecoveryEngine(t)
+	if err := store.PutAgent(domain.AgentDefinition{ID: "loop-agent", Name: "Loop Agent", ExecutorID: "codex", Loop: domain.AgentLoopPolicy{Enabled: true, MaxIterations: 2, OnExhausted: "human"}}); err != nil {
+		t.Fatal(err)
+	}
+	cvERunner(t, e, "loop-runner", domain.RunnerStatusOnline, "terminal", "codex")
+	e.SetRunnerDispatchNotify(func(string) {
+		for _, task := range store.RunnerTasks() {
+			if task.Status != domain.RunnerTaskQueued {
+				continue
+			}
+			task.Status = domain.RunnerTaskFailed
+			task.Attempt = 1
+			task.Error = "HTTP 429 Too Many Requests"
+			task.ModelErrorClass = string(runtime.ModelErrorRateLimited)
+			if err := store.PutRunnerTask(task); err != nil {
+				t.Errorf("complete task: %v", err)
+			}
+		}
+	})
+	wf := domain.WorkflowDefinition{ID: "loop-human", SandboxProfileID: repo.TestNativeSandboxID, Nodes: []domain.WorkflowNode{{ID: "n", Type: "agent", AgentID: "loop-agent", MaxAttempts: 1}}}
+	run := domain.Run{ID: "loop-human", WorkflowID: wf.ID, Status: "running", WorkflowSnapshot: wf, ExecutionContext: domain.TelemetryContext{ExecutionMode: domain.ExecutionModeRunner, ExecutionRunnerID: "loop-runner", RunnerWorkspaceLayout: domain.RunnerWorkspaceLayoutShared}, Nodes: map[string]*domain.NodeRun{"n": {NodeID: "n", Status: "pending"}}}
+	if err := store.PutRun(run); err != nil {
+		t.Fatal(err)
+	}
+	if resumed := e.ResumeInterruptedRuns(); len(resumed) != 1 {
+		t.Fatalf("resumed = %v", resumed)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		got, _ := store.RunState(run.ID)
+		node := got.Nodes["n"]
+		if got.Status == "waiting" && node.Status == "waiting_approval" && node.WaitReason == "" && node.Attempt == 1 && node.ModelRetry == nil {
+			return
+		}
+		if domain.TerminalRunStatus(got.Status) || time.Now().After(deadline) {
+			t.Fatalf("expected ordinary LOOP human gate; run status=%s, node=%+v", got.Status, node)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
 func TestDelayedRetryRunsWhileAnotherNodeWaitsForApproval(t *testing.T) {
 	e, store := newRecoveryEngine(t)
 	wf := domain.WorkflowDefinition{ID: "mixed-wait", SandboxProfileID: repo.TestNativeSandboxID, Nodes: []domain.WorkflowNode{{ID: "retry", Type: "command", Command: "true"}, {ID: "gate", Type: "approval"}}}
@@ -398,6 +442,10 @@ func TestNextModelRetryAtUsesEarliestDeadline(t *testing.T) {
 	if got := nextModelRetryAt(run); !got.Equal(now.Add(time.Second)) {
 		t.Fatalf("next retry = %s", got)
 	}
+	run.Nodes["missing"] = &domain.NodeRun{Status: "waiting_retry"}
+	if got := nextModelRetryAt(run); !got.IsZero() {
+		t.Fatalf("missing deadline must take precedence over future retries, got %s", got)
+	}
 }
 
 func TestWaitForModelRetryRespondsToWakeAndCancellation(t *testing.T) {
@@ -407,12 +455,12 @@ func TestWaitForModelRetryRespondsToWakeAndCancellation(t *testing.T) {
 			defer cancel()
 			wake, done := make(chan struct{}, 1), make(chan struct{})
 			go func() {
-				waitForModelRetry(ctx, wake, time.Time{})
+				waitForModelRetry(ctx, wake, time.Now().Add(time.Hour))
 				close(done)
 			}()
 			select {
 			case <-done:
-				t.Fatal("zero deadline returned without a wakeup")
+				t.Fatal("future deadline returned without a wakeup")
 			default:
 			}
 			if action == "wake" {
@@ -424,6 +472,48 @@ func TestWaitForModelRetryRespondsToWakeAndCancellation(t *testing.T) {
 			case <-done:
 			case <-time.After(time.Second):
 				t.Fatal("wait did not respond")
+			}
+		})
+	}
+}
+
+func TestModelRetryWithoutDeadlineResumes(t *testing.T) {
+	for _, withApproval := range []bool{false, true} {
+		name := "running"
+		if withApproval {
+			name = "waiting"
+		}
+		t.Run(name, func(t *testing.T) {
+			e, store := newRecoveryEngine(t)
+			wf := domain.WorkflowDefinition{ID: "missing-deadline", SandboxProfileID: repo.TestNativeSandboxID, Nodes: []domain.WorkflowNode{{ID: "retry", Type: "command", Command: "true"}}}
+			run := domain.Run{ID: "missing-deadline", WorkflowID: wf.ID, Status: name, WorkflowSnapshot: wf, Nodes: map[string]*domain.NodeRun{
+				"retry": {NodeID: "retry", Status: "waiting_retry", Attempt: 1, RetrySameAttempt: true},
+			}}
+			want := "succeeded"
+			if withApproval {
+				run.WorkflowSnapshot.Nodes = append(wf.Nodes, domain.WorkflowNode{ID: "gate", Type: "approval"})
+				run.Nodes["gate"] = &domain.NodeRun{NodeID: "gate", Status: "waiting_approval"}
+				want = "waiting"
+			}
+			if err := store.PutRun(run); err != nil {
+				t.Fatal(err)
+			}
+			if resumed := e.ResumeInterruptedRuns(); len(resumed) != 1 || resumed[0] != run.ID {
+				t.Fatalf("resumed = %v", resumed)
+			}
+			deadline := time.Now().Add(5 * time.Second)
+			for {
+				got, _ := store.RunState(run.ID)
+				if retry := got.Nodes["retry"]; got.Status == want && retry.Status == "succeeded" && retry.Attempt == 1 {
+					if withApproval && got.Nodes["gate"].Status != "waiting_approval" {
+						t.Fatalf("approval was changed: %+v", got.Nodes["gate"])
+					}
+					return
+				}
+				if time.Now().After(deadline) {
+					t.Fatalf("run status=%s, retry did not resume: %+v", got.Status, got.Nodes["retry"])
+				}
+				time.Sleep(20 * time.Millisecond)
 			}
 		})
 	}

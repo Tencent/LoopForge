@@ -122,7 +122,13 @@ func hasModelRetry(r domain.Run) bool {
 func nextModelRetryAt(r domain.Run) time.Time {
 	var next time.Time
 	for _, n := range r.Nodes {
-		if n != nil && n.Status == "waiting_retry" && !n.NextRetryAt.IsZero() && (next.IsZero() || n.NextRetryAt.Before(next)) {
+		if n == nil || n.Status != "waiting_retry" {
+			continue
+		}
+		if n.NextRetryAt.IsZero() {
+			return time.Time{}
+		}
+		if next.IsZero() || n.NextRetryAt.Before(next) {
 			next = n.NextRetryAt
 		}
 	}
@@ -130,15 +136,7 @@ func nextModelRetryAt(r domain.Run) time.Time {
 }
 
 // waitForModelRetry sleeps until the next deadline, a scheduler wakeup, or cancellation.
-// A zero deadline waits for a wakeup or cancellation without spinning.
 func waitForModelRetry(ctx context.Context, wake <-chan struct{}, next time.Time) {
-	if next.IsZero() {
-		select {
-		case <-ctx.Done():
-		case <-wake:
-		}
-		return
-	}
 	timer := time.NewTimer(time.Until(next))
 	defer timer.Stop()
 	select {
@@ -150,7 +148,7 @@ func waitForModelRetry(ctx context.Context, wake <-chan struct{}, next time.Time
 
 func modelRetryDue(r domain.Run, now time.Time) bool {
 	for _, n := range r.Nodes {
-		if n != nil && n.Status == "waiting_retry" && !n.NextRetryAt.IsZero() && !n.NextRetryAt.After(now) {
+		if n != nil && n.Status == "waiting_retry" && !n.NextRetryAt.After(now) {
 			return true
 		}
 	}
@@ -160,7 +158,7 @@ func modelRetryDue(r domain.Run, now time.Time) bool {
 func promoteDueModelRetries(r *domain.Run, now time.Time) bool {
 	changed := false
 	for _, n := range r.Nodes {
-		if n != nil && n.Status == "waiting_retry" && !n.NextRetryAt.IsZero() && !n.NextRetryAt.After(now) {
+		if n != nil && n.Status == "waiting_retry" && !n.NextRetryAt.After(now) {
 			n.Status = "pending"
 			n.Activity = "模型服务重试已就绪"
 			changed = true

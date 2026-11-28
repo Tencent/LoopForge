@@ -42,3 +42,19 @@ func TestCodexNativeMCPToolTelemetry(t *testing.T) {
 		t.Fatalf("events=%+v", events)
 	}
 }
+
+func TestCodexNativeMCPGatePreservesCitedOutput(t *testing.T) {
+	adapter := newProtocolAdapter(domain.ExecutorDefinition{Kind: "codex", Protocol: "jsonl"}, nil)
+	report := "# 验收报告\n\n引用来源 [[knowledge:ev_1]]。"
+	for _, item := range []map[string]any{
+		{"type": "agent_message", "text": report},
+		{"type": "mcp_tool_call", "server": "agentflow-gate", "tool": "submit_gate_result", "status": "completed"},
+		{"type": "agent_message", "text": "已提交。"},
+	} {
+		adapter.handleCodexJSON(map[string]any{"type": "item.completed", "item": item})
+	}
+	adapter.handleCodexJSON(map[string]any{"type": "turn.completed"})
+	if got := adapter.VisibleOutput(); got != report {
+		t.Fatalf("expected pre-gate cited report, got %q", got)
+	}
+}

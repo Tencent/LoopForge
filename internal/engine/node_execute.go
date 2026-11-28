@@ -121,7 +121,12 @@ func (e *Engine) execute(ctx context.Context, runID string) {
 		}
 		wf := workflowForRun(e.repo, r)
 		if modelRetryDue(r, time.Now().UTC()) {
-			e.updateRun(runID, func(current *domain.Run) { promoteDueModelRetries(current, time.Now().UTC()) })
+			e.updateRun(runID, func(current *domain.Run) {
+				if current.Generation != generation || !e.ownsRun(*current) || current.CancelRequested || current.PauseRequested {
+					return
+				}
+				promoteDueModelRetries(current, time.Now().UTC())
+			})
 			continue
 		}
 		e.reconcileNodeExecutions(runID)
@@ -134,6 +139,10 @@ func (e *Engine) execute(ctx context.Context, runID string) {
 		}
 		running := len(inflight)
 		inflightMu.Unlock()
+		if len(ready) == 0 && hasModelRetry(r) && (running > 0 || !hasWaiting(wf, r)) {
+			waitForModelRetry(ctx, wake, nextModelRetryAt(r))
+			continue
+		}
 		if len(ready) == 0 && running > 0 {
 			// A sibling is still running: its result may unblock more nodes, and
 			// a failed or waiting branch must not settle the run under it.
@@ -145,10 +154,6 @@ func (e *Engine) execute(ctx context.Context, runID string) {
 			continue
 		}
 		if len(ready) == 0 {
-			if hasModelRetry(r) && !hasWaiting(wf, r) {
-				waitForModelRetry(ctx, wake, nextModelRetryAt(r))
-				continue
-			}
 			if allSucceeded(wf, r) {
 				rework, err := e.integrateScheduledRun(runID)
 				if err != nil {
@@ -735,6 +740,7 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 	gates := make([]verificationRun, 0)
 	effectiveNode := node
 	maxIterations := 1
+	modelRecoveryEnabled := false
 	loopOnExhausted := "fail"
 	loopFeedback := ""
 	invocationSeq := 0
@@ -815,8 +821,8 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 			err = errResolve
 			break
 		}
-		if cb := sb.credentialSnapshot().CodeBuddy; ex.Kind == "codebuddy" && cb.Sponsored {
-			ex = e.sponsoredExecutor(runID, ex, cb.SponsoredModels, sink)
+		policy := mergeModelRetryPolicy(agent.ModelRetry, node.ModelRetry)
+		if cb := sb.credentialSnapshot().CodeBuddy; policy != nil && ex.Kind == "codebuddy" && cb.Sponsored {
 			// Shared credentials only permit the platform's approved model set.
 			allowed := map[string]bool{}
 			for _, model := range cb.SponsoredModels {
@@ -832,12 +838,16 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 		}
 		e.updateRun(runID, func(r *domain.Run) {
 			nr := r.Nodes[node.ID]
-			if nr != nil && !nr.ModelPolicyInitialized {
+			if !shouldCommitNodeOutcome(*r, nr, executionGeneration, executionAttempt, false, executionSequence) {
+				return
+			}
+			if !nr.ModelPolicyInitialized {
 				nr.ActiveModel = ex.Model
 				nr.FallbackModels = uniqueFallbackModels(ex.Model, agent.FallbackModels)
 				nr.ModelPolicyInitialized = true
-				nr.ModelRetry = mergeModelRetryPolicy(agent.ModelRetry, node.ModelRetry)
+				nr.ModelRetry = policy
 			}
+			modelRecoveryEnabled = nr.ModelRetry != nil
 		})
 		effectiveNode.ArtifactOutputs = mergeArtifactContracts(agent.ArtifactOutputs, node.ArtifactOutputs)
 		gates = gates[:0]
@@ -881,15 +891,18 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 				}
 			}
 			effectiveExecutor := ex
-			if nr := current.Nodes[node.ID]; nr != nil && nr.ActiveModel != "" {
+			if nr := current.Nodes[node.ID]; modelRecoveryEnabled && nr != nil && nr.ActiveModel != "" {
 				effectiveExecutor.Model = nr.ActiveModel
 			}
 			if cb := sb.credentialSnapshot().CodeBuddy; effectiveExecutor.Kind == "codebuddy" && cb.Sponsored {
 				effectiveExecutor = e.sponsoredExecutor(runID, effectiveExecutor, cb.SponsoredModels, sink)
 			}
 			invocationAgent := agent
-			invocationAgent.Model = effectiveExecutor.Model
-			invocationID := fmt.Sprintf("%s-%d-%d-%d", nodeControlKey(current, node.ID), attempt, executionSequence, invocationSeq)
+			invocationID := fmt.Sprintf("%s-%d-%d", nodeControlKey(current, node.ID), attempt, invocationSeq)
+			if modelRecoveryEnabled {
+				invocationAgent.Model = effectiveExecutor.Model
+				invocationID = fmt.Sprintf("%s-%d-%d-%d", nodeControlKey(current, node.ID), attempt, executionSequence, invocationSeq)
+			}
 			rendered := renderPromptWithStore(e.repo, wf, effectiveNode, current)
 			hadCatalog := strings.Contains(rendered, "{{artifacts}}")
 			prompt := strings.ReplaceAll(rendered, "{{artifacts}}", artifactContext)
@@ -1206,7 +1219,7 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 			break
 		}
 		var modelFailure *runtime.ModelError
-		if errors.As(err, &modelFailure) {
+		if modelRecoveryEnabled && errors.As(err, &modelFailure) {
 			break
 		}
 		if failedAction != "loop" {
@@ -1226,7 +1239,12 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 			return
 		}
 		var modelFailure *runtime.ModelError
-		if isArtifactHandoffFailure(err) || errors.As(err, &modelFailure) {
+		if isArtifactHandoffFailure(err) {
+			failNode(err, false)
+			return
+		}
+		if modelRecoveryEnabled && errors.As(err, &modelFailure) {
+			e.markNodeKnowledgeReads(runID, node.ID, executionGeneration, executionAttempt, executionSequence, output, frozen)
 			failNode(err, false)
 			return
 		}
@@ -1275,7 +1293,7 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 			e.persistCitedKnowledgeReads(runID, node.ID, executionAttempt)
 			return
 		}
-		e.markNodeKnowledgeReads(runID, node.ID, executionGeneration, executionAttempt, output, frozen)
+		e.markNodeKnowledgeReads(runID, node.ID, executionGeneration, executionAttempt, executionSequence, output, frozen)
 		failNode(err, failedAction == "reject" || (failedAction == "" && allowRejectOnFailure(node, err, gateRejected)))
 		return
 	}
@@ -1294,7 +1312,7 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 		sink(domain.TelemetryEvent{Category: "artifact", Name: "artifact.optional.skipped", Phase: "finish", Level: "warn", Message: warning})
 	})
 	if err != nil {
-		e.markNodeKnowledgeReads(runID, node.ID, executionGeneration, executionAttempt, output, nil)
+		e.markNodeKnowledgeReads(runID, node.ID, executionGeneration, executionAttempt, executionSequence, output, nil)
 		failNode(fmt.Errorf("artifact contract: %w", err), nodeRejects(node) && !isArtifactHandoffFailure(err))
 		return
 	}
@@ -1458,18 +1476,22 @@ func lostCLISession(output string, err error) bool {
 		strings.Contains(msg, "conversation does not exist")
 }
 
-func (e *Engine) markNodeKnowledgeReads(runID, nodeID string, generation, attempt int, output string, artifacts []domain.Artifact) {
+func (e *Engine) markNodeKnowledgeReads(runID, nodeID string, generation, attempt, sequence int, output string, artifacts []domain.Artifact) {
+	committed := false
 	e.updateRun(runID, func(r *domain.Run) {
 		nr := r.Nodes[nodeID]
-		if !shouldCommitNodeOutcome(*r, nr, generation, attempt, false) {
+		if !shouldCommitNodeOutcome(*r, nr, generation, attempt, false, sequence) {
 			return
 		}
 		if nr.Output == "" && output != "" {
 			nr.Output = output
 		}
 		markKnowledgeReadsCited(nr.KnowledgeReads, attempt, output, artifacts)
+		committed = true
 	})
-	e.persistCitedKnowledgeReads(runID, nodeID, attempt)
+	if committed {
+		e.persistCitedKnowledgeReads(runID, nodeID, attempt)
+	}
 }
 
 func (e *Engine) persistCitedKnowledgeReads(runID, nodeID string, attempt int) {

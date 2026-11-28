@@ -508,13 +508,15 @@ func (a *protocolAdapter) handleCodexJSON(raw map[string]any) {
 			if name == "" {
 				name = stringValue(item["name"])
 			}
+			var isGate bool
 			if name == "" && itemType == "mcp_tool_call" {
 				name = stringValue(item["tool"])
+				isGate = isSubmitGateToolName(name)
 				if server := stringValue(item["server"]); server != "" && name != "" {
 					name = server + "/" + name
 				}
 			}
-			if isSubmitGateToolName(name) {
+			if isGate || isSubmitGateToolName(name) {
 				a.snapshotPreGateCitedOutput()
 			}
 			msg := summarizeToolCall(name, item)

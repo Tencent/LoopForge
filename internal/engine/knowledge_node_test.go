@@ -303,7 +303,7 @@ func TestMarkNodeKnowledgeReadsOnFailurePreservesFrozenArtifactCitations(t *test
 	}
 	eng := &Engine{repo: store}
 	frozen := []domain.Artifact{{Name: "partial.md", Path: "partial.md", Content: "局部交付物 [[knowledge:ev_2]]"}}
-	eng.markNodeKnowledgeReads(run.ID, "n1", 3, 1, "失败前输出 [[knowledge:ev_1]]", frozen)
+	eng.markNodeKnowledgeReads(run.ID, "n1", 3, 1, 0, "失败前输出 [[knowledge:ev_1]]", frozen)
 
 	saved, _ := store.RunState(run.ID)
 	nr := saved.Nodes["n1"]
