@@ -3,6 +3,8 @@ package httpapi
 import (
 	"agentflow/internal/domain"
 	"fmt"
+	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -197,13 +199,15 @@ func replyCompact(text string) string {
 	return strings.Join(strings.Fields(text), "")
 }
 
-// replyRicher keeps the copy that still has its spaces and line breaks when
-// two strings are the same once whitespace is ignored.
-func replyRicher(primary, alternate string) string {
-	if len(alternate) > len(primary) {
-		return alternate
+// When only whitespace differs, keep richer Markdown layout. A change to a
+// word boundary or a quoted value is an actual correction from the final reply.
+var replyContentTokens = regexp.MustCompile(`"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|` + "`[^`]*`" + `|[\pL\pN_]+`)
+
+func replyRicher(streamed, final string) string {
+	if len(final) >= len(streamed) || !slices.Equal(replyContentTokens.FindAllString(streamed, -1), replyContentTokens.FindAllString(final, -1)) {
+		return final
 	}
-	return primary
+	return streamed
 }
 
 func replyParagraphs(text string) []string {
@@ -265,7 +269,7 @@ func assistantVisibleReply(final string, events []domain.AssistantActivityEvent)
 		if rest, ok := cutReplyPhase(final, parts); ok && rest == "" {
 			return joined
 		}
-		return final
+		return replyRicher(joined, final)
 	}
 	if strings.Contains(final, joined) || strings.HasPrefix(compactFinal, compactJoined) {
 		repeated := dropRepeatedReply(final)
@@ -282,7 +286,7 @@ func assistantVisibleReply(final string, events []domain.AssistantActivityEvent)
 		if rest, ok := cutReplyPhase(final, []string{last}); ok && rest == "" {
 			return joined
 		}
-		return strings.TrimSuffix(joined, last) + final
+		return strings.TrimSuffix(joined, last) + replyRicher(last, final)
 	}
 	if strings.HasPrefix(final, last) {
 		suffix := trimAssistantReplyText(strings.TrimPrefix(final, last))

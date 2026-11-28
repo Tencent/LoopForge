@@ -461,3 +461,24 @@ func TestAssistantVisibleReplyKeepsWhitespaceCorrections(t *testing.T) {
 		}
 	}
 }
+
+func TestAssistantVisibleReplyPreservesRicherMarkdownAndFinalLiterals(t *testing.T) {
+	for _, tc := range []struct{ streamed, final, want string }{
+		{"## Heading\n| key | value |", "##Heading|key|value|", "## Heading\n| key | value |"},
+		{"The literal is \"a + b\".", "The literal is \"a+b\".", "The literal is \"a+b\"."},
+		{"Set read only.", "Set readonly.", "Set readonly."},
+	} {
+		for _, prefix := range []string{"", "Earlier work."} {
+			events := []domain.AssistantActivityEvent{}
+			want := tc.want
+			if prefix != "" {
+				events = append(events, domain.AssistantActivityEvent{Kind: "text", Text: prefix}, domain.AssistantActivityEvent{Kind: "tool", ID: "read"})
+				want = prefix + "\n\n" + want
+			}
+			events = append(events, domain.AssistantActivityEvent{Kind: "text", Text: tc.streamed})
+			if got := assistantVisibleReply(tc.final, events); got != want {
+				t.Errorf("stream=%q final=%q: got %q, want %q", tc.streamed, tc.final, got, want)
+			}
+		}
+	}
+}
