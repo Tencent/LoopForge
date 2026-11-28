@@ -1839,10 +1839,135 @@ git commit -m "docs(plan): 记录 Postgres 部署验收结果"
 
 ## 验收记录
 
-（Task 10 完成后填写）
+验收时间：2026-11-28。验收对象：分支 `feat/postgres-supabase`，数据落在本机 Supabase
+Postgres 的独立库 `loopforge`（测试库 `loopforge_test`）。密码与 DSN 只在 `.env`
+（0600，已在 `.gitignore`），本节不含任何凭据。
+
+### Step 1 · 启动
+
+`bash scripts/dev.sh`（`.env` 由 `scripts/configure.sh` 生成，平台二进制由
+`scripts/build-binaries.sh` 构建）。平台日志：
+
+```
+2026/11/28 11:38:12 engine instance=all-cjhmacmin.local-49992 role=all execute_runs=true run_lease_ttl=30s
+2026/11/28 11:38:12 LoopForge all listening on http://0.0.0.0:8090
+```
+
+**本机环境限制（部署侧配置，不是代码改动）**：这台机器访问不到 Docker Hub
+（`curl https://registry-1.docker.io/v2/` → `Connection reset by peer`），
+`docker build` 拉不到 `FROM node:22-bookworm`，沙箱镜像永远建不出来。改用平台
+**已有**的 `AGENTFLOW_ISOLATED_IMAGE` 开关指向本机已有的 `alpine:latest`：
+`internal/runtime/sandbox_docker.go` 的 `isolatedRuntimeImage()` 在 Dockerfile
+等于内置隔离配方时直接复用该镜像、不再构建，而种子的 `generic-docker` 正好就是
+那份配方（逐字节相等，已核对）。所以验收运行时是：
+
+```bash
+export AGENTFLOW_ISOLATED_IMAGE=alpine:latest
+bash scripts/dev.sh
+```
+
+验收脚本只用 POSIX shell（`mkdir -p` / `printf`），`alpine` 的 busybox `sh` 足够。
+
+### Step 2 · 健康检查
+
+`GET /api/health` → `200`（40 bytes）。
+
+### Step 3 · 登录与建项目
+
+- 用 `.local/admin-password` 里的密码登录 `admin`；另建了一个临时平台管理员账号
+  `acceptance` 做浏览器验收，验收结束后删除。
+- 建项目「PG 冒烟」（`pg-smoke`），`GET /api/projects` 里能看到（与 `welcome` 并列）。
+- **平台管理员建项目没有 owner**：`internal/httpapi/projects.go` 的 owner 赋值块被
+  `if !h.isPlatformAdmin(r)` 整个跳过，新项目 `owner_user_id` 为 NULL、没有
+  `project_members` 行，因此也不进全局项目切换器。这是上游的平台管理员行为，不是
+  Postgres 移植的问题。验收时用 `PUT /api/projects` 补上 `ownerId` 与 maintainer
+  成员后，库内形态与种子的 `welcome` 项目一致：
+
+  | project_id | user_id | role |
+  |---|---|---|
+  | `pg-smoke` | 2 | maintainer |
+  | `welcome` | 1 | maintainer |
+
+### Step 4 · 跑内置 demo LOOP
+
+流程「平台验收 · 脚本与审批」（`welcome-workflow`），三个节点：
+`prepare`(script) → `approve`(approval, `rejectTo: prepare`) → `finish`(script)。
+运行 `run-1795836387494691000`。
+
+| 阶段 | 结果 |
+|---|---|
+| `prepare` | 脚本节点在沙箱里执行成功（159 ms），产物 `welcome` = `reports/welcome.md`（102 B），日志「产物契约校验通过」 |
+| `approve` | 人工门禁停住：`run.status=waiting`、`admission_state=held`、节点 `approve` 状态 `waiting_approval` |
+| 人工批准 | `POST /api/runs/run-1795836387494691000/approve`，body `{"nodeId":"approve"}` → `200 {"ok":true}` |
+| `finish` | 脚本节点执行成功，产物 `completed` = `completed.md`（56 B） |
+
+终态：`run.status=succeeded`、`admission_state=released`、3/3 节点 `succeeded`、
+3 个产物（`welcome` / `decision` / `completed`）。产物内容与 SHA-256 都落在
+Postgres 的 `run_artifacts` 里：
+
+```
+welcome   |reports/welcome.md|102|e112920a442fc04fc02f2030942610982e756f0bb9a5f6273b11f675e54e6b52
+decision  |decision.md       | 58|98fef50e2a0cc7028fb07091435bb6dd622f27cb3591b3be149a573134499915
+completed |completed.md      | 56|6de6a34b7a294a7f122135caeb22d8c65e00a114938ef7f496b01d18ca7c51e9
+```
+
+### Step 5 · 逐页检查
+
+浏览器逐页打开：统计（总览 / 交付 / 数据就绪）、运行记录、流程模板、角色定义、
+项目配置、沙箱管理、平台管理、RSI 工作台、运行详情。全部正常渲染，无 500、无 JS
+报错。平台日志（重启后的整段）：
+
+```
+$ grep -oE "\-> [0-9]{3} " .local/platform.log | sort | uniq -c
+     157 -> 200
+$ grep -inE "SQLSTATE|ERROR|syntax error|panic" .local/platform.log
+（无输出）
+```
+
+**run_obs 生成列筛选**（`migrations/001_run_obs_generated_columns.pg.sql` 建的两个
+生成列，在 Postgres 上确实存在且是生成列）：
+
+```
+run_logs    |level |character varying|ALWAYS
+run_telemetry|adapter|character varying|ALWAYS
+```
+
+- `/api/analytics` 的 coverage 统计就是直接 `GROUP BY adapter` / `GROUP BY level`
+  （`internal/repo/analytics.go` 的 `queryAnalyticsCoverage`），返回
+  `adapterEvents={"agentflow-control-plane":16,"unknown":1}`、`logLevels={"info":16}`。
+- 运行详情页「实时轨迹」tab 的 实时 / Hook / OTEL 筛选：实时 8 条、Hook 0 条、
+  OTEL 0 条。本次运行的 adapter 是 `agentflow-control-plane`，既不属于 hook 分类
+  也不属于 otel 分类，所以这两个筛选为 0 是正确结果；Postgres 与 MySQL 走的是同一
+  套语义（MySQL 用 SQL 过滤生成列，Postgres 用等价的 Go 侧过滤
+  `observability.MatchAdapter`）。
+- 统计页在「PG 冒烟」项目范围内显示 **LOOP 成功率 100%**、**LOOP 人工介入率 100%**
+  （人工介入率正是那道审批门禁）。
+
+### Step 6 · 重启持久化
+
+停掉平台、重新 `bash scripts/dev.sh` 之后：
+
+| 项 | 重启前 | 重启后 |
+|---|---|---|
+| run 状态 | `succeeded` / `released` | `succeeded` / `released` |
+| `telemetry_sequence` / `log_sequence` | 17 / 16 | 17 / 16 |
+| 3 个产物 | 见上表 | `diff` 逐字相同（name/path/size/sha256 全等） |
+| 项目 | `pg-smoke`、`welcome` | `pg-smoke`、`welcome` |
+
+数据都在 Supabase 的 `loopforge` 库里，重启不丢。
+
+### 额外发现并修复的缺陷
+
+`internal/repo/projects_sop_detection.go` 的 SOP 检测扫描在 Postgres 上会每次都
+报错：`payload::jsonb #>> '{sopDetection,enabled}'` 返回的是**文本** `'true'`，
+而查询同时绑了一个整型参数 `1`，pgx 没法把 int 编码进 text 参数（OID 25），于是
+报 `unable to encode 1 into text format for text (OID 25)`——SOP 检测在 Postgres
+上一直是坏的，只是没被测试覆盖。修法是 Postgres 分支只绑文本形式
+（提交 `23296b1`，带一条 Postgres 回归用例和一条 sqlite 守卫用例）。
 
 ## 已知缺口
 
 - `migrations/0xx_*.sql` 中的 63 个历史升级迁移保持 MySQL-only，未移植。它们只服务老库升级；新建库走 gorm AutoMigrate。若日后要把已有 MySQL 库的数据搬到 Postgres，需要另做数据迁移器。
 - `migrations/033_generic_sop_mr_node.sql`、`038_generic_sop_host_credentials.sql`、`043_loop_terminology.sql` 同样保持 MySQL-only。它们的等价内容已包含在 `migrations/seed/pg/001_public_catalog.sql` 里（种子已含「发起 MR」节点与 LOOP 术语），所以新建库不依赖它们。
 - `internal/httpapi/assistant_acceptance.go` 的 `LookupCodeBuddyCredentialReadOnly` 仍按 MySQL DSN 工作（腾讯内网验收流程专用），Postgres 部署不经过该路径。
+- 验收用的这台机器访问不到 Docker Hub（`registry-1.docker.io` 连接被重置），`generic-docker` 沙箱的 `FROM node:22-bookworm` 拉不下来。验收因此用平台已有的 `AGENTFLOW_ISOLATED_IMAGE` 指向本机镜像绕开构建（见「验收记录」Step 1）。这是网络环境问题，不是移植问题；能访问 Docker Hub 的机器不需要这个开关。
