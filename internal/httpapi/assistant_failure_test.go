@@ -370,6 +370,7 @@ func TestTestCodeBuddyConnectionNamesInvalidModel(t *testing.T) {
 	bin := filepath.Join(dir, "codebuddy")
 	script := "#!/bin/sh\n" +
 		"for a in \"$@\"; do case \"$a\" in --help) echo 'Available models:'; echo '  deepseek-v4.1-flash'; exit 0;; esac; done\n" +
+		"cat <<'RESULT'\n" +
 		`{"type":"assistant","message":{"content":[{"type":"text","text":"400 model [` + mistypedCodeBuddyModel + `] service info not found"}]}}` + "\n" +
 		`{"type":"result","subtype":"error_during_execution","is_error":true,"result":""}` + "\nRESULT\n"
 	if err := os.WriteFile(bin, []byte(script), 0o700); err != nil {
@@ -380,7 +381,7 @@ func TestTestCodeBuddyConnectionNamesInvalidModel(t *testing.T) {
 	if result.Connected || result.Error == "" {
 		t.Fatalf("mistyped model reported as connected: %+v", result)
 	}
-	if !strings.Contains(result.Error, mistypedCodeBuddyModel) || strings.Contains(result.Error, "未返回完整回答") {
+	if !strings.Contains(result.Error, "CodeBuddy 无法使用模型 "+mistypedCodeBuddyModel) || strings.Contains(result.Error, "未返回完整回答") {
 		t.Fatalf("error %q does not name the model", result.Error)
 	}
 }
