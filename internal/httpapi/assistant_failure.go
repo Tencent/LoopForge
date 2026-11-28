@@ -162,7 +162,10 @@ func classifyAssistantFailureParts(f domain.AssistantFailure, err error) (domain
 	return c, false
 }
 
-var assistantModelMissingRe = regexp.MustCompile("(?i)\\bmodel\\s+[`'\"]?[^\\s`'\"]*[`'\"]?\\s*(?:does not exist|not found|is not available)")
+// CodeBuddy reports an unknown model as `400 model [id] service info not found`
+// and OpenAI-compatible providers as `The model `x` does not exist ...`, so the
+// pattern accepts a bracketed, quoted or bare ID plus the provider's wording.
+var assistantModelMissingRe = regexp.MustCompile("(?i)\\bmodel\\s*[`'\"]?(?:\\[[^\\]]+\\]|[^\\s`'\"]*)[`'\"]?\\s*(?:does not exist|not found|is not available|service info not found)")
 
 func classifyAssistantFailureText(f domain.AssistantFailure, err error, text string) domain.AssistantFailure {
 	message := strings.ToLower(text)

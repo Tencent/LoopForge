@@ -213,6 +213,15 @@ func testOfficialCodeBuddyConnection(ctx context.Context, environment, apiKey, m
 		return cliModelProbeResult{Connected: true, Source: "official"}
 	}
 	failure := classifyAssistantFailureText(domain.AssistantFailure{}, err, err.Error())
+	switch failure.Code {
+	case "MODEL_UNAVAILABLE":
+		failure.Message = "CodeBuddy 无法使用模型 " + model + "，请确认模型 ID 拼写正确，并在当前网络环境下可用"
+	case "MISSING_RESULT":
+		// An empty answer with no recognisable reason is almost always a model
+		// the current network environment cannot serve, so name the model and
+		// the way out instead of asking the user to retry blindly.
+		failure.Message = "CodeBuddy 没有返回回答，请确认模型 " + model + " 在当前网络环境下可用，或换成模型目录里的其他模型"
+	}
 	if failure.Message != "" {
 		return cliModelProbeResult{Error: failure.Message}
 	}

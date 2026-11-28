@@ -328,3 +328,56 @@ func TestFailedSharedGenerationSnapshotKeepsCauseAndRetryHistory(t *testing.T) {
 		})
 	}
 }
+
+func TestAssistantCLIReportsModelRejectionFromAssistantText(t *testing.T) {
+	// CodeBuddy answers a mistyped model ID with an assistant text block and a
+	// result whose payload is empty; the model error must survive the decode so
+	// the connection test can say the model is unavailable instead of "retry".
+	for _, tc := range []struct {
+		name, text string
+	}{
+		{"bracketed model", "400 model [deepseek-v4.1-flsh] service info not found"},
+		{"plain model", "400 model deepseek-v4.1-flsh not found"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			bin := filepath.Join(dir, "codebuddy")
+			script := "#!/bin/sh\ncat <<'RESULT'\n" +
+				`{"type":"assistant","message":{"content":[{"type":"text","text":"` + tc.text + `"}]}}` + "\n" +
+				`{"type":"result","subtype":"error_during_execution","is_error":true,"result":""}` + "\nRESULT\n"
+			if err := os.WriteFile(bin, []byte(script), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("AGENTFLOW_CODEBUDDY_BIN", bin)
+			_, _, err := runAssistantCLI(context.Background(), assistantCLIRequest{Prompt: "Reply with OK.", SessionRoot: dir}, domain.User{ID: 1, CodeBuddyAPIKey: "test-private-key"}, nil)
+			if err == nil {
+				t.Fatal("empty result was accepted")
+			}
+			failure := classifyAssistantFailureText(domain.AssistantFailure{}, err, err.Error())
+			if failure.Code != "MODEL_UNAVAILABLE" {
+				t.Fatalf("code=%s message=%q err=%v", failure.Code, failure.Message, err)
+			}
+		})
+	}
+}
+
+func TestTestCodeBuddyConnectionNamesInvalidModel(t *testing.T) {
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "codebuddy")
+	script := "#!/bin/sh\n" +
+		"for a in \"$@\"; do case \"$a\" in --help) echo 'Available models:'; echo '  deepseek-v4.1-flash'; exit 0;; esac; done\n" +
+		"cat <<'RESULT'\n" +
+		`{"type":"assistant","message":{"content":[{"type":"text","text":"400 model [deepseek-v4.1-flsh] service info not found"}]}}` + "\n" +
+		`{"type":"result","subtype":"error_during_execution","is_error":true,"result":""}` + "\nRESULT\n"
+	if err := os.WriteFile(bin, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AGENTFLOW_CODEBUDDY_BIN", bin)
+	result := testOfficialCodeBuddyConnection(context.Background(), "ioa", "test-private-key", "deepseek-v4.1-flsh")
+	if result.Connected || result.Error == "" {
+		t.Fatalf("mistyped model reported as connected: %+v", result)
+	}
+	if !strings.Contains(result.Error, "deepseek-v4.1-flsh") || strings.Contains(result.Error, "未返回完整回答") {
+		t.Fatalf("error %q does not name the model", result.Error)
+	}
+}
