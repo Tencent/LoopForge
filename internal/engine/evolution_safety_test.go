@@ -35,7 +35,7 @@ func TestEvolutionReplayRejectsExternalWorkflows(t *testing.T) {
 			w.Nodes[0].Type = "script"
 			w.Nodes[0].Script = "exit 0"
 		}, "script"},
-		{"nested SOP", func(w *domain.WorkflowDefinition, _ *domain.AgentDefinition, _ *domain.Run) { w.Nodes[0].Type = "sop" }, "sop"},
+		{"nested LOOP", func(w *domain.WorkflowDefinition, _ *domain.AgentDefinition, _ *domain.Run) { w.Nodes[0].Type = "sop" }, "sop 类型（脚本、命令和子 LOOP 不在首版范围内）"},
 		{"external credential", func(w *domain.WorkflowDefinition, _ *domain.AgentDefinition, _ *domain.Run) {
 			w.Nodes[0].CredentialEnv = map[string]string{"TOKEN": "deployment"}
 		}, "外部凭据"},

@@ -113,7 +113,8 @@ type assistantHandlers struct {
 	clarifyClassify func(context.Context, domain.User, string) (string, error)
 	// attachmentSweepWake nudges the background sweep after a deletion
 	// queues files; nil when no sweeper runs (tests sweep directly).
-	attachmentSweepWake chan struct{}
+	attachmentSweepWake  chan struct{}
+	attachmentThumbnails [2]attachmentThumbnailCache
 }
 
 func (h *assistantHandlers) chat(c *gin.Context) {
@@ -178,6 +179,10 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 		return
 	}
 	old, exists := h.repo.AssistantSession(ownerID, req.SessionID)
+	if !restoreAssistantActivities(req.Messages, old.Messages) {
+		c.JSON(409, gin.H{"error": "会话执行记录已更新，请重新打开后发送"})
+		return
+	}
 	if !h.bindTurnExecutionTarget(c, &req, stored.ID, old) {
 		return
 	}

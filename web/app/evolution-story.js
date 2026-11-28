@@ -135,7 +135,7 @@ function evoStoryValidationHTML(p,filter='all'){
 }
 const EVO_STORY_SOURCES=[
   ['node_failed','alert','失败案例'],['rework','refresh','返工案例'],
-  ['user_feedback','user','用户反馈'],['eval_low','chart','评测低分'],['sop_detection','alert','SOP 自动检测']
+  ['user_feedback','user','用户反馈'],['eval_low','chart','评测低分'],['sop_detection','alert','LOOP 自动检测']
 ];
 function evoFindingPriorityHTML(finding){
   const label={high:'高',medium:'中',low:'低'}[finding?.severity];
