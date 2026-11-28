@@ -1220,6 +1220,8 @@ func (r *DeliveryRepo) buildDeliveries(filter domain.AnalyticsFilter, now time.T
 		acc.item.Lanes = compactDeliveryLanes(BuildRequirementSnapshot(issues[issueID], project, acc.runs, nil, workflowDefs, now).Lanes)
 		if issue, ok := issues[issueID]; ok {
 			acc.item.Title = issue.Title
+			acc.item.ProjectID = issue.ProjectID
+			acc.item.IssueNumber = issue.Number
 			acc.item.Source = issue.Source
 			if acc.item.Source == "" {
 				acc.item.Source = "local"
