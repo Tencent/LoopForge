@@ -155,7 +155,7 @@ func trimTrailingSlash(s string) string {
 func (d *Daemon) Run(ctx context.Context) error {
 	ctx, stop := context.WithCancel(ctx)
 	defer stop()
-	if err := d.ensureRegistered(ctx); err != nil {
+	if err := d.registerUntilReady(ctx); err != nil {
 		return err
 	}
 	d.refreshRuntimes(ctx)
@@ -296,6 +296,31 @@ func (d *Daemon) ensureRegistered(ctx context.Context) error {
 		return nil
 	}
 	return d.registerLocked(ctx, st.RunnerID)
+}
+
+// registerRetryInterval is how long Run waits between registration attempts.
+// Tests lower it so a transient failure does not cost seconds.
+var registerRetryInterval = 3 * time.Second
+
+// registerUntilReady retries registration until it succeeds or ctx is done.
+// macOS withholds a launchd agent's first local-network connection until the
+// user grants Local Network access, and skips the prompt when the process
+// exits right after that failure (Apple FB16131937). Retrying in place keeps
+// the agent alive so a later attempt reaches the platform.
+func (d *Daemon) registerUntilReady(ctx context.Context) error {
+	var err error
+	for attempt := 1; ; attempt++ {
+		if err = d.ensureRegistered(ctx); err == nil {
+			return nil
+		}
+		if ctx.Err() != nil {
+			return err
+		}
+		log.Printf("register attempt %d failed, retrying in %s: %v", attempt, registerRetryInterval, err)
+		if !waitContext(ctx, registerRetryInterval) {
+			return err
+		}
+	}
 }
 
 func (d *Daemon) registerLocked(ctx context.Context, runnerID string) error {
