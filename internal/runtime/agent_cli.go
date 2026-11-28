@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -129,6 +130,47 @@ type AgentCLIMCPOptions struct {
 	// ReadOnly denies the CLI's own shell, edit and web tools (AI 对话 runs on
 	// the control plane); MCP tools stay available.
 	ReadOnly bool
+	// ReadableDirs are directories outside the working directory that a
+	// read-only CLI may still read, such as the conversation's attachments.
+	// Only CLIs that confine reads to the working directory need them.
+	ReadableDirs []string
+}
+
+// openCodeRules is one OpenCode permission as pattern rules. OpenCode applies
+// the last matching rule, so the order is kept as written rather than sorted
+// like a Go map.
+type openCodeRules [][2]string
+
+func (r openCodeRules) MarshalJSON() ([]byte, error) {
+	var b bytes.Buffer
+	b.WriteByte('{')
+	for i, rule := range r {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		pattern, _ := json.Marshal(rule[0])
+		action, _ := json.Marshal(rule[1])
+		b.Write(pattern)
+		b.WriteByte(':')
+		b.Write(action)
+	}
+	b.WriteByte('}')
+	return b.Bytes(), nil
+}
+
+// openCodeReadOnlyExternalDirectory denies paths outside the working
+// directory except the given readable directories.
+func openCodeReadOnlyExternalDirectory(dirs []string) any {
+	rules := openCodeRules{{"*", "deny"}}
+	for _, dir := range dirs {
+		if dir = strings.TrimSpace(dir); dir != "" {
+			rules = append(rules, [2]string{filepath.Join(filepath.Clean(dir), "*"), "allow"})
+		}
+	}
+	if len(rules) == 1 {
+		return "deny"
+	}
+	return rules
 }
 
 var dshServerNameRe = regexp.MustCompile(`[^A-Za-z0-9_-]`)
@@ -196,7 +238,7 @@ func WriteAgentCLIMCPConfig(kind string, home AgentCLIHome, entries map[string]a
 	case AgentCLIOpenCode:
 		permission := map[string]any{"edit": "allow", "bash": "allow", "webfetch": "allow", "external_directory": "allow", "doom_loop": "allow"}
 		if options.ReadOnly {
-			permission = map[string]any{"edit": "deny", "bash": "deny", "webfetch": "deny", "websearch": "deny", "external_directory": "deny", "task": "deny"}
+			permission = map[string]any{"edit": "deny", "bash": "deny", "webfetch": "deny", "websearch": "deny", "external_directory": openCodeReadOnlyExternalDirectory(options.ReadableDirs), "task": "deny"}
 		}
 		document = map[string]any{"$schema": "https://opencode.ai/config.json", "mcp": servers, "permission": permission, "autoupdate": false, "share": "disabled"}
 	case AgentCLIDeepSeek:

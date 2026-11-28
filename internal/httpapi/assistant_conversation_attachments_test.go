@@ -135,6 +135,24 @@ func TestConversationImageRoutingAcrossEngines(t *testing.T) {
 					if index < 0 || !slices.Equal(inv.command.Argv[index:], []string{"--file", imagePath, "--", prompt}) || !inv.command.AgentCLI.ImageInput {
 						t.Fatalf("wrong OpenCode file input: %v", inv.command.Argv)
 					}
+					// Read-only OpenCode denies paths outside ws; the note's
+					// attachment paths (text files included) must stay readable.
+					data, err := os.ReadFile(filepath.Join(root, "home", ".config", "opencode", "opencode.json"))
+					if err != nil {
+						t.Fatal(err)
+					}
+					var doc struct {
+						Permission struct {
+							External map[string]string `json:"external_directory"`
+						} `json:"permission"`
+					}
+					if err := json.Unmarshal(data, &doc); err != nil {
+						t.Fatalf("OpenCode chat config: %v\n%s", err, data)
+					}
+					documentPath := filepath.Join(root, conversationAttachmentPath(document.ID, document.Name))
+					if !strings.Contains(note, documentPath) || doc.Permission.External["*"] != "deny" || doc.Permission.External[filepath.Join(root, conversationAttachmentsDir, "*")] != "allow" {
+						t.Fatalf("OpenCode chat cannot read %s: %s", documentPath, data)
+					}
 				case runtime.AgentCLIPi:
 					if !slices.Contains(inv.command.Argv, "@"+imagePath) || !inv.command.AgentCLI.ImageInput {
 						t.Fatalf("wrong Pi file input: %v", inv.command.Argv)

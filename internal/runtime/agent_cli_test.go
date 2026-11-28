@@ -245,6 +245,61 @@ func TestWriteAgentCLIMCPConfigChat(t *testing.T) {
 	}
 }
 
+// AI 对话 hands attachments over by a path outside OpenCode's working
+// directory. Read-only chat must still read them, and nothing else outside.
+func TestOpenCodeReadOnlyAllowsReadableDirs(t *testing.T) {
+	home := t.TempDir()
+	attachments := filepath.Join(t.TempDir(), "attachments")
+	if err := WriteAgentCLIMCPConfig(AgentCLIOpenCode, HostAgentCLIHome(home), map[string]any{}, AgentCLIMCPOptions{ReadOnly: true, ReadableDirs: []string{attachments, " "}}); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(home, ".config/opencode/opencode.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Permission map[string]json.RawMessage `json:"permission"`
+	}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	// OpenCode applies the last matching rule: the catch-all must come first.
+	want := `{"*":"deny",` + string(mustJSONString(t, filepath.Join(attachments, "*"))) + `:"allow"}`
+	if got := string(doc.Permission["external_directory"]); strings.Join(strings.Fields(got), "") != want {
+		t.Fatalf("external_directory = %s, want %s", got, want)
+	}
+	for _, tool := range []string{"edit", "bash", "webfetch", "task"} {
+		if got := string(doc.Permission[tool]); got != `"deny"` {
+			t.Fatalf("%s = %s, want deny", tool, got)
+		}
+	}
+	// Without readable directories everything outside stays denied, and LOOP
+	// invocations keep full access.
+	if err := WriteAgentCLIMCPConfig(AgentCLIOpenCode, HostAgentCLIHome(home), map[string]any{}, AgentCLIMCPOptions{ReadOnly: true}); err != nil {
+		t.Fatal(err)
+	}
+	data, _ = os.ReadFile(filepath.Join(home, ".config/opencode/opencode.json"))
+	if !strings.Contains(string(data), `"external_directory": "deny"`) {
+		t.Fatalf("read-only without dirs: %s", data)
+	}
+	if err := WriteAgentCLIMCPConfig(AgentCLIOpenCode, HostAgentCLIHome(home), map[string]any{}, AgentCLIMCPOptions{ReadableDirs: []string{attachments}}); err != nil {
+		t.Fatal(err)
+	}
+	data, _ = os.ReadFile(filepath.Join(home, ".config/opencode/opencode.json"))
+	if !strings.Contains(string(data), `"external_directory": "allow"`) {
+		t.Fatalf("LOOP permission: %s", data)
+	}
+}
+
+func mustJSONString(t *testing.T, s string) []byte {
+	t.Helper()
+	data, err := json.Marshal(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return data
+}
+
 func TestWriteKimiChatAgent(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "agent.md")
 	if err := WriteKimiChatAgent(path, "Be terse."); err != nil {

@@ -33,7 +33,13 @@ func prepareAssistantAgentCLIInvocation(kind string, o assistantEngineInvocation
 		}
 		entries[id] = entry
 	}
-	if err := runtime.WriteAgentCLIMCPConfig(kind, runtime.AgentCLIHome{Base: o.Root, Rel: "home"}, entries, runtime.AgentCLIMCPOptions{ReadOnly: !o.Workspace}); err != nil {
+	mcpOptions := runtime.AgentCLIMCPOptions{ReadOnly: !o.Workspace}
+	if mcpOptions.ReadOnly {
+		// The prompt hands attachments over by their path under the session
+		// root (conversationAttachmentNote), outside the CLI's ws directory.
+		mcpOptions.ReadableDirs = []string{filepath.Join(o.Root, conversationAttachmentsDir)}
+	}
+	if err := runtime.WriteAgentCLIMCPConfig(kind, runtime.AgentCLIHome{Base: o.Root, Rel: "home"}, entries, mcpOptions); err != nil {
 		return assistantCLIInvocation{}, err
 	}
 	resume := ""
