@@ -23,6 +23,16 @@ func (e *Engine) saveConversationWorkspaceAfterUse(ctx context.Context, id, toke
 	return err
 }
 
+// A runner gate that is still releasing is transient, so the save waits for
+// it. A gate that stays busy must not re-download the workspace ten times a
+// second for the whole save budget: the save stops and records the failure, and
+// the checkpoint retry backoff owns the next attempt.
+const (
+	conversationSaveBusyAttempts = 10
+	conversationSaveBusyDelay    = 100 * time.Millisecond
+	conversationSaveBusyMaxDelay = 500 * time.Millisecond
+)
+
 // EndConversationWorkspaceUseAsync only transfers the lease on the foreground
 // path. Compression, upload and publication run independently of the turn.
 // Foreground use can supersede this lease, even from another API instance.
@@ -58,6 +68,8 @@ func (e *Engine) EndConversationWorkspaceUseAsync(ctx context.Context, id, token
 				}
 			}
 		}()
+		busyDelay := conversationSaveBusyDelay
+		busyAttempts := 0
 		for {
 			err = e.saveConversationWorkspaceAfterUse(saveCtx, id, saveToken)
 			meta, exists := e.repo.WorkspaceCheckpoint(id)
@@ -65,11 +77,18 @@ func (e *Engine) EndConversationWorkspaceUseAsync(ctx context.Context, id, token
 				err = nil // superseded: never publish an error or clear the new lease
 				break
 			}
-			if errors.Is(err, repo.ErrWorkspaceInUse) && saveCtx.Err() == nil {
+			if errors.Is(err, repo.ErrWorkspaceInUse) && saveCtx.Err() == nil && busyAttempts < conversationSaveBusyAttempts {
 				// A preceding export may still be releasing its runner gate.
+				busyAttempts++
 				select {
 				case <-saveCtx.Done():
-				case <-time.After(100 * time.Millisecond):
+				case <-time.After(busyDelay):
+				}
+				if busyDelay < conversationSaveBusyMaxDelay {
+					busyDelay *= 2
+					if busyDelay > conversationSaveBusyMaxDelay {
+						busyDelay = conversationSaveBusyMaxDelay
+					}
 				}
 				continue
 			}

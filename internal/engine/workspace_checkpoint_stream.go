@@ -18,6 +18,18 @@ import (
 )
 
 func (e *Engine) saveConversationWorkspace(ctx context.Context, run domain.Run, token string) error {
+	// Packaging and transferring an archive can outlast the lease it started
+	// with: a foreground handoff keeps the turn's expiry, and publishing only
+	// accepts a live lease, so the same token would fail forever. Renew only a
+	// lapsed lease of this token: a live one was issued by the caller's own
+	// clock (the idle sweeper, or another API instance), and rewriting its
+	// expiry with this host's clock could shorten it. A failure here keeps
+	// every file in place.
+	if meta, ok := e.repo.WorkspaceCheckpoint(run.ID); ok && meta.LeaseToken == token && (meta.LeaseUntil == nil || !meta.LeaseUntil.After(time.Now().UTC())) {
+		if err := e.repo.RenewWorkspaceUse(run.ID, token, time.Now().UTC()); err != nil {
+			return fmt.Errorf("renew workspace save lease: %w", err)
+		}
+	}
 	file, err := os.CreateTemp("", "agentflow-checkpoint-save-")
 	if err != nil {
 		return err
