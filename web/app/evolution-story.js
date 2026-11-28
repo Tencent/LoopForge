@@ -207,10 +207,10 @@ function evoStoryReleaseHTML(m,p){
     <header class="evo-story-section-head"><h2 id="evoReleaseTitle">${evoReviewIcon('sparkles')}发布建议</h2></header>
     <div id="evoReleaseAdvice" role="status">${evoStoryReleaseAdviceHTML(m,p)}</div>
     <div class="evo-release-eval">
-      <div class="evo-release-eval-head"><b>智能评测</b>${scores?`<span>通过线 ${scores.threshold} 分</span>`:''}</div>
+      <div class="evo-release-eval-head"><b>智能评测</b>${scores?`<span>${lfT(`通过线 ${scores.threshold} 分`, `pass mark ${scores.threshold} pts`)}</span>`:''}</div>
       ${scores?`<div class="evo-release-score">
-        <span>原版 <b>${scores.before}</b></span><span aria-hidden="true">→</span><span>修改稿 <strong>${scores.after}</strong> 分</span>
-        ${kbBadge(`${delta>0?'+':''}${delta} 分`,delta>0?'ok':delta<0?'err':'')}
+        <span>原版 <b>${scores.before}</b></span><span aria-hidden="true">→</span><span>修改稿 <strong>${scores.after}</strong> ${lfT('分', 'pts')}</span>
+        ${kbBadge(lfT(`${delta>0?'+':''}${delta} 分`, `${delta>0?'+':''}${delta} pts`),delta>0?'ok':delta<0?'err':'')}
       </div>
       <details id="evoReleaseEvalDetails">
         <summary>查看评分明细</summary>
