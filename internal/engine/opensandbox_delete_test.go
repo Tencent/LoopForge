@@ -310,10 +310,10 @@ func TestOpenSandboxCreateRejectionAdoptsExistingSandbox(t *testing.T) {
 	}
 }
 
-// 408, 429 and 5xx leave the create outcome unknown, so the pending flag must
+// A conflict without a visible sandbox also leaves the outcome unknown. The intent must
 // stay for lookup-only recovery instead of letting a retry POST again.
 func TestOpenSandboxCreateUncertainOutcomeKeepsPending(t *testing.T) {
-	for _, status := range []int{http.StatusInternalServerError, http.StatusRequestTimeout, http.StatusTooManyRequests} {
+	for _, status := range []int{http.StatusConflict, http.StatusInternalServerError, http.StatusRequestTimeout, http.StatusTooManyRequests} {
 		t.Run(http.StatusText(status), func(t *testing.T) {
 			const scope, runID = "uncertain-test", "run-os-uncertain"
 			var creates atomic.Int32

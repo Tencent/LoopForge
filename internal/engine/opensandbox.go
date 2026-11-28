@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 	"time"
 
@@ -185,6 +186,10 @@ func (e *Engine) provisionOpenSandbox(ctx context.Context, client *opensandbox.C
 				// The lookup failed for another reason, so this attempt's
 				// outcome is unknown. Keep the pending flag for the next one.
 				return "", findErr
+			} else if rejected.Status == http.StatusConflict {
+				// A duplicate may exist before it appears in the provider's list.
+				// Keep the intent and let the next attempt look up the same sandbox.
+				return "", fmt.Errorf("OpenSandbox 创建冲突，等待原执行环境可见: %v", err)
 			}
 		}
 		if err != nil && !errors.As(err, &rejected) {
