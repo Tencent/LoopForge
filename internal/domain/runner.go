@@ -2,6 +2,7 @@ package domain
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"path"
@@ -29,7 +30,7 @@ const (
 	PlatformRunnerName          = "平台执行机器（云端）"
 )
 
-// DefaultRunnerRunLimit is the initial SOP run limit for each execution machine.
+// DefaultRunnerRunLimit is the initial LOOP run limit for each execution machine.
 const DefaultRunnerRunLimit = 10
 
 type RunnerLoad struct {
@@ -46,6 +47,8 @@ type PlatformRunnerStatus struct {
 	CloudPool       bool        `json:"cloudPool"`
 	CloudPoolOnline int         `json:"cloudPoolOnline"`
 	Load            *RunnerLoad `json:"load"`
+
+	AllowPrivilegedSandbox bool `json:"allowPrivilegedSandbox"`
 }
 
 // RunnerTask states. LEASED sits between QUEUED and RUNNING so a claim that
@@ -200,15 +203,22 @@ func (r Runner) SupportsGitPlainHTTP() bool {
 
 const RunnerGitPlainHTTPUpgradeMessage = "Git HTTP 仓库需要 Runner " + RunnerVersionGitPlainHTTP + " 或更新版本，请先升级执行机器"
 
-// RunnerVersionPrivilegedSandbox is the first runner that applies the Docker
-// privilege setting in a frozen sandbox profile.
-const RunnerVersionPrivilegedSandbox = "0.12.5"
+// RunnerVersionPrivilegedSandbox is the minimum version that enforces the
+// execution machine's saved permission for privileged Docker sandboxes.
+const RunnerVersionPrivilegedSandbox = "0.13.2"
+
+const RunnerPrivilegedSandboxHeader = "X-AgentFlow-Privileged-Sandbox-Settings"
+const RunnerPrivilegedSandboxUpgradeMessage = "特权 Docker 沙箱需要 Runner " + RunnerVersionPrivilegedSandbox + " 或更新版本，请先升级执行机器"
 
 func (r Runner) ValidatePrivilegedSandboxVersion(profile SandboxProfile) error {
-	if profile.Privileged && !versionAtLeast(r.RunnerVersion, RunnerVersionPrivilegedSandbox) {
-		return fmt.Errorf("特权 Docker 沙箱需要 Runner %s 或更新版本，请先升级执行机器", RunnerVersionPrivilegedSandbox)
+	if profile.Privileged && !r.SupportsPrivilegedSandboxSettings() {
+		return errors.New(RunnerPrivilegedSandboxUpgradeMessage)
 	}
 	return nil
+}
+
+func (r Runner) SupportsPrivilegedSandboxSettings() bool {
+	return versionAtLeast(r.RunnerVersion, RunnerVersionPrivilegedSandbox)
 }
 
 const RunnerVersionDockerSandboxLimits = "0.12.6"
@@ -235,7 +245,7 @@ func (r Runner) FilterGitHTTPCredentials(credentials map[string]GitHTTPExecution
 }
 
 // RunnerVersionProjectCredentials adds in-memory project environment values
-// to authenticated SOP task claims and conversation process starts.
+// to authenticated LOOP task claims and conversation process starts.
 const RunnerVersionProjectCredentials = "0.12.1"
 
 func (r Runner) SupportsProjectCredentials() bool {
@@ -245,14 +255,22 @@ func (r Runner) SupportsProjectCredentials() bool {
 // RunnerVersionArtifactTransfer introduced task-scoped streaming for SOP files.
 const RunnerVersionArtifactTransfer = "0.13.0"
 
+// RunnerVersionEvolutionReplay is the first runner version that honors
+// RunnerInvocation.DisableBrowser during isolated evolution replays.
+const RunnerVersionEvolutionReplay = "0.13.1"
+
 const RunnerResultReportError = "执行结果回传失败"
 
 func (r Runner) SupportsArtifactTransfer() bool {
 	return versionAtLeast(r.RunnerVersion, RunnerVersionArtifactTransfer)
 }
 
+func (r Runner) SupportsEvolutionReplayDisableBrowser() bool {
+	return versionAtLeast(r.RunnerVersion, RunnerVersionEvolutionReplay)
+}
+
 // RunnerVersionConversationSOPWorkspace discovers nested conversation checkouts
-// and prepares them inside the SOP sandbox while preserving local work.
+// and prepares them inside the LOOP sandbox while preserving local work.
 const RunnerVersionConversationSOPWorkspace = "0.12.3"
 
 func (r Runner) SupportsConversationSOPWorkspace() bool {
@@ -284,7 +302,7 @@ type Runner struct {
 	// NativeSandboxAvailable is reported by the daemon. Older Runners leave it
 	// false so the platform does not choose native automatically for them.
 	NativeSandboxAvailable bool `json:"nativeSandboxAvailable"`
-	// RunLimit caps concurrently admitted top-level SOP runs on a personal
+	// RunLimit caps concurrently admitted top-level LOOP runs on a personal
 	// machine, counted like the project limit. 0 means unlimited.
 	RunLimit   int             `json:"runLimit"`
 	Status     string          `json:"status"`
@@ -301,6 +319,8 @@ type Runner struct {
 	SessionExpiresAt *time.Time            `json:"-"`
 	CreatedAt        time.Time             `json:"createdAt"`
 	UpdatedAt        time.Time             `json:"updatedAt"`
+
+	AllowPrivilegedSandbox bool `json:"allowPrivilegedSandbox"`
 }
 
 // PublicRunner strips credential material before returning runner data to
@@ -677,6 +697,7 @@ type RunnerInvocation struct {
 	InvocationID    string                  `json:"invocationId,omitempty"`
 	ResumeSessionID string                  `json:"resumeSessionId,omitempty"`
 	GateResultPath  string                  `json:"gateResultPath,omitempty"`
+	DisableBrowser  bool                    `json:"disableBrowser,omitempty"`
 	Executor        ExecutorDefinition      `json:"executor"`
 	Agent           AgentDefinition         `json:"agent"`
 	Assets          AgentAssetBundle        `json:"assets"`
@@ -734,7 +755,7 @@ type RunnerInvocation struct {
 	// authenticated claim/control dispatch and never persisted in the task.
 	GitHTTPUserID      int64                                 `json:"gitHttpUserId,omitempty"`
 	GitHTTPCredentials map[string]GitHTTPExecutionCredential `json:"gitHttpCredentials,omitempty"`
-	// The first SOP Agent may recover a failed automatic checkout. The runner
+	// The first LOOP Agent may recover a failed automatic checkout. The runner
 	// validates the frozen repository and branch before reporting success.
 	RepositoryPreparationFallback bool `json:"repositoryPreparationFallback,omitempty"`
 	// Repositories lists every repository the run touches (multi-repository
@@ -759,7 +780,7 @@ type RunnerRepository struct {
 	// CreateNewWorkBranch creates WorkBranch from the base ref and fails when a
 	// same-named remote head already exists.
 	CreateNewWorkBranch bool `json:"createNewWorkBranch,omitempty"`
-	// PreserveCheckout starts a generated SOP branch at the existing local
+	// PreserveCheckout starts a generated LOOP branch at the existing local
 	// HEAD when the checkout was supplied by a conversation.
 	PreserveCheckout bool `json:"preserveCheckout,omitempty"`
 	// Dir is the workspace-relative checkout directory. Empty selects the

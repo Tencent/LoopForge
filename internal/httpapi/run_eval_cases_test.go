@@ -37,7 +37,7 @@ func TestRunEvalCloneAndApplyBranches(t *testing.T) {
 	if _, err := h.ensureProjectAgent(run, "cvb-eval-p", "missing"); err == nil {
 		t.Fatal("missing agent accepted")
 	}
-	if err := f.s.PutWorkflow(domain.WorkflowDefinition{ID: "cvb-shared-wf", Name: "Shared", ProjectID: "elsewhere", Shared: true, SandboxProfileID: "test-native", Nodes: run.WorkflowSnapshot.Nodes}); err != nil {
+	if err := f.s.PutWorkflow(domain.WorkflowDefinition{ID: "cvb-shared-wf", Name: "Shared", Version: 4, Status: "published", ProjectID: "elsewhere", Shared: true, SandboxProfileID: "test-native", Nodes: run.WorkflowSnapshot.Nodes}); err != nil {
 		t.Fatal(err)
 	}
 	if err := f.s.PutAgent(domain.AgentDefinition{ID: "cvb-eval-agent", Name: "Shared agent", ProjectID: "elsewhere", Shared: true, Version: 2}); err != nil {
@@ -46,7 +46,7 @@ func TestRunEvalCloneAndApplyBranches(t *testing.T) {
 	run.WorkflowID = "cvb-shared-wf"
 	run.WorkflowSnapshot.ID = "cvb-shared-wf"
 	wf, err := h.ensureProjectWorkflow(run, "cvb-eval-p", run.WorkflowID)
-	if err != nil || wf.ProjectID != "cvb-eval-p" {
+	if err != nil || wf.ProjectID != "cvb-eval-p" || wf.Status != "draft" || wf.Version != 1 || wf.PublishedRevision != 0 {
 		t.Fatalf("workflow clone: %+v %v", wf, err)
 	}
 	agent, err := h.ensureProjectAgent(run, "cvb-eval-p", "cvb-eval-agent")
@@ -82,6 +82,16 @@ func TestRunEvalCloneAndApplyBranches(t *testing.T) {
 	// the role editor; otherwise two revisions share one version number.
 	if updated, ok := f.s.Agent(agent.ID); !ok || updated.Version != agent.Version+1 {
 		t.Fatalf("role recommendation did not bump the version: %+v", updated)
+	}
+
+	legacy, _ := f.s.Workflow(wf.ID)
+	legacy.Version = 4 // Evaluation copies used to retain the source version.
+	if err := f.s.PutWorkflow(legacy); err != nil {
+		t.Fatal(err)
+	}
+	published := requestJSONAuthed[domain.WorkflowDefinition](t, f.h, f.user, http.MethodPost, "/api/workflows/"+wf.ID+"/publish", nil, http.StatusOK)
+	if published.Version != 1 || published.Status != "published" || published.PublishedRevision != published.Revision {
+		t.Fatalf("first publication of legacy evaluation copy: %+v", published)
 	}
 
 	failure := domain.RunEvalRecord{ID: "cvb-fail-eval", RunID: run.ID, Status: domain.RunEvalRunning}
@@ -383,7 +393,7 @@ func TestRunEvalLiveStreamAndPersistenceErrors(t *testing.T) {
 	}
 	h := &runsHandlers{deps: &deps{repo: f.s}, evalJobs: newRunEvalHub()}
 	job := &runEvalJob{runID: run.ID, evalID: "eval", subs: map[chan runEvalJobEvent]struct{}{}, done: make(chan struct{})}
-	emitRunEvalStage(job.publish, "collecting", "正在整理本次 SOP 轨迹")
+	emitRunEvalStage(job.publish, "collecting", "正在整理本次 LOOP 轨迹")
 	h.evalJobs.jobs[run.ID] = job
 	router := gin.New()
 	router.GET("/api/runs/:id/eval/stream", h.streamRunEval)

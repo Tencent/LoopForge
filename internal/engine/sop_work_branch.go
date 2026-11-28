@@ -143,7 +143,7 @@ func validateSOPWorkBranch(branch string, repository domain.RepositoryContext, d
 
 func (e *Engine) generateSOPWorkBranch(ctx context.Context, request SOPWorkBranchRequest, validate func(context.Context, string) error) (string, error) {
 	if e.GenerateSOPWorkBranch == nil {
-		return "", fmt.Errorf("AI 分支命名不可用，请检查 SOP 执行器")
+		return "", fmt.Errorf("AI 分支命名不可用，请检查 LOOP 执行器")
 	}
 	ctx, cancel := context.WithTimeout(ctx, time.Minute)
 	defer cancel()

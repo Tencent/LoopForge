@@ -107,7 +107,7 @@ func (h *scheduleHandlers) scheduleJobs(c *gin.Context) {
 				return
 			}
 			if job.WorkflowID == "" {
-				c.JSON(400, map[string]string{"error": "触发任务必须选择默认 SOP"})
+				c.JSON(400, map[string]string{"error": "触发任务必须选择默认 LOOP"})
 				return
 			}
 			job.AssistantPrompt = ""
@@ -193,6 +193,7 @@ func (h *scheduleHandlers) scheduleJobs(c *gin.Context) {
 		job.LastAssistantMessage = prior.LastAssistantMessage
 		job.LastTraceID = prior.LastTraceID
 		job.LastSessionID = prior.LastSessionID
+		job.LastSessionGone = false
 		// The pinned conversation is chosen by the first fixed-mode run, never
 		// by a save; leaving fixed mode unpins it, so re-enabling starts fresh.
 		job.FixedSessionID = ""

@@ -91,6 +91,18 @@ func TestProjectCredentialStorageAndRotation(t *testing.T) {
 			if err != nil || len(env) != 2 || env["REGISTRY_LOGIN"] != username || env["REGISTRY_PASSWORD"] != replacement {
 				t.Fatalf("rotate and preserve fields: %v", err)
 			}
+			ids := []string{id, "missing-binding"}
+			available, err := st.AvailableProjectCredentialMetadata(ctx, projectID, ids)
+			if err != nil || len(available) != 1 || available[0].ID != id {
+				t.Fatalf("available binding metadata: %v, count %d", err, len(available))
+			}
+			env, err = st.ResolveAvailableProjectCredentialEnv(ctx, projectID, ids)
+			if err != nil || len(env) != 2 || env["REGISTRY_PASSWORD"] != replacement {
+				t.Fatalf("available binding environment: %v", err)
+			}
+			if _, err := st.ResolveProjectCredentialEnv(ctx, projectID, ids); !errors.Is(err, ErrProjectCredentialUnavailable) {
+				t.Fatalf("strict resolution accepted a missing binding: %v", err)
+			}
 			input.Disabled = true
 			input.Fields = []domain.ProjectCredentialVariableInput{{Name: "REGISTRY_LOGIN"}, {Name: "REGISTRY_PASSWORD"}}
 			if _, err := st.SaveProjectCredential(ctx, projectID, id, false, input); err != nil {
@@ -98,6 +110,9 @@ func TestProjectCredentialStorageAndRotation(t *testing.T) {
 			}
 			if _, err := st.ResolveProjectCredentialEnv(ctx, projectID, []string{id}); !errors.Is(err, ErrProjectCredentialUnavailable) {
 				t.Fatalf("disabled credential resolved: %v", err)
+			}
+			if env, err := st.ResolveAvailableProjectCredentialEnv(ctx, projectID, ids); err != nil || len(env) != 0 {
+				t.Fatalf("only disabled or missing credentials should yield an empty environment: %v", err)
 			}
 
 			t.Setenv("AGENTFLOW_PROJECT_CREDENTIAL_KEY", base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{1}, 32)))

@@ -73,6 +73,11 @@ const readOnly = [
   ['/api/knowledge/usage', d => assert.ok(d)],
   ['/api/knowledge/candidates', d => assert.ok(d)],
   ['/api/knowledge/submissions', d => assert.ok(d)],
+  ['/api/knowledge/connector-types', d => assert.ok(Array.isArray(d) && d.length > 0)],
+  ['/api/knowledge/connectors', d => assert.ok(Array.isArray(d))],
+  ['/api/knowledge/reference-options', d => assert.ok(Array.isArray(d))],
+  ['/api/knowledge/usage/events', d => assert.ok(d && Array.isArray(d.items))],
+  ['/api/knowledge/oauth/presets', d => assert.ok(d && Array.isArray(d.presets))],
 ];
 
 for (const [path, check] of readOnly) {
@@ -99,7 +104,7 @@ test('current user resolves through the token and model credentials are explicit
 });
 
 test('unknown resources answer 404 instead of 500', async () => {
-  for (const path of ['/api/runs/run-does-not-exist', '/api/workflows/e2e-missing', '/api/agents/e2e-missing', '/api/projects/e2e-missing']) {
+  for (const path of ['/api/runs/run-does-not-exist', '/api/workflows/e2e-missing', '/api/agents/e2e-missing', '/api/projects/e2e-missing', '/api/knowledge/connectors/e2e-missing']) {
     await api('GET', path, undefined, { expect: 404 });
   }
 });

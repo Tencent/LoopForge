@@ -328,11 +328,18 @@ function ActivityGroup({ block, live, interrupted, expandAll, badges }) {
     </div>
   );
 }
-function Narration({ blocks, live, interrupted, expandAll = false, badges }) {
+function Narration({
+  blocks,
+  live,
+  interrupted,
+  expandAll = false,
+  badges,
+  citationProps = null,
+}) {
   return blocks.map((block) =>
     block.type === "text" ? (
       <div key={block.id} className="reply-trace-text">
-        <RichContent message={block.text} />
+        <RichContent message={block.text} {...citationProps} />
       </div>
     ) : (
       <ActivityGroup
@@ -352,6 +359,11 @@ export function ReplyTimeline({
   finishedAt,
   live = false,
   interrupted = false,
+  knowledgeReads = null,
+  knowledgeSummary = null,
+  citationsEnabled = false,
+  streaming = false,
+  onCitationClick = null,
   approvals = [],
 }) {
   return (
@@ -364,6 +376,13 @@ export function ReplyTimeline({
         interrupted={interrupted}
         approvals={approvals}
         narration={traceBlocks(steps, { live })}
+        citationProps={{
+          knowledgeReads,
+          knowledgeSummary,
+          citationsEnabled,
+          streaming,
+          onCitationClick,
+        }}
       />
     </div>
   );
@@ -381,10 +400,11 @@ export default function ActivityTrace({
   interrupted = false,
   approvals = [],
   narration = null,
+  citationProps = null,
 }) {
   const [expanded, setExpanded] = useState(false);
   const [now, setNow] = useState(Date.now);
-  // Fold the trace once its turn finishes (an SOP node keeps this instance).
+  // Fold the trace once its turn finishes (a LOOP node keeps this instance).
   useEffect(() => {
     if (!live) setExpanded(false);
   }, [live]);
@@ -424,7 +444,13 @@ export default function ActivityTrace({
         <div className="execution-body" aria-label="执行过程">
           {blocks.length ? (
             <>
-              <Narration blocks={blocks} live interrupted={interrupted} badges={badges} />
+              <Narration
+                blocks={blocks}
+                live
+                interrupted={interrupted}
+                badges={badges}
+                citationProps={citationProps}
+              />
               {/* A CLI that names the tool differently still shows what waits. */}
               {unmatched.map((item) => (
                 <div className="execution-waiting" data-approval="waiting" key={item.id}>
@@ -485,6 +511,7 @@ export default function ActivityTrace({
               live={false}
               interrupted={interrupted}
               expandAll
+              citationProps={citationProps}
             />
           ) : (
             <p className="execution-empty">这条历史回复未保存执行过程。</p>

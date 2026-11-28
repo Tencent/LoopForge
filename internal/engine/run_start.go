@@ -52,7 +52,7 @@ func (e *Engine) StartWithExecutionContext(workflowID, input string, repository 
 // StartWithRepositoriesContext starts a run with one or more repositories.
 // Each repository is checked out into a first-level
 // sub-directory, gets its work branch and, on scheduled runs, its own
-// integration merge and MR. SOP deliverables stay at the run workspace root.
+// integration merge and MR. LOOP deliverables stay at the run workspace root.
 func (e *Engine) StartWithRepositoriesContext(workflowID, input string, repositories []domain.RepositoryContext, executionContext domain.TelemetryContext) (domain.Run, error) {
 	return e.StartWithRepositories(context.Background(), workflowID, input, repositories, executionContext)
 }
@@ -85,7 +85,7 @@ func (e *Engine) StartWithRepositories(ctx context.Context, workflowID, input st
 			}
 		}
 		if !allowed {
-			return domain.Run{}, fmt.Errorf("SOP 不在共享任务的引用范围内")
+			return domain.Run{}, fmt.Errorf("LOOP 不在共享任务的引用范围内")
 		}
 	}
 	return e.startWorkflowDefinition(ctx, wf, input, repositories, executionContext, false)
@@ -94,6 +94,17 @@ func (e *Engine) StartWithRepositories(ctx context.Context, workflowID, input st
 // startWorkflowDefinition also accepts a run-only conversation workspace definition.
 // It never writes a template to the catalog.
 func (e *Engine) startWorkflowDefinition(ctx context.Context, wf domain.WorkflowDefinition, input string, repositories []domain.RepositoryContext, executionContext domain.TelemetryContext, workspace bool) (domain.Run, error) {
+	return e.startWorkflowDefinitionSeeded(ctx, wf, input, repositories, executionContext, workspace, nil)
+}
+
+// startWorkflowDefinitionSeeded lets seed adjust the new run (node states,
+// artifacts) after every node is initialized and before it is persisted.
+func (e *Engine) startWorkflowDefinitionSeeded(ctx context.Context, wf domain.WorkflowDefinition, input string, repositories []domain.RepositoryContext, executionContext domain.TelemetryContext, workspace bool, seed func(*domain.Run)) (domain.Run, error) {
+	if executionContext.IsEvolutionReplay() {
+		if err := e.validateEvolutionReplayDefinition(wf, repositories); err != nil {
+			return domain.Run{}, err
+		}
+	}
 	workflowID := wf.ID
 	repositories = normalizeRepositories(repositories)
 	if executionContext.ParentRunID == "" || !executionContext.ExecutionPinned || executionContext.WorkspaceRunID == "" {
@@ -125,7 +136,7 @@ func (e *Engine) startWorkflowDefinition(ctx context.Context, wf domain.Workflow
 			executionContext.ProjectID = wf.ProjectID
 		}
 		if executionContext.ProjectID != wf.ProjectID {
-			return domain.Run{}, apperr.New(apperr.Forbidden, "只能在当前项目运行其私有 SOP")
+			return domain.Run{}, apperr.New(apperr.Forbidden, "只能在当前项目运行其私有 LOOP")
 		}
 	}
 	wf = defaultWorkflowSandboxProfile(wf)
@@ -146,7 +157,7 @@ func (e *Engine) startWorkflowDefinition(ctx context.Context, wf domain.Workflow
 		var ok bool
 		parent, ok = e.repo.RunState(executionContext.ParentRunID)
 		if !ok {
-			return domain.Run{}, fmt.Errorf("父 SOP 运行不存在")
+			return domain.Run{}, fmt.Errorf("父 LOOP 运行不存在")
 		}
 		if wf.AutoSelectSandbox {
 			workspaceSandboxID = parent.WorkflowSnapshot.SandboxProfileID
@@ -252,6 +263,10 @@ func (e *Engine) startWorkflowDefinition(ctx context.Context, wf domain.Workflow
 	}
 	executionContext.RunID, executionContext.TraceID, executionContext.WorkflowID, executionContext.WorkflowVersion = id, id, workflowID, wf.Version
 	wf.SandboxSnapshot = sandbox
+	var canaryNames []string
+	if !workspace {
+		executionContext.EvolutionCanaryIDs, canaryNames = e.assignEvolutionCanaries(id, wf, executionContext)
+	}
 	r := domain.Run{
 		ID: id, WorkflowID: workflowID, WorkflowSnapshot: wf, Status: "running", Input: input,
 		Repository: firstRepository, ExecutionContext: executionContext, Nodes: map[string]*domain.NodeRun{},
@@ -283,6 +298,12 @@ func (e *Engine) startWorkflowDefinition(ctx context.Context, wf domain.Workflow
 			e.event(&r, "", "workspace.shared", "复用对话工作区 "+workspaceRunID(r))
 		}
 	}
+	if len(canaryNames) > 0 {
+		e.event(&r, "", "evolution.canary", "本次运行参与进化试用，使用「"+strings.Join(canaryNames, "、")+"」的候选正文")
+	}
+	if seed != nil {
+		seed(&r)
+	}
 	executeHere := executeRuns && !workspace && (!borrowsConversationWorkspace(r) || !e.workspaceBlocked(r))
 	if executeHere {
 		if strings.TrimSpace(instanceID) == "" || ttl <= 0 {
@@ -303,6 +324,9 @@ func (e *Engine) startWorkflowDefinition(ctx context.Context, wf domain.Workflow
 	}
 	if current, ok := e.repo.RunState(r.ID); ok {
 		r = current
+	}
+	if !workspace {
+		e.recordRunAssetPins(r)
 	}
 	e.publish(r.ID)
 	if r.Status == "queued" {

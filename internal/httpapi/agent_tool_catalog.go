@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"agentflow/internal/knowledge"
 	"context"
 	"encoding/json"
 	"errors"
@@ -271,7 +272,7 @@ func tapdInnerToolAllowed(mode AgentToolMode, name string) bool {
 
 func (h *agentToolGateway) buildCatalog(ctx context.Context, session *AgentToolSession) []agentToolDescriptor {
 	if session != nil && session.RuntimeMode == domain.AssistantModeWorkspace {
-		out := workspaceIntegrationCatalog(session)
+		out := append(workspaceIntegrationCatalog(session), h.knowledgeReferenceCatalog(ctx, session)...)
 		for i, tool := range out {
 			if tool.Name == "workbench_workspace_open" {
 				out[i] = h.workspaceOpenDescriptorFor(session)
@@ -422,6 +423,7 @@ func (h *agentToolGateway) buildCatalog(ctx context.Context, session *AgentToolS
 	if len(mainBotWorkspaceTools(session)) > 0 {
 		out = append(out, h.workspaceOpenDescriptorFor(session))
 	}
+	out = append(out, h.knowledgeReferenceCatalog(ctx, session)...)
 	out = append(out, mainBotBrowserTools(session)...)
 	out = append(out, terminalToolDescriptors(session.Mode, session.ExecMode)...)
 	session.mu.Lock()
@@ -547,8 +549,51 @@ func mcpToolTextResult(text string, isError bool) map[string]any {
 	}
 }
 
-// sopDesignerCatalog is the SOP designer's whole tool set: the read-only
-// platform tools it needs to look up roles and SOPs, the schema reader and the
+func (h *agentToolGateway) knowledgeReferenceCatalog(ctx context.Context, s *AgentToolSession) []agentToolDescriptor {
+	var out []agentToolDescriptor
+	if len(s.KnowledgeRefs) == 0 {
+		return out
+	}
+	exec := h.deps.executor()
+	if exec == nil {
+		return out
+	}
+	ctx, cancel := context.WithTimeout(ctx, knowledge.CallTimeout)
+	defer cancel()
+	for _, ref := range s.KnowledgeRefs {
+		if ctx.Err() != nil {
+			break
+		}
+		conn, tools, err := exec.ReferenceTools(ctx, s.UserID, ref)
+		if err != nil {
+			logAgentToolEvent("knowledge-catalog-err", "mode="+string(s.Mode), "connector="+ref.ConnectorID, "err="+truncateRunes(err.Error(), 160))
+			s.diagnostics().platform("knowledge.unavailable", ref.ConnectorID+"："+err.Error(), s.User)
+			continue
+		}
+		if len(tools) == 0 {
+			logAgentToolEvent("knowledge-catalog-empty", "mode="+string(s.Mode), "connector="+ref.ConnectorID, "type="+conn.Type)
+			s.diagnostics().platform("knowledge.empty_tools", ref.ConnectorID+"：未发现声明为只读（readOnlyHint）的工具", s.User)
+			continue
+		}
+		ns := knowledgeToolNamespace(ref.ConnectorID)
+		for _, tool := range tools {
+			out = append(out, agentToolDescriptor{
+				Name:         ns + "__" + tool.Name,
+				Kind:         "knowledge",
+				ServerID:     ref.ConnectorID,
+				UpstreamName: tool.Name,
+				InputSchema:  defaultToolSchema(tool.InputSchema),
+				OutputSchema: tool.OutputSchema,
+				Annotations:  tool.Annotations,
+				Description:  knowledgeToolDescription(conn.Name, conn.Type, conn.ID, tool.Name, tool.Description),
+			})
+		}
+	}
+	return out
+}
+
+// sopDesignerCatalog is the LOOP designer's whole tool set: the read-only
+// platform tools it needs to look up roles and LOOPs, the schema reader and the
 // terminal reply tool. External MCPs, workspace and browser tools are left
 // out, so a designer turn can only end in a workflows_save draft.
 func sopDesignerCatalog(session *AgentToolSession) []agentToolDescriptor {

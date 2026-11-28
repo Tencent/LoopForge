@@ -44,7 +44,7 @@ await sweep('run', runs, async run => {
   await api('DELETE', `/api/runs/${run.id}`, undefined, { expect: [200, 204, 400, 404, 409] });
 });
 
-// Open issues keep their SOP binding and block the workflow delete.
+// Open issues keep their LOOP binding and block the workflow delete.
 const openIssues = list(await get(`/api/issues?projectId=${encodeURIComponent(cfg.projectId)}&limit=500`))
   .filter(issue => issue.status !== 'closed' && ours(issue));
 await sweep('issue (close)', openIssues, issue => post(`/api/issues/${issue.id}/close`, {}, { expect: [200, 404, 409] }));
@@ -58,6 +58,7 @@ await sweepCollection('skill', '/api/skills', item => ours(item) && !item.shared
 // mcp-<n>-project-<p> are the platform defaults, re-provisioned for every project.
 await sweepCollection('mcp server', '/api/mcp-servers', item => ours(item) && !item.shared && !/^mcp-\d+-project-/.test(item.id));
 await sweepCollection('sandbox', '/api/sandboxes');
+await sweepCollection('knowledge connector', '/api/knowledge/connectors', item => ours(item) || (all && String(item.name || '').startsWith(cfg.prefix)));
 // Repositories are deleted by query (DELETE /api/repositories?id=…).
 await sweepCollection('repository', '/api/repositories', ours, item => `/api/repositories?id=${encodeURIComponent(item.id)}`);
 // Runner-mode scenarios bind throwaway machines; a killed daemon cannot

@@ -141,7 +141,7 @@ func AssistantTitleFromMessages(messages []domain.AssistantMessage) string {
 
 // Project conversation replies once blanked their stored title, so the history
 // list showed "新对话". Name those rows after their first user message, once.
-// SOP run sessions are always titled by their workflow and are left alone.
+// LOOP run sessions are always titled by their workflow and are left alone.
 func (r *AssistantRepo) backfillAssistantTitles(rows []assistantSessionRow) {
 	index := map[string]int{}
 	var ids []string
@@ -404,7 +404,10 @@ func (r *AssistantRepo) putAssistantSession(userID int64, v domain.AssistantSess
 		v.Archived = old.Archived
 		v.Shared = old.Shared
 		// Environment preferences are changed only by the dedicated, locked setter.
+		v.KnowledgeRestricted = old.KnowledgeRestricted || len(old.KnowledgeRefs) > 0
+		v.KnowledgeRefs = old.KnowledgeRefs
 		v.SandboxProfileID = old.SandboxProfileID
+		v.ProjectCredentialObservations = mergeAssistantCredentialObservations(old, v)
 		v.ProjectCredentialIDs = old.ProjectCredentialIDs
 		if v.WorkspaceRunID == "" {
 			v.WorkspaceRunID = old.WorkspaceRunID
@@ -425,7 +428,7 @@ func (r *AssistantRepo) putAssistantSession(userID int64, v domain.AssistantSess
 		if old.Shared {
 			v.RunID = old.RunID
 			v.ProjectID = old.ProjectID
-			// The first generated title may replace a shared SOP label.
+			// The first generated title may replace a shared LOOP label.
 			// Every other write keeps the title already stored.
 			if !(v.TitleGenerated && !old.TitleGenerated && !old.TitleEdited) {
 				v.Title = old.Title
@@ -471,7 +474,7 @@ func (r *AssistantRepo) putAssistantSession(userID int64, v domain.AssistantSess
 		"model":      strings.TrimSpace(v.Model),
 		"source":     strings.TrimSpace(v.Source),
 		"task_id":    strings.TrimSpace(v.TaskID),
-		"payload":    mustJSON(v),
+		"payload":    encodeAssistantSession(v),
 		"created_at": timePtr(v.CreatedAt),
 		"updated_at": timePtr(v.UpdatedAt),
 	})
@@ -485,7 +488,7 @@ func (r *AssistantRepo) SetAssistantSessionArchived(userID int64, id string, arc
 		}
 		item := decodeAssistantSession(row)
 		item.Archived = archived
-		return tx.Model(&assistantSessionRow{}).Where("id = ? AND user_id = ?", row.ID, userID).Update("payload", mustJSON(item)).Error
+		return tx.Model(&assistantSessionRow{}).Where("id = ? AND user_id = ?", row.ID, userID).Update("payload", encodeAssistantSession(item)).Error
 	})
 }
 
@@ -536,7 +539,7 @@ func (r *AssistantRepo) updateAssistantSessionWorkspace(userID int64, id, projec
 			return fmt.Errorf("任务会话直接使用任务工作区")
 		}
 		update(&item)
-		return tx.Model(&assistantSessionRow{}).Where("id = ? AND user_id = ?", row.ID, userID).Update("payload", mustJSON(item)).Error
+		return tx.Model(&assistantSessionRow{}).Where("id = ? AND user_id = ?", row.ID, userID).Update("payload", encodeAssistantSession(item)).Error
 	})
 }
 
@@ -731,9 +734,20 @@ func (r *AssistantRepo) taskByID(id string) (domain.AssistantTask, bool) {
 	return decodeAssistantTask(row), true
 }
 
+type assistantSessionPayload struct {
+	domain.AssistantSession
+	CredentialObservations map[string]domain.AssistantProjectCredentialObservation `json:"projectCredentialObservations,omitempty"`
+}
+
+func encodeAssistantSession(item domain.AssistantSession) []byte {
+	return mustJSON(assistantSessionPayload{AssistantSession: item, CredentialObservations: item.ProjectCredentialObservations})
+}
+
 func decodeAssistantSession(row assistantSessionRow) domain.AssistantSession {
-	var item domain.AssistantSession
-	_ = json.Unmarshal(row.Payload, &item)
+	var payload assistantSessionPayload
+	_ = json.Unmarshal(row.Payload, &payload)
+	item := payload.AssistantSession
+	item.ProjectCredentialObservations = payload.CredentialObservations
 	var summary struct {
 		MessageCount int `json:"executionMessageCount"`
 	}
@@ -810,4 +824,17 @@ func decodeAssistantTask(row assistantTaskRow) domain.AssistantTask {
 func (r *AssistantRepo) AssistantTaskExists(projectID, id string) bool {
 	var count int64
 	return r.DB.Model(&assistantTaskRow{}).Where("id = ? AND project_id = ?", id, projectID).Count(&count).Error == nil && count > 0
+}
+
+func (r *AssistantRepo) SetAssistantSessionKnowledge(userID int64, id string, refs []domain.KnowledgeRef) error {
+	return r.DB.Transaction(func(tx *gorm.DB) error {
+		var row assistantSessionRow
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ? AND user_id = ?", assistantRecordID(id), userID).Take(&row).Error; err != nil {
+			return fmt.Errorf("会话不存在")
+		}
+		item := decodeAssistantSession(row)
+		item.KnowledgeRestricted = item.KnowledgeRestricted || len(item.KnowledgeRefs) > 0 || len(refs) > 0
+		item.KnowledgeRefs = refs
+		return tx.Model(&assistantSessionRow{}).Where("id = ? AND user_id = ?", row.ID, userID).Update("payload", mustJSON(item)).Error
+	})
 }

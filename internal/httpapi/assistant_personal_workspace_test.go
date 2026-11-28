@@ -166,8 +166,8 @@ func TestPersonalWorkspaceAccess(t *testing.T) {
 		ID: "private-workspace", Kind: domain.RunKindWorkspace, Status: "waiting",
 		ExecutionContext: domain.TelemetryContext{ResponsibleUserID: owner.ID},
 		Artifacts: []domain.Artifact{{
-			ID: "private-note", RunID: "private-workspace", Name: domain.KnowledgeArtifactBasename,
-			Path: domain.KnowledgeArtifactBasename, Content: "private content", CreatedAt: time.Now().UTC(),
+			ID: "private-note", RunID: "private-workspace", Name: "knowledge.md",
+			Path: "knowledge.md", Content: "private content", CreatedAt: time.Now().UTC(),
 		}},
 	}
 	if err := h.repo.PutRun(run); err != nil {

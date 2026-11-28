@@ -44,6 +44,9 @@ func TestClaimSSHKnownHostsFitsAfterLegacyPayload(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || !req.SupportsGitSSHKnownHosts || !req.SupportsDockerSandboxLimits {
 			t.Errorf("claim did not advertise SSH host pin and Docker limit support: %v", err)
 		}
+		if r.Header.Get(domain.RunnerPrivilegedSandboxHeader) != "1" {
+			t.Error("claim did not advertise privileged sandbox setting support")
+		}
 		_, _ = w.Write(body)
 	}))
 	defer server.Close()
@@ -152,6 +155,10 @@ func TestClientOpenControlWebSocketBranches(t *testing.T) {
 			}
 			if r.Header.Get(domain.RunnerDockerSandboxLimitsHeader) != "1" {
 				http.Error(w, "missing Docker sandbox limit support", http.StatusBadRequest)
+				return
+			}
+			if r.Header.Get(domain.RunnerPrivilegedSandboxHeader) != "1" {
+				http.Error(w, "missing privileged sandbox setting support", http.StatusBadRequest)
 				return
 			}
 			conn, err := upgrader.Upgrade(w, r, nil)

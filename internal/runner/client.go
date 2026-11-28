@@ -70,6 +70,9 @@ func (c *Client) do(ctx context.Context, method, path string, body any, out any)
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
+	if path == runnerTaskClaimPath {
+		req.Header.Set(domain.RunnerPrivilegedSandboxHeader, "1")
+	}
 	if session := c.sessionToken(); session != "" {
 		req.Header.Set("Authorization", "Bearer "+session)
 	}
@@ -191,6 +194,14 @@ func (c *Client) Heartbeat(ctx context.Context, req HeartbeatRequest) (*Heartbea
 	return &out, nil
 }
 
+func (c *Client) privilegedSandboxSetting(ctx context.Context) (bool, error) {
+	var setting struct {
+		Allowed bool `json:"allowed"`
+	}
+	err := c.do(ctx, http.MethodGet, "/runners/privileged-sandbox", nil, &setting)
+	return setting.Allowed, err
+}
+
 // Deregister permanently removes this machine from the platform. It is used
 // by explicit uninstall, not by an ordinary daemon stop or service restart.
 func (c *Client) Deregister(ctx context.Context) error {
@@ -294,6 +305,7 @@ func (c *Client) OpenControl(ctx context.Context) (*websocket.Conn, error) {
 	header := http.Header{}
 	header.Set(domain.RunnerSSHHostKeyProbeHeader, "1")
 	header.Set(domain.RunnerDockerSandboxLimitsHeader, "1")
+	header.Set(domain.RunnerPrivilegedSandboxHeader, "1")
 	if session := c.sessionToken(); session != "" {
 		header.Set("Authorization", "Bearer "+session)
 	}

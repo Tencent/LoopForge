@@ -11,7 +11,7 @@ func CatalogOwned(itemProjectID, currentProjectID string) bool {
 
 // CatalogSharedWith reports whether a catalog item should appear in the
 // "shared" tab of the current project. Legacy items with an empty projectId
-// stay visible as shared so existing production SOPs and roles do not vanish.
+// stay visible as shared so existing production LOOPs and roles do not vanish.
 func CatalogSharedWith(itemProjectID string, shared bool, currentProjectID string) bool {
 	item := strings.TrimSpace(itemProjectID)
 	current := strings.TrimSpace(currentProjectID)

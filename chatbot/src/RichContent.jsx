@@ -12,6 +12,7 @@ import remarkGfm from "remark-gfm";
 import { createPortal } from "react-dom";
 import DOMPurify from "dompurify";
 import HarnessIcon from "./HarnessIcon";
+import KnowledgeSources from "./KnowledgeSources";
 import SlidingTabs from "./SlidingTabs";
 import { attachmentURL, visibleText } from "./api";
 import { definitionTarget } from "./platform.js";
@@ -20,6 +21,16 @@ import {
   agentBrowserTarget,
   remarkWorkspaceLinks,
 } from "./agent-browser-links.js";
+import {
+  buildKnowledgeSummary,
+  collapseAdjacentDuplicateCitations,
+  extractCitedIdsInOrder,
+  filterKnowledgeReadsForAttempt,
+  formatTextForCopy,
+  knowledgeCitePrefix,
+  maskIncompleteStreamingCitation,
+  remarkKnowledgeCitations,
+} from "./knowledge-citations.js";
 import "./agent-browser.css";
 import {
   imageRetryDelay,
@@ -249,13 +260,24 @@ export function CodeBlock({ language, source }) {
     </div>
   );
 }
-const MarkdownAssets = createContext({ assets: [], projectId: "" });
+const MarkdownAssets = createContext({
+  assets: [],
+  projectId: "",
+  knowledgeReads: [],
+  knowledgeSummary: null,
+  citationsEnabled: false,
+  streamingCiteOrder: null,
+  onCitationClick: null,
+});
 // Set inside a link so inline code there does not become a nested control.
 const InsideLink = createContext(false);
 // file:///workspace/... survives URL sanitizing only to be opened in the Agent
 // browser; it is never rendered as an href.
 const markdownURL = (url) =>
-  /^file:\/\/\/workspace\//i.test(url) ? url : defaultUrlTransform(url);
+  /^file:\/\/\/workspace\//i.test(url) ||
+  String(url || "").startsWith(knowledgeCitePrefix)
+    ? url
+    : defaultUrlTransform(url);
 function AgentBrowserLink({ target, open, children }) {
   return (
     <InsideLink.Provider value>
@@ -318,7 +340,61 @@ const markdownComponents = {
     );
   },
   a: ({ href, children }) => {
+    const {
+      knowledgeReads,
+      knowledgeSummary,
+      citationsEnabled,
+      streamingCiteOrder,
+      onCitationClick,
+    } = useContext(MarkdownAssets);
     const openInBrowser = useContext(AgentBrowserLinks);
+    if (citationsEnabled && String(href || "").startsWith(knowledgeCitePrefix)) {
+      const citeId = href.slice(knowledgeCitePrefix.length);
+      const hasReads = Array.isArray(knowledgeReads) && knowledgeReads.length > 0;
+      if (hasReads) {
+        const entry = knowledgeSummary?.byCiteId?.get(citeId);
+        if (!entry) {
+          return (
+            <sup
+              className="knowledge-cite-sup is-unresolved"
+              title="未匹配到有效知识库证据"
+            >
+              ?
+            </sup>
+          );
+        }
+        const tooltip = [
+          entry.doc.sourceName || entry.doc.sourceId,
+          entry.doc.label,
+          entry.locator,
+        ]
+          .filter(Boolean)
+          .join(" · ");
+        return (
+          <sup className="knowledge-cite-wrap">
+            <button
+              type="button"
+              className="knowledge-cite-sup"
+              data-cite-index={entry.citeIndex}
+              title={tooltip || entry.doc.label}
+              aria-label={`引用 [${entry.citeIndex}] ${entry.doc.label}`}
+              onClick={() => onCitationClick?.(entry.citeIndex)}
+            >
+              {entry.citeIndex}
+            </button>
+          </sup>
+        );
+      }
+      const streamNum = streamingCiteOrder?.get(citeId) || "?";
+      return (
+        <sup
+          className="knowledge-cite-sup is-streaming"
+          title="知识库引用（生成完成后显示文档详情）"
+        >
+          {streamNum}
+        </sup>
+      );
+    }
     const target = openInBrowser ? agentBrowserTarget(href) : "";
     if (target)
       return (
@@ -350,26 +426,100 @@ const markdownComponents = {
   ),
 };
 const emptyAssets = [];
-export function RichContent({ message, assets = emptyAssets, projectId = "" }) {
-  const text = typeof message === "string" ? message : visibleText(message);
-  const context = useMemo(() => ({ assets, projectId }), [assets, projectId]);
-  const markdown = useMemo(() => (
-    <Markdown
-      remarkPlugins={[remarkGfm, remarkWorkspaceLinks]}
-      components={markdownComponents}
-      urlTransform={markdownURL}
-    >
-      {text}
-    </Markdown>
-  ), [text]);
+export function RichContent({
+  message,
+  assets = emptyAssets,
+  projectId = "",
+  knowledgeReads = [],
+  knowledgeSummary: precomputedSummary = null,
+  citationsEnabled = false,
+  streaming = false,
+  onCitationClick = null,
+}) {
+  const rawText = typeof message === "string" ? message : visibleText(message);
+  const hasReads = Array.isArray(knowledgeReads) && knowledgeReads.length > 0;
+  const enableCites = hasReads || citationsEnabled;
+  const text = useMemo(
+    () =>
+      streaming && enableCites
+        ? maskIncompleteStreamingCitation(rawText)
+        : rawText,
+    [rawText, streaming, enableCites],
+  );
+  const knowledgeSummary = useMemo(() => {
+    if (!hasReads) return null;
+    if (precomputedSummary) return precomputedSummary;
+    return buildKnowledgeSummary(knowledgeReads, [text], {
+      live: streaming,
+    });
+  }, [hasReads, precomputedSummary, knowledgeReads, text, streaming]);
+  const displayText = useMemo(
+    () =>
+      hasReads && knowledgeSummary
+        ? collapseAdjacentDuplicateCitations(text, knowledgeSummary)
+        : text,
+    [hasReads, knowledgeSummary, text],
+  );
+  const streamingCiteOrder = useMemo(() => {
+    if (!enableCites || hasReads) return null;
+    const ids = extractCitedIdsInOrder([text]);
+    const map = new Map();
+    ids.forEach((id, idx) => map.set(id, idx + 1));
+    return map;
+  }, [enableCites, hasReads, text]);
+  const plugins = useMemo(() => {
+    if (!enableCites) return [remarkGfm, remarkWorkspaceLinks];
+    const resolveDocKey = (citeId) => {
+      const entry = knowledgeSummary?.byCiteId?.get(citeId);
+      if (entry?.citeIndex) return `cite:${entry.citeIndex}`;
+      return `id:${citeId}`;
+    };
+    return [
+      remarkGfm,
+      remarkWorkspaceLinks,
+      [remarkKnowledgeCitations, { resolveDocKey }],
+    ];
+  }, [enableCites, knowledgeSummary]);
+  const contextValue = useMemo(
+    () => ({
+      assets,
+      projectId,
+      knowledgeReads,
+      knowledgeSummary,
+      citationsEnabled: enableCites,
+      streamingCiteOrder,
+      onCitationClick,
+    }),
+    [
+      assets,
+      projectId,
+      knowledgeReads,
+      knowledgeSummary,
+      enableCites,
+      streamingCiteOrder,
+      onCitationClick,
+    ],
+  );
+  const markdown = useMemo(
+    () => (
+      <Markdown
+        remarkPlugins={plugins}
+        components={markdownComponents}
+        urlTransform={markdownURL}
+      >
+        {displayText}
+      </Markdown>
+    ),
+    [plugins, displayText],
+  );
   return (
-    <MarkdownAssets.Provider value={context}>
+    <MarkdownAssets.Provider value={contextValue}>
       <div className="markdown">{markdown}</div>
     </MarkdownAssets.Provider>
   );
 }
 
-// Full-window viewer shared by chat images, artifact previews and SOP node
+// Full-window viewer shared by chat images, artifact previews and LOOP node
 // files. Double-click an image to open; Esc closes.
 export function ImageLightbox({ src, alt, onClose }) {
   useEffect(() => {
@@ -547,10 +697,22 @@ function looksBinary(content) {
   const head = content.slice(0, 65536);
   return (head.match(/\uFFFD/g) || []).length > head.length * 0.1;
 }
-export function ArtifactPreview({ artifact }) {
+export function ArtifactPreview({ artifact, knowledgeReads = [], attempt }) {
   const [text, setText] = useState("");
   const [error, setError] = useState("");
   const [mode, setMode] = useState("preview");
+  const [highlightedCite, setHighlightedCite] = useState(null);
+  const sourcesRef = useRef(null);
+  const highlightTimer = useRef(null);
+  useEffect(() => () => window.clearTimeout(highlightTimer.current), []);
+  const handleCitationClick = (citeIndex) => {
+    setHighlightedCite(citeIndex);
+    window.clearTimeout(highlightTimer.current);
+    highlightTimer.current = window.setTimeout(
+      () => setHighlightedCite(null),
+      2000,
+    );
+  };
   const readable =
     !artifact?.mimeType ||
     /^(text\/|application\/(json|javascript|xml))/.test(artifact.mimeType);
@@ -611,10 +773,29 @@ export function ArtifactPreview({ artifact }) {
     typeof source === "string" && source.length > 0 && !error && !binary;
   const isMarkdown =
     artifact.mimeType?.startsWith("text/markdown") ||
-    ["markdown", "md"].includes(artifact.language?.toLowerCase());
+    ["markdown", "md"].includes(artifact.language?.toLowerCase()) ||
+    /\.mdx?$/i.test(artifact.name || "");
   const canPreview =
     hasSource &&
     (["svg", "mermaid", "html", "slides", "ppt"].includes(kind) || isMarkdown);
+  const filteredReads = useMemo(
+    () =>
+      filterKnowledgeReadsForAttempt(
+        knowledgeReads,
+        attempt ?? artifact?.attempt,
+      ),
+    [knowledgeReads, attempt, artifact?.attempt],
+  );
+  const artSummary = useMemo(() => {
+    if (!filteredReads.length || !isMarkdown || !hasSource) return null;
+    return buildKnowledgeSummary(filteredReads, [source], {
+      scopeToTexts: true,
+    });
+  }, [filteredReads, isMarkdown, hasSource, source]);
+  const copyValue =
+    mode === "preview" && isMarkdown && filteredReads.length > 0
+      ? formatTextForCopy(source, filteredReads, artSummary)
+      : source;
   return (
     <article className="artifact-preview">
       <header className="artifact-preview-header">
@@ -663,7 +844,7 @@ export function ArtifactPreview({ artifact }) {
             {hasSource ? (
               <CopyButton
                 className="artifact-preview-icon-action"
-                value={source}
+                value={copyValue}
                 label="复制正文"
               />
             ) : null}
@@ -742,7 +923,24 @@ export function ArtifactPreview({ artifact }) {
         ) : artifact.url && !readable ? (
           <p className="muted">此类型文件可通过右上角下载查看。</p>
         ) : isMarkdown ? (
-          <RichContent message={source} />
+          <>
+            <RichContent
+              message={source}
+              knowledgeReads={filteredReads}
+              knowledgeSummary={artSummary}
+              onCitationClick={handleCitationClick}
+            />
+            {filteredReads.length > 0 ? (
+              <KnowledgeSources
+                knowledgeReads={filteredReads}
+                summary={artSummary}
+                highlightedIndex={highlightedCite}
+                containerRef={sourcesRef}
+                title="产物引用来源"
+                usedLabel="实际用于产出"
+              />
+            ) : null}
+          </>
         ) : (
           <pre className="artifact-source">{source || "正在加载…"}</pre>
         )}

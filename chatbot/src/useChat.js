@@ -120,8 +120,8 @@ export function useChat() {
   const [identity, setIdentity] = useState(null),
     [projects, setProjects] = useState([]),
     [sandboxes, setSandboxes] = useState([]),
+    [draftKnowledgeRefs,setDraftKnowledgeRefs]=useState([]),
     [sandboxProfileId, setSandboxProfileId] = useState(""),
-    [draftProjectCredentialIds, setDraftProjectCredentialIds] = useState([]),
     [sandboxBusy, setSandboxBusy] = useState(false),
     [loadedWorkspace, setLoadedWorkspace] = useState(null),
     [users, setUsers] = useState([]),
@@ -258,7 +258,7 @@ export function useChat() {
       draftExecutorPicked.current = false;
       setSelection((options) => ({ executor: id ? options.executor : accountDefaultsRef.current?.executor || storedExecutor(), model: null, effort: null }));
       setSandboxProfileId("");
-      setDraftProjectCredentialIds([]);
+      setDraftKnowledgeRefs([]);
       currentId.current = id;
       setActiveId(id);
       if (id) setRevealId(id);
@@ -624,8 +624,7 @@ export function useChat() {
       }
       if (strategy === "new") newChat();
       if (id !== projectRef.current) {
-        setSandboxProfileId("");
-        setDraftProjectCredentialIds([]);
+        setSandboxProfileId(""); setDraftKnowledgeRefs([]);
         setDraftIssueId("");
         const url = new URL(location.href);
         url.searchParams.delete("issueId");
@@ -643,7 +642,7 @@ export function useChat() {
     (id) => {
       newChat();
       if (id === projectRef.current) return;
-      setSandboxProfileId("");
+      setSandboxProfileId(""); setDraftKnowledgeRefs([]);
       setProjectId(id);
       syncProject(id);
     },
@@ -670,6 +669,21 @@ export function useChat() {
             if (Array.isArray(sandboxRows)) setSandboxes(sandboxRows);
             if (Array.isArray(projectRows)) setProjects(projectRows);
           }).catch(() => {});
+        return;
+      }
+      if (e.data?.type === "agentflow-chat-open-session") {
+        const sid = typeof e.data.sessionId === "string" ? e.data.sessionId.trim() : "";
+        if (!sid) return;
+        const pid = typeof e.data.projectId === "string" ? e.data.projectId.trim() : "";
+        if (pid) globalProject.current = pid;
+        setRevealId(sid);
+        setActiveId(sid);
+        setError("");
+        void api("/api/assistant/sessions")
+          .then((rows) => {
+            if (Array.isArray(rows)) setSessions(rows);
+          })
+          .catch(() => {});
         return;
       }
       if (e.data?.type !== "agentflow-project-context") return;
@@ -1195,8 +1209,8 @@ export function useChat() {
             id,
             projectId: draft.projectId,
             issueId: draft.issueId,
+            knowledgeRefs: draftKnowledgeRefs,
             sandboxProfileId,
-            projectCredentialIds: draftProjectCredentialIds,
             executionTarget: {pool: executionMachines.defaultRunnerId ? "runner" : "cloud", runnerId: executionMachines.defaultRunnerId || ""},
             ...chosen,
             executor,
@@ -1436,7 +1450,7 @@ export function useChat() {
         if (error.draftChanged && currentId.current === id) setSession(stored);
         throw error;
       }
-      // The session header lets a confirmed SOP continue in this
+      // The session header lets a confirmed LOOP continue in this
       // conversation's workspace.
       const result = await api("/mcp", {
         method: "POST",
@@ -1593,36 +1607,6 @@ export function useChat() {
     } catch (e) { setError(e.message); return false; }
     finally { sandboxBusyRef.current = false; setSandboxBusy(false); }
   }
-  async function selectProjectCredentials(ids) {
-    const current = sessionRef.current;
-    if (submittingRef.current || sandboxBusyRef.current || generation?.status === "running") return false;
-    if (!currentId.current) {
-      setDraftProjectCredentialIds(ids);
-      return true;
-    }
-    if (!current || current.id !== currentId.current || current.shared || current.runId) return false;
-    sandboxBusyRef.current = true;
-    setSandboxBusy(true);
-    setError("");
-    try {
-      const saved = await write(
-        `${sessionPath(current.id)}/project-credentials`,
-        { projectCredentialIds: ids },
-        "PUT",
-      );
-      if (currentId.current === current.id) {
-        sessionRef.current = saved;
-        setSession(saved);
-      }
-      return true;
-    } catch (error) {
-      setError(error.message);
-      return false;
-    } finally {
-      sandboxBusyRef.current = false;
-      setSandboxBusy(false);
-    }
-  }
   const workspaceRunId = session?.workspaceRunId || session?.runId;
   useEffect(() => {
     if (!workspaceRunId) return;
@@ -1697,8 +1681,6 @@ export function useChat() {
     projects,
     sandboxes,
     sandboxProfileId: activeId ? session?.sandboxProfileId || "" : sandboxProfileId,
-    projectCredentialIds: activeId ? session?.projectCredentialIds || [] : draftProjectCredentialIds,
-    selectProjectCredentials,
     sandboxLocked: !!session?.runId,
     sandboxBusy,
     workspaceSandbox: workspaceSandbox || null,
@@ -1706,6 +1688,14 @@ export function useChat() {
     workspaceExecutionError: workspace?.error || "",
     ...executionMachines,
     selectSandbox,
+    knowledgeRefs:activeId ? session?.knowledgeRefs || [] : draftKnowledgeRefs,
+    async saveKnowledgeRefs(refs){
+      const id=activeId;
+      if((id||"")!==(currentId.current||"") || projectId!==projectRef.current)throw new Error("会话已切换，请重新选择知识库");
+      if (!id){setDraftKnowledgeRefs(refs);return}
+      const saved=await write(sessionPath(id)+"/knowledge",{knowledgeRefs:refs},"PUT");
+      if(currentId.current===id){sessionRef.current=saved;setSession(saved)}
+    },
     models: executorModels,
     executor,
     executors: user ? availableExecutors : [],

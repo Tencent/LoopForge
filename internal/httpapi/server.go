@@ -38,12 +38,14 @@ import (
 
 // deps 聚合所有领域 handler 共享的基础依赖与跨领域行为。
 type deps struct {
-	repo       *repo.Store
-	engine     *engine.Engine
-	sync       *tracker.Service
-	schedule   *schedule.Service
-	authClient *auth.Client
-	api        http.Handler
+	repo          *repo.Store
+	engine        *engine.Engine
+	sync          *tracker.Service
+	schedule      *schedule.Service
+	authClient    *auth.Client
+	knowledgeSvc  *knowledge.Service
+	knowledgeExec *knowledge.Executor
+	api           http.Handler
 	// passwordAttempts is this server's brute-force budget (auth_password.go).
 	passwordAttempts *passwordLimiter
 }
@@ -98,6 +100,7 @@ type Server struct {
 	botInteractions *botInteractionHandlers
 	botIdentities   *botIdentityHandlers
 	know            *knowledgeHandlers // knowledge.go / knowledge_proxy.go
+	evolution       *evolutionHandlers // evolution.go / evolution_jobs.go
 }
 
 func New(s *repo.Store, e *engine.Engine, syncSvc *tracker.Service, basicUser, basicPass string) *gin.Engine {
@@ -119,7 +122,7 @@ func (b *Background) gate() <-chan struct{} {
 // caller's shutdown context. The returned stop function cancels and joins them.
 // Cancelling ctx stops claiming; running work is only cancelled by Stop.
 func NewWithNotificationsAndBackground(ctx context.Context, s *repo.Store, e *engine.Engine, syncSvc *tracker.Service, basicUser, basicPass string, notifications *notification.Service, opts BackgroundOptions) (*gin.Engine, *Background) {
-	bg := &Background{recoveryGate: opts.RecoveryGate}
+	bg := &Background{recoveryGate: opts.RecoveryGate, sopDetectionContext: ctx}
 	router := newWithNotifications(s, e, syncSvc, basicUser, basicPass, notifications, bg, func(h *assistantHandlers, runs *runsHandlers) {
 		h.startSessionJanitor(ctx)
 		h.startAttachmentSweeper(ctx)
@@ -128,7 +131,9 @@ func NewWithNotificationsAndBackground(ctx context.Context, s *repo.Store, e *en
 }
 
 func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Service, basicUser, basicPass string, notifications *notification.Service, bg *Background, startBackground func(*assistantHandlers, *runsHandlers)) *gin.Engine {
-	d := &deps{repo: s, engine: e, sync: syncSvc, authClient: auth.NewClientFromEnv(), passwordAttempts: newPasswordLimiter()}
+	knowledgeSvc := knowledge.NewService(s, randomID)
+	knowledgeExec := knowledge.NewExecutor(knowledgeSvc)
+	d := &deps{repo: s, engine: e, sync: syncSvc, authClient: auth.NewClientFromEnv(), knowledgeSvc: knowledgeSvc, knowledgeExec: knowledgeExec, passwordAttempts: newPasswordLimiter()}
 	if trustGatewayIdentityHeaders() && strings.TrimSpace(os.Getenv("AGENTFLOW_IDENTITY_HEADER_SECRET")) == "" {
 		log.Printf("warning: AGENTFLOW_TRUST_IDENTITY_HEADERS is on without AGENTFLOW_IDENTITY_HEADER_SECRET; any loopback caller without forwarding headers, including a proxy that passes client headers through, can sign in as any user")
 	}
@@ -151,8 +156,11 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	if bg != nil {
 		bg.runnerControls = runnerControls
 	}
-	e.WorkspaceCheckpointTransport = func(ctx context.Context, run domain.Run, request domain.RunnerWorkspaceRequest) (domain.RunnerWorkspaceResponse, error) {
-		return runnerControls.requestWorkspace(ctx, e.RunExecutionRunner(run), request)
+	if e != nil {
+		e.WorkspaceCheckpointTransport = func(ctx context.Context, run domain.Run, request domain.RunnerWorkspaceRequest) (domain.RunnerWorkspaceResponse, error) {
+			return runnerControls.requestWorkspace(ctx, e.RunExecutionRunner(run), request)
+		}
+		e.ConfigureKnowledge(knowledgeExec)
 	}
 	api := &Server{
 		deps:            d,
@@ -182,7 +190,8 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 		schedule:        &scheduleHandlers{deps: d},
 		tokens:          &tokenHandlers{deps: d},
 		syncAPI:         &syncHandlers{deps: d},
-		know:            &knowledgeHandlers{deps: d, svc: knowledge.NewService(d.repo, randomID), activity: &knowledgeActivityLog{}},
+		know:            &knowledgeHandlers{deps: d, svc: knowledgeSvc, exec: knowledgeExec, legacy: knowledge.NewLegacyService(s, randomID), activity: &knowledgeActivityLog{}},
+		evolution:       newEvolutionHandlers(d),
 	}
 	e.WorkspaceActive = func(run domain.Run) bool { return api.runs.terminals.HasRunScope(run.ID) }
 	api.catalog.notifications = api.notifications
@@ -202,6 +211,10 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	// deps 由所有领域共享，schedule 服务就绪后回填一次即全局可见。
 	d.schedule = sched
 	api.runners.startRunnerSweeper()
+	runAfterGate(bg.gate(), api.evolution.startReplayMonitor)
+	if bg != nil && bg.sopDetectionContext != nil {
+		go api.evolution.monitorSOPDetection(bg.sopDetectionContext, bg.gate())
+	}
 	runAfterGate(bg.gate(), stream.recoverClarifyJobs)
 	g := gin.New()
 	g.HandleMethodNotAllowed = true
@@ -380,6 +393,7 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.POST("/api/assistant/sessions/:id/read", asst.markSessionRead)
 	g.POST("/api/assistant/sessions/:id/fork", asst.forkSession)
 	g.GET("/api/assistant/sessions/:id", asst.session)
+	g.PUT("/api/assistant/sessions/:id/knowledge", asst.sessionKnowledge)
 	g.PUT("/api/assistant/sessions/:id/title", asst.renameSession)
 	g.PUT("/api/assistant/sessions/:id/sandbox", asst.sessionSandbox)
 	g.PUT("/api/assistant/sessions/:id/project-credentials", asst.sessionProjectCredentials)
@@ -549,22 +563,46 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.GET("/api/observability/spec", api.observabilitySpec)
 	g.POST("/api/otel/*path", api.otel)
 
-	// --- knowledge base ---
-	g.GET("/api/knowledge/settings", api.know.settings)
-	g.PUT("/api/knowledge/settings", api.know.settings)
-	g.POST("/api/knowledge/check", api.know.check)
-	g.GET("/api/knowledge/sources", api.know.sources)
-	g.POST("/api/knowledge/search", api.know.search)
-	g.GET("/api/knowledge/document", api.know.document)
-	g.GET("/api/knowledge/usage", api.know.usage)
-	g.GET("/api/knowledge/candidates", api.know.candidates)
-	g.GET("/api/knowledge/submissions", api.know.submissions)
-	g.POST("/api/knowledge/submissions", api.know.submissions)
-	g.GET("/api/knowledge/submissions/:id", api.know.submission)
-	g.PUT("/api/knowledge/submissions/:id", api.know.submission)
-	g.DELETE("/api/knowledge/submissions/:id", api.know.submission)
-	g.POST("/api/knowledge/submissions/:id/publish", api.know.publish)
-	g.POST("/api/knowledge/submissions/:id/reject", api.know.reject)
+	// --- asset evolution（进化中心）---
+	registerEvolutionRoutes(g, api.evolution)
+
+	// --- knowledge connectors (per-user read-only sources) ---
+	g.GET("/api/knowledge/connector-types", api.know.connectorTypes)
+	g.GET("/api/knowledge/connectors", api.know.listConnectors)
+	g.POST("/api/knowledge/connectors", api.know.createConnector)
+	g.POST("/api/knowledge/connectors/check", api.know.checkConnector)
+	g.GET("/api/knowledge/connectors/:id", api.know.getConnector)
+	g.PUT("/api/knowledge/connectors/:id", api.know.updateConnector)
+	g.DELETE("/api/knowledge/connectors/:id", api.know.deleteConnector)
+	g.POST("/api/knowledge/connectors/:id/check", api.know.checkConnectorByID)
+	g.GET("/api/knowledge/connectors/:id/sources", api.know.connectorSources)
+	g.POST("/api/knowledge/reference-check", api.know.checkReferences)
+	g.GET("/api/knowledge/reference-options", api.know.referenceOptions)
+	g.GET("/api/knowledge/usage", api.know.getUsage)
+	g.GET("/api/knowledge/usage/events", api.know.listUsageEvents)
+	g.DELETE("/api/knowledge/usage", api.know.resetUsage)
+	g.GET("/api/knowledge/oauth/presets", api.know.oauthPresets)
+	g.POST("/api/knowledge/oauth/:type/authorize", api.know.oauthAuthorize)
+	g.GET("/api/knowledge/oauth/callback", api.know.oauthCallback)
+	g.GET("/api/knowledge/oauth/:type/callback", api.know.oauthCallback)
+
+	// --- legacy platform knowledge compatibility ---
+	// TODO(knowledge-legacy-compat): 保留旧版平台级知识库与沉淀审核队列路由以兼容历史
+	// 调用方与上游 E2E 用例；待外部调用方及 E2E 全部迁移至个人知识连接器后移除。
+	g.GET("/api/knowledge/settings", api.know.legacySettings)
+	g.PUT("/api/knowledge/settings", api.know.legacySettings)
+	g.POST("/api/knowledge/check", api.know.legacyCheck)
+	g.GET("/api/knowledge/sources", api.know.legacySources)
+	g.POST("/api/knowledge/search", api.know.legacySearch)
+	g.GET("/api/knowledge/document", api.know.legacyDocument)
+	g.GET("/api/knowledge/candidates", api.know.legacyCandidates)
+	g.GET("/api/knowledge/submissions", api.know.legacySubmissions)
+	g.POST("/api/knowledge/submissions", api.know.legacySubmissions)
+	g.GET("/api/knowledge/submissions/:id", api.know.legacySubmission)
+	g.PUT("/api/knowledge/submissions/:id", api.know.legacySubmission)
+	g.DELETE("/api/knowledge/submissions/:id", api.know.legacySubmission)
+	g.POST("/api/knowledge/submissions/:id/publish", api.know.legacyPublish)
+	g.POST("/api/knowledge/submissions/:id/reject", api.know.legacyReject)
 
 	// --- runs ---
 	g.GET("/api/runs", api.runs.runs)
@@ -649,7 +687,9 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.PUT("/api/runners/default", api.runners.runnerDefaultSet)
 	g.DELETE("/api/runners/:id", api.runners.runnerRemove)
 	g.PUT("/api/runners/platform/run-limit", api.runners.platformRunnerRunLimitSet)
+	g.PUT("/api/runners/platform/privileged-sandbox", api.runners.platformRunnerPrivilegedSandboxSet)
 	g.PUT("/api/runners/:id/run-limit", api.runners.runnerRunLimitSet)
+	g.PUT("/api/runners/:id/privileged-sandbox", api.runners.runnerPrivilegedSandboxSet)
 	g.PUT("/api/runners/:id/shared-projects", api.runners.runnerSharedProjectsSet)
 	g.GET("/api/runners/:id/maintenance", api.runners.runnerMaintenance)
 	g.POST("/api/runners/:id/maintenance", api.runners.runnerMaintenance)
@@ -685,6 +725,7 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.POST("/runners/deregister", api.runners.runnerDeregister)
 	g.POST("/runners/disconnect", api.runners.runnerDisconnect)
 	g.POST("/runners/heartbeat", api.runners.runnerHeartbeat)
+	g.GET("/runners/privileged-sandbox", api.runners.runnerPrivilegedSandboxSetting)
 	g.POST("/runners/tasks/claim", api.runners.runnerTaskClaim)
 	g.POST("/runners/tasks/:id/start", api.runners.runnerTaskStart)
 	g.POST("/runners/tasks/:id/lease/renew", api.runners.runnerTaskLeaseRenew)
@@ -841,7 +882,7 @@ func (s *Server) bootstrap(c *gin.Context) {
 		"storage":      s.repo.StorageInfo(),
 		"capabilities": map[string]bool{"docker": runtime.DockerReady()},
 		// Set when users without their own CodeBuddy API Key can still chat
-		// and run SOPs on the platform's shared key, limited to these models
+		// and run LOOPs on the platform's shared key, limited to these models
 		// (sponsoredModel is the default).
 		"sponsoredModel":    sponsoredModel,
 		"sponsoredModels":   sharedModels,

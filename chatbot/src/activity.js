@@ -491,7 +491,7 @@ export function activityFace(step) {
   if (platform) {
     const [, type, action] = platform;
     const noun = {
-      workflows: "SOP",
+      workflows: "LOOP",
       agents: "角色",
       issues: "需求",
       runs: "运行",
@@ -525,6 +525,12 @@ export function activityFace(step) {
     return { kind: "command", busy: "正在运行", done: "已运行" };
   if (/imagegen|generate.?image|生图|画图/.test(name))
     return { kind: "image", busy: "正在生成图片", done: "已生成图片" };
+  if (/kb_fetch|read_document/.test(name))
+    return { kind: "read", busy: "正在读取", done: "已读取" };
+  if (/search_knowledge|kb_search/.test(name))
+    return { kind: "search", busy: "正在搜索", done: "已搜索" };
+  if (/knowledge/.test(name))
+    return { kind: "read", busy: "正在读取", done: "已读取" };
   if (/browser|fetch|web.?search|navigate/.test(name))
     return { kind: "web", busy: "正在浏览", done: "已浏览" };
   if (/write|edit|patch/.test(name))
@@ -534,7 +540,7 @@ export function activityFace(step) {
   if (/search|grep|glob|find/.test(name))
     return { kind: "search", busy: "正在搜索", done: "已搜索" };
   if (/workflow|sop/.test(name))
-    return { kind: "workflow", busy: "正在处理 SOP", done: "已处理 SOP" };
+    return { kind: "workflow", busy: "正在处理 LOOP", done: "已处理 LOOP" };
   if (/list|tree/.test(name))
     return { kind: "search", busy: "正在查看", done: "已查看" };
   return {
@@ -563,6 +569,8 @@ export function activityTarget(step) {
       detail =
         args.file_path ||
         args.filePath ||
+        args.knowledge_id ||
+        args.document_id ||
         args.command ||
         args.cmd ||
         args.query ||

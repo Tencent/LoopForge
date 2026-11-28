@@ -40,7 +40,7 @@ func (h *assistantHandlers) newExecutionTarget(userID int64, projectID string, r
 		}
 	case domain.ExecutionModeRunner:
 		runner, ok := h.repo.Runner(target.RunnerID)
-		if !ok || !h.repo.CanUseRunner(runner, projectID, userID) {
+		if !ok || !h.repo.CanUseConversationRunner(runner, projectID, userID) {
 			return nil, fmt.Errorf("无权使用此执行机器")
 		}
 		if !runner.SupportsConversationCLI() {
@@ -59,7 +59,8 @@ func (h *assistantHandlers) bindTurnExecutionTarget(c *gin.Context, req *assista
 			c.JSON(409, gin.H{"error": repo.ErrAssistantExecutionLocked.Error()})
 			return false
 		}
-		if !h.canUseBoundExecutionTarget(target, saved.ProjectID, userID) {
+		requireShare := assistantSessionOriginFrom(c.Request.Context()).Source == domain.AssistantSourceScheduled
+		if !h.canUseBoundExecutionTarget(target, saved.ProjectID, userID, requireShare) {
 			c.JSON(403, gin.H{"error": errAssistantRunnerAccessRevoked.Error()})
 			return false
 		}
@@ -75,17 +76,23 @@ func (h *assistantHandlers) bindTurnExecutionTarget(c *gin.Context, req *assista
 	return true
 }
 
-func (h *assistantHandlers) canUseBoundExecutionTarget(target domain.AssistantExecutionTarget, projectID string, userID int64) bool {
+func (h *assistantHandlers) canUseBoundExecutionTarget(target domain.AssistantExecutionTarget, projectID string, userID int64, requireShare bool) bool {
 	if target.Pool != domain.ExecutionModeRunner {
 		return true
 	}
 	runner, ok := h.repo.Runner(target.RunnerID)
-	return ok && h.canUseBoundRunner(runner, projectID, userID)
+	return ok && h.canUseBoundRunner(runner, projectID, userID, requireShare)
 }
 
 // Ownerless runners can only reach this check after a server allocation.
-func (h *assistantHandlers) canUseBoundRunner(runner domain.Runner, projectID string, userID int64) bool {
-	return runner.OwnerUserID == 0 || h.repo.CanUseRunner(runner, projectID, userID)
+func (h *assistantHandlers) canUseBoundRunner(runner domain.Runner, projectID string, userID int64, requireShare bool) bool {
+	if runner.OwnerUserID == 0 {
+		return true
+	}
+	if requireShare {
+		return h.repo.CanUseRunner(runner, projectID, userID)
+	}
+	return h.repo.CanUseConversationRunner(runner, projectID, userID)
 }
 
 // Use a machine's login only for its owner on a personal execution target.
@@ -154,7 +161,7 @@ func (h *assistantHandlers) sessionMode(c *gin.Context) {
 			return
 		}
 		if !run.IsWorkspace() && !sopStopped(run) {
-			c.JSON(409, gin.H{"error": "请先暂停或接管 SOP，再进入工作区模式"})
+			c.JSON(409, gin.H{"error": "请先暂停或接管 LOOP，再进入工作区模式"})
 			return
 		}
 		if h.engine == nil {
@@ -172,5 +179,5 @@ func (h *assistantHandlers) sessionMode(c *gin.Context) {
 		return
 	}
 	saved, _ = h.repo.AssistantSession(owner, saved.ID)
-	c.JSON(200, saved)
+	c.JSON(200, sanitizeAssistantSessionForViewer(saved, user.ID))
 }

@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -299,7 +300,7 @@ func (h *runnersHandlers) runnerDefault(c *gin.Context) {
 		defaults = h.repo.ResolveRunnerDefaults(user.ID, projectID)
 	}
 	runner := defaults.Runner
-	platform, err := h.platformRunnerStatus(projectID, h.isPlatformAdmin(c.Request))
+	platform, err := h.platformRunnerStatus(c.Request.Context(), projectID, h.isPlatformAdmin(c.Request))
 	if err != nil {
 		respond(c, err)
 		return
@@ -312,7 +313,8 @@ func (h *runnersHandlers) runnerDefault(c *gin.Context) {
 		"platformRunner": platform,
 		// minRunnerVersion lets the runners page disable「设为默认」with the
 		// same rule PUT /api/runners/default enforces.
-		"minRunnerVersion": domain.RunnerVersionDefaultSelection,
+		"minRunnerVersion":                  domain.RunnerVersionDefaultSelection,
+		"minPrivilegedSandboxRunnerVersion": domain.RunnerVersionPrivilegedSandbox,
 	}
 	if projectID != "" {
 		result["personalRunnerId"] = defaults.PersonalRunnerID
@@ -322,8 +324,12 @@ func (h *runnersHandlers) runnerDefault(c *gin.Context) {
 	c.JSON(http.StatusOK, result)
 }
 
-func (h *runnersHandlers) platformRunnerStatus(projectID string, canEdit bool) (domain.PlatformRunnerStatus, error) {
+func (h *runnersHandlers) platformRunnerStatus(ctx context.Context, projectID string, canEdit bool) (domain.PlatformRunnerStatus, error) {
 	loads, err := h.repo.LoadSnapshots(nil)
+	if err != nil {
+		return domain.PlatformRunnerStatus{}, err
+	}
+	allowed, err := h.repo.PlatformRunnerPrivilegedSandbox(ctx)
 	if err != nil {
 		return domain.PlatformRunnerStatus{}, err
 	}
@@ -331,6 +337,7 @@ func (h *runnersHandlers) platformRunnerStatus(projectID string, canEdit bool) (
 	status := domain.PlatformRunnerStatus{
 		Name: domain.PlatformRunnerName, Status: domain.RunnerStatusOffline,
 		RunLimit: h.repo.PlatformRunnerRunLimit(), CanEditLimit: canEdit, Load: &load,
+		AllowPrivilegedSandbox: allowed,
 	}
 	if h.engine != nil {
 		status.CloudPool, status.CloudPoolOnline = h.engine.CloudPoolStatus()
@@ -410,7 +417,7 @@ func (h *runnersHandlers) runnerRemove(c *gin.Context) {
 	c.JSON(http.StatusOK, map[string]bool{"ok": true})
 }
 
-// runnerRunLimitSet sets how many top-level SOP runs one of the caller's own
+// runnerRunLimitSet sets how many top-level LOOP runs one of the caller's own
 // machines may hold at once. 0 sets unlimited mode.
 // 路由: g.PUT("/api/runners/:id/run-limit", h.runnerRunLimitSet)
 func (h *runnersHandlers) runnerRunLimitSet(c *gin.Context) {
@@ -480,7 +487,7 @@ func (h *runnersHandlers) platformRunnerRunLimitSet(c *gin.Context) {
 	if h.engine != nil && (*input.RunLimit == 0 || (previous > 0 && *input.RunLimit > previous)) {
 		h.engine.PromoteQueuedRunsAsync()
 	}
-	status, err := h.platformRunnerStatus(strings.TrimSpace(c.Query("projectId")), true)
+	status, err := h.platformRunnerStatus(c.Request.Context(), strings.TrimSpace(c.Query("projectId")), true)
 	if err != nil {
 		respond(c, err)
 		return
@@ -549,7 +556,7 @@ func (h *runnersHandlers) runnerDefaultSet(c *gin.Context) {
 		message := "已设为你在此项目的默认执行机器"
 		switch {
 		case mode == domain.RunnerSelectionModeAuto:
-			message = "已开启此项目 SOP 自动分配"
+			message = "已开启此项目 LOOP 自动分配"
 		case mode == domain.RunnerSelectionModePlatform:
 			message = "已设为此项目使用平台执行机器"
 		case runnerID == "":
@@ -1057,13 +1064,12 @@ func (h *runnersHandlers) runnerTaskClaim(c *gin.Context) {
 			}
 			profile := task.Sandbox.Profile
 			switch {
+			case profile.Privileged && c.GetHeader(domain.RunnerPrivilegedSandboxHeader) != "1":
+				err = errors.New(domain.RunnerPrivilegedSandboxUpgradeMessage)
 			case profile.HasResourceLimits() && !input.SupportsDockerSandboxLimits:
 				err = errors.New(domain.RunnerDockerSandboxLimitsUpgradeMessage)
 			case task.RunID != "" && task.Action == "":
 				err = domain.ValidateFrozenSandbox(profile)
-				if err == nil {
-					err = runner.ValidatePrivilegedSandboxVersion(profile)
-				}
 				if err == nil {
 					task.ProjectCredentialEnv, err = h.runnerTaskProjectCredentialEnv(c.Request.Context(), task, runner)
 				}

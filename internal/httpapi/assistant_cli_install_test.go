@@ -430,3 +430,47 @@ mkdir -p "$prefix/node_modules/.bin"
 printf '#!/bin/sh\necho ok\n' > "$prefix/node_modules/.bin/$NPM_TEST_BIN"
 chmod 755 "$prefix/node_modules/.bin/$NPM_TEST_BIN"
 `
+
+// Discovery before the install cached an empty CodeBuddy catalog; installing
+// from the conversation must list the models on the next read, not an hour
+// later.
+func TestInstallCodeBuddyListsItsModelsImmediately(t *testing.T) {
+	if hostHas("codebuddy") {
+		t.Skip("host codebuddy would hide the on-demand installation")
+	}
+	resetCLIInstallJobs(t)
+	withoutGlobalCLIs(t)
+	root := t.TempDir()
+	npm := t.TempDir()
+	if err := os.WriteFile(filepath.Join(npm, "npm"), []byte(genericInstallNPM), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", npm+string(os.PathListSeparator)+"/usr/bin:/bin")
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("AGENTFLOW_MANAGED_CLI_ROOT", "")
+	t.Setenv("AGENTFLOW_CODEBUDDY_BIN", "")
+	t.Setenv("AGENTFLOW_RUNTIME_CLI_DIR", root)
+	t.Setenv("NPM_TEST_LOG", filepath.Join(t.TempDir(), "npm.log"))
+	t.Setenv("NPM_TEST_BIN", "codebuddy")
+	stubCLIModelDiscovery(t)
+	discoverCLIModels = func(context.Context, string, string) []string {
+		if _, err := resolveCodeBuddyBin(); err != nil {
+			return nil
+		}
+		return []string{"deepseek-v4.1-flash"}
+	}
+
+	refreshCLIModels(context.Background(), "ioa", "key")
+	if assistantCatalogLists(loadAssistantModels("ioa", "key"), "deepseek-v4.1-flash") {
+		t.Fatal("models listed before the CLI exists")
+	}
+	h := &assistantHandlers{deps: &deps{}}
+	user := domainUserToAuth(domain.User{ID: 1, LoginName: "lab"})
+	if rec := postCLIInstall(t, h, user, `{"engine":"codebuddy"}`); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"installed":true`) {
+		t.Fatalf("install: %d %s", rec.Code, rec.Body.String())
+	}
+	refreshCLIModels(context.Background(), "ioa", "key")
+	if !assistantCatalogLists(loadAssistantModels("ioa", "key"), "deepseek-v4.1-flash") {
+		t.Fatalf("models after install: %+v", loadAssistantModels("ioa", "key"))
+	}
+}

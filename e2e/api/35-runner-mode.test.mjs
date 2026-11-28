@@ -1,4 +1,4 @@
-// Runs script SOPs on an execution machine the suite starts itself: the runner
+// Runs script LOOPs on an execution machine the suite starts itself: the runner
 // binary served by the deployment registers with a bind code, is shared with
 // the test project and becomes the token owner's default machine for this file.
 // The previous default is restored afterwards. Upstream artifacts must reach
@@ -113,8 +113,8 @@ test('runner mode: a missing required artifact fails the node with a contract er
   assert.match(String(run.nodes?.forgetful?.error || ''), /artifact contract|report/);
 });
 
-// 执行机器上子 SOP 用父流程的检出目录：改动双向可见，执行机器不推工作分支。
-test('runner mode: repository-bound child SOP works in the parent checkout', { skip: repoSkip, timeout: 700_000 }, async () => {
+// 执行机器上子 LOOP 用父流程的检出目录：改动双向可见，执行机器不推工作分支。
+test('runner mode: repository-bound child LOOP works in the parent checkout', { skip: repoSkip, timeout: 700_000 }, async () => {
   const { run, child } = await childSOPHandoffScenario({ label: 'runner-repo-sop', extra: { sandboxProfileId }, waitRun });
   assert.equal(run.executionContext?.executionMode, 'runner');
   assert.equal(run.executionContext?.executionRunnerId, runnerId);

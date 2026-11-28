@@ -30,6 +30,63 @@ func BaselineAlignResolverAgent() domain.AgentDefinition {
 	}
 }
 
+func (r *CatalogRepo) evolutionAsset(tx *gorm.DB, kind, id string) (string, []byte, error) {
+	table := "agents"
+	if kind == domain.EvoAssetRule {
+		table = "rules"
+	} else if kind != domain.EvoAssetAgent {
+		return "", nil, errors.New("unsupported evolution asset")
+	}
+	var row struct{ Payload []byte }
+	if err := r.locking(tx.Table(table).Where("id = ?", id)).Take(&row).Error; err != nil {
+		return "", nil, err
+	}
+	if kind == domain.EvoAssetAgent {
+		var asset domain.AgentDefinition
+		if err := json.Unmarshal(row.Payload, &asset); err != nil {
+			return "", nil, err
+		}
+		return asset.Prompt, row.Payload, nil
+	}
+	var asset domain.RuleDefinition
+	if err := json.Unmarshal(row.Payload, &asset); err != nil {
+		return "", nil, err
+	}
+	return asset.Content, row.Payload, nil
+}
+
+func (r *CatalogRepo) writeEvolutionAsset(tx *gorm.DB, kind, id, content string, original []byte) error {
+	table := "agents"
+	var payload []byte
+	now := time.Now().UTC()
+	if kind == domain.EvoAssetAgent {
+		var asset domain.AgentDefinition
+		if err := json.Unmarshal(original, &asset); err != nil {
+			return err
+		}
+		asset.Prompt, asset.UpdatedAt = content, now
+		payload = mustJSON(asset)
+	} else if kind == domain.EvoAssetRule {
+		table = "rules"
+		var asset domain.RuleDefinition
+		if err := json.Unmarshal(original, &asset); err != nil {
+			return err
+		}
+		asset.Content, asset.UpdatedAt = content, now
+		payload = mustJSON(asset)
+	} else {
+		return errors.New("unsupported evolution asset")
+	}
+	result := tx.Table(table).Where("id = ? AND CAST(payload AS CHAR) = CAST(? AS CHAR)", id, string(original)).Updates(map[string]any{"payload": payload, "updated_at": timePtr(now)})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected != 1 {
+		return ErrEvoStale
+	}
+	return nil
+}
+
 // ---------- Agents ----------
 
 func (r *CatalogRepo) Agents() []domain.AgentDefinition {
@@ -491,9 +548,9 @@ func (r *CatalogRepo) DeleteSandbox(id string) error {
 
 // ---------- Workflows ----------
 
-// Workflows lists project SOPs plus stored generic templates. A leftover
+// Workflows lists project LOOPs plus stored generic templates. A leftover
 // workflows-table row occupying a generic id is filtered out so the template
-// stays authoritative. Generic templates always sort after the stored SOPs
+// stays authoritative. Generic templates always sort after the stored LOOPs
 // (master semantics: the stored list is sorted by UpdatedAt, generics are
 // appended).
 func (r *CatalogRepo) Workflows() []domain.WorkflowDefinition {
@@ -515,7 +572,7 @@ func (r *CatalogRepo) Workflows() []domain.WorkflowDefinition {
 	return append(out, generic...)
 }
 
-// Workflow resolves a custom SOP or a generic_templates row. Generic ids stay
+// Workflow resolves a custom LOOP or a generic_templates row. Generic ids stay
 // reserved so a leftover workflows-table collision cannot shadow the template.
 func (r *CatalogRepo) Workflow(id string) (domain.WorkflowDefinition, bool) {
 	if wf, ok := r.GenericWorkflowByID(id); ok {
@@ -560,6 +617,14 @@ func workflowNeedsPublish(v domain.WorkflowDefinition) bool {
 	return v.Status != "published" || workflowPublishedRevision(v) != v.Revision
 }
 
+func nextWorkflowVersion(v domain.WorkflowDefinition) int {
+	// Older evaluation copies can carry the source version before their first publication.
+	if v.Version < 1 || workflowPublishedRevision(v) == 0 {
+		return 1
+	}
+	return v.Version + 1
+}
+
 // PublishWorkflow is idempotent until the saved definition changes.
 func (r *CatalogRepo) PublishWorkflow(id string) (domain.WorkflowDefinition, error) {
 	var published domain.WorkflowDefinition
@@ -585,8 +650,8 @@ func (r *CatalogRepo) publishStoredWorkflow(id string) (domain.WorkflowDefinitio
 	if !workflowNeedsPublish(v) {
 		return v, nil
 	}
+	v.Version = nextWorkflowVersion(v)
 	v.Status = "published"
-	v.Version++
 	if err := r.putWorkflow(v, true); err != nil {
 		return domain.WorkflowDefinition{}, err
 	}
@@ -599,6 +664,9 @@ func (r *CatalogRepo) putWorkflow(v domain.WorkflowDefinition, publishing bool) 
 		return errors.New("workflow id and name are required")
 	}
 	if err := domain.ValidateWorkflowPreparation(v); err != nil {
+		return err
+	}
+	if err := domain.ValidateWorkflowKnowledge(v); err != nil {
 		return err
 	}
 	if err := domain.ValidateWorkflowMetricStages(v); err != nil {
@@ -655,7 +723,7 @@ func (r *CatalogRepo) putWorkflow(v domain.WorkflowDefinition, publishing bool) 
 	})
 }
 
-// DeleteWorkflow removes a SOP definition. Historical runs keep their own
+// DeleteWorkflow removes a LOOP definition. Historical runs keep their own
 // WorkflowSnapshot, so already-finished runs stay fully readable afterwards.
 func (r *CatalogRepo) DeleteWorkflow(id string) error {
 	if _, ok := r.storedWorkflow(id); !ok {
@@ -975,14 +1043,14 @@ func (r *CatalogRepo) RestoreAgentRevision(id string) (domain.AgentDefinition, e
 	return agent, r.PutAgent(agent)
 }
 
-// ---------- Production SOP ids ----------
+// ---------- Production LOOP ids ----------
 
 const (
 	issueFixWorkflowID    = "issue-fix-production"
 	requirementWorkflowID = "requirement-development-production"
 )
 
-// DefaultWorkflowID returns the production SOP to bind when an issue has none.
+// DefaultWorkflowID returns the production LOOP to bind when an issue has none.
 // Gongfeng issues use the repair loop; TAPD / local requirements use delivery.
 func DefaultWorkflowID(source, kind string) string {
 	if source == "gongfeng" || kind == "issue" {
@@ -997,7 +1065,7 @@ func isRequirement(source, kind string) bool {
 	return source != "gongfeng" && kind != "issue"
 }
 
-// bindDefaultWorkflow assigns the SOP an issue should run when it has none yet.
+// bindDefaultWorkflow assigns the LOOP an issue should run when it has none yet.
 func bindDefaultWorkflow(v *domain.Issue, projectWorkflowID, projectIssueWorkflowID string) {
 	if v.Source == "gongfeng" && v.Kind == "" {
 		v.Kind = "issue"
@@ -1015,8 +1083,8 @@ func bindDefaultWorkflow(v *domain.Issue, projectWorkflowID, projectIssueWorkflo
 		return
 	} else if wf := strings.TrimSpace(projectWorkflowID); wf != "" && isGenericWorkflowID(wf) {
 		// Projects defaulting to a built-in generic template (e.g. the
-		// LoopForge backend delivery SOP a new project starts with) run their
-		// synced Gongfeng issues on it too; projects bound to a production SOP
+		// LoopForge backend delivery LOOP a new project starts with) run their
+		// synced Gongfeng issues on it too; projects bound to a production LOOP
 		// keep the production default below.
 		v.WorkflowID = wf
 		return
@@ -1035,7 +1103,7 @@ func isGenericWorkflowID(id string) bool {
 	}
 }
 
-// ProjectIssueWorkflowID is the conventional per-project defect SOP id.
+// ProjectIssueWorkflowID is the conventional per-project defect LOOP id.
 func ProjectIssueWorkflowID(projectID string) string {
 	projectID = strings.TrimSpace(projectID)
 	if projectID == "" {

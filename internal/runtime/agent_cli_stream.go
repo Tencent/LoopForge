@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-// ClaudeStream renders the Claude-style stream-json lines that both the SOP
+// ClaudeStream renders the Claude-style stream-json lines that both the LOOP
 // protocol adapter (handleClaudeStream) and AI 对话 parse: deltas become
 // stream_event content blocks, finished text / thinking / tool calls become
 // assistant blocks, tool outputs become user tool_result blocks and the turn

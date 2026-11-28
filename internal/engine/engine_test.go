@@ -245,12 +245,27 @@ func TestResolveAssetsBindsKnowledgeMCP(t *testing.T) {
 	e := &Engine{repo: st}
 	e.ConfigurePlatformMCP("http://agentflow.local/", "")
 	agent := domain.AgentDefinition{ID: "dev", KnowledgeBase: true}
-	// 未接入知识库时开关退化为无操作，不影响运行。
+	// 未接入个人连接器时开关退化为无操作，不影响运行。
 	if assets := e.resolveAssets(agent, "p1", "", 3); len(assets.MCPServers) != 0 || len(assets.Rules) != 0 {
-		t.Fatalf("knowledge bound before the knowledge base is connected: %#v", assets)
+		t.Fatalf("knowledge bound before user has an enabled connector: %#v", assets)
 	}
-	settings := domain.KnowledgeSettings{Enabled: true, URL: "http://kb.local/mcp", Token: "upstream-secret"}
-	if err := st.PutKnowledgeSettings(settings); err != nil {
+	svc := knowledge.NewService(st, nil)
+	conn, err := svc.CreateConnector(context.Background(), 3, knowledge.ConnectorInput{
+		Name:     "我的知识库",
+		Type:     domain.ConnectorTypeMCP,
+		Endpoint: "http://kb.local/mcp",
+		Secret:   domain.KnowledgeConnectorSecret{Token: "upstream-secret"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Other user's connector must never bind for user 3.
+	if _, err := svc.CreateConnector(context.Background(), 99, knowledge.ConnectorInput{
+		Name:     "别人的知识库",
+		Type:     domain.ConnectorTypeMCP,
+		Endpoint: "http://other.local/mcp",
+		Secret:   domain.KnowledgeConnectorSecret{Token: "other-secret"},
+	}); err != nil {
 		t.Fatal(err)
 	}
 	assets := e.resolveAssets(agent, "p1", "", 3)
@@ -258,15 +273,15 @@ func TestResolveAssetsBindsKnowledgeMCP(t *testing.T) {
 		t.Fatalf("knowledge MCP/rule not bound: %#v", assets)
 	}
 	server := assets.MCPServers[0]
-	if server.ID != domain.KnowledgeMCPServerID || server.Transport != "http" || server.URL != "http://agentflow.local"+knowledge.ProxyPath {
+	if server.ID != domain.KnowledgeMCPServerID+"-"+conn.ID || server.Transport != "http" || server.URL != "http://agentflow.local"+knowledge.ProxyPath {
 		t.Fatalf("unexpected knowledge MCP definition: %#v", server)
 	}
 	auth := server.Headers["Authorization"]
 	if strings.Contains(auth, "upstream-secret") {
 		t.Fatal("upstream token leaked into the run asset bundle")
 	}
-	claims, err := knowledge.VerifyProxyToken(settings, strings.TrimPrefix(auth, "Bearer "), time.Now())
-	if err != nil || claims.ProjectID != "p1" || claims.UserID != 3 || claims.AgentID != "dev" {
+	claims, err := knowledge.VerifyProxyToken(strings.TrimPrefix(auth, "Bearer "), time.Now())
+	if err != nil || claims.ProjectID != "p1" || claims.UserID != 3 || claims.AgentID != "dev" || claims.Ref == nil || claims.Ref.ConnectorID != conn.ID {
 		t.Fatalf("proxy token claims = %#v, %v", claims, err)
 	}
 	if assets := e.resolveAssets(domain.AgentDefinition{ID: "other"}, "p1", "", 3); len(assets.MCPServers) != 0 {
@@ -289,10 +304,16 @@ func TestKnowledgeMCPWithoutPlatformBase(t *testing.T) {
 	t.Cleanup(func() { st.Close() })
 	e := &Engine{repo: st}
 	agent := domain.AgentDefinition{ID: "dev", KnowledgeBase: true}
-	if warning := knowledgeSkippedWarning(agent, e.resolveAssets(agent, "p1", "", 3)); !strings.Contains(warning, "知识中心未启用") {
+	if warning := knowledgeSkippedWarning(agent, e.resolveAssets(agent, "p1", "", 3)); !strings.Contains(warning, "未配置已启用的个人知识库连接器") {
 		t.Fatalf("knowledge not connected should explain itself, got %q", warning)
 	}
-	if err := st.PutKnowledgeSettings(domain.KnowledgeSettings{Enabled: true, URL: "http://kb.local/mcp", Token: "upstream-secret"}); err != nil {
+	svc := knowledge.NewService(st, nil)
+	if _, err := svc.CreateConnector(context.Background(), 3, knowledge.ConnectorInput{
+		Name:     "我的知识库",
+		Type:     domain.ConnectorTypeMCP,
+		Endpoint: "http://kb.local/mcp",
+		Secret:   domain.KnowledgeConnectorSecret{Token: "upstream-secret"},
+	}); err != nil {
 		t.Fatal(err)
 	}
 	// 独立 worker 未配置平台地址：执行机器仍能改写使用，云端执行丢弃并说明原因。
@@ -318,8 +339,8 @@ func TestGlobalRuleInjectsIntoEveryNodeOfBoundWorkflow(t *testing.T) {
 	t.Cleanup(func() { st.Close() })
 	for _, rule := range []domain.RuleDefinition{
 		{ID: "bound", Name: "Bound", ProjectID: "p1", Content: "already on the role", Priority: 10},
-		{ID: "global-sop", Name: "Global SOP", ProjectID: "p1", Content: "applies to every node", Priority: 80, Global: true, WorkflowIDs: []string{"sop-a", " sop-a "}},
-		{ID: "global-other", Name: "Other SOP", ProjectID: "p1", Content: "other", Global: true, WorkflowIDs: []string{"sop-b"}},
+		{ID: "global-sop", Name: "Global LOOP", ProjectID: "p1", Content: "applies to every node", Priority: 80, Global: true, WorkflowIDs: []string{"sop-a", " sop-a "}},
+		{ID: "global-other", Name: "Other LOOP", ProjectID: "p1", Content: "other", Global: true, WorkflowIDs: []string{"sop-b"}},
 		{ID: "plain", Name: "Plain", ProjectID: "p1", Content: "not global", WorkflowIDs: []string{"sop-a"}},
 		{ID: "foreign", Name: "Foreign", ProjectID: "p2", Content: "foreign", Global: true, WorkflowIDs: []string{"sop-a"}},
 		{ID: "shared-global", Name: "Shared global", ProjectID: "p2", Content: "shared", Shared: true, Global: true, WorkflowIDs: []string{"sop-a"}},
@@ -431,7 +452,7 @@ func TestGenericCatalogAssetsIgnoreStoredCrossProjectCollisions(t *testing.T) {
 	}
 	wf, ok := st.GenericWorkflowByID(repo.GenericBackendDeliveryWorkflowID)
 	if !ok {
-		t.Fatal("generic backend SOP missing")
+		t.Fatal("generic backend LOOP missing")
 	}
 	agent, ok := workflowAgent(st, wf, repo.GenericAgentRequirement)
 	if !ok || agent.Name == "Foreign edit" {
@@ -1093,10 +1114,10 @@ func TestStartUsesFreshWorkBranchPerSOP(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = e.Cancel(run.ID) })
 	if run.Repository.WorkBranch == "" || run.Repository.WorkBranch == "feature/old-sop-branch" {
-		t.Fatalf("new SOP reused previous branch: %q", run.Repository.WorkBranch)
+		t.Fatalf("new LOOP reused previous branch: %q", run.Repository.WorkBranch)
 	}
 	if persistentSandboxID(run) != run.ID {
-		t.Fatalf("sandbox should be per SOP run, got %q", persistentSandboxID(run))
+		t.Fatalf("sandbox should be per LOOP run, got %q", persistentSandboxID(run))
 	}
 }
 
@@ -2020,7 +2041,7 @@ func TestGenericRequirementPlaybookIncludesIssueInput(t *testing.T) {
 	}
 	wf, ok := s.GenericWorkflowByID(repo.GenericBackendDeliveryWorkflowID)
 	if !ok {
-		t.Fatal("generic backend SOP missing")
+		t.Fatal("generic backend LOOP missing")
 	}
 	var node domain.WorkflowNode
 	for _, item := range wf.Nodes {
@@ -3229,7 +3250,7 @@ func TestExcludeFromRepositoryPatchDependencies(t *testing.T) {
 		// Terraform / IaC
 		".terraform/providers/registry.terraform.io/hashicorp/aws/5.0.0/terraform-provider-aws",
 		".terragrunt-cache/hash/main.tf",
-		// Internal & SOP reports
+		// Internal & LOOP reports
 		".agentflow/temp.txt",
 		".codebuddy/rules.json",
 		"fix-plan.md",
@@ -3764,7 +3785,7 @@ func TestBindGitDiffQuietExcludesDeliverables(t *testing.T) {
 	arts := []domain.ArtifactContract{{Name: "fix-plan", Path: "fix-plan.md", Required: true}}
 	got := bindVerificationCommand("git diff --quiet", arts)
 	if !strings.Contains(got, ":(exclude)fix-plan.md") || !strings.Contains(got, ":(exclude)checkers-report.md") {
-		t.Fatalf("cleanliness gate must ignore SOP deliverables, got %q", got)
+		t.Fatalf("cleanliness gate must ignore LOOP deliverables, got %q", got)
 	}
 	if !strings.HasPrefix(got, "git diff --quiet -- .") {
 		t.Fatalf("cleanliness gate must keep pathspec separator, got %q", got)
@@ -3968,7 +3989,7 @@ func TestExistingMRBlurbDoesNotReusePreviousSOP(t *testing.T) {
 	}
 	got := existingMRBlurb(s, domain.Run{ID: "run-new", ExecutionContext: domain.TelemetryContext{IssueID: "gf-5"}})
 	if strings.Contains(got, "merge_requests/138") || strings.Contains(got, "必须在此 MR") {
-		t.Fatalf("new SOP still bound to previous MR: %s", got)
+		t.Fatalf("new LOOP still bound to previous MR: %s", got)
 	}
 }
 

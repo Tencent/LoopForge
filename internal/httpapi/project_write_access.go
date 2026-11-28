@@ -14,7 +14,7 @@ import (
 )
 
 // requireProjectWriter limits changes to a project's requirements, roles and
-// SOPs to platform administrators, the project owner and non-viewer members.
+// LOOPs to platform administrators, the project owner and non-viewer members.
 // Projects with neither an owner nor members are shared. Authenticated
 // requests without a user identity (service tokens) are allowed.
 func (d deps) requireProjectWriter(c *gin.Context, projectIDs ...string) bool {
@@ -153,6 +153,7 @@ func (d deps) assetOwner(kind, id string) (project string, global bool, found bo
 	case "schedule-jobs":
 		v, ok := d.repo.ScheduleJob(id)
 		return v.ProjectID, false, ok
+	// TODO(knowledge-legacy-compat): remove with legacy /api/knowledge/submissions routes.
 	case "knowledge":
 		v, ok := d.repo.KnowledgeSubmission(id)
 		return v.ProjectID, false, ok
@@ -161,8 +162,8 @@ func (d deps) assetOwner(kind, id string) (project string, global bool, found bo
 }
 
 // assetWriteGuard applies project membership to catalog assets, project MCP
-// servers, schedule jobs and knowledge submissions, and limits platform-wide
-// assets and sync settings to administrators.
+// servers and schedule jobs, and limits platform-wide assets and sync settings
+// to administrators.
 func (d deps) assetWriteGuard() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if c.Request.Method == http.MethodGet || !authRequired() {
@@ -202,6 +203,10 @@ func (d deps) allowAssetWrite(c *gin.Context, path string) bool {
 			return d.requirePlatformAdmin(c)
 		}
 		return d.requireProjectWriter(c, strings.TrimSpace(body.ProjectID))
+	case "/api/schedule-jobs/:id", "/api/schedule-jobs/:id/run":
+		project, _, _ := d.assetOwner("schedule-jobs", c.Param("id"))
+		return d.requireProjectWriter(c, project)
+	// TODO(knowledge-legacy-compat): remove with legacy /api/knowledge/submissions routes.
 	case "/api/knowledge/submissions":
 		var body struct {
 			ProjectID string `json:"projectId"`
@@ -210,9 +215,6 @@ func (d deps) allowAssetWrite(c *gin.Context, path string) bool {
 		return d.requireProjectWriter(c, strings.TrimSpace(body.ProjectID))
 	case "/api/knowledge/submissions/:id", "/api/knowledge/submissions/:id/publish", "/api/knowledge/submissions/:id/reject":
 		project, _, _ := d.assetOwner("knowledge", c.Param("id"))
-		return d.requireProjectWriter(c, project)
-	case "/api/schedule-jobs/:id", "/api/schedule-jobs/:id/run":
-		project, _, _ := d.assetOwner("schedule-jobs", c.Param("id"))
 		return d.requireProjectWriter(c, project)
 	case "/api/skills/:id/files", "/api/skills/:id/files/*path":
 		return d.allowStoredAsset(c, "skills", c.Param("id"))

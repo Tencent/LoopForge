@@ -8,7 +8,7 @@ test('approval helpers explain gates, failures, pauses, and contextual payloads'
   const result = app.evaluate(`
     (() => {
       const run={id:'approval-run',status:'waiting',workflowId:'flow-1',pauseRequested:false,
-        workflowSnapshot:{id:'flow-1',name:'交付 SOP',version:1,revision:1,nodes:[
+        workflowSnapshot:{id:'flow-1',name:'交付 LOOP',version:1,revision:1,nodes:[
           {id:'build',name:'构建',type:'script'},
           {id:'review',name:'人工验收',type:'approval',rejectTo:'build',taskPrompt:'检查测试结果'},
           {id:'ship',name:'发布',type:'agent'}],
@@ -56,7 +56,7 @@ test('approval list sends context and removes the approved run after refreshing'
     id: 'approval-run', projectId: 'project-1', status: 'waiting', workflowId: 'flow-approval', createdAt: '2026-10-20T10:00:00Z',
     executionContext: { responsibleUserId: 7, projectId: 'project-1' },
     workflowSnapshot: {
-      id: 'flow-approval', name: '交付 SOP', version: 1, revision: 1,
+      id: 'flow-approval', name: '交付 LOOP', version: 1, revision: 1,
       nodes: [{ id: 'review', name: '验收', type: 'approval', taskPrompt: '确认结果' }], edges: [],
     },
     nodes: { review: { status: 'waiting_approval' } },
@@ -76,7 +76,7 @@ test('approval list sends context and removes the approved run after refreshing'
   `);
   await app.evaluate(`renderApprovals(true)`);
   const card = app.document.querySelector('#approvalList .ap-card');
-  assert.match(card.textContent, /交付 SOP/);
+  assert.match(card.textContent, /交付 LOOP/);
   assert.match(card.textContent, /为什么需要人工确认/);
   card.querySelector('[data-human-context]').value = '验收通过，保留截图';
   card.querySelector('[data-approve]').click();

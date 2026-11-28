@@ -30,7 +30,10 @@ type TelemetryContext struct {
 	IssueID         string `json:"issueId,omitempty"`
 	// TAPDID is the external requirement key; local IssueID may differ across imports.
 	TAPDID            string `json:"tapdId,omitempty"`
-	ResponsibleUserID int64  `json:"responsibleUserId,omitempty"`
+	ResponsibleUserID int64 `json:"responsibleUserId,omitempty"`
+	// KnowledgeRefs optionally pins the running user's connector bindings for
+	// this SOP Run (nil = follow node KnowledgeRefs / role toggle).
+	KnowledgeRefs *[]KnowledgeRef `json:"knowledgeRefs,omitempty"`
 	// ExecutionMode and ExecutionRunnerID freeze the execution target when a
 	// run starts. Retries reconnect to this target instead of following a
 	// user's later default-runner changes.
@@ -56,7 +59,7 @@ type TelemetryContext struct {
 	ParentRunID  string `json:"parentRunId,omitempty"`
 	ParentNodeID string `json:"parentNodeId,omitempty"`
 	// WorkspaceRunID names the run that owns the checkout, either a
-	// conversation workspace or the root SOP in a nested run. Empty means
+	// conversation workspace or the root LOOP in a nested run. Empty means
 	// this run owns its workspace.
 	WorkspaceRunID  string `json:"workspaceRunId,omitempty"`
 	WorkflowID      string `json:"workflowId,omitempty"`
@@ -72,6 +75,16 @@ type TelemetryContext struct {
 	TraceID         string `json:"traceId"`
 	SpanID          string `json:"spanId,omitempty"`
 	ParentSpanID    string `json:"parentSpanId,omitempty"`
+	// Purpose marks non-business runs. RunPurposeEvolutionReplay runs
+	// validate an asset candidate: they never deliver issues, send
+	// notifications, use platform MCP writes or count in analytics. Child
+	// SOP runs inherit it with the rest of the context.
+	Purpose string `json:"purpose,omitempty"`
+	// EvolutionReplayID names the replay whose asset overrides this run uses.
+	EvolutionReplayID string `json:"evolutionReplayId,omitempty"`
+	// EvolutionCanaryIDs name the proposals in a trial whose candidate this
+	// business run uses instead of the live body (assigned at run start).
+	EvolutionCanaryIDs []string `json:"evolutionCanaryIds,omitempty"`
 }
 
 type MetricPoint struct {

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/knowledge"
 	"agentflow/internal/preview"
 	"agentflow/internal/repo"
 	"agentflow/internal/runtime"
@@ -48,7 +49,7 @@ type Engine struct {
 	claimKick      chan struct{}
 
 	// MergeIntoBranch creates or reuses a Gongfeng MR from source→target and
-	// merges it (merge commit, source branch kept). Scheduled SOP uses this
+	// merges it (merge commit, source branch kept). Scheduled LOOP uses this
 	// to land each issue work branch on the integrate baseline. Nil means
 	// the engine falls back to a direct push (local/dev without Gongfeng).
 	// The default branch is never an automatic merge target.
@@ -61,6 +62,9 @@ type Engine struct {
 	// FindBranchMRsInto lists the MRs from a work branch into one target
 	// branch with their head commits, for mode=mr gates. Nil cannot verify.
 	FindBranchMRsInto func(domain.BranchMRQuery) ([]domain.DeliveryMR, error)
+
+	// knowledgeExecutor resolves user-owned Connectors and builds L0 catalogs.
+	knowledge *knowledge.Executor
 
 	// runnerDispatchNotify wakes long-polling CLI runners when the engine
 	// queues a runner task. Wired via SetRunnerDispatchNotify (httpapi.New);
@@ -105,6 +109,39 @@ func New(s *repo.Store, sm *runtime.Manager) *Engine {
 	host, _ := os.Hostname()
 	e := &Engine{repo: s, sandboxes: sm, runner: runtime.NewExecutorRunner(), running: map[string]context.CancelFunc{}, runEnvs: map[string]*runEnvironment{}, workspaceFacts: map[string]domain.RunnerWorkspaceFacts{}, subs: map[string]map[chan domain.Run]struct{}{}, runnerTaskSubs: map[string]map[chan struct{}]struct{}{}, instanceID: fmt.Sprintf("%s-%d", host, os.Getpid()), workspaceHost: host, leaseTTL: 30 * time.Second, executeRuns: true, claimKick: make(chan struct{}, 1), obsKick: make(chan struct{}, 1)}
 	return e
+}
+
+// ConfigureKnowledge attaches the user-scoped knowledge Connector Executor.
+func (e *Engine) ConfigureKnowledge(exec *knowledge.Executor) {
+	if e == nil {
+		return
+	}
+	e.mu.Lock()
+	e.knowledge = exec
+	e.mu.Unlock()
+}
+
+func (e *Engine) knowledgeExecutor() *knowledge.Executor {
+	if e == nil {
+		return nil
+	}
+	e.mu.Lock()
+	exec := e.knowledge
+	e.mu.Unlock()
+	if exec != nil {
+		return exec
+	}
+	if e.repo == nil {
+		return nil
+	}
+	exec = knowledge.NewExecutor(knowledge.NewService(e.repo, nil))
+	e.mu.Lock()
+	if e.knowledge == nil {
+		e.knowledge = exec
+	}
+	exec = e.knowledge
+	e.mu.Unlock()
+	return exec
 }
 
 // StartMaintenance starts the process-lifetime background work owned by the

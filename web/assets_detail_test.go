@@ -94,6 +94,12 @@ func TestAssetsStylesheetFollowsHarnessTokens(t *testing.T) {
 	if !strings.Contains(string(css), "minmax(min(100%, 256px), 1fr)") {
 		t.Fatal("assets-harness.css card grid must use minmax(min(100%, 256px), 1fr) so 1280px viewports show three columns")
 	}
+	if strings.Contains(string(css), "#assetsView .sandbox-field + .sandbox-field") {
+		t.Fatal("assets-harness.css must not apply vertical .sandbox-field spacing inside .sandbox-env-grid columns")
+	}
+	if !strings.Contains(string(css), "#assetsView .sandbox-card > .sandbox-field + .sandbox-field { margin-top: 16px; }") {
+		t.Fatal("assets-harness.css must scope vertical .sandbox-field spacing to direct .sandbox-card children")
+	}
 	v4, err := os.ReadFile("product-v4.css")
 	if err != nil {
 		t.Fatal(err)

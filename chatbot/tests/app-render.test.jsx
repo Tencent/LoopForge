@@ -555,6 +555,43 @@ describe("App", () => {
     }
   });
 
+  test("create-and-clarify handoff pre-fills a clarify prompt and cleans mentionIntent", async () => {
+    const previous = { ...chat };
+    const originalFetch = globalThis.fetch;
+    const issues = {
+      i1: { id: "i1", title: "导出 CSV", projectId: "p1" },
+      i2: { id: "i2", title: "筛选条件", projectId: "p1" },
+    };
+    globalThis.fetch = vi.fn(async (path) => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ issue: issues[decodeURIComponent(String(path).split("/").pop())] }),
+    }));
+    Object.assign(chat, { projectId: "p1", startProjectDraft: vi.fn() });
+    history.replaceState({}, "", "/?projectId=p1&mentionIssue=i1&mentionIntent=clarify");
+    let view;
+    try {
+      view = render(<App />);
+      const box = screen.getByRole("textbox");
+      await waitFor(() => expect(box.value).toBe("@导出 CSV 帮我澄清这个需求"));
+      expect(new URLSearchParams(location.search).has("mentionIssue")).toBe(false);
+      expect(new URLSearchParams(location.search).has("mentionIntent")).toBe(false);
+
+      window.dispatchEvent(new MessageEvent("message", {
+        data: { type: "agentflow-chat-mention-issue", issueId: "i2", projectId: "p1", intent: "clarify" },
+        origin: location.origin,
+        source: window.parent,
+      }));
+      await waitFor(() => expect(box.value).toBe("@筛选条件 帮我澄清这个需求"));
+    } finally {
+      view?.unmount();
+      globalThis.fetch = originalFetch;
+      Object.assign(chat, previous);
+      delete chat.startProjectDraft;
+      localStorage.clear();
+    }
+  });
+
   test("a requirement handoff keeps the project's unsent new-conversation draft", async () => {
     const previous = { ...chat };
     const originalFetch = globalThis.fetch;
@@ -697,8 +734,8 @@ describe("App", () => {
     expect(screen.getByLabelText("选择项目")).toHaveClass("is-unset");
     await user.click(screen.getByText("接入测试环境"));
     expect(screen.getByRole("textbox").value).toMatch(/^带我一步步接入测试环境/);
-    await user.click(screen.getByText("选用 SOP 与角色"));
-    expect(screen.getByRole("textbox").value).toMatch(/产品、前端、后端交付 SOP/);
+    await user.click(screen.getByText("选用 LOOP 与角色"));
+    expect(screen.getByRole("textbox").value).toMatch(/产品、前端、后端交付 LOOP/);
   });
 
   test("questions and replies show when they were sent, and the header switches project", async () => {
@@ -857,7 +894,7 @@ describe("App", () => {
             role: "assistant",
             content: JSON.stringify({
               message: "生成了产物",
-              drafts: [{ tool: "workflows_save", body: { name: "交付 SOP", projectId: "p1" } }],
+              drafts: [{ tool: "workflows_save", body: { name: "交付 LOOP", projectId: "p1" } }],
             }),
             attachments: [{ id: "img1", name: "result.png", mimeType: "image/png" }],
             createdAt: new Date().toISOString(),

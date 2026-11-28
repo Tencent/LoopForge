@@ -82,6 +82,9 @@ func (r *CatalogRepo) UpdateGenericWorkflow(workflow domain.WorkflowDefinition) 
 	if err := domain.ValidateWorkflowPreparation(workflow); err != nil {
 		return domain.WorkflowDefinition{}, err
 	}
+	if err := domain.ValidateWorkflowKnowledge(workflow); err != nil {
+		return domain.WorkflowDefinition{}, err
+	}
 	if err := domain.ValidateWorkflowMetricStages(workflow); err != nil {
 		return domain.WorkflowDefinition{}, err
 	}
@@ -198,13 +201,10 @@ func (r *CatalogRepo) publishGenericWorkflow(id string) (domain.WorkflowDefiniti
 	if !workflowNeedsPublish(template.Workflow) {
 		return template.Workflow, nil
 	}
+	template.Workflow.Version = nextWorkflowVersion(template.Workflow)
 	template.Workflow.Status = "published"
-	template.Workflow.Version++
 	template.Workflow.Revision++
 	template.Workflow.PublishedRevision = template.Workflow.Revision
-	if template.Workflow.Version < 1 {
-		template.Workflow.Version = 1
-	}
 	template.Workflow.UpdatedAt = time.Now().UTC()
 	if err := r.putGenericTemplate(template); err != nil {
 		return domain.WorkflowDefinition{}, err
@@ -212,7 +212,7 @@ func (r *CatalogRepo) publishGenericWorkflow(id string) (domain.WorkflowDefiniti
 	return template.Workflow, nil
 }
 
-// GenericTemplates returns every stored generic SOP.
+// GenericTemplates returns every stored generic LOOP.
 func (r *CatalogRepo) GenericTemplates() []GenericTemplate {
 	var rows []genericTemplateRow
 	if err := r.DB.Order("id ASC").Find(&rows).Error; err != nil {
@@ -270,7 +270,7 @@ func (r *CatalogRepo) AgentShadowsTemplateOutside(agent domain.AgentDefinition, 
 	return inTemplate
 }
 
-// WorkflowNamesUsingAgent lists the SOPs whose nodes resolve to this stored
+// WorkflowNamesUsingAgent lists the LOOPs whose nodes resolve to this stored
 // role at run time.
 func (r *CatalogRepo) WorkflowNamesUsingAgent(agent domain.AgentDefinition) []string {
 	var names []string

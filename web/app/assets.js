@@ -25,7 +25,7 @@ function assetStatusHTML(a){
 }
 function assetMetaHTML(a){
   const item=(icon,text)=>`<span>${huiIcon(icon)}${escapeHTML(text)}</span>`;const meta=[];
-  if(state.assetType==='rules'){meta.push(item('priority-bolt',`优先级 ${a.priority||0}`));if(a.global){const bound=(a.workflowIds||[]).length;meta.push(item('globe',bound?`全局 · ${bound} 个 SOP`:'全局'))}}
+  if(state.assetType==='rules'){meta.push(item('priority-bolt',`优先级 ${a.priority||0}`));if(a.global){const bound=(a.workflowIds||[]).length;meta.push(item('globe',bound?`全局 · ${bound} 个 LOOP`:'全局'))}}
   if(state.assetType==='skills'){
     meta.push(item('doc',`${Object.keys(a.files||{}).length+(a.fileRefs||[]).length} 个文件`));
     const src=assetSkillSource(a);
@@ -257,7 +257,7 @@ async function toggleAssetShare(id){
     toast(saved.shared?(state.assetType==='skills'?'已共享，所有对话和定时任务会自动装入':'已共享，其他项目可绑定'):'已取消共享');
   }catch(e){toast(e.message)}
 }
-function assetEmptyHint(){return ({rules:'规则是写给 Agent 的行为约束，例如编码规范、禁止事项。建好后在「角色定义」里绑定到角色。',skills:'技能是 Agent 可按需加载的说明和附加文件，例如某个框架的操作手册。建好后在「角色定义」里绑定到角色。',sandboxes:'沙箱决定 SOP 节点和对话工作区在什么隔离环境里执行：docker 沙箱自带 Dockerfile，native 沙箱使用执行机器上已安装的工具。建好后在流程设置里选用；也可以直接用「共享」里的现成配置。'})[state.assetType]||''}
+function assetEmptyHint(){return ({rules:'规则是写给 Agent 的行为约束，例如编码规范、禁止事项。建好后在「角色定义」里绑定到角色。',skills:'技能是 Agent 可按需加载的说明和附加文件，例如某个框架的操作手册。建好后在「角色定义」里绑定到角色。',sandboxes:'沙箱决定 LOOP 节点和对话工作区在什么隔离环境里执行：docker 沙箱自带 Dockerfile，native 沙箱使用执行机器上已安装的工具。建好后在流程设置里选用；也可以直接用「共享」里的现成配置。'})[state.assetType]||''}
 function assetKindLabel(){return ({rules:'规则',skills:'技能',sandboxes:'沙箱'})[state.assetType]||'资产'}
 function assetRefKindLabel(){return ({rules:'角色',skills:'角色',sandboxes:'流程'})[state.assetType]||'引用'}
 function assetReferenceNames(a){
@@ -292,11 +292,11 @@ async function deleteAsset(id){
   }catch(e){toast(e.message||'删除失败')}
 }
 function assetKind(){return assetKindLabel()}
-function ruleGlobalFields(a){const on=!!a.global;return `<div class="rule-global-block"><label class="rule-global-row"><span><b>作为全局规则</b><small>开启后选择要生效的 SOP。该 SOP 的每个节点执行时都会带上这条规则。</small></span><input name="global" type="checkbox" class="rule-global-input" role="switch" ${on?'checked':''}></label><div id="ruleSOPPickerWrap" class="rule-global-sops" ${on?'':'hidden'}><label>应用到 SOP</label><div id="ruleSOPPicker" class="repo-picker"></div><div class="json-help">从下拉框添加，点击标签移除。选中的 SOP 在运行时，其全部节点都会注入本规则。</div></div></div>`}
+function ruleGlobalFields(a){const on=!!a.global;return `<div class="rule-global-block"><label class="rule-global-row"><span><b>作为全局规则</b><small>开启后选择要生效的 LOOP。该 LOOP 的每个节点执行时都会带上这条规则。</small></span><input name="global" type="checkbox" class="rule-global-input" role="switch" ${on?'checked':''}></label><div id="ruleSOPPickerWrap" class="rule-global-sops" ${on?'':'hidden'}><label>应用到 LOOP</label><div id="ruleSOPPicker" class="repo-picker"></div><div class="json-help">从下拉框添加，点击标签移除。选中的 LOOP 在运行时，其全部节点都会注入本规则。</div></div></div>`}
 function ruleSOPChoices(){return runnableWorkflowOptions()}
 function selectedRuleWorkflowIds(){try{const ids=JSON.parse($('#ruleSOPPicker')?.dataset.ids||'[]');return Array.isArray(ids)?ids:[]}catch{return []}}
 function setRuleWorkflowIds(ids){const host=$('#ruleSOPPicker');if(!host)return;const known=new Set(ruleSOPChoices().map(w=>w.id));host.dataset.ids=JSON.stringify([...new Set((ids||[]).map(id=>String(id||'').trim()).filter(id=>id&&known.has(id)))]);renderRuleSOPPicker();markAssetDirty()}
-function renderRuleSOPPicker(){const host=$('#ruleSOPPicker');if(!host)return;const sops=ruleSOPChoices();const selected=selectedRuleWorkflowIds();const chosen=new Set(selected);const leftover=sops.filter(w=>!chosen.has(w.id));const tags=selected.map(id=>{const sop=sops.find(w=>w.id===id);const name=sop?.name||id;const nodes=sop?.nodes?.length||0;const label=nodes?`${name} · ${nodes} 个节点`:name;return `<button type="button" class="repo-picker-tag" data-remove-rule-sop="${escapeHTML(id)}" title="点击移除">${escapeHTML(label)}<span aria-hidden="true">×</span></button>`}).join('');const options=leftover.map(w=>`<option value="${escapeHTML(w.id)}">${escapeHTML(w.name)}${w.nodes?.length?` · ${w.nodes.length} 个节点`:''}</option>`).join('');const placeholder=!sops.length?'暂无可选 SOP':(!leftover.length?'已全部选择':'＋ 添加 SOP…');host.innerHTML=`<div class="repo-picker-field">${tags}<select class="repo-picker-select"${leftover.length?'':' disabled'}><option value="">${placeholder}</option>${options}</select></div>`;host.querySelectorAll('[data-remove-rule-sop]').forEach(b=>b.onclick=()=>setRuleWorkflowIds(selected.filter(id=>id!==b.dataset.removeRuleSop)));const sel=host.querySelector('select');if(sel)sel.onchange=()=>{if(!sel.value)return;setRuleWorkflowIds([...selected,sel.value])}}
+function renderRuleSOPPicker(){const host=$('#ruleSOPPicker');if(!host)return;const sops=ruleSOPChoices();const selected=selectedRuleWorkflowIds();const chosen=new Set(selected);const leftover=sops.filter(w=>!chosen.has(w.id));const tags=selected.map(id=>{const sop=sops.find(w=>w.id===id);const name=sop?.name||id;const nodes=sop?.nodes?.length||0;const label=nodes?`${name} · ${nodes} 个节点`:name;return `<button type="button" class="repo-picker-tag" data-remove-rule-sop="${escapeHTML(id)}" title="点击移除">${escapeHTML(label)}<span aria-hidden="true">×</span></button>`}).join('');const options=leftover.map(w=>`<option value="${escapeHTML(w.id)}">${escapeHTML(w.name)}${w.nodes?.length?` · ${w.nodes.length} 个节点`:''}</option>`).join('');const placeholder=!sops.length?'暂无可选 LOOP':(!leftover.length?'已全部选择':'＋ 添加 LOOP…');host.innerHTML=`<div class="repo-picker-field">${tags}<select class="repo-picker-select"${leftover.length?'':' disabled'}><option value="">${placeholder}</option>${options}</select></div>`;host.querySelectorAll('[data-remove-rule-sop]').forEach(b=>b.onclick=()=>setRuleWorkflowIds(selected.filter(id=>id!==b.dataset.removeRuleSop)));const sel=host.querySelector('select');if(sel)sel.onchange=()=>{if(!sel.value)return;setRuleWorkflowIds([...selected,sel.value])}}
 function bindRuleGlobalPicker(a){const host=$('#ruleSOPPicker');if(!host)return;const known=new Set(ruleSOPChoices().map(w=>w.id));host.dataset.ids=JSON.stringify((Array.isArray(a.workflowIds)?a.workflowIds:[]).filter(id=>known.has(id)));const toggle=document.querySelector('#assetForm [name="global"]');const wrap=$('#ruleSOPPickerWrap');const sync=()=>{if(wrap)wrap.hidden=!(toggle&&toggle.checked)};if(toggle)toggle.onchange=sync;sync();renderRuleSOPPicker()}
 // seatbelt / bwrap are the per-OS forms of native; rows saved before the merge still carry them.
 // Rows saved as local before it was removed read as native.
@@ -317,17 +317,35 @@ function sandboxSetupHTML(a){
   const driver=sandboxDriverOption(a.driver);
   const privilegeHelp=lfT('执行机器须允许特权沙箱。容器内进程可访问宿主机设备，并可能控制执行机器。','The execution machine must allow privileged sandboxes. Processes in the container can access host devices and may take control of the machine.');
   return `<div class="sandbox-setup">
-  ${assetFieldLabel('隔离方式','Docker 在 OCI 容器里执行；系统轻量隔离按执行机器的系统自动选择 seatbelt（macOS）或 bwrap（Linux），可以在用户的执行机器、云端 Runner 或平台本机上运行。')}
-  <select name="driver" class="asset-select" aria-label="隔离方式"><option value="docker" ${driver==='docker'?'selected':''}>${sandboxDriverLabel('docker')}</option><option value="native" ${driver==='native'?'selected':''}>${sandboxDriverLabel('native')}</option></select>
-  ${assetFieldLabel('工具链说明','Agent 自动选择沙箱时参考这些工具和版本。','assetSandboxToolchain')}
-  <input id="assetSandboxToolchain" name="toolchain" class="asset-input" maxlength="500" value="${escapeHTML(a.toolchain||'')}" placeholder="例如 Python 3.12、uv、PostgreSQL 客户端">
-  <div data-sandbox-drivers="docker">
-    ${assetFieldLabel('Dockerfile','保存在这个沙箱里。沙箱初始化时用它 docker build 出镜像；内容相同的沙箱共用同一个镜像。不要指向仓库目录或现成镜像名。','assetDockerfile')}
-    <textarea id="assetDockerfile" name="dockerfileContent" class="asset-editor" rows="14" spellcheck="false" placeholder="FROM node:22-bookworm-slim">${escapeHTML(a.dockerfile?.content||'')}</textarea>
-    ${assetFieldLabel('构建上下文文件','JSON 对象：键是构建上下文里的相对路径，值是文件内容，和 Dockerfile 一起保存，可在 Dockerfile 里 COPY。','assetDockerfileFiles')}
-    <textarea id="assetDockerfileFiles" name="dockerfileFiles" class="asset-editor is-short" rows="4" spellcheck="false" placeholder='{"packages.txt":"git\\ncurl"}'>${escapeHTML(JSON.stringify(a.dockerfile?.files||{},null,2))}</textarea>
+  <section class="sandbox-card">
+    <div class="sandbox-card-head">
+      <div><h3>运行环境与工具链</h3><p>选择隔离方式并说明沙箱预装的语言、工具与版本。</p></div>
+    </div>
+    <div class="sandbox-env-grid">
+      <div class="sandbox-field">
+        ${assetFieldLabel('隔离方式','Docker 在 OCI 容器里执行；系统轻量隔离按执行机器的系统自动选择 seatbelt（macOS）或 bwrap（Linux），可以在用户的执行机器、云端 Runner 或平台本机上运行。')}
+        <select name="driver" class="asset-select" aria-label="隔离方式"><option value="docker" ${driver==='docker'?'selected':''}>${sandboxDriverLabel('docker')}</option><option value="native" ${driver==='native'?'selected':''}>${sandboxDriverLabel('native')}</option></select>
+      </div>
+      <div class="sandbox-field">
+        ${assetFieldLabel('工具链说明','Agent 自动选择沙箱时参考这些工具和版本。','assetSandboxToolchain')}
+        <input id="assetSandboxToolchain" name="toolchain" class="asset-input" maxlength="500" value="${escapeHTML(a.toolchain||'')}" placeholder="例如 Python 3.12、uv、PostgreSQL 客户端">
+      </div>
+    </div>
+  </section>
+  <section class="sandbox-card" data-sandbox-drivers="docker">
+    <div class="sandbox-card-head">
+      <div><h3>容器构建与安全限制</h3><p>使用标准 Dockerfile 构建隔离镜像；内容相同的沙箱自动复用镜像缓存。</p></div>
+    </div>
+    <div class="sandbox-field">
+      ${assetFieldLabel('Dockerfile','保存在这个沙箱里。沙箱初始化时用它 docker build 出镜像；内容相同的沙箱共用同一个镜像。不要指向仓库目录或现成镜像名。','assetDockerfile')}
+      <textarea id="assetDockerfile" name="dockerfileContent" class="asset-editor is-dockerfile" rows="9" spellcheck="false" placeholder="FROM node:22-bookworm-slim">${escapeHTML(a.dockerfile?.content||'')}</textarea>
+    </div>
+    <div class="sandbox-field">
+      ${assetFieldLabel('构建上下文文件','JSON 对象：键是构建上下文里的相对路径，值是文件内容，和 Dockerfile 一起保存，可在 Dockerfile 里 COPY。','assetDockerfileFiles')}
+      <textarea id="assetDockerfileFiles" name="dockerfileFiles" class="asset-editor is-compact" rows="4" spellcheck="false" placeholder='{"packages.txt":"git\\ncurl"}'>${escapeHTML(JSON.stringify(a.dockerfile?.files||{},null,2))}</textarea>
+    </div>
     <div class="asset-switch-row">
-      <label for="assetReadOnlyRootFS"><b>容器根文件系统只读</b></label>
+      <label for="assetReadOnlyRootFS"><b>容器根文件系统只读</b><small>开启后系统目录只读、/tmp 使用内存盘，仅工作区 /workspace 可写；默认建议关闭。</small></label>
       <span class="asset-switch-controls">
         <button type="button" class="field-help" aria-label="容器根文件系统只读说明" title="开启后 /usr、/etc 等系统目录只读，/tmp 使用临时内存盘，缺少的 CLI 无法在容器内自动安装；工作区 /workspace 仍可写。默认建议关闭。">?</button>
         <input id="assetReadOnlyRootFS" name="readOnlyRootFS" type="checkbox" class="asset-switch" role="switch" ${a.readOnlyRootFS?'checked':''}>
@@ -335,31 +353,43 @@ function sandboxSetupHTML(a){
     </div>
     <details class="sandbox-advanced">
       <summary>${lfT('高级设置','Advanced settings')}</summary>
-      <div class="sandbox-resource-fields">
-        <div>
-          <label for="assetSandboxCPU" class="asset-field-label">CPU 上限（核）</label>
-          <input id="assetSandboxCPU" name="cpuCores" class="asset-input" type="number" inputmode="decimal" min="0.01" max="9223372036.854" step="0.001" aria-describedby="assetSandboxResourceHint" value="${a.cpuMillicores?a.cpuMillicores/1000:''}">
+      <div class="sandbox-advanced-body">
+        <div class="sandbox-resource-fields">
+          <div>
+            <label for="assetSandboxCPU" class="asset-field-label">CPU 上限（核）</label>
+            <input id="assetSandboxCPU" name="cpuCores" class="asset-input" type="number" inputmode="decimal" min="0.01" max="9223372036.854" step="0.001" aria-describedby="assetSandboxResourceHint" value="${a.cpuMillicores?a.cpuMillicores/1000:''}" placeholder="默认不限">
+          </div>
+          <div>
+            <label for="assetSandboxMemory" class="asset-field-label">内存上限（MiB）</label>
+            <input id="assetSandboxMemory" name="memoryMiB" class="asset-input" type="number" inputmode="numeric" min="6" max="8796093022207" step="1" aria-describedby="assetSandboxResourceHint" value="${escapeHTML(a.memoryMiB||'')}" placeholder="默认不限">
+          </div>
         </div>
-        <div>
-          <label for="assetSandboxMemory" class="asset-field-label">内存上限（MiB）</label>
-          <input id="assetSandboxMemory" name="memoryMiB" class="asset-input" type="number" inputmode="numeric" min="6" max="8796093022207" step="1" aria-describedby="assetSandboxResourceHint" value="${escapeHTML(a.memoryMiB||'')}">
+        <div id="assetSandboxResourceHint" class="asset-field-hint">留空使用执行机器配置。两处都配置上限时，较低值生效。</div>
+        <div class="asset-switch-row">
+          <label for="assetPrivileged"><b>${lfT('特权模式','Privileged mode')}</b><small>容器可访问宿主机设备，需执行机器开启特权许可。</small></label>
+          <span class="asset-switch-controls">
+            <button type="button" class="field-help" aria-label="${lfT('特权模式说明','About privileged mode')}" title="${escapeHTML(privilegeHelp)}">?</button>
+            <input id="assetPrivileged" name="privileged" type="checkbox" class="asset-switch" role="switch" ${a.privileged?'checked':''}>
+          </span>
         </div>
-      </div>
-      <div id="assetSandboxResourceHint" class="asset-field-hint">留空使用执行机器配置。两处都配置上限时，较低值生效。</div>
-      <div class="asset-switch-row">
-        <label for="assetPrivileged"><b>${lfT('特权模式','Privileged mode')}</b></label>
-        <span class="asset-switch-controls">
-          <button type="button" class="field-help" aria-label="${lfT('特权模式说明','About privileged mode')}" title="${escapeHTML(privilegeHelp)}">?</button>
-          <input id="assetPrivileged" name="privileged" type="checkbox" class="asset-switch" role="switch" ${a.privileged?'checked':''}>
-        </span>
       </div>
     </details>
-  </div>
-  <div data-sandbox-drivers="native">
-    <div class="asset-field-hint">系统轻量隔离直接使用执行机器上已安装的语言和工具，系统目录只读，只有工作区可写。需要的设置（如 JAVA_HOME、代理）写进下面的环境变量。仓库从执行机器的仓库缓存共享克隆，不重复下载。</div>
-  </div>
-  ${assetFieldLabel('环境变量','JSON 对象，叠加到沙箱基础环境并随资产保存；不要在这里保存凭证。平台凭证、HOME/TMPDIR 和遥测变量优先级更高。')}
-  <textarea name="environment" class="asset-editor is-env" rows="4" placeholder='{"NAME":"value"}'>${escapeHTML(JSON.stringify(a.environment||{},null,2))}</textarea>
+  </section>
+  <section class="sandbox-card sandbox-native-card" data-sandbox-drivers="native">
+    <div class="sandbox-native-callout">
+      <span class="sandbox-native-icon" aria-hidden="true">${huiIcon('server')}</span>
+      <div>
+        <b>系统轻量隔离</b>
+        <p>系统轻量隔离直接使用执行机器上已安装的语言和工具，系统目录只读，只有工作区可写。需要的设置（如 JAVA_HOME、代理）写进下面的环境变量。仓库从执行机器的仓库缓存共享克隆，不重复下载。</p>
+      </div>
+    </div>
+  </section>
+  <section class="sandbox-card">
+    <div class="sandbox-field">
+      ${assetFieldLabel('环境变量','JSON 对象，叠加到沙箱基础环境并随资产保存；不要在这里保存凭证。平台凭证、HOME/TMPDIR 和遥测变量优先级更高。','assetSandboxEnv')}
+      <textarea id="assetSandboxEnv" name="environment" class="asset-editor is-env" rows="4" spellcheck="false" placeholder='{"NAME":"value"}'>${escapeHTML(JSON.stringify(a.environment||{},null,2))}</textarea>
+    </div>
+  </section>
 </div>`}
 function assetMainPanesHTML(a,{creating,readonly}){
   const pane=(key,body)=>`<div class="asset-tabpanel" data-asset-pane="${key}" role="tabpanel">${body}</div>`;

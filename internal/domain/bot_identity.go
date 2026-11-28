@@ -71,7 +71,7 @@ type BotPendingDraft struct {
 	CreatedAt     time.Time  `json:"createdAt"`
 	UpdatedAt     time.Time  `json:"updatedAt"`
 	ExecutedAt    *time.Time `json:"executedAt,omitempty"`
-	// SOP is the SOP choice offered on the chat card when the draft
+	// SOP is the LOOP choice offered on the chat card when the draft
 	// creates exactly one requirement (nil otherwise); Choice is what the
 	// requester picked there: a workflow ID, BotDraftDefaultSOP, or empty
 	// when nothing was picked.
@@ -82,10 +82,10 @@ type BotPendingDraft struct {
 	RepoChoice string `json:"-"`
 }
 
-// BotDraftDefaultSOP is the card choice "project default SOP".
+// BotDraftDefaultSOP is the card choice "project default LOOP".
 const BotDraftDefaultSOP = "__default__"
 
-// BotDraftSOP is the SOP selection of a new requirement in a draft.
+// BotDraftSOP is the LOOP selection of a new requirement in a draft.
 type BotDraftSOP struct {
 	Index       int                 `json:"index"`
 	WorkflowID  string              `json:"workflowId,omitempty"` // named by the model
@@ -128,7 +128,7 @@ func (d BotPendingDraft) SelectedRepository() string {
 	return BotDraftDefaultSOP
 }
 
-// BotDraftSOPOption is one selectable SOP.
+// BotDraftSOPOption is one selectable LOOP.
 type BotDraftSOPOption struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
@@ -150,7 +150,7 @@ func (s *BotDraftSOP) Allows(id string) bool {
 	return false
 }
 
-// Selected is the effective card selection: the pick, else the SOP the
+// Selected is the effective card selection: the pick, else the LOOP the
 // model named, else the project default.
 func (d BotPendingDraft) Selected() string {
 	switch {

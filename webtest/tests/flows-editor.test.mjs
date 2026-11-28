@@ -50,7 +50,7 @@ test('flow editor handles artifact/list editors and saves workflow changes', asy
   t.after(app.close);
   app.evaluate(`switchView('flow');state.workflow={id:'save-flow',projectId:'project-1',name:'Save me',
     status:'draft',version:1,revision:0,sandboxProfileId:'sandbox-1',nodes:[
-      {id:'sub',name:'Sub SOP',type:'sop',sopWorkflowId:'flow-1',position:{x:10,y:10},
+      {id:'sub',name:'Sub LOOP',type:'sop',sopWorkflowId:'flow-1',position:{x:10,y:10},
        artifactOutputs:[{name:'report',path:'report.md',mediaType:'text/markdown',required:true}]}
     ],edges:[]};state.selectedNode='sub';state.workflowDirty=true;renderAll();renderProperties()`);
   const name = app.document.querySelector('#properties [data-ak="name"]');
@@ -66,6 +66,23 @@ test('flow editor handles artifact/list editors and saves workflow changes', asy
   assert.equal(call.body.id, 'save-flow');
   assert.equal(call.body.nodes[0].artifactOutputs[0].name, 'handoff');
   assert.equal(app.evaluate(`state.workflowDirty`), false);
+});
+
+test('the canvas toolbar labels automatic arrangement and clicking it lays out dependencies', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  app.evaluate(`switchView('flow');state.workflow={id:'arrange-flow',projectId:'project-1',name:'Arrange',status:'draft',
+    nodes:[{id:'a',name:'Build',type:'script',position:{x:320,y:30}},
+      {id:'b',name:'Approve',type:'approval',position:{x:20,y:30}}],
+    edges:[{id:'edge',source:'a',target:'b',when:'success'}]};markWorkflowClean();renderAll()`);
+  const button = app.document.querySelector('#canvasToolbar #canvasArrange');
+  assert.equal(button.textContent, '自动整理');
+  assert.equal(button.disabled, false);
+  button.click();
+  assert.equal(app.evaluate('state.workflow.nodes.map(n=>n.position.x).join(",")'), '80,400');
+  assert.equal(app.evaluate('state.workflowDirty'), true);
+  app.document.querySelector('#canvasUndo').click();
+  assert.equal(app.evaluate('state.workflow.nodes.map(n=>n.position.x).join(",")'), '320,20');
 });
 
 test('flow preview properties persist the CLI, model and SPA fallback', async (t) => {
@@ -124,7 +141,7 @@ test('flow preview properties persist the CLI, model and SPA fallback', async (t
   assert.equal(app.evaluate('state.workflow.preview.executorId'), '');
 });
 
-test('SOP wizard creates a workflow and publish/delete actions send expected requests', async (t) => {
+test('LOOP wizard creates a workflow and publish/delete actions send expected requests', async (t) => {
   const app = await loadApp();
   t.after(app.close);
   app.evaluate(`afConfirm=async()=>true;openSOPWizard()`);
@@ -141,11 +158,13 @@ test('SOP wizard creates a workflow and publish/delete actions send expected req
   });
   assert.equal(app.evaluate(`state.workflow.name`), 'Release checks');
   assert.deepEqual(app.evaluate(`state.workflow.tags`).join(','), 'release,qa');
+  assert.doesNotMatch(app.document.querySelector('#workflowMeta').textContent, /v1/);
 
   const current = app.evaluate(`structuredClone(state.workflow)`);
-  app.router.post(/^\/api\/workflows\/[^/]+\/publish$/, { ...current, status: 'published', version: 2 });
+  app.router.post(/^\/api\/workflows\/[^/]+\/publish$/, { ...current, status: 'published', version: 1, revision: 2, publishedRevision: 2 });
   await app.evaluate(`publishWorkflow()`);
   assert.equal(app.evaluate(`state.workflow.status`), 'published');
+  assert.match(app.document.querySelector('#workflowMeta').textContent, /v1/);
   const id = app.evaluate(`state.workflow.id`);
   app.router.delete(`/api/workflows/${id}`, { ok: true });
   await app.evaluate(`deleteWorkflow(${JSON.stringify(id)})`);

@@ -256,14 +256,14 @@ test('run filtering, paging, status actions, and list/detail transitions remain 
   assert.match(app.document.querySelector('#runsView').textContent, /共 28 条|运行记录/);
 });
 
-test('conversation workspaces stay out of SOP run lists and counts but keep their requirement', async (t) => {
+test('conversation workspaces stay out of LOOP run lists and counts but keep their requirement', async (t) => {
   const app = await loadApp();
   t.after(app.close);
   const out = JSON.parse(app.evaluate(`
     const pid=state.projectFilter||state.data.projects[0].id;
     state.data.issues=[...(state.data.issues||[]),{id:'iss-conv',projectId:pid,number:42,title:'修复登录页文案',workflowId:state.data.workflows[0].id}];
     state.data.runs=[
-      {id:'sop-1',workflowId:'wf-a',status:'succeeded',input:'SOP run',createdAt:new Date(Date.now()-60000).toISOString(),executionContext:{projectId:pid},nodes:{a:{status:'succeeded'}},workflowSnapshot:{name:'SOP A'}},
+      {id:'sop-1',workflowId:'wf-a',status:'succeeded',input:'LOOP run',createdAt:new Date(Date.now()-60000).toISOString(),executionContext:{projectId:pid},nodes:{a:{status:'succeeded'}},workflowSnapshot:{name:'LOOP A'}},
       {id:'ws-linked',kind:'workspace',workflowId:'conversation-workspace',status:'waiting',input:'对话改代码：改登录文案',createdAt:new Date().toISOString(),executionContext:{projectId:pid,issueId:'iss-conv'},usage:{totalTokens:999},workflowSnapshot:{id:'conversation-workspace',name:'对话工作区'}},
       {id:'ws-review',kind:'workspace',workflowId:'conversation-workspace',status:'waiting',input:'对话改代码：只读评审 MR 546',createdAt:new Date().toISOString(),workspaceCleanedAt:new Date().toISOString(),executionContext:{projectId:pid},workflowSnapshot:{name:'对话工作区'}}
     ];
@@ -284,7 +284,7 @@ test('conversation workspaces stay out of SOP run lists and counts but keep thei
   assert.doesNotMatch(out.overview, /999/);
   assert.equal(out.searched, 0);
   assert.deepEqual(out.live, []);
-  // The requirement list is unchanged: the linked workspace still shows as its SOP.
+  // The requirement list is unchanged: the linked workspace still shows as its LOOP.
   assert.equal(out.latest, 'ws-linked');
   assert.equal(out.sop, '对话工作区');
   assert.ok(out.row.includes('对话工作区'), JSON.stringify(out.row));
@@ -419,7 +419,7 @@ test('terminal, human-waiting, paused and cancelling runs stop inspector motion'
   }
 });
 
-test('a parent node only animates while its child SOP is executing', async (t) => {
+test('a parent node only animates while its child LOOP is executing', async (t) => {
   const app = await loadApp();
   t.after(app.close);
   renderActivityFixture(app);
@@ -455,4 +455,277 @@ test('child pause and cancellation polling refreshes motion without parent strea
       assertInspectorMotion(app, !requested, `${flag}=${requested} from child polling`);
     }
   }
+});
+
+test('run detail and artifact preview display strict two-layer knowledge citations', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+
+  const workflow = {
+    ...app.evaluate('structuredClone(state.data.workflows[0])'),
+    nodes: [{ id: 'node-1', name: '方案设计', type: 'agent' }],
+  };
+  const knowledgeReads = [
+    {
+      id: 'kr-cat',
+      serverId: 'agentflow-knowledge',
+      tool: 'list_documents',
+      status: '命中',
+      attempt: 1,
+      evidences: [{ id: 'ev_cat_1', documentId: 'doc-cat', title: '目录文档不应混入.md' }],
+    },
+    {
+      id: 'kr-search',
+      serverId: 'agentflow-knowledge',
+      tool: 'search_knowledge',
+      query: '网关端口',
+      status: '命中',
+      attempt: 1,
+      cited: true,
+      evidences: [
+        {
+          id: 'ev_aaa_1',
+          sourceId: 'wk::kb1',
+          sourceName: '研发规范库',
+          documentId: 'wk::doc1',
+          title: '部署规范.md',
+          locator: '#chunk-2',
+          cited: true,
+        },
+        {
+          id: 'ev_aaa_2',
+          sourceId: 'wk::kb1',
+          sourceName: '研发规范库',
+          documentId: 'wk::doc2',
+          title: '排障手册.md',
+          locator: '#chunk-0',
+          cited: false,
+        },
+      ],
+    },
+    {
+      id: 'kr-read',
+      serverId: 'agentflow-knowledge',
+      tool: 'read_document',
+      query: 'wk::doc3',
+      status: '命中',
+      attempt: 1,
+      cited: false,
+      evidences: [
+        {
+          id: 'ev_bbb_1',
+          sourceId: 'wk::kb1',
+          sourceName: '研发规范库',
+          documentId: 'wk::doc3',
+          title: '发布流程.md',
+          locator: '#chunk-0..#chunk-2',
+          cited: false,
+        },
+      ],
+    },
+  ];
+  const run = {
+    ...app.evaluate('structuredClone(state.data.runs[0])'),
+    id: 'run-kb-1',
+    status: 'succeeded',
+    finishedAt: '2026-10-21T10:05:00Z',
+    workflowSnapshot: workflow,
+    nodes: {
+      'node-1': {
+        status: 'succeeded',
+        attempt: 1,
+        output: '采用默认端口 8080 [[knowledge:ev_aaa_1]]。',
+        knowledgeReads,
+      },
+    },
+    artifacts: [
+      {
+        id: 'art-kb-1',
+        nodeId: 'node-1',
+        attempt: 1,
+        name: 'report.md',
+        path: 'report.md',
+        mediaType: 'text/markdown',
+        size: 512,
+        sha256: '1234567890abcdef',
+        content: '# 总结\n\n端口见规范 [[knowledge:ev_aaa_1]]，示例代码 `[[knowledge:ev_aaa_1]]`。\n',
+      },
+    ],
+  };
+
+  app.router.get('/api/runs/run-kb-1', run);
+  app.router.get('/api/runs/run-kb-1/artifacts/art-kb-1', run.artifacts[0].content);
+  app.evaluate(`state.data.runs=[${JSON.stringify(run)}];state.selectedRun='run-kb-1';state.activeRun=state.data.runs[0]`);
+  app.evaluate(`switchView('runs');showRunDetail('run-kb-1')`);
+  await settle(6);
+
+  const kbCard = app.document.querySelector('#runDetail .run-kb-card');
+  assert.ok(kbCard, 'node inspector should render .run-kb-card');
+  assert.match(kbCard.textContent, /实际使用 1 篇 · 检索读取 3 篇/);
+  assert.match(kbCard.textContent, /部署规范\.md/);
+  assert.match(kbCard.textContent, /发布流程\.md/);
+  assert.match(kbCard.textContent, /排障手册\.md/);
+  assert.match(kbCard.textContent, /\[1\] 已用于回答/);
+  assert.match(kbCard.textContent, /已读正文 · 未引用/);
+  assert.match(kbCard.textContent, /仅检索未采用/);
+  assert.doesNotMatch(kbCard.textContent, /目录文档不应混入\.md/);
+  assert.match(kbCard.querySelector('.run-kb-trace').textContent, /list_documents/);
+
+  const outputPre = app.document.querySelector('#runDetail .node-output pre');
+  assert.ok(outputPre, 'node output should render');
+  assert.doesNotMatch(outputPre.textContent, /\[\[knowledge:/);
+  const outCite = outputPre.querySelector('[data-kb-cite="1"]');
+  assert.ok(outCite, 'node output should render numbered superscript [1]');
+  assert.equal(outCite.textContent, '1');
+  assert.equal(app.evaluate(`inspectorNeedsRefresh(document.querySelector('#runDetail'), state.activeRun)`), false);
+
+  outCite.click();
+  assert.ok(kbCard.querySelector('[data-kb-doc-index="1"]').classList.contains('is-highlighted'));
+
+  await app.evaluate(`previewArtifact(state.activeRun, 'art-kb-1')`);
+  await settle(3);
+  const modal = app.document.querySelector('#artifactPreview');
+  const mdBody = modal.querySelector('.markdown-body');
+  assert.equal(mdBody.querySelector('code').textContent, '[[knowledge:ev_aaa_1]]');
+  assert.doesNotMatch(mdBody.querySelector('p').textContent.replace(mdBody.querySelector('code').textContent, ''), /\[\[knowledge:/);
+  assert.ok(mdBody.querySelector('[data-kb-cite="1"]'), 'artifact preview should render numbered superscript [1]');
+  const artFooter = modal.querySelector('.run-kb-artifact-cites');
+  assert.ok(artFooter, 'artifact preview should render citation footer');
+  assert.match(artFooter.textContent, /实际使用 1 篇 · 检索读取 3 篇/);
+  assert.match(artFooter.textContent, /部署规范\.md/);
+});
+
+test('run detail knowledge citations handle stripped artifacts, attempt isolation, copy cleanup, links, and English i18n', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  const { readFile } = await import('node:fs/promises');
+  const path = await import('node:path');
+  const vm = await import('node:vm');
+  const { WEB_ROOT } = await import('../lib/load-app.mjs');
+
+  const workflow = app.evaluate('structuredClone(state.data.workflows[0])');
+  const firstNodeId = workflow.nodes[0].id;
+  const run = {
+    ...app.evaluate('structuredClone(state.data.runs[0])'),
+    id: 'run-kb-edges',
+    status: 'succeeded',
+    workflowSnapshot: workflow,
+    nodes: {
+      [firstNodeId]: {
+        status: 'succeeded',
+        attempt: 1,
+        output: '结论 [链接](https://example.com/spec?x=1) 见规范 [[knowledge:ev_aaa_1]]，示例代码 `[[knowledge:ev_aaa_1]]`。',
+        knowledgeReads: [
+          {
+            id: 'kr-1',
+            attempt: 1,
+            serverId: 'agentflow-knowledge',
+            tool: 'search_knowledge',
+            status: '命中',
+            cited: true,
+            evidences: [
+              {
+                id: 'ev_aaa_1',
+                sourceId: 'wk::kb1',
+                sourceName: '研发规范库',
+                documentId: 'wk::doc1',
+                title: '部署规范.md',
+                locator: '#chunk-2',
+                cited: true,
+                citedIn: ['节点输出', 'artifacts/report.md'],
+              },
+            ],
+          },
+        ],
+      },
+      [workflow.nodes[1]?.id || 'node-2']: {
+        status: 'succeeded',
+        attempt: 2,
+        output: '重试无检索',
+        knowledgeReads: [
+          { id: 'kr-stale', attempt: 1, serverId: 'agentflow-knowledge', tool: 'search_knowledge', status: '命中', evidences: [{ id: 'ev_stale', title: '旧重试.md' }] },
+        ],
+      },
+    },
+    artifacts: [
+      {
+        id: 'art-stripped',
+        nodeId: firstNodeId,
+        attempt: 1,
+        name: 'report.md',
+        path: 'artifacts/report.md',
+        mediaType: 'text/markdown',
+        size: 512,
+        sha256: '1234567890abcdef',
+      },
+    ],
+  };
+
+  let copied = [];
+  Object.defineProperty(app.window.navigator, 'clipboard', {
+    configurable: true,
+    value: {
+      writeText: async (txt) => {
+        copied.push(txt);
+      },
+    },
+  });
+  Object.defineProperty(app.window, 'isSecureContext', { configurable: true, value: true });
+
+  app.router.get('/api/runs/run-kb-edges', run);
+  app.router.get(
+    '/api/runs/run-kb-edges/artifacts/art-stripped',
+    '# 交付\n\n[链接 [[knowledge:ev_aaa_1]]](https://example.com) 与正文 [[knowledge:ev_aaa_1]]。\n\n```md\n[[knowledge:ev_aaa_1]]\n```',
+  );
+  app.evaluate(`state.data.runs=[${JSON.stringify(run)}];state.selectedRun='run-kb-edges';state.activeRun=state.data.runs[0]`);
+  app.evaluate(`switchView('runs');showRunDetail('run-kb-edges')`);
+  await settle(6);
+
+  const kbCard = app.document.querySelector('#runDetail .run-kb-card');
+  assert.ok(kbCard, 'node 1 should render .run-kb-card');
+  assert.match(kbCard.textContent, /引用位置：/);
+  assert.match(kbCard.textContent, /artifacts\/report\.md/);
+
+  // Clicking [data-copy-output] copies formatted citation [1] + References block cleanly.
+  app.document.querySelector('#runDetail [data-copy-output]')?.click();
+  await settle(2);
+  assert.ok(copied.at(-1)?.includes('见规范 [1]'), 'copied node output should convert citation marker to [1]');
+  assert.ok(copied.at(-1)?.includes('参考来源:'), 'copied node output should include References');
+  assert.ok(copied.at(-1)?.includes('`[[knowledge:ev_aaa_1]]`'), 'copied node output should preserve code marker');
+
+  // Previewing artifact: no button inside <a>, preview copy converts [1], source copy keeps raw marker.
+  await app.evaluate(`previewArtifact(state.activeRun, 'art-stripped')`);
+  await settle(3);
+  const modal = app.document.querySelector('#artifactPreview');
+  assert.equal(modal.querySelectorAll('.markdown-body a button').length, 0, 'must not nest <button> inside <a>');
+  modal.querySelector('[data-copy-artifact]')?.click();
+  await settle(2);
+  assert.ok(copied.at(-1)?.includes('与正文 [1]。'));
+  modal.querySelector('[data-mode="source"]')?.click();
+  await settle(2);
+  modal.querySelector('[data-copy-artifact]')?.click();
+  await settle(2);
+  assert.ok(copied.at(-1)?.includes('与正文 [[knowledge:ev_aaa_1]]。'));
+
+  // Attempt 2 node with zero attempt-2 reads must not leak attempt 1 reads.
+  if (workflow.nodes[1]?.id) {
+    app.evaluate(`selectRunNode(${JSON.stringify(workflow.nodes[1].id)})`);
+    await settle(3);
+    assert.equal(app.document.querySelector('#runDetail .run-kb-card'), null);
+  }
+
+  // Verify English i18n renders KB chrome cleanly while preserving data-i18n-data doc titles.
+  app.evaluate(`selectRunNode(${JSON.stringify(firstNodeId)});renderRunDetail(state.activeRun)`);
+  await settle(4);
+  app.document.documentElement.dataset.lang = 'en';
+  for (const file of ['i18n-en.js', 'i18n.js']) {
+    new vm.Script(await readFile(path.join(WEB_ROOT, file), 'utf8'), { filename: file }).runInContext(
+      app.dom.getInternalVMContext(),
+    );
+  }
+  const enCard = app.document.querySelector('#runDetail .run-kb-card');
+  assert.match(enCard.textContent, /Knowledge base sources/);
+  assert.match(enCard.textContent, /1 doc/);
+  assert.match(enCard.textContent, /部署规范\.md/, 'document title in data-i18n-data must stay intact');
+  assert.match(enCard.textContent, /Used in answer/);
 });

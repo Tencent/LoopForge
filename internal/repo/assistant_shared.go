@@ -60,7 +60,7 @@ func (r *AssistantRepo) EnsureRunAssistantSession(runID, projectID, title string
 		item.ExecutionTarget = &target
 	}
 	deriveAssistantParticipants(&item, item.Messages)
-	row := assistantSessionRow{ID: id, UserID: userID, ProjectID: projectID, Title: title, Source: item.Source, TaskID: item.TaskID, Payload: mustJSON(item), Created: &now, Updated: &now}
+	row := assistantSessionRow{ID: id, UserID: userID, ProjectID: projectID, Title: title, Source: item.Source, TaskID: item.TaskID, Payload: encodeAssistantSession(item), Created: &now, Updated: &now}
 	if err := r.DB.Clauses(clause.OnConflict{DoNothing: true}).Create(&row).Error; err != nil {
 		return item, err
 	}
@@ -87,7 +87,7 @@ func (r *AssistantRepo) ListSharedAssistantSessions() []domain.AssistantSession 
 	return out
 }
 
-// ListCrossUserAssistantSessions returns, in one query, SOP shared sessions
+// ListCrossUserAssistantSessions returns, in one query, LOOP shared sessions
 // and project-shared conversations created by other users. The HTTP layer
 // filters both by project membership.
 func (r *AssistantRepo) ListCrossUserAssistantSessions(excludeUserID int64) (shared, project []domain.AssistantSession) {
@@ -145,8 +145,8 @@ func validSharedAssistantSession(s domain.AssistantSession) bool {
 }
 
 // ProjectSharedAssistantSession reports whether an ordinary conversation is
-// shared with its project's members. SOP run sessions keep their own rules;
-// legacy per-user run discussions stay private. A SOP designer conversation
+// shared with its project's members. LOOP run sessions keep their own rules;
+// legacy per-user run discussions stay private. A LOOP designer conversation
 // stays private to its author too: it edits one person's unsaved canvas and
 // is not a project discussion.
 func ProjectSharedAssistantSession(s domain.AssistantSession) bool {
@@ -264,6 +264,6 @@ func (r *AssistantRepo) ReplaceAssistantTurn(source domain.AssistantSession, ind
 			return fmt.Errorf("无法读取更新后的会话")
 		}
 		saved.HistoryRevision++
-		return tx.Model(&assistantSessionRow{}).Where("id = ? AND user_id = ?", saved.ID, saved.UserID).Update("payload", mustJSON(saved)).Error
+		return tx.Model(&assistantSessionRow{}).Where("id = ? AND user_id = ?", saved.ID, saved.UserID).Update("payload", encodeAssistantSession(saved)).Error
 	})
 }

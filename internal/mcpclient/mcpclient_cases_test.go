@@ -58,7 +58,7 @@ func TestMCPClientListAndCallErrorResponses(t *testing.T) {
 			w.WriteHeader(tc.status)
 			_, _ = w.Write([]byte(tc.body))
 		}))
-		c := New(server.URL, nil)
+		c := New(server.URL, nil).WithTransport(server.Client().Transport)
 		c.init = true
 		if _, err := c.ListToolsContext(nil); err == nil {
 			t.Fatalf("list accepted %d %q", tc.status, tc.body)
@@ -68,7 +68,7 @@ func TestMCPClientListAndCallErrorResponses(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"error":"gateway failed"}`))
 	}))
-	c := New(server.URL, nil)
+	c := New(server.URL, nil).WithTransport(server.Client().Transport)
 	c.init = true
 	if _, err := c.CallToolContext(nil, "x", nil); err == nil {
 		t.Fatal("gateway error accepted")

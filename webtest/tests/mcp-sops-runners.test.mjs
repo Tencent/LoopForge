@@ -32,7 +32,7 @@ test('MCP import accepts common formats, validates bad input, and saves HTTP con
   assert.equal(call.body.projectId, 'project-1');
 });
 
-test('generic SOP requirements reflect credentials and installed MCPs, then clone through API', async (t) => {
+test('generic LOOP requirements reflect credentials and installed MCPs, then clone through API', async (t) => {
   const app = await loadApp();
   t.after(app.close);
   const generic = {
@@ -201,6 +201,59 @@ test('runner sharing saves multiple projects and offers project defaults for eli
   assert.match(app.document.querySelector('.runner-card').textContent, /个人默认/);
 });
 
+test('execution machine cards control privileged sandboxes and require a compatible Runner', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  const platform = {
+    name: '平台执行机器（云端）', status: 'online', canEditLimit: true,
+    allowPrivilegedSandbox: false,
+  };
+  const machines = [
+    { id: 'own', name: 'Owned', ownerUserId: 1, runnerVersion: '0.13.2', allowPrivilegedSandbox: false },
+    { id: 'shared', name: 'Shared', ownerUserId: 2, runnerVersion: '0.13.2', allowPrivilegedSandbox: true },
+    { id: 'old', name: 'Old', ownerUserId: 1, runnerVersion: '0.13.1', allowPrivilegedSandbox: false },
+  ];
+  app.router.get('/api/runners', machines);
+  app.router.get('/api/runners/default', () => ({ platformRunner: platform, minPrivilegedSandboxRunnerVersion: '0.13.2' }));
+  app.router.put('/api/runners/platform/privileged-sandbox', ({ body }) => {
+    platform.allowPrivilegedSandbox = body.allowed;
+    return {};
+  });
+  app.router.put('/api/runners/own/privileged-sandbox', ({ body }) => {
+    machines[0].allowPrivilegedSandbox = body.allowed;
+    return {};
+  });
+  app.evaluate(`
+    state.currentUser={id:1};
+    state.runnerBindCode={code:'fixture',expiresAt:'2099-01-01T00:00:00Z'};
+  `);
+  await app.evaluate('refreshRunners()');
+  const selector = '[data-runner-privileged-sandbox]';
+  const control = (target) => app.document.querySelector(`[data-runner-privileged-sandbox="${target}"]`);
+  const changes = () => app.router.calls.filter(call => call.method === 'PUT' && call.path.endsWith('/privileged-sandbox'));
+  assert.equal(app.document.querySelectorAll(selector).length, 2);
+  assert.equal(control('platform').checked, false);
+  assert.equal(control('own').checked, false);
+  assert.match(app.document.querySelector('#runnersList').children[2].textContent, /需升级 Runner/);
+  control('platform').click();
+  await settle(8);
+  control('own').click();
+  await settle(8);
+  assert.equal(control('own').checked, true);
+  control('own').click();
+  await settle(8);
+  assert.deepEqual(changes().map(call => [call.path, call.body.allowed]), [
+    ['/api/runners/platform/privileged-sandbox', true],
+    ['/api/runners/own/privileged-sandbox', true],
+    ['/api/runners/own/privileged-sandbox', false],
+  ]);
+  assert.equal(control('platform').checked, true);
+  assert.equal(control('own').checked, false);
+  platform.canEditLimit = false;
+  await app.evaluate('refreshRunners()');
+  assert.equal(control('platform'), null);
+});
+
 test('platform runner card and auto assignment respect project and admin permissions', async (t) => {
   const app = await loadApp();
   t.after(app.close);
@@ -263,15 +316,24 @@ test('platform runner card and auto assignment respect project and admin permiss
   assert.match(card().textContent, /运行中 2 · 不限/);
 
   const poolStatus = app.document.querySelector('#runnerPoolStatus');
+  const dispatchBar = app.document.querySelector('#runnerDispatchBar');
+  const dispatchHint = app.document.querySelector('#runnerDispatchHint');
   const toggle = app.document.querySelector('#runnerAutoAssign');
+  assert.ok(dispatchBar.contains(toggle) && dispatchBar.contains(poolStatus), 'auto-assign and pool status belong to the shared dispatch bar');
+  assert.equal(app.document.querySelector('.runner-list-heading')?.contains(toggle), false, 'auto-assign is not scoped to available machines only');
+  assert.ok(Boolean(dispatchBar.compareDocumentPosition(section) & app.window.Node.DOCUMENT_POSITION_FOLLOWING), 'dispatch bar precedes platform and available machine sections');
+  assert.equal(dispatchHint.hidden, false);
+  assert.match(dispatchHint.textContent, /平台机器.*可用机器/);
   assert.equal(toggle.hidden, false);
   toggle.click();
   await settle(8);
   assert.equal(toggle.getAttribute('aria-pressed'), 'true');
-  assert.match(poolStatus.textContent, /此项目 SOP 自动分配 · 2 台在线机器可用/);
+  assert.equal(dispatchBar.classList.contains('is-auto'), true);
+  assert.match(poolStatus.textContent, /此项目 LOOP 自动分配 · 2 台在线机器可用/);
   toggle.click();
   await settle(8);
   assert.equal(toggle.getAttribute('aria-pressed'), 'false');
+  assert.equal(dispatchBar.classList.contains('is-auto'), false);
 
   const platformDefaultBtn = () => card().querySelector('[data-runner-platform-default]');
   assert.equal(platformDefaultBtn().textContent, '设为项目默认');
@@ -292,6 +354,7 @@ test('platform runner card and auto assignment respect project and admin permiss
   platform.status = 'offline';
   await app.evaluate(`state.projectFilter='read';refreshRunners()`);
   assert.equal(toggle.hidden, true);
+  assert.equal(dispatchHint.hidden, true);
   assert.equal(card().querySelector('[data-runner-platform-default], [data-platform-run-limit]'), null);
   assert.match(card().textContent, /不限同时运行数/);
   assert.equal(card().querySelector('.runner-status').textContent, '离线');

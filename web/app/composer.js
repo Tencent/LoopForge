@@ -109,7 +109,7 @@ function fillReqWorkflow(preferred){
   const preferredId=String(preferred||select.value||'').trim();
   const fallback=defaultSOPForIssue({projectId:state.projectFilter,kind:'requirement'});
   const selected=opts.some(w=>w.id===preferredId)?preferredId:(opts.some(w=>w.id===fallback)?fallback:(opts[0]?.id||''));
-  select.innerHTML=opts.map(w=>`<option value="${escapeHTML(w.id)}" ${w.id===selected?'selected':''}>${escapeHTML(w.name)}</option>`).join('')||'<option value="">暂无可选 SOP</option>';
+  select.innerHTML=opts.map(w=>`<option value="${escapeHTML(w.id)}" ${w.id===selected?'selected':''}>${escapeHTML(w.name)}</option>`).join('')||'<option value="">暂无可选 LOOP</option>';
   if(selected)select.value=selected;
   window.enhanceSelect?.(select)?.refresh?.();
 }
@@ -131,7 +131,7 @@ function renderReqDelivery(){
     }
   });
   const hint=$('#reqDeliverySOPHint');
-  if(hint)hint.textContent=hasSOP?'按选定的 SOP 流程跑，可手动或定时触发':'当前项目还没有可运行的 SOP';
+  if(hint)hint.textContent=hasSOP?'按选定的 LOOP 流程跑，可手动或定时触发':'当前项目还没有可运行的 LOOP';
   const field=$('#reqWorkflowField');
   if(field)field.hidden=delivery!=='sop';
   hydrateReqIcons($('#reqDelivery'));
@@ -237,7 +237,7 @@ function renderReqContext(){
   renderReqDelivery();
 }
 function reqFooterNote(){
-  return reqUsesSOP()?'建单后可在详情里触发 SOP，也可以先去对话里把需求聊清楚':'不绑定 SOP，定时任务也不会自动认领；以后想跑 SOP 可在详情里选择';
+  return reqUsesSOP()?'建单后可在详情里触发 LOOP，也可以先去对话里把需求聊清楚':'不绑定 LOOP，定时任务也不会自动认领；以后想跑 LOOP 可在详情里选择';
 }
 function renderReqFooter(){
   const creating=!!state.reqCreating;
@@ -456,7 +456,7 @@ async function createIssueFromChat(target,mode){
   if(state.reqCreating)return toast('正在建单，请勿重复点击');
   const useSOP=reqUsesSOP();
   const workflowId=selectedReqWorkflowId();
-  if(useSOP&&!workflowId)return toast('请选择 SOP，或改为不使用 SOP');
+  if(useSOP&&!workflowId)return toast('请选择 LOOP，或改为不使用 LOOP');
   state.reqCreating=toChat?'chat':'issue';
   renderReqFooter();
   const project=currentProject();
@@ -495,8 +495,8 @@ async function createIssueFromChat(target,mode){
     renderIssues();
     if(syncError)toast('已在平台建单，TAPD 同步失败：'+syncError,'err');
     else if(target==='tapd')toast(`已创建需求并同步 TAPD ${issue.externalRef?.externalId||''}`,'ok');
-    else toast(toChat?'已创建需求，在对话里继续澄清':(useSOP?'已在平台创建需求，可在详情里触发 SOP':'已创建需求（不使用 SOP）'),'ok');
-    if(toChat)openIssueInChat(issue);
+    else toast(toChat?'已创建需求，在对话里继续澄清':(useSOP?'已在平台创建需求，可在详情里触发 LOOP':'已创建需求（不使用 LOOP）'),'ok');
+    if(toChat)openIssueInChat(issue,{intent:'clarify'});
     else openIssueDetail(issue.id);
   }catch(err){toast(err.message,'err')}
   finally{state.reqCreating='';renderReqFooter()}

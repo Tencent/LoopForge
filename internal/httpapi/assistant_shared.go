@@ -24,21 +24,21 @@ func assistantStorageOwner(st *repo.Store, id string, fallback int64) int64 {
 }
 
 // conversationScope returns the storage owner and whether the conversation is
-// multi-user. SOP run sessions and every conversation bound to a project are
+// multi-user. LOOP run sessions and every conversation bound to a project are
 // shared with that project's members; only unbound conversations are private.
 func (h *assistantHandlers) conversationScope(c *gin.Context, id, runID, projectID string, userID int64) (int64, bool, error) {
 	if s, ok := h.repo.SharedAssistantSession(id); ok {
 		r, exists := h.repo.RunState(s.RunID)
 		if s.ProjectID == "" || !exists || r.ExecutionContext.ProjectID != s.ProjectID || !h.workbenchProjectAllowed(c, s.ProjectID, userID) {
-			return 0, false, fmt.Errorf("无权访问共享 SOP 会话")
+			return 0, false, fmt.Errorf("无权访问共享 LOOP 会话")
 		}
 		if (runID != "" && runID != s.RunID) || (projectID != "" && projectID != s.ProjectID) {
-			return 0, false, fmt.Errorf("会话与 SOP 运行不匹配")
+			return 0, false, fmt.Errorf("会话与 LOOP 运行不匹配")
 		}
 		return s.UserID, true, nil
 	}
 	if runID != "" {
-		return 0, false, fmt.Errorf("请从任务运行打开共享 SOP 会话")
+		return 0, false, fmt.Errorf("请从任务运行打开共享 LOOP 会话")
 	}
 	if s, ok := h.repo.ProjectAssistantSession(id); ok {
 		if !h.workbenchProjectAllowed(c, s.ProjectID, userID) {
@@ -59,7 +59,7 @@ func (h *assistantHandlers) conversationReadScope(c *gin.Context, id string, use
 	if err == nil {
 		return owner, shared, false, nil
 	}
-	if s, ok := h.repo.ProjectAssistantSession(id); ok {
+	if s, ok := h.repo.ProjectAssistantSession(id); ok && len(s.KnowledgeRefs) == 0 && !s.KnowledgeRestricted {
 		return s.UserID, true, true, nil
 	}
 	return 0, false, false, err
@@ -99,7 +99,7 @@ func (h *assistantHandlers) runConversation(c *gin.Context) {
 	}
 	c.Header("Cache-Control", "no-store")
 	session.IssueID = r.ExecutionContext.IssueID
-	c.JSON(200, session)
+	c.JSON(200, sanitizeAssistantSessionForViewer(session, user.ID))
 }
 func sharedTranscriptPrefix(old []assistantMessage, next []assistantMessage) bool {
 	if len(next) < len(old) {

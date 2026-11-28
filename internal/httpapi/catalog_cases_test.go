@@ -141,6 +141,25 @@ func TestCatalogWorkflowBranches(t *testing.T) {
 		}
 	}
 
+	draft := requestJSONAuthed[domain.WorkflowDefinition](t, f.h, f.user, http.MethodGet, "/api/workflows/cvb-flow", nil, http.StatusOK)
+	if draft.Status != "draft" || draft.PublishedRevision != 0 {
+		t.Fatalf("saved workflow = %+v", draft)
+	}
+	const publishPath = "/api/workflows/cvb-flow/publish"
+	first := requestJSONAuthed[domain.WorkflowDefinition](t, f.h, f.user, http.MethodPost, publishPath, nil, http.StatusOK)
+	if first.Status != "published" || first.Version != 1 || first.PublishedRevision != first.Revision {
+		t.Fatalf("first publication = %+v", first)
+	}
+	first.Description = "Updated after the first publication"
+	saved := requestJSONAuthed[domain.WorkflowDefinition](t, f.h, f.user, http.MethodPut, "/api/workflows", first, http.StatusOK)
+	if saved.Version != 1 || saved.PublishedRevision != first.Revision || saved.Revision <= first.Revision {
+		t.Fatalf("saved edit = %+v", saved)
+	}
+	second := requestJSONAuthed[domain.WorkflowDefinition](t, f.h, f.user, http.MethodPost, publishPath, nil, http.StatusOK)
+	if second.Version != 2 || second.PublishedRevision != second.Revision {
+		t.Fatalf("second publication = %+v", second)
+	}
+
 	// Deletion conflicts: active run, then bound issue.
 	if err := f.s.PutRun(domain.Run{ID: "cvb-active", WorkflowID: "cvb-flow", Status: "running", Nodes: map[string]*domain.NodeRun{}}); err != nil {
 		t.Fatal(err)

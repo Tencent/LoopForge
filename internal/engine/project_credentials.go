@@ -14,7 +14,7 @@ func (e *Engine) ResolveRunProjectCredentialEnv(ctx context.Context, run domain.
 	}
 	projectID := run.ExecutionContext.ProjectID
 	if wf.Generic || projectID == "" || projectID != wf.ProjectID {
-		return nil, fmt.Errorf("请将 SOP 复制到当前项目后重新绑定凭据")
+		return nil, fmt.Errorf("请将 LOOP 复制到当前项目后重新绑定凭据")
 	}
 	project, found := e.repo.Project(projectID)
 	user, signedIn := e.repo.User(run.ExecutionContext.ResponsibleUserID)

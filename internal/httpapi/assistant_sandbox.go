@@ -48,5 +48,5 @@ func (h *assistantHandlers) sessionSandbox(c *gin.Context) {
 		return
 	}
 	stored, _ := h.repo.AssistantSession(ownerID, s.ID)
-	c.JSON(200, stored)
+	c.JSON(200, sanitizeAssistantSessionForViewer(stored, u.ID))
 }

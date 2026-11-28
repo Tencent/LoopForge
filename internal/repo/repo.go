@@ -200,6 +200,7 @@ type Store struct {
 	*GitHTTPHostTrustRepo
 	*NotificationsRepo
 	*BotInteractionsRepo
+	*EvolutionRepo
 }
 
 // newStore wires the shared deps and every cross-domain pointer. Domains have
@@ -231,6 +232,7 @@ func newStore(db *gorm.DB) *Store {
 	s.RoomsRepo = &RoomsRepo{deps: d}
 	s.SpacesRepo = &SpacesRepo{deps: d}
 	s.KnowledgeRepo = &KnowledgeRepo{deps: d}
+	s.EvolutionRepo = &EvolutionRepo{deps: d, catalog: s.CatalogRepo}
 	s.PlatformSettingsRepo = &PlatformSettingsRepo{deps: d}
 	s.SSHHostTrustRepo = &SSHHostTrustRepo{deps: d}
 	s.HTTPSHostTrustRepo = &HTTPSHostTrustRepo{deps: d}
@@ -297,7 +299,7 @@ func (s *Store) StorageInfo() map[string]any {
 	return map[string]any{
 		"driver":   s.DB.Dialector.Name(),
 		"database": true,
-		"note":     "所有状态都在 MySQL：项目、Issue、SOP、运行记录、助手对话和定时任务都直接读写数据库。",
+		"note":     "所有状态都在 MySQL：项目、Issue、LOOP、运行记录、助手对话和定时任务都直接读写数据库。",
 	}
 }
 

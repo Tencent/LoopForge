@@ -7,7 +7,7 @@ import (
 	"agentflow/internal/domain"
 )
 
-// Parallel SOP branches run as independent executeNode goroutines. Nothing
+// Parallel LOOP branches run as independent executeNode goroutines. Nothing
 // serializes a whole run any more; what must not overlap is locked by a
 // narrower key:
 //
@@ -17,7 +17,7 @@ import (
 //   - one CLI invocation per (workspace owner, agent): an Agent's control
 //     directories (.agentflow/<agent>, config/<agent>, private home, gate MCP
 //     config) are keyed by its ID, so two nodes of the same role in one
-//     checkout (including a child SOP in its parent's checkout) take turns;
+//     checkout (including a child LOOP in its parent's checkout) take turns;
 //   - one pool binding per run, so concurrent first nodes pick one machine.
 //
 // Everything else (preparation, checkout, input materialization) stays under

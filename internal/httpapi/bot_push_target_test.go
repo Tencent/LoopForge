@@ -224,7 +224,7 @@ func TestFeishuCardClickApprovesWaitingNode(t *testing.T) {
 	if err := s.CreateNotificationDelivery(delivery); err != nil {
 		t.Fatal(err)
 	}
-	card := h.notifications.service.Interactions.PushCardFor(delivery, "需求：登录优化\nSOP：交付", "https://platform.example/#/runs/"+run.ID)
+	card := h.notifications.service.Interactions.PushCardFor(delivery, "需求：登录优化\nLOOP：交付", "https://platform.example/#/runs/"+run.ID)
 	if card == nil || card.Title != "登录优化" || len(card.Actions) == 0 || card.Actions[0].Key != "approve" {
 		t.Fatalf("card = %+v", card)
 	}

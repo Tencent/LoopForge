@@ -8,12 +8,12 @@ import (
 const (
 	// AssistantSourceChat is an ordinary conversation.
 	AssistantSourceChat = "chat"
-	// AssistantSourceSOP is a shared conversation owned by a SOP run.
+	// AssistantSourceSOP is a shared conversation owned by a LOOP run.
 	AssistantSourceSOP = "sop"
 	// AssistantSourceScheduled is a conversation produced by a scheduled task.
 	AssistantSourceScheduled = "scheduled"
-	// AssistantSourceSOPDesigner is a private conversation of the SOP
-	// designer's AI orchestrator. It belongs to one SOP canvas and stays out
+	// AssistantSourceSOPDesigner is a private conversation of the LOOP
+	// designer's AI orchestrator. It belongs to one LOOP canvas and stays out
 	// of the workbench conversation list.
 	AssistantSourceSOPDesigner = "sop-designer"
 )
@@ -45,12 +45,13 @@ type AssistantActivityEvent struct {
 	// it actually ran on, which also resolves aliases such as "lite".
 	Model string `json:"model,omitempty"`
 	// Input is the task an Agent dispatch hands the subagent and Output the
-	// report it returns; the side panel shows them like an SOP node session.
+	// report it returns; the side panel shows them like a LOOP node session.
 	Input  string `json:"input,omitempty"`
 	Output string `json:"output,omitempty"`
 }
 
 type AssistantMessage struct {
+	KnowledgeReads []KnowledgeRead          `json:"knowledgeReads,omitempty"`
 	Assets         []AssistantAssetRef      `json:"assets,omitempty"`
 	RunIDs         []string                 `json:"runIds,omitempty"`
 	Activity       []AssistantActivityEvent `json:"activity,omitempty"`
@@ -179,14 +180,16 @@ func (s AssistantSession) Mode() string {
 }
 
 type AssistantSession struct {
+	KnowledgeRestricted   bool                      `json:"knowledgeRestricted,omitempty"`
+	KnowledgeRefs         []KnowledgeRef            `json:"knowledgeRefs,omitempty"`
 	ExecutionTarget       *AssistantExecutionTarget `json:"executionTarget,omitempty"`
 	ExecutionTargetLocked bool                      `json:"executionTargetLocked"`
 	RuntimeMode           string                    `json:"runtimeMode,omitempty"`
-	// Source separates ordinary chats, SOP run conversations and scheduled
+	// Source separates ordinary chats, LOOP run conversations and scheduled
 	// task runs. Legacy rows leave it empty and are inferred when read.
 	// TaskID is the scheduled job or assistant task that produced the session,
 	// so repeated runs of one task keep a single conversation.
-	// WorkflowID is the SOP a designer conversation (source sop-designer)
+	// WorkflowID is the LOOP a designer conversation (source sop-designer)
 	// edits; the canvas lists its conversations by this id.
 	Source              string                 `json:"source,omitempty"`
 	TaskID              string                 `json:"taskId,omitempty"`
@@ -223,7 +226,7 @@ type AssistantSession struct {
 	Executor       string `json:"executor,omitempty"`
 	RunID          string `json:"runId,omitempty"`
 	// WorkspaceRunID is the one workspace Main Bot has bound to an ordinary
-	// conversation: one the conversation opened, or the SOP run of an issue.
+	// conversation: one the conversation opened, or the LOOP run of an issue.
 	// Unlike RunID it does not make the session a shared run conversation.
 	WorkspaceRunID string `json:"workspaceRunId,omitempty"`
 	// OwnWorkspaceRunIDs are the workspaces the conversation opened itself; it
@@ -235,6 +238,24 @@ type AssistantSession struct {
 	UpdatedAt          time.Time          `json:"updatedAt"`
 
 	ProjectCredentialIDs []string `json:"projectCredentialIds,omitempty"`
+	// ProjectCredentialObservations are server-owned and contain metadata only.
+	ProjectCredentialObservations map[string]AssistantProjectCredentialObservation `json:"-"`
+}
+
+type AssistantProjectCredentialStatus string
+
+const (
+	// Legacy observations were only saved for available credentials.
+	AssistantProjectCredentialAvailable    AssistantProjectCredentialStatus = ""
+	AssistantProjectCredentialUnavailable  AssistantProjectCredentialStatus = "unavailable"
+	AssistantProjectCredentialAccessDenied AssistantProjectCredentialStatus = "access-denied"
+)
+
+type AssistantProjectCredentialObservation struct {
+	Variables  []string                         `json:"variables,omitempty"`
+	UpdatedAt  time.Time                        `json:"updatedAt,omitzero"`
+	Status     AssistantProjectCredentialStatus `json:"status,omitempty"`
+	ObservedAt time.Time                        `json:"observedAt,omitzero"`
 }
 
 type AssistantTask struct {

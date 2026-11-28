@@ -26,8 +26,9 @@ type Project struct {
 	OwnerID             int64             `json:"ownerId,omitempty"`
 	Members             []ProjectMember   `json:"members,omitempty"`
 	// MembersVersion is an opaque snapshot token for replacing the member list.
-	MembersVersion string        `json:"membersVersion,omitempty"`
-	RunEval        RunEvalPolicy `json:"runEval,omitempty"`
+	MembersVersion string              `json:"membersVersion,omitempty"`
+	RunEval        RunEvalPolicy       `json:"runEval,omitempty"`
+	SOPDetection   *SOPDetectionConfig `json:"sopDetection,omitempty"`
 	// Deprecated project-level credential fields are kept only so old payloads
 	// can be decoded and scrubbed by the schema migration.
 	GitToken                     string    `json:"-"`
@@ -51,6 +52,7 @@ func PublicProject(p Project) Project {
 	p.GitHubCredentialConfigured = false
 	p.CodeBuddyAPIKey = ""
 	p.CodeBuddyAPIKeyConfigured = false
+	p.SOPDetection = nil // RSI exposes only the public detection controls.
 	return p
 }
 
@@ -396,7 +398,7 @@ func NormalizeRepositoryDirName(rc RepositoryContext) string {
 
 // AssignRepositoryDirs fills WorkspaceDir so every bound repository is
 // checked out into a unique first-level sub-directory of the run workspace.
-// SOP deliverables such as fix-plan.md stay at the run root and never enter
+// LOOP deliverables such as fix-plan.md stay at the run root and never enter
 // a git checkout.
 func AssignRepositoryDirs(repositories []RepositoryContext) {
 	used := map[string]bool{}

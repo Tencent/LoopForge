@@ -419,7 +419,7 @@ func TestSOPWorkspaceRestoresConversationCheckpoint(t *testing.T) {
 				t.Fatal(err)
 			}
 			if rec := request(owner, http.MethodPost, "/restore"); rec.Code != http.StatusConflict || !bytes.Contains(rec.Body.Bytes(), []byte(repo.ErrWorkspaceInUse.Error())) {
-				t.Fatalf("running SOP restore = %d: %s", rec.Code, rec.Body)
+				t.Fatalf("running LOOP restore = %d: %s", rec.Code, rec.Body)
 			}
 			sop.Status = "succeeded"
 			if err := a.repo.PutRun(sop); err != nil {
@@ -427,19 +427,19 @@ func TestSOPWorkspaceRestoresConversationCheckpoint(t *testing.T) {
 			}
 			rec := request(owner, http.MethodPost, "/restore")
 			if rec.Code != http.StatusOK && (mode != "async" || rec.Code != http.StatusAccepted) {
-				t.Fatalf("SOP restore = %d: %s", rec.Code, rec.Body)
+				t.Fatalf("LOOP restore = %d: %s", rec.Code, rec.Body)
 			}
 			for deadline := time.Now().Add(5 * time.Second); ; {
 				status := request(owner, http.MethodGet, "/restore")
 				var state domain.WorkspaceRestoreStatus
 				if err := json.Unmarshal(status.Body.Bytes(), &state); err != nil || status.Code != http.StatusOK {
-					t.Fatalf("SOP restore status = %d: %s", status.Code, status.Body)
+					t.Fatalf("LOOP restore status = %d: %s", status.Code, status.Body)
 				}
 				if state.Status == "ready" {
 					break
 				}
 				if state.Status != "restoring" || time.Now().After(deadline) {
-					t.Fatalf("SOP restore did not finish: %s", status.Body)
+					t.Fatalf("LOOP restore did not finish: %s", status.Body)
 				}
 				time.Sleep(10 * time.Millisecond)
 			}
@@ -452,7 +452,7 @@ func TestSOPWorkspaceRestoresConversationCheckpoint(t *testing.T) {
 				t.Fatal("the owning workspace still has a cleanup mark")
 			}
 			if _, err := os.Stat(manager.RunWorkspace(sop.ID)); !os.IsNotExist(err) {
-				t.Fatalf("restore created a separate SOP workspace: %v", err)
+				t.Fatalf("restore created a separate LOOP workspace: %v", err)
 			}
 		})
 	}
@@ -505,7 +505,7 @@ func TestSOPWorkspaceActivityTouchesConversationOwner(t *testing.T) {
 		t.Fatal("activity did not update the conversation workspace")
 	}
 	if _, ok := a.repo.WorkspaceCheckpoint(sop.ID); ok {
-		t.Fatal("activity created a checkpoint for the borrowing SOP")
+		t.Fatal("activity created a checkpoint for the borrowing LOOP")
 	}
 	workspace.WorkspaceCleanedAt = time.Now().UTC()
 	if err := a.repo.PutRun(workspace); err != nil {
@@ -566,7 +566,7 @@ func TestSharedRunnerWorkspaceRestoreRequiresConnectedRunner(t *testing.T) {
 		return response
 	}
 	connect := func(result domain.RunnerWorkspaceResponse) *runnerControlConn {
-		conn := hub.register(runner, nil, false, false)
+		conn := hub.register(runner, nil, false, false, false)
 		done := make(chan struct{})
 		go func() {
 			defer close(done)

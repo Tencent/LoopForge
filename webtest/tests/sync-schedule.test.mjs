@@ -492,7 +492,7 @@ test('AI schedule navigation separates existing tasks and preserves editor kind 
   assert.match(app.document.querySelector('#aiScheduleJobList').textContent, /Existing AI job/);
   assert.doesNotMatch(app.document.querySelector('#aiScheduleJobList').textContent, /Existing trigger|Other AI job/);
   assert.equal(app.document.querySelector('#scheduleJobCount').textContent, '已启用');
-  assert.equal(app.document.querySelector('#issueHeadingMenu #newScheduleJob'), null, 'SOP 触发 moved out of the issue list menu');
+  assert.equal(app.document.querySelector('#issueHeadingMenu #newScheduleJob'), null, 'LOOP 触发 moved out of the issue list menu');
   app.document.querySelector('#aiScheduleTriggerTab').click();
   await settle(2);
   assert.equal(app.document.querySelector('#aiScheduleTriggerPanel').hidden, false);
@@ -643,7 +643,8 @@ test('save closes its own editor after success, retains input after failure and 
  form.dispatchEvent(new app.window.Event('submit',{bubbles:true,cancelable:true}));await settle(4);
  assert.equal(app.document.querySelector('#scheduleModal').classList.contains('open'),true);
  assert.equal(form.elements.assistantPrompt.value,'keep me');assert.equal(form.querySelector('[type=submit]').disabled,false);
- assert.equal(form.querySelector('[type=submit]').textContent,'保存 AI 定时任务');
+ assert.equal(form.querySelector('[type=submit]').textContent,'仅保存');
+ assert.equal(form.querySelector('#scheduleSaveAndRun').hidden,false);
 });
 
 test('late save responses cannot close a newly opened editor',async t=>{

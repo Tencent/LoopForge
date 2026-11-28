@@ -356,6 +356,7 @@ func assistantPromptMessages(messages []assistantMessage) []assistantMessage {
 		out[i].Activity = nil
 		out[i].RunIDs = nil
 		out[i].Assets = nil
+		out[i].KnowledgeReads = nil
 		out[i].Model = ""
 		out[i].Usage = nil
 		if out[i].Unfinished != "" {

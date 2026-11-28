@@ -14,7 +14,7 @@ import (
 )
 
 // HasWorkspaceSOPRuns reports whether another run relies on this workspace.
-// A status-filtered check counts waiting SOPs that still hold a top-level slot.
+// A status-filtered check counts waiting LOOPs that still hold a top-level slot.
 // An unfiltered check still protects the workspace from deletion.
 func (r *RunsRepo) HasWorkspaceSOPRuns(runID string, statuses ...string) (bool, error) {
 	query := r.workspaceSOPRuns(r.DB, runID, statuses)
@@ -46,8 +46,8 @@ func workspaceSOPRunExists(query *gorm.DB) (bool, error) {
 	return err == nil, err
 }
 
-// Lock the checkout owner while admitting a top-level SOP. This serializes
-// dispatch and retry with other SOPs, foreground leases and workspace cleanup.
+// Lock the checkout owner while admitting a top-level LOOP. This serializes
+// dispatch and retry with other LOOPs, foreground leases and workspace cleanup.
 func (r *RunsRepo) checkConversationWorkspaceForSOP(tx *gorm.DB, run domain.Run, newRun bool) error {
 	id := run.ExecutionContext.WorkspaceRunID
 	row, err := r.takeRunForUpdate(tx, id)
@@ -70,7 +70,7 @@ func (r *RunsRepo) checkConversationWorkspaceForSOP(tx *gorm.DB, run domain.Run,
 		return err
 	}
 	if busy {
-		return fmt.Errorf("对话工作区已有未结束的 SOP：%w", ErrWorkspaceInUse)
+		return fmt.Errorf("对话工作区已有未结束的 LOOP：%w", ErrWorkspaceInUse)
 	}
 	return nil
 }

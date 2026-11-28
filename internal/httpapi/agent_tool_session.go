@@ -55,6 +55,8 @@ type AgentToolSession struct {
 	toolsMu           sync.RWMutex
 	pendingMode       string
 	modeAction        func(context.Context) error
+	knowledgeReads    []domain.KnowledgeRead
+	KnowledgeRefs     []domain.KnowledgeRef
 	SelectedMCPIDs    map[string]bool
 	ExecutionRunnerID string
 	runnerLogin       bool
@@ -73,6 +75,7 @@ type AgentToolSession struct {
 	ChatSessionID string
 	ChatOwnerID   int64
 
+	requireRunnerShare      bool
 	projectCredentialIDs    []string
 	projectCredentialValues []string // protected by mu
 
@@ -82,7 +85,7 @@ type AgentToolSession struct {
 	turnMessages     []assistantMessage
 	SandboxProfileID string
 	// workspaceRunID is the one workspace an ordinary conversation is bound
-	// to: one it opened itself, or the SOP run of an issue.
+	// to: one it opened itself, or the LOOP run of an issue.
 	workspaceRunID string
 	workspaceMu    sync.Mutex
 	workspaceTurn  *assistantWorkspaceTurn
@@ -563,7 +566,7 @@ func (s *AgentToolSession) diagnostics() *assistantDiagnosticsCollector {
 	return assistantDiagnosticsFrom(s.ctx)
 }
 
-// sopDesigner reports a SOP designer turn: read-only platform tools plus one
+// sopDesigner reports a LOOP designer turn: read-only platform tools plus one
 // workflows_save draft, no workspace, browser or external MCP.
 func (s *AgentToolSession) sopDesigner() bool {
 	return s != nil && s.Surface == assistantSurfaceSOPDesigner

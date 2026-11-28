@@ -300,7 +300,7 @@ func (h *assistantHandlers) executeAssistantTask(ctx context.Context, user domai
 	if id := policy.Continue; id != "" {
 		if prev, ok := h.repo.AssistantSession(user.ID, id); ok && prev.Source == origin.Source &&
 			prev.TaskID == origin.TaskID && prev.ProjectID == task.ProjectID &&
-			h.canUseBoundExecutionTarget(prev.Execution(), task.ProjectID, user.ID) {
+			h.canUseBoundExecutionTarget(prev.Execution(), task.ProjectID, user.ID, true) {
 			pending = prev
 			pending.Model, pending.Executor, pending.ExecutionTarget = model, cliEngine, target
 			pending.Messages = append(append([]assistantMessage{}, prev.Messages...), prompt)
@@ -417,14 +417,14 @@ func (h *assistantHandlers) readScheduledTurn(user domain.User, task *assistantT
 func scheduledAssistantPrompt(task assistantTask, mode assistantExecMode) string {
 	prefix := "这是当前项目「" + task.ProjectID + "」下的无人值守定时任务「" + task.Name + "」。直接调用当前项目和个人已安装的 MCP，以及 agentflow__* 平台工具，读写立即生效。issues_save 把需求 id 放在 body.id（也可同时放 path.id）。" +
 		"运行期间没有人回答问题或确认操作：不要向用户提问或等待确认，有歧义时按最合理、影响最小的理解执行并在汇报里写明假设；某项条件不满足时跳过该项并说明原因，继续处理其余项。" +
-		"除非提示词明确要求，不要为完成任务新建或修改沙箱、角色、SOP、项目等平台配置。" +
+		"除非提示词明确要求，不要为完成任务新建或修改沙箱、角色、LOOP、项目等平台配置。" +
 		"要查看、审查、合并 GitHub 的 PR 或关闭 Issue 时，先调用 workbench_workspace_open 进入工作区，直接用 gh（平台按主机提供令牌），其他 API 用 git credential fill 按主机取令牌；不要在输出里打印令牌。" +
 		"全部完成后用自然语言汇报结果。"
 	if mode.DeferSOP {
-		prefix += " 不要调用 issues_dispatch、runs_start、schedule_jobs_run、schedule_jobs_save；需要派发 SOP 时请单独创建触发任务。"
+		prefix += " 不要调用 issues_dispatch、runs_start、schedule_jobs_run、schedule_jobs_save；需要派发 LOOP 时请单独创建触发任务。"
 	} else {
-		prefix += " 与主页 AI 对话的完全权限模式使用相同的工具和执行权限；按提示词调用 SOP、平台工具、工作区及浏览器工具完成任务。"
-		prefix += " 启动、派发或重试 SOP 时直接调用平台工具并保留返回的运行 ID。需要等待 SOP 结果时，用 agentflow__runs_wait，path.id 填派发结果的 runId（runs_start 返回 id）。" +
+		prefix += " 与主页 AI 对话的完全权限模式使用相同的工具和执行权限；按提示词调用 LOOP、平台工具、工作区及浏览器工具完成任务。"
+		prefix += " 启动、派发或重试 LOOP 时直接调用平台工具并保留返回的运行 ID。需要等待 LOOP 结果时，用 agentflow__runs_wait，path.id 填派发结果的 runId（runs_start 返回 id）。" +
 			"只有 timedOut=true 才继续等待同一运行。收到终态（succeeded、failed、cancelled）或 waiting、paused 后结束等待并如实汇报，必要时用 runs_get 查看原因。"
 	}
 	return prefix + " 按下面的提示词原文执行。\n" + task.Prompt + domain.NotificationAIInstructions(task.Notifications)

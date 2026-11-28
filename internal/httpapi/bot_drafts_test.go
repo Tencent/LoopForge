@@ -135,7 +135,7 @@ func TestWeComConfirmModeExecutesConfirmedDraftOnce(t *testing.T) {
 		t.Fatalf("other user can read the draft: %d", code)
 	}
 	code, view := draftCall(t, h, member, "GET", "/api/bot-drafts/"+id, false)
-	if code != 200 || view["status"] != repo.BotDraftPending || len(view["operations"].([]any)) != 1 || !strings.HasPrefix(view["operations"].([]any)[0].(string), "1. 保存需求：网页确认的需求!（SOP：") {
+	if code != 200 || view["status"] != repo.BotDraftPending || len(view["operations"].([]any)) != 1 || !strings.HasPrefix(view["operations"].([]any)[0].(string), "1. 保存需求：网页确认的需求!（LOOP：") {
 		t.Fatalf("view = %d %v", code, view)
 	}
 	if _, ok := view["drafts"]; ok {
@@ -279,8 +279,8 @@ func TestBotPendingDraftStateMachine(t *testing.T) {
 
 var _ = http.MethodGet
 
-// New requirements from chat show their SOP; the confirmation page can
-// switch to another SOP of the project and start it right away.
+// New requirements from chat show their LOOP; the confirmation page can
+// switch to another LOOP of the project and start it right away.
 func TestBotDraftChoosesSOPAndStartsIt(t *testing.T) {
 	s, h, _, ask, last := confirmModeFixtureFor(t, domain.BotChannelFeishu)
 	member, _ := s.User(43)
@@ -300,8 +300,8 @@ func TestBotDraftChoosesSOPAndStartsIt(t *testing.T) {
 	project.WorkflowID = "wf-dev"
 	s.PutProject(project)
 	id := ask()
-	if !strings.Contains(*last, "（SOP：项目默认 · 研发交付）") || !strings.Contains(*last, "确认页可以更换仓库和 SOP") {
-		t.Fatalf("summary without SOP: %q", *last)
+	if !strings.Contains(*last, "（LOOP：项目默认 · 研发交付）") || !strings.Contains(*last, "确认页可以更换仓库和 LOOP") {
+		t.Fatalf("summary without LOOP: %q", *last)
 	}
 	_, view := draftCall(t, h, member, "GET", "/api/bot-drafts/"+id, false)
 	issues, _ := view["newIssues"].([]any)
@@ -315,11 +315,11 @@ func TestBotDraftChoosesSOPAndStartsIt(t *testing.T) {
 	if strings.Contains(strings.Join(names, ","), "wf-other") || !strings.Contains(strings.Join(names, ","), "wf-fix") {
 		t.Fatalf("workflows offered = %v", names)
 	}
-	// A foreign SOP is refused and nothing is created.
+	// A foreign LOOP is refused and nothing is created.
 	before := len(s.Issues())
 	other := ask()
 	if _, out := draftChoice(t, h, member, other, `{"choices":[{"index":0,"workflowId":"wf-other","start":true}]}`); out["status"] != repo.BotDraftFailed || len(s.Issues()) != before {
-		t.Fatalf("foreign SOP = %v", out)
+		t.Fatalf("foreign LOOP = %v", out)
 	}
 	code, out := draftChoice(t, h, member, id, `{"choices":[{"index":0,"workflowId":"wf-fix","start":true}]}`)
 	if code != 200 {
@@ -332,7 +332,7 @@ func TestBotDraftChoosesSOPAndStartsIt(t *testing.T) {
 		}
 	}
 	if created.ID == "" {
-		t.Fatalf("issue not bound to the chosen SOP: %v", out)
+		t.Fatalf("issue not bound to the chosen LOOP: %v", out)
 	}
 	results := strings.Join(toStrings(out["results"]), "\n")
 	if !strings.Contains(results, "已完成：保存需求：网页确认的需求") || !strings.Contains(results, "缺陷修复") {
@@ -345,7 +345,7 @@ func TestBotDraftChoosesSOPAndStartsIt(t *testing.T) {
 		}
 	}
 	if !started || !strings.Contains(results, "已启动：缺陷修复") {
-		t.Fatalf("SOP not started: %q", results)
+		t.Fatalf("LOOP not started: %q", results)
 	}
 }
 
@@ -374,8 +374,8 @@ func toStrings(v any) []string {
 	return out
 }
 
-// The Feishu confirmation card: "确认并启动 SOP" creates the requirement and
-// starts its SOP once; other people's clicks and later clicks do nothing;
+// The Feishu confirmation card: "确认并启动 LOOP" creates the requirement and
+// starts its LOOP once; other people's clicks and later clicks do nothing;
 // "取消" cancels.
 func TestFeishuDraftCardButtons(t *testing.T) {
 	s, h, bot, ask, _ := confirmModeFixtureFor(t, domain.BotChannelFeishu)
@@ -427,7 +427,7 @@ func TestFeishuDraftCardButtons(t *testing.T) {
 	}
 }
 
-// The model named an SOP; the user switches back to the project default on
+// The model named a LOOP; the user switches back to the project default on
 // the page, so the requirement is saved without workflowId and gets the
 // project default. Generic templates are offered too.
 func TestBotDraftDefaultSOPOption(t *testing.T) {
@@ -444,9 +444,9 @@ func TestBotDraftDefaultSOPOption(t *testing.T) {
 	project, _ := s.Project("p")
 	project.WorkflowID = "wf-dev"
 	s.PutProject(project)
-	body, _ := json.Marshal(map[string]any{"projectId": "p", "title": "点名 SOP 的需求", "workflowId": "wf-fix"})
+	body, _ := json.Marshal(map[string]any{"projectId": "p", "title": "点名 LOOP 的需求", "workflowId": "wf-fix"})
 	raw, _ := json.Marshal([]assistantDraft{{Tool: "issues_save", Body: body}})
-	draft, err := s.CreateBotPendingDraft(domain.BotPendingDraft{ConfigID: "b-feishu", ProjectID: "p", UserID: 43, SenderID: "new-wecom-user", Summary: "1. 保存需求：点名 SOP 的需求（SOP：缺陷修复）", Drafts: string(raw)}, time.Now().UTC())
+	draft, err := s.CreateBotPendingDraft(domain.BotPendingDraft{ConfigID: "b-feishu", ProjectID: "p", UserID: 43, SenderID: "new-wecom-user", Summary: "1. 保存需求：点名 LOOP 的需求（LOOP：缺陷修复）", Drafts: string(raw)}, time.Now().UTC())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -460,13 +460,13 @@ func TestBotDraftDefaultSOPOption(t *testing.T) {
 		ids = append(ids, wf.(map[string]any)["id"].(string))
 	}
 	if !strings.Contains(strings.Join(ids, ","), "wf-fix") {
-		t.Fatalf("draft SOP not offered: %v", ids)
+		t.Fatalf("draft LOOP not offered: %v", ids)
 	}
 	if code, out := draftChoice(t, h, member, draft.ID, `{"choices":[{"index":0,"workflowId":""}]}`); code != 200 || out["status"] != repo.BotDraftExecuted {
 		t.Fatalf("confirm default = %d %v", code, out)
 	}
 	for _, issue := range s.Issues() {
-		if issue.Title == "点名 SOP 的需求" {
+		if issue.Title == "点名 LOOP 的需求" {
 			if issue.WorkflowID != "wf-dev" {
 				t.Fatalf("bound to %q, want the project default", issue.WorkflowID)
 			}
@@ -476,8 +476,8 @@ func TestBotDraftDefaultSOPOption(t *testing.T) {
 	t.Fatal("requirement not created")
 }
 
-// A requirement the model saves without an SOP offers no SOP to pick or to
-// start on the confirm page, and confirming it keeps it out of SOP delivery
+// A requirement the model saves without a LOOP offers no LOOP to pick or to
+// start on the confirm page, and confirming it keeps it out of LOOP delivery
 // instead of binding the project default.
 func TestBotDraftRequirementWithoutSOP(t *testing.T) {
 	s, h, bot, _, _ := confirmModeFixtureFor(t, domain.BotChannelFeishu)
@@ -491,18 +491,18 @@ func TestBotDraftRequirementWithoutSOP(t *testing.T) {
 	body, _ := json.Marshal(map[string]any{"projectId": "p", "title": "对话里改的需求", "sopMode": "none"})
 	drafts := []assistantDraft{{Tool: "issues_save", Body: body}}
 	if issues := h.botDraftNewIssues(bot.ProjectID, drafts); len(issues) != 0 {
-		t.Fatalf("SOP choices offered for a requirement without SOP: %+v", issues)
+		t.Fatalf("LOOP choices offered for a requirement without LOOP: %+v", issues)
 	}
-	if line := botDraftSummaryLineFor(drafts[0], "", "不使用 SOP"); !strings.Contains(line, "不使用 SOP") {
+	if line := botDraftSummaryLineFor(drafts[0], "", "不使用 LOOP"); !strings.Contains(line, "不使用 LOOP") {
 		t.Fatalf("summary = %q", line)
 	}
 	raw, _ := json.Marshal(drafts)
-	draft, err := s.CreateBotPendingDraft(domain.BotPendingDraft{ConfigID: "b-feishu", ProjectID: "p", UserID: 43, SenderID: "new-wecom-user", Summary: "1. 保存需求：对话里改的需求（SOP：不使用 SOP）", Drafts: string(raw)}, time.Now().UTC())
+	draft, err := s.CreateBotPendingDraft(domain.BotPendingDraft{ConfigID: "b-feishu", ProjectID: "p", UserID: 43, SenderID: "new-wecom-user", Summary: "1. 保存需求：对话里改的需求（LOOP：不使用 LOOP）", Drafts: string(raw)}, time.Now().UTC())
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, view := draftCall(t, h, member, "GET", "/api/bot-drafts/"+draft.ID, false); view["newIssues"] != nil {
-		t.Fatalf("confirm page offers SOP choices: %v", view["newIssues"])
+		t.Fatalf("confirm page offers LOOP choices: %v", view["newIssues"])
 	}
 	if code, out := draftChoice(t, h, member, draft.ID, `{}`); code != 200 || out["status"] != repo.BotDraftExecuted {
 		t.Fatalf("confirm = %d %v", code, out)
@@ -518,7 +518,7 @@ func TestBotDraftRequirementWithoutSOP(t *testing.T) {
 	t.Fatal("requirement not created")
 }
 
-// The SOP picked on the chat card is offered from the project's SOPs, used
+// The LOOP picked on the chat card is offered from the project's LOOPs, used
 // by the card's confirm button and preselected on the platform page.
 func TestFeishuDraftCardUsesPickedSOP(t *testing.T) {
 	s, h, bot, ask, _ := confirmModeFixtureFor(t, domain.BotChannelFeishu)
@@ -617,7 +617,7 @@ func TestBotDraftChoosesRepository(t *testing.T) {
 		t.Fatalf("foreign repository = %v", out)
 	}
 
-	// Card: a repository drop-down before the SOP; the pick is stored,
+	// Card: a repository drop-down before the LOOP; the pick is stored,
 	// foreign repositories are refused, and confirming binds it.
 	id = ask()
 	draft, _ := s.BotPendingDraft(id, time.Now().UTC())

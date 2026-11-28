@@ -37,8 +37,8 @@ export function sidebarReplyStatus(status, unread = false) {
 }
 
 // Run sessions only earn a chip while something needs the reader: a running
-// SOP, a run waiting for a person, or a failure. Finished runs stay quiet; the
-// title already says which SOP they belong to.
+// LOOP, a run waiting for a person, or a failure. Finished runs stay quiet; the
+// title already says which LOOP they belong to.
 const runStates = {
   running: { state: "running", label: "运行中" },
   waiting: { state: "waiting", label: "待处理" },
@@ -53,7 +53,7 @@ export function runSessionState(session) {
 }
 
 // The hover text of a history row. A run conversation's title says what the
-// run does, so its SOP and run state are named here instead of in the row.
+// run does, so its LOOP and run state are named here instead of in the row.
 export function sessionTooltip(session, { projectName = "", replyLabel = "" } = {}) {
   const run = Boolean(session?.shared && session?.runId);
   const title = session?.displayTitle || session?.title || "新对话";

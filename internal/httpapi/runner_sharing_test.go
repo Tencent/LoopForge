@@ -85,6 +85,7 @@ func TestRunnerProjectModesAndLoadPayload(t *testing.T) {
 				got.PersonalRunnerID != machine.ID || got.ProjectRunnerID != tc.projectDefault || got.ProjectRunnerMode != tc.mode ||
 				got.MinRunnerVersion != domain.RunnerVersionDefaultSelection || !got.CloudPool.Configured || got.CloudPool.Online != 0 ||
 				got.PlatformRunner.RunLimit != 10 || got.PlatformRunner.Name != domain.PlatformRunnerName || got.PlatformRunner.CanEditLimit ||
+				got.PlatformRunner.AllowPrivilegedSandbox ||
 				got.PlatformRunner.Status != domain.RunnerStatusOffline || got.PlatformRunner.Load == nil || got.PlatformRunner.Load.RunningRuns != 1 {
 				t.Fatalf("%s after %q: %d %s", url, tc.mode, rec.Code, rec.Body)
 			}
@@ -236,7 +237,7 @@ func TestConversationRunnerDefaultSkipsMachinesThatOnlySupportSOPs(t *testing.T)
 		t.Fatal(err)
 	}
 	check(path, "sop-only")
-	check(path+"&conversation=1", "")
+	check(path+"&conversation=1", "chat-ready")
 	putDefault("/api/runners/default", "sop-only")
 	check("/api/runners/default?conversation=1", "")
 }
@@ -295,7 +296,7 @@ func TestRunnerProjectSharing(t *testing.T) {
 		if !tc.visible && len(rows) != 0 {
 			t.Fatalf("%s exposed %+v", tc.query, rows)
 		}
-		if tc.visible && (len(rows) != 1 || rows[0].ID != runner.ID || !rows[0].CanUseInProject || len(rows[0].SharedProjectIDs) != 0 ||
+		if tc.visible && (len(rows) != 1 || rows[0].ID != runner.ID || !rows[0].CanUseInProject || !rows[0].CanUseInConversation || len(rows[0].SharedProjectIDs) != 0 ||
 			len(rows[0].Runtimes) != 1 || rows[0].Runtimes[0].BinaryPath != "" || rows[0].Runtimes[0].AuthMode != "personal") {
 			t.Fatalf("%s returned an invalid shared machine view: %+v", tc.query, rows)
 		}
@@ -305,7 +306,8 @@ func TestRunnerProjectSharing(t *testing.T) {
 		if err := json.Unmarshal(check(owner, http.MethodGet, "/api/runners?projectId="+project, nil, 200), &rows); err != nil {
 			t.Fatal(err)
 		}
-		if len(rows) != 1 || rows[0].ID != runner.ID || rows[0].CanUseInProject != (project == "one") {
+		if len(rows) != 1 || rows[0].ID != runner.ID || rows[0].CanUseInProject != (project == "one") ||
+			rows[0].CanUseInConversation != (project != "other") {
 			t.Fatalf("owner's management view for %s: %+v", project, rows)
 		}
 	}
@@ -353,7 +355,9 @@ func TestRunnerProjectSharing(t *testing.T) {
 			Pool: domain.ExecutionModeRunner, RunnerID: runner.ID,
 		}}
 	}
-	check(owner, http.MethodPut, "/api/assistant/sessions/owner-runner-unassigned", draft("unassigned"), 400)
+	check(owner, http.MethodPut, "/api/assistant/sessions/owner-runner-unassigned", draft("unassigned"), 200)
+	check(owner, http.MethodPut, "/api/assistant/sessions/owner-runner-other", draft("other"), 400)
+	check(owner, http.MethodPut, "/api/runners/default?projectId=unassigned", selection, 403)
 	check(owner, http.MethodPut, "/api/assistant/sessions/owner-runner-personal", draft(""), 200)
 	check(owner, http.MethodPut, "/api/assistant/sessions/owner-runner-one", draft("one"), 200)
 	check(member, http.MethodPut, "/api/assistant/sessions/shared-runner-one", draft("one"), 200)
@@ -364,14 +368,14 @@ func TestRunnerProjectSharing(t *testing.T) {
 	check(owner, http.MethodPut, sharing, grant("two"), 200)
 	checkDefault(owner, "one", "", runner.ID, "")
 	checkDefault(owner, "two", runner.ID, runner.ID, "")
-	check(owner, http.MethodPut, "/api/assistant/sessions/owner-runner-one", draft(""), 400)
+	check(member, http.MethodPut, "/api/assistant/sessions/shared-runner-one", draft(""), 400)
 	staleDraft := assistantRequest{
-		SessionID: "owner-runner-one", ProjectID: "one",
+		SessionID: "shared-runner-one", ProjectID: "one",
 		Messages: []assistantMessage{{Role: "user", Content: "hello"}},
 	}
 	for _, path := range []string{"/api/assistant/chat", "/api/assistant/generations"} {
 		var outcome struct{ Error string }
-		if err := json.Unmarshal(check(owner, http.MethodPost, path, staleDraft, 400), &outcome); err != nil {
+		if err := json.Unmarshal(check(member, http.MethodPost, path, staleDraft, 400), &outcome); err != nil {
 			t.Fatal(err)
 		}
 		if outcome.Error != "无权使用此执行机器" {
@@ -405,6 +409,13 @@ func TestRunnerProjectSharing(t *testing.T) {
 		if len(rows) != 0 {
 			t.Fatalf("project with machine owner membership %+v exposed %+v", members, rows)
 		}
+		if err := json.Unmarshal(check(owner, http.MethodGet, "/api/runners?projectId=two", nil, 200), &rows); err != nil {
+			t.Fatal(err)
+		}
+		if len(rows) != 1 || rows[0].ID != runner.ID || rows[0].CanUseInConversation {
+			t.Fatalf("machine owner without project write access: %+v", rows)
+		}
+		check(owner, http.MethodPut, "/api/assistant/sessions/owner-runner-two-forbidden", draft("two"), 400)
 		checkDefault(member, "two", "", "", "")
 		check(member, http.MethodPut, "/api/runners/default?projectId=two", selection, 403)
 		check(member, http.MethodPut, "/api/assistant/sessions/shared-runner-owner-revoked", draft("two"), 400)

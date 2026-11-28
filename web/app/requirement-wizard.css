@@ -394,7 +394,7 @@
   color: #fff;
 }
 #requirementModal .req-choice.is-on .req-choice-ind { border-color: var(--hui-accent); background: var(--hui-accent); }
-/* ---------- SOP 与建单位置 ---------- */
+/* ---------- LOOP 与建单位置 ---------- */
 #requirementModal .req-form { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 18px; }
 #requirementModal .req-wide { grid-column: 1 / -1; }
 #requirementModal .req-dest { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }

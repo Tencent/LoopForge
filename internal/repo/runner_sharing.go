@@ -77,9 +77,23 @@ func (r *RunnersRepo) CanUseRunner(runner domain.Runner, projectID string, userI
 	return writable && runnerSharedByWritableOwner(runner, project)
 }
 
+// CanUseConversationRunner lets a machine owner use it for their own turns
+// in a project where they have write access.
+func (r *RunnersRepo) CanUseConversationRunner(runner domain.Runner, projectID string, userID int64) bool {
+	project, writable := r.writableRunnerProject(projectID, userID)
+	owned := userID > 0 && runner.OwnerUserID == userID
+	shared := writable && runnerSharedByWritableOwner(runner, project)
+	return canUseRunnerInConversation(projectID, owned, shared, writable)
+}
+
+func canUseRunnerInConversation(projectID string, owned, shared, writable bool) bool {
+	return shared || (owned && (projectID == "" || writable))
+}
+
 type RunnerProjectView struct {
 	domain.Runner
 	CanUseInProject      bool               `json:"canUseInProject,omitempty"`
+	CanUseInConversation bool               `json:"canUseInConversation"`
 	SupportsConversation bool               `json:"supportsConversation"`
 	Load                 *domain.RunnerLoad `json:"load,omitempty"`
 }
@@ -89,10 +103,14 @@ func (r *RunnersRepo) RunnersForUser(userID int64, projectID string) []RunnerPro
 	items := r.Runners()
 	out := make([]RunnerProjectView, 0, len(items))
 	for _, runner := range items {
-		canUse := writable && runnerSharedByWritableOwner(runner, project)
-		if runner.OwnerUserID == userID || canUse {
+		owned := userID > 0 && runner.OwnerUserID == userID
+		shared := writable && runnerSharedByWritableOwner(runner, project)
+		if owned || shared {
 			out = append(out, RunnerProjectView{
-				Runner: runner, CanUseInProject: canUse, SupportsConversation: runner.SupportsConversationCLI(),
+				Runner:               runner,
+				CanUseInProject:      shared,
+				CanUseInConversation: canUseRunnerInConversation(projectID, owned, shared, writable),
+				SupportsConversation: runner.SupportsConversationCLI(),
 			})
 		}
 	}
@@ -201,11 +219,13 @@ func (r *RunnersRepo) resolveRunnerDefaults(userID int64, projectID string, conv
 		return defaults
 	}
 	if runner, ok := r.Runner(defaults.PersonalRunnerID); ok {
-		if conversation && !runner.SupportsConversationCLI() {
-			return defaults
-		}
-		// A personal SOP can still use a legacy ownerless default.
-		if (!conversation && projectID == "" && runner.OwnerUserID == 0) || r.CanUseRunner(runner, projectID, userID) {
+		// A personal LOOP can still use a legacy ownerless default.
+		switch {
+		case conversation:
+			if runner.SupportsConversationCLI() && r.CanUseConversationRunner(runner, projectID, userID) {
+				defaults.Runner = runner
+			}
+		case (projectID == "" && runner.OwnerUserID == 0) || r.CanUseRunner(runner, projectID, userID):
 			defaults.Runner = runner
 		}
 	}

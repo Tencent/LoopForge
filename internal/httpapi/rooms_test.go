@@ -98,7 +98,7 @@ func TestRoomCreatesIssueAndDispatchesSOP(t *testing.T) {
 	}, http.StatusBadRequest)
 
 	dispatched := requestJSONAuthed[roomIssueResult](t, h, owner, http.MethodPost, "/api/rooms/"+room.ID+"/issues", map[string]any{
-		"title": "按 SOP 交付", "description": "走群聊派单", "workflowId": "room-sop", "agentId": "developer",
+		"title": "按 LOOP 交付", "description": "走群聊派单", "workflowId": "room-sop", "agentId": "developer",
 	}, http.StatusCreated)
 	if dispatched.Task == nil || dispatched.Task.RunID == "" || dispatched.Task.IssueID != dispatched.Issue.ID {
 		t.Fatalf("sop dispatch: %+v", dispatched)
@@ -200,7 +200,7 @@ func TestRoomCreatesIssueAndDispatchesSOP(t *testing.T) {
 		"title": "两条流程并行", "workflowIds": []string{"room-sop", "room-sop-2"},
 	}, http.StatusCreated)
 	if len(multi.Messages) != 2 || len(multi.Tasks) != 2 || multi.Messages[1].Lane != 1 || multi.Message.TargetType != "multi" {
-		t.Fatalf("multi-SOP dispatch: %+v", multi)
+		t.Fatalf("multi-LOOP dispatch: %+v", multi)
 	}
 	for _, task := range multi.Tasks {
 		runID := task.RunID

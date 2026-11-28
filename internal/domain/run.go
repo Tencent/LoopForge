@@ -58,7 +58,7 @@ type Run struct {
 const RunKindWorkspace = "workspace"
 const ConversationWorkspaceWorkflowID = "conversation-workspace"
 
-// IsWorkspace distinguishes an on-demand chat workspace from a scheduled SOP.
+// IsWorkspace distinguishes an on-demand chat workspace from a scheduled LOOP.
 func (r Run) IsWorkspace() bool { return r.Kind == RunKindWorkspace }
 
 // FailedBeforeAutoAssignment reports whether a project-auto run failed while waiting for a machine.
@@ -72,7 +72,7 @@ func (r Run) IsPersonalWorkspace() bool {
 	return r.IsWorkspace() && r.ExecutionContext.ProjectID == ""
 }
 
-// LiveWorkspace reports a chat workspace that is open for edits. It has no SOP
+// LiveWorkspace reports a chat workspace that is open for edits. It has no LOOP
 // graph to pause, so Main Bot and people in the IDE edit it side by side and
 // rely on expectedSha256 to catch conflicting writes.
 func (r Run) LiveWorkspace() bool {
@@ -80,7 +80,7 @@ func (r Run) LiveWorkspace() bool {
 }
 
 // HumanEditable reports whether people may edit the workspace in the IDE. Like
-// an AI IDE they edit at any time, also while SOP agents run: nothing pauses,
+// an AI IDE they edit at any time, also while LOOP agents run: nothing pauses,
 // expectedSha256 catches conflicting writes and agents re-read what changed.
 func (r Run) HumanEditable() bool {
 	if !r.WorkspaceCleanedAt.IsZero() {
@@ -95,7 +95,7 @@ func (r Run) HumanEditable() bool {
 	return false
 }
 
-// HistoricalGroup is a record of the retired role groups. It has no SOP graph
+// HistoricalGroup is a record of the retired role groups. It has no LOOP graph
 // that could be resumed or retried.
 func (r Run) HistoricalGroup() bool {
 	return !r.IsWorkspace() && r.WorkflowSnapshot.CollaborationMode == "group"
@@ -124,7 +124,7 @@ func (r Run) RepositoryContexts() []RepositoryContext {
 	return nil
 }
 
-// UsesConversationWorkspace includes a dispatched SOP and its child runs.
+// UsesConversationWorkspace includes a dispatched LOOP and its child runs.
 func (r Run) UsesConversationWorkspace() bool {
 	return r.ExecutionContext.ExecutionPinned && r.ExecutionContext.WorkspaceRunID != "" && !r.IsWorkspace()
 }
@@ -155,27 +155,28 @@ func (r *Run) UnmarshalJSON(raw []byte) error {
 }
 
 type NodeRun struct {
-	NodeID          string      `json:"nodeId"`
-	Status          string      `json:"status"`
-	Attempt         int         `json:"attempt"`
-	ReworkCount     int         `json:"reworkCount"`
-	SandboxID       string      `json:"sandboxId,omitempty"`
-	Output          string      `json:"output,omitempty"`
-	Error           string      `json:"error,omitempty"`
-	Provider        string      `json:"provider,omitempty"`
-	Model           string      `json:"model,omitempty"`
-	SessionID       string      `json:"sessionId,omitempty"`
-	ResumeSessionID string      `json:"resumeSessionId,omitempty"`
-	Activity        string      `json:"activity,omitempty"`
-	Feedback        string      `json:"feedback,omitempty"`
-	Usage           TokenUsage  `json:"usage"`
-	UsageSessionID  string      `json:"usageSessionId,omitempty"`
-	UsageCursor     TokenUsage  `json:"usageCursor,omitempty"`
-	ToolCalls       int         `json:"toolCalls"`
-	GateResult      *GateResult `json:"gateResult,omitempty"`
-	ChildRunID      string      `json:"childRunId,omitempty"`
-	StartedAt       time.Time   `json:"startedAt,omitzero"`
-	FinishedAt      time.Time   `json:"finishedAt,omitzero"`
+	KnowledgeReads  []KnowledgeRead `json:"knowledgeReads,omitempty"`
+	NodeID          string          `json:"nodeId"`
+	Status          string          `json:"status"`
+	Attempt         int             `json:"attempt"`
+	ReworkCount     int             `json:"reworkCount"`
+	SandboxID       string          `json:"sandboxId,omitempty"`
+	Output          string          `json:"output,omitempty"`
+	Error           string          `json:"error,omitempty"`
+	Provider        string          `json:"provider,omitempty"`
+	Model           string          `json:"model,omitempty"`
+	SessionID       string          `json:"sessionId,omitempty"`
+	ResumeSessionID string          `json:"resumeSessionId,omitempty"`
+	Activity        string          `json:"activity,omitempty"`
+	Feedback        string          `json:"feedback,omitempty"`
+	Usage           TokenUsage      `json:"usage"`
+	UsageSessionID  string          `json:"usageSessionId,omitempty"`
+	UsageCursor     TokenUsage      `json:"usageCursor,omitempty"`
+	ToolCalls       int             `json:"toolCalls"`
+	GateResult      *GateResult     `json:"gateResult,omitempty"`
+	ChildRunID      string          `json:"childRunId,omitempty"`
+	StartedAt       time.Time       `json:"startedAt,omitzero"`
+	FinishedAt      time.Time       `json:"finishedAt,omitzero"`
 
 	TransientRetries       int               `json:"transientRetries,omitempty"`
 	ModelTransientErrors   int               `json:"modelTransientErrors,omitempty"`
@@ -297,7 +298,7 @@ type Artifact struct {
 	Content   string `json:"content"`
 	BlobID    string `json:"-"`
 	// RepositoryDir records which run repository workspace the artifact was
-	// collected from (empty = run workspace root, where SOP deliverables live).
+	// collected from (empty = run workspace root, where LOOP deliverables live).
 	RepositoryDir string    `json:"repositoryDir,omitempty"`
 	CreatedAt     time.Time `json:"createdAt"`
 }

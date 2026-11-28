@@ -115,7 +115,7 @@ func (e *Engine) planAutoAssignCandidate(candidate *autoAssignCandidate, wf doma
 		}
 		for _, req := range requirements {
 			if !req.Configured {
-				return fmt.Errorf("请在个人配置中添加可用的执行器凭据（%s）", cmp.Or(req.Name, req.Kind, "SOP 默认执行器"))
+				return fmt.Errorf("请在个人配置中添加可用的执行器凭据（%s）", cmp.Or(req.Name, req.Kind, "LOOP 默认执行器"))
 			}
 		}
 		candidate.executorDefaults = defaults
@@ -155,7 +155,7 @@ func (e *Engine) prepareAutoAssign(ctx context.Context, wf domain.WorkflowDefini
 	}
 	if len(candidates) == 0 {
 		if incompatible != nil {
-			return nil, profile, "", fmt.Errorf("没有在线执行机器可运行此 SOP：%w", incompatible)
+			return nil, profile, "", fmt.Errorf("没有在线执行机器可运行此 LOOP：%w", incompatible)
 		}
 		return nil, profile, "", fmt.Errorf("项目暂无可用的在线执行机器，请启动平台执行机器或共享一台在线机器")
 	}
@@ -172,7 +172,7 @@ func (e *Engine) prepareAutoAssign(ctx context.Context, wf domain.WorkflowDefini
 		return false
 	})
 	if len(candidates) == 0 {
-		return nil, profile, "", fmt.Errorf("没有在线执行机器可运行此 SOP：%w", branchIncompatible)
+		return nil, profile, "", fmt.Errorf("没有在线执行机器可运行此 LOOP：%w", branchIncompatible)
 	}
 	var selection string
 	if wf.AutoSelectSandbox {
@@ -203,7 +203,7 @@ func (e *Engine) prepareAutoAssign(ctx context.Context, wf domain.WorkflowDefini
 		platformAdded = platformAdded || !candidate.shared
 	}
 	if len(compatible) == 0 {
-		return nil, profile, "", fmt.Errorf("没有在线执行机器支持此 SOP 的沙箱 %s（%s），请启用兼容的沙箱或执行机器", profile.ID, profile.Driver)
+		return nil, profile, "", fmt.Errorf("没有在线执行机器支持此 LOOP 的沙箱 %s（%s），请启用兼容的沙箱或执行机器", profile.ID, profile.Driver)
 	}
 	return compatible, profile, selection, nil
 }
@@ -276,7 +276,7 @@ func (e *Engine) autoAssignPlan(run domain.Run, target string, runner *domain.Ru
 func (e *Engine) checkAutoRunReachable(run domain.Run, now time.Time) string {
 	wf, ec := run.WorkflowSnapshot, run.ExecutionContext
 	if wf.SandboxSnapshot == nil {
-		return "自动分配缺少已选沙箱，请重新启动 SOP"
+		return "自动分配缺少已选沙箱，请重新启动 LOOP"
 	}
 	offline := false
 	graceStart := run.QueueEnteredAt
@@ -317,7 +317,7 @@ func (e *Engine) validateAutoAssignBinding(run domain.Run) error {
 		if run.ExecutionContext.ExecutionMode == domain.ExecutionModeCloud {
 			return nil
 		}
-		return fmt.Errorf("SOP 正在等待自动分配执行机器")
+		return fmt.Errorf("LOOP 正在等待自动分配执行机器")
 	}
 	runner, ok := e.repo.Runner(id)
 	if !ok || runner.Status != domain.RunnerStatusOnline {

@@ -14,7 +14,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -25,6 +24,7 @@ type dockerSandbox struct {
 	profile              domain.SandboxProfile
 	requirements         SandboxRequirements
 	dockerfile           domain.DockerfileDefinition
+	privilegedSetting    privilegedSandboxSettingLookup
 	limits               dockerSandboxLimits
 	builtImage           string
 	mu                   sync.Mutex
@@ -69,7 +69,7 @@ func (s *dockerSandbox) Close(ctx context.Context) error {
 
 // removeDockerSandbox drops a sandbox container. Per-run throwaway images
 // (agentflow-tmp-*) are removed with it; content-hashed cache images stay so
-// the next SOP with the same Dockerfile does not rebuild from node:22.
+// the next LOOP with the same Dockerfile does not rebuild from node:22.
 func removeDockerSandbox(ctx context.Context, container, image string) {
 	if !dockerAvailable() {
 		return
@@ -477,16 +477,17 @@ func isDockerCwdUnsafe(out string, err error) bool {
 }
 
 type dockerWorkspaceInspection struct {
-	source      string
-	legacyMasks bool
-	gitTools    string
-	privileged  bool
-	limitsLabel string
-	limits      dockerHostLimits
+	source       string
+	legacyMasks  bool
+	gitTools     string
+	privileged   bool
+	cgroupnsMode string
+	limitsLabel  string
+	limits       dockerHostLimits
 }
 
 func inspectDockerWorkspace(ctx context.Context, name string) (*dockerWorkspaceInspection, error) {
-	const format = `{"mounts":{{json .Mounts}},"privileged":{{.HostConfig.Privileged}},"limitsLabel":{{json (index .Config.Labels "` + dockerSandboxLimitsLabel + `")}},"limits":{"NanoCpus":{{.HostConfig.NanoCpus}},"Memory":{{.HostConfig.Memory}},"PidsLimit":{{json .HostConfig.PidsLimit}}}}`
+	const format = `{"mounts":{{json .Mounts}},"privileged":{{.HostConfig.Privileged}},"cgroupnsMode":{{json .HostConfig.CgroupnsMode}},"limitsLabel":{{json (index .Config.Labels "` + dockerSandboxLimitsLabel + `")}},"limits":{"NanoCpus":{{.HostConfig.NanoCpus}},"Memory":{{.HostConfig.Memory}},"PidsLimit":{{json .HostConfig.PidsLimit}}}}`
 	out, err := exec.CommandContext(ctx, "docker", "inspect", "--type", "container", "--format", format, name).CombinedOutput()
 	if dockerObjectGone(string(out), err) {
 		return nil, nil
@@ -499,14 +500,15 @@ func inspectDockerWorkspace(ctx context.Context, name string) (*dockerWorkspaceI
 			Destination, Source string
 			RW                  bool
 		}
-		Privileged  bool
-		LimitsLabel string
-		Limits      dockerHostLimits
+		Privileged   bool
+		CgroupnsMode string
+		LimitsLabel  string
+		Limits       dockerHostLimits
 	}
 	if err := json.Unmarshal(out, &config); err != nil {
 		return nil, fmt.Errorf("decode Docker workspace for %s: %w", name, err)
 	}
-	workspace := &dockerWorkspaceInspection{privileged: config.Privileged, limitsLabel: config.LimitsLabel, limits: config.Limits}
+	workspace := &dockerWorkspaceInspection{privileged: config.Privileged, cgroupnsMode: config.CgroupnsMode, limitsLabel: config.LimitsLabel, limits: config.Limits}
 	for _, mount := range config.Mounts {
 		switch mount.Destination {
 		case "/workspace":
@@ -620,18 +622,14 @@ func parseDockerSandboxMounts(out, absRoot string) map[string]string {
 	return found
 }
 
-const privilegedDockerSandboxEnv = "AGENTFLOW_ALLOW_PRIVILEGED_SANDBOX"
-
 func createDocker(ctx context.Context, id, workspace string, p domain.SandboxProfile, requirements SandboxRequirements, dockerfile domain.DockerfileDefinition) (Sandbox, error) {
 	if strings.TrimSpace(dockerfile.Content) == "" {
 		return nil, fmt.Errorf("docker sandbox requires a dockerfile")
 	}
+	setting, _ := ctx.Value(privilegedSandboxSettingKey{}).(privilegedSandboxSettingLookup)
 	if p.Privileged {
-		// Only the process on the Docker host can authorize privileged
-		// execution. The profile's environment is for in-sandbox commands.
-		allowed, _ := strconv.ParseBool(strings.TrimSpace(os.Getenv(privilegedDockerSandboxEnv)))
-		if !allowed {
-			return nil, fmt.Errorf("当前执行机器未允许特权 Docker 沙箱，请联系机器管理员设置 %s=true", privilegedDockerSandboxEnv)
+		if err := checkPrivilegedSandbox(ctx, setting); err != nil {
+			return nil, err
 		}
 	}
 	limits, err := readDockerSandboxLimits(p)
@@ -642,7 +640,7 @@ func createDocker(ctx context.Context, id, workspace string, p domain.SandboxPro
 	// after prepareRepository has cloned into this directory. Creating the
 	// container first, then letting git replace the workspace inode, is the
 	// runc 126 "cwd outside mount namespace" failure.
-	return &dockerSandbox{id: id, name: dockerContainerName(id), workspace: workspace, profile: p, requirements: requirements, dockerfile: dockerfile, limits: limits}, nil
+	return &dockerSandbox{id: id, name: dockerContainerName(id), workspace: workspace, profile: p, requirements: requirements, dockerfile: dockerfile, limits: limits, privilegedSetting: setting}, nil
 }
 
 const dockerSandboxPrefix = "agentflow-"
@@ -857,6 +855,11 @@ func (s *dockerSandbox) start(ctx context.Context, mode dockerStartMode) error {
 		return nil
 	}
 	name, workspace, p := s.name, s.workspace, s.profile
+	if p.Privileged {
+		if err := checkPrivilegedSandbox(ctx, s.privilegedSetting); err != nil {
+			return err
+		}
+	}
 	gitTools, err := dockerGitToolsDirectory(workspace, name)
 	if err != nil {
 		return err
@@ -871,7 +874,7 @@ func (s *dockerSandbox) start(ctx context.Context, mode dockerStartMode) error {
 		if !dockerBindMatchesWorkspace(container.source, workspace) {
 			return fmt.Errorf("docker sandbox %s is bound to %s, not %s", name, container.source, workspace)
 		}
-		recreate = recreate || container.privileged != p.Privileged || !s.limits.matches(container)
+		recreate = recreate || container.privileged != p.Privileged || p.Privileged && container.cgroupnsMode == "host" || !s.limits.matches(container)
 		hasGitTools = dockerBindMatchesWorkspace(container.gitTools, gitTools)
 		if mode == dockerStartRefreshGitTools && !hasGitTools {
 			// A previous Worker can detach its workspace before all Docker
@@ -892,11 +895,13 @@ func (s *dockerSandbox) start(ctx context.Context, mode dockerStartMode) error {
 	if container != nil && !recreate && !container.legacyMasks {
 		if err := exec.CommandContext(ctx, "docker", "start", name).Run(); err == nil {
 			if err := waitDockerWorkspaceReady(ctx, name); err == nil {
-				if hasGitTools {
-					s.gitToolsRoot = gitTools
+				if !p.Privileged || preparePrivilegedDockerCgroup(ctx, name) == nil {
+					if hasGitTools {
+						s.gitToolsRoot = gitTools
+					}
+					s.started = true
+					return nil
 				}
-				s.started = true
-				return nil
 			}
 		}
 	}
@@ -907,7 +912,7 @@ func (s *dockerSandbox) start(ctx context.Context, mode dockerStartMode) error {
 	image := built
 	args := []string{"create", "--name", name, "--init"}
 	if p.Privileged {
-		args = append(args, "--privileged")
+		args = append(args, "--privileged", "--cgroupns=private")
 	} else {
 		args = append(args, "--cap-drop=ALL", "--security-opt", "no-new-privileges")
 	}
@@ -1011,8 +1016,55 @@ func (s *dockerSandbox) start(ctx context.Context, mode dockerStartMode) error {
 		s.started = false
 		return err
 	}
+	if p.Privileged {
+		if err := preparePrivilegedDockerCgroup(ctx, name); err != nil {
+			_ = exec.Command("docker", "rm", "-f", name).Run()
+			dropEphemeralDockerImage(s.builtImage)
+			s.builtImage = ""
+			s.started = false
+			return err
+		}
+	}
 	s.started = true
 	s.gitToolsRoot = gitTools
+	return nil
+}
+
+const privilegedDockerCgroupSetupScript = `set -eu
+[ -f /sys/fs/cgroup/cgroup.controllers ] && [ -w /sys/fs/cgroup/cgroup.subtree_control ] || exit 0
+IFS= read -r cg < /proc/1/cgroup 2>/dev/null || exit 0
+case "$cg" in
+  0::/|0::/init) ;;
+  *) exit 0 ;;
+esac
+mkdir -p /sys/fs/cgroup/init
+printf '%s\n' "$$" > /sys/fs/cgroup/init/cgroup.procs 2>/dev/null || true
+procs=$(cat /sys/fs/cgroup/cgroup.procs 2>/dev/null || true)
+for p in $procs; do
+  printf '%s\n' "$p" > /sys/fs/cgroup/init/cgroup.procs 2>/dev/null || true
+done
+for p in $(cat /sys/fs/cgroup/cgroup.procs 2>/dev/null || true); do
+  printf '%s\n' "$p" > /sys/fs/cgroup/init/cgroup.procs 2>/dev/null || true
+done
+ctrls=$(cat /sys/fs/cgroup/cgroup.controllers 2>/dev/null || true)
+[ -n "$ctrls" ] || exit 0
+out=""
+for c in $ctrls; do
+  out="${out:+$out }+$c"
+done
+if ! printf '%s\n' "$out" > /sys/fs/cgroup/cgroup.subtree_control 2>/dev/null; then
+  for c in $ctrls; do
+    printf '+%s\n' "$c" > /sys/fs/cgroup/cgroup.subtree_control 2>/dev/null || true
+  done
+  enabled=$(cat /sys/fs/cgroup/cgroup.subtree_control 2>/dev/null || true)
+  [ -n "$enabled" ] || exit 1
+fi`
+
+func preparePrivilegedDockerCgroup(ctx context.Context, name string) error {
+	out, err := exec.CommandContext(ctx, "docker", "exec", "--user", "0:0", name, "sh", "-c", privilegedDockerCgroupSetupScript).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("prepare privileged sandbox cgroup: %w: %s", err, strings.TrimSpace(string(out)))
+	}
 	return nil
 }
 

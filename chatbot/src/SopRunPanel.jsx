@@ -1,9 +1,14 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import HarnessIcon from "./HarnessIcon";
 import SlidingTabs from "./SlidingTabs";
 import HarnessSelect from "./HarnessSelect";
 import { api } from "./api";
 import { RichContent, ArtifactPreview, ImageLightbox } from "./RichContent";
+import KnowledgeSources from "./KnowledgeSources";
+import {
+  buildKnowledgeSummary,
+  filterKnowledgeReadsForAttempt,
+} from "./knowledge-citations.js";
 import { IconButton, CredentialAction } from "./ui";
 import ActivityTrace from "./ActivityTrace";
 import {
@@ -201,7 +206,50 @@ function NodeConversation({ run, node, definition, onPreview }) {
     .filter(
       (source) => sourceIDs.has(source.id) && run.nodes?.[source.id]?.output,
     )
-    .map((source) => ({ ...source, output: run.nodes[source.id].output }));
+    .map((source) => ({
+      ...source,
+      output: run.nodes[source.id].output,
+      knowledgeReads: filterKnowledgeReadsForAttempt(
+        run.nodes?.[source.id]?.knowledgeReads,
+        run.nodes?.[source.id]?.attempt,
+      ),
+    }));
+  const [highlightedCite, setHighlightedCite] = useState(null);
+  const sourcesRef = useRef(null);
+  const highlightTimer = useRef(null);
+  useEffect(() => () => window.clearTimeout(highlightTimer.current), []);
+  const handleCitationClick = (citeIndex) => {
+    setHighlightedCite(citeIndex);
+    window.clearTimeout(highlightTimer.current);
+    highlightTimer.current = window.setTimeout(() => setHighlightedCite(null), 2000);
+    const row = sourcesRef.current?.querySelector?.(`[data-cite-index="${citeIndex}"]`);
+    row?.scrollIntoView?.({ behavior: "smooth", block: "nearest" });
+  };
+  const nodeReads = useMemo(
+    () => filterKnowledgeReadsForAttempt(node.knowledgeReads, node.attempt),
+    [node.knowledgeReads, node.attempt],
+  );
+  const nodeLive = ["running", "queued"].includes(node.status);
+  const nodeTexts = useMemo(() => {
+    const narrationTexts = items.flatMap((item) =>
+      Array.isArray(item.steps)
+        ? item.steps.filter((s) => s.kind === "text" && s.text).map((s) => s.text)
+        : [],
+    );
+    return [
+      node.output || "",
+      ...narrationTexts,
+      ...items.filter((i) => i.type === "reply").map((i) => i.message || ""),
+    ];
+  }, [node.output, items]);
+  const nodeSummary = useMemo(
+    () =>
+      nodeReads.length
+        ? buildKnowledgeSummary(nodeReads, nodeTexts, { live: nodeLive })
+        : null,
+    [nodeReads, nodeTexts, nodeLive],
+  );
+  const nodeKnowledgeText = nodeTexts.join("\n");
   const opening = run.input || "";
   return (
     <div className="node-conversation">
@@ -216,7 +264,10 @@ function NodeConversation({ run, node, definition, onPreview }) {
               <span className="node-message-sender">
                 {source.name || source.id}
               </span>
-              <RichContent message={source.output} />
+              <RichContent
+                message={source.output}
+                knowledgeReads={source.knowledgeReads}
+              />
             </div>
           ))}
         </article>
@@ -240,7 +291,13 @@ function NodeConversation({ run, node, definition, onPreview }) {
             aria-label="节点回复"
             key={item.key}
           >
-            <RichContent message={item.message} />
+            <RichContent
+              message={item.message}
+              knowledgeReads={nodeReads}
+              knowledgeSummary={nodeSummary}
+              streaming={nodeLive}
+              onCitationClick={handleCitationClick}
+            />
           </article>
         ) : (
           <ActivityTrace
@@ -249,6 +306,16 @@ function NodeConversation({ run, node, definition, onPreview }) {
             startedAt={item.startedAt}
             finishedAt={item.finishedAt}
             live={item.live}
+            citationProps={
+              nodeReads.length
+                ? {
+                    knowledgeReads: nodeReads,
+                    knowledgeSummary: nodeSummary,
+                    streaming: nodeLive,
+                    onCitationClick: handleCitationClick,
+                  }
+                : null
+            }
           />
         ),
       )}
@@ -279,6 +346,15 @@ function NodeConversation({ run, node, definition, onPreview }) {
             ? "节点尚未开始。"
             : "暂无可读取的执行记录。"}
         </p>
+      ) : null}
+      {nodeReads.length > 0 ? (
+        <KnowledgeSources
+          knowledgeReads={nodeReads}
+          text={nodeKnowledgeText}
+          summary={nodeSummary}
+          highlightedIndex={highlightedCite}
+          containerRef={sourcesRef}
+        />
       ) : null}
       {node.error ? (
         <p className="error">
@@ -322,18 +398,18 @@ export default function SopRunPanel({
   const artifacts = (run.artifacts || []).filter(
     (a) => !nodeId || a.nodeId === nodeId,
   );
-  const title = run.workflowSnapshot?.name || "SOP 运行";
+  const title = run.workflowSnapshot?.name || "LOOP 运行";
   const Container = embedded ? "section" : "aside";
   return (
     <Container
       className={`${embedded ? "sop-run-embedded" : "side-panel"} sop-run-panel ${nodeId ? "node-conversation-view" : ""}`}
-      aria-label="SOP 运行过程"
+      aria-label="LOOP 运行过程"
     >
       {!embedded ? (
         <header className="sop-panel-header">
           <span>
             <GitBranch size={16} />
-            SOP 运行
+            LOOP 运行
           </span>
           <IconButton label="关闭运行侧边栏" onClick={onClose}>
             <X size={16} />
@@ -373,7 +449,11 @@ export default function SopRunPanel({
               <ChevronLeft size={14} />
               {tab === "conversation" ? "返回会话" : "返回节点产物"}
             </button>
-            <ArtifactPreview artifact={artifact} />
+            <ArtifactPreview
+              artifact={artifact}
+              attempt={artifact.attempt}
+              knowledgeReads={run.nodes?.[artifact.nodeId]?.knowledgeReads || []}
+            />
           </>
         ) : nodeId && node ? (
           <>

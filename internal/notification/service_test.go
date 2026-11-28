@@ -242,7 +242,7 @@ func TestSOPCompletionSendsOnceAfterAllNodeEvents(t *testing.T) {
 	}
 	items, _ := svc.Store.NotificationDeliveries(bot.ProjectID)
 	if len(items) != 0 {
-		t.Fatal("node completion sent before SOP completion")
+		t.Fatal("node completion sent before LOOP completion")
 	}
 	run.Status = "succeeded"
 	run.Events = append(run.Events, domain.RunEvent{ID: "sop-done", Type: "run.succeeded", Timestamp: time.Now().UTC()})
@@ -303,7 +303,7 @@ func TestClearingUnifiedBotDisablesAllNotifications(t *testing.T) {
 	}
 	items, _ := svc.Store.NotificationDeliveries(bot.ProjectID)
 	if len(items) != 0 || f.sent != 0 {
-		t.Fatalf("disabled SOP sent %+v", items)
+		t.Fatalf("disabled LOOP sent %+v", items)
 	}
 }
 
@@ -337,7 +337,7 @@ func TestWeComOriginDeliveryUsesTheLiveConnection(t *testing.T) {
 	svc, provider, bot, run := serviceFixture(t)
 	provider.err = context.Canceled // the CLI path must not be used
 	now := time.Now().UTC()
-	item := domain.NotificationDelivery{ID: "origin-done", ProjectID: "p", BotID: bot.ID, RunID: run.ID, EventType: "succeeded", SourceType: "run", SourceID: run.ID, Origin: domain.NotificationOriginChat, TargetID: "wr_group", TargetType: "group", Content: "### SOP 已完成", Status: "pending", CreatedAt: now, NextAttemptAt: now}
+	item := domain.NotificationDelivery{ID: "origin-done", ProjectID: "p", BotID: bot.ID, RunID: run.ID, EventType: "succeeded", SourceType: "run", SourceID: run.ID, Origin: domain.NotificationOriginChat, TargetID: "wr_group", TargetType: "group", Content: "### LOOP 已完成", Status: "pending", CreatedAt: now, NextAttemptAt: now}
 	if err := svc.Store.CreateNotificationDelivery(item); err != nil {
 		t.Fatal(err)
 	}
@@ -378,7 +378,7 @@ func TestWeComOriginDeliveryUsesTheLiveConnection(t *testing.T) {
 		}
 	}
 	conv, _ := svc.Store.BotConversation(post.ConversationID)
-	if post.Action != botinteraction.ActionChatPost || post.DeliveryID != item.ID || post.SendRoute != repo.BotSendRoutePushChat || conv.ChatType != "group" || conv.ChatID != "wr_group" || !strings.Contains(post.Content, "SOP 已完成") {
+	if post.Action != botinteraction.ActionChatPost || post.DeliveryID != item.ID || post.SendRoute != repo.BotSendRoutePushChat || conv.ChatType != "group" || conv.ChatID != "wr_group" || !strings.Contains(post.Content, "LOOP 已完成") {
 		t.Fatalf("queued = %+v in %+v", post, conv)
 	}
 }
@@ -421,7 +421,7 @@ func TestWeComOriginDeliveryFollowsTheSendResult(t *testing.T) {
 	}
 	settlePending(t, svc)
 	now := time.Now().UTC()
-	item := domain.NotificationDelivery{ID: "origin-done", ProjectID: "p", BotID: bot.ID, RunID: run.ID, EventType: "succeeded", SourceType: "run", SourceID: run.ID, Origin: domain.NotificationOriginChat, TargetID: "wr_group", TargetType: "group", Content: "### SOP 已完成", Status: "pending", CreatedAt: now, NextAttemptAt: now}
+	item := domain.NotificationDelivery{ID: "origin-done", ProjectID: "p", BotID: bot.ID, RunID: run.ID, EventType: "succeeded", SourceType: "run", SourceID: run.ID, Origin: domain.NotificationOriginChat, TargetID: "wr_group", TargetType: "group", Content: "### LOOP 已完成", Status: "pending", CreatedAt: now, NextAttemptAt: now}
 	if err := svc.Store.CreateNotificationDelivery(item); err != nil {
 		t.Fatal(err)
 	}
@@ -488,7 +488,7 @@ func TestWeComPrivateOriginRechecksTheSender(t *testing.T) {
 	}
 	deliver := func(id string) domain.NotificationDelivery {
 		t.Helper()
-		item := domain.NotificationDelivery{ID: id, ProjectID: "p", BotID: bot.ID, RunID: run.ID, EventType: "succeeded", SourceType: "run", SourceID: run.ID, Origin: domain.NotificationOriginChat, TargetID: "zhangsan", TargetType: "single", Content: "### SOP 已完成", Status: "pending", CreatedAt: now, NextAttemptAt: now}
+		item := domain.NotificationDelivery{ID: id, ProjectID: "p", BotID: bot.ID, RunID: run.ID, EventType: "succeeded", SourceType: "run", SourceID: run.ID, Origin: domain.NotificationOriginChat, TargetID: "zhangsan", TargetType: "single", Content: "### LOOP 已完成", Status: "pending", CreatedAt: now, NextAttemptAt: now}
 		if err := svc.Store.CreateNotificationDelivery(item); err != nil {
 			t.Fatal(err)
 		}
@@ -518,7 +518,7 @@ func TestWeComPrivateOriginRechecksTheSender(t *testing.T) {
 }
 
 // WeCom template cards have no text input: a node question goes out as
-// text with the question and how to answer, on the SOP notification and on
+// text with the question and how to answer, on the LOOP notification and on
 // the message back to the conversation the run came from.
 func TestWeComNodeQuestionIsSentAsText(t *testing.T) {
 	svc, provider, bot, run := serviceFixture(t)

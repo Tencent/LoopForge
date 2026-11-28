@@ -1768,7 +1768,7 @@ textarea.pa-input{height:auto;min-height:76px;padding:9px 11px;resize:vertical;l
 .clarification-feedback b{color:var(--amber)}
 .requirement-modal-card .modal-actions{padding:14px 26px 20px}
 
-/* ================= Agent / SOP 向导 ================= */
+/* ================= Agent / LOOP 向导 ================= */
 .definition-wizard-card{width:min(900px,94vw);max-height:90vh;overflow:auto;padding:0;border-radius:17px}
 .wizard-head{min-height:96px;padding:20px 26px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--line);background:linear-gradient(135deg,var(--panel),var(--panel-2))}
 .wizard-head h2{margin:3px 0 4px;font-size:20px}
@@ -2073,6 +2073,8 @@ html[data-theme="dark"] .edge-delete-btn:hover path{stroke:#ffffff !important}
 .issue-modal-card label.toggle-row{display:flex;align-items:center;gap:7px}
 .issue-modal-card .toggle-row input[type="checkbox"]{width:auto;flex:0 0 auto;margin:0;padding:0}
 .issue-modal-card textarea{resize:vertical}
+/* 长表单滚动时，取消/启动 SOP/保存始终固定在弹窗底部可见 */
+.issue-modal-card>.modal-actions{position:sticky;bottom:calc(-1 * var(--sp-6));z-index:4;margin:var(--sp-4) calc(-1 * var(--sp-6)) calc(-1 * var(--sp-6));padding:12px var(--sp-6) var(--sp-6);background:var(--v3-surface,var(--panel));border-top:1px solid var(--line-strong)}
 
 /* ================= 响应式 ================= */
 @media (max-width:1100px){

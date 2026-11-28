@@ -54,7 +54,7 @@ func helperCLIExecution(ctx context.Context, root string, actorID int64, engine 
 	return bound.h.conversationExecutor(s, root), s.runnerLogin
 }
 
-func (h *assistantHandlers) conversationRunner(s *AgentToolSession, checkAccess bool) (domain.Runner, error) {
+func (h *assistantHandlers) conversationRunner(ctx context.Context, s *AgentToolSession, checkAccess bool) (domain.Runner, error) {
 	if h.runnerControls == nil {
 		return domain.Runner{}, errAssistantExecutionUnavailable
 	}
@@ -62,8 +62,11 @@ func (h *assistantHandlers) conversationRunner(s *AgentToolSession, checkAccess 
 	if !ok {
 		return domain.Runner{}, errAssistantExecutionUnavailable
 	}
-	if checkAccess && !h.canUseBoundRunner(runner, s.ProjectID, s.UserID) {
-		return domain.Runner{}, errAssistantRunnerAccessRevoked
+	if checkAccess {
+		requireShare := s.requireRunnerShare || assistantSessionOriginFrom(ctx).Source == domain.AssistantSourceScheduled
+		if !h.canUseBoundRunner(runner, s.ProjectID, s.UserID, requireShare) {
+			return domain.Runner{}, errAssistantRunnerAccessRevoked
+		}
 	}
 	if runner.Status != domain.RunnerStatusOnline {
 		return domain.Runner{}, errAssistantExecutionUnavailable
@@ -114,7 +117,7 @@ func (h *assistantHandlers) conversationExecutor(s *AgentToolSession, root strin
 		var projectCredentialEnv map[string]string
 		if s.RuntimeMode == domain.AssistantModeWorkspace {
 			if s.ExecutionRunnerID != "" {
-				if _, err := h.conversationRunner(s, true); err != nil {
+				if _, err := h.conversationRunner(ctx, s, true); err != nil {
 					return "", err
 				}
 			}
@@ -128,7 +131,7 @@ func (h *assistantHandlers) conversationExecutor(s *AgentToolSession, root strin
 				return "", fmt.Errorf("工作区与会话不在同一执行机器")
 			}
 			if !run.IsWorkspace() && !sopStopped(run) {
-				return "", fmt.Errorf("SOP 正在执行，请先暂停后接管工作区")
+				return "", fmt.Errorf("LOOP 正在执行，请先暂停后接管工作区")
 			}
 			var err error
 			if s.workspaceTurn != nil {
@@ -152,15 +155,18 @@ func (h *assistantHandlers) conversationExecutor(s *AgentToolSession, root strin
 			}
 			if len(s.projectCredentialIDs) > 0 {
 				project, ok := h.repo.Project(s.ProjectID)
-				use, _ := domain.ProjectCredentialAccess(project, s.UserID, h.repo.IsPlatformAdmin(s.User.LoginName))
-				if !ok || !use || project.ID != s.ProjectID || run.ExecutionContext.ProjectID != s.ProjectID {
+				platformAdmin := h.repo.IsPlatformAdmin(s.User.LoginName)
+				if !ok || project.ID != s.ProjectID || run.ExecutionContext.ProjectID != s.ProjectID ||
+					!workbenchProjectAllowsUser(project, s.UserID, platformAdmin) {
 					return "", fmt.Errorf("无权在该工作区使用项目凭据")
 				}
-				projectCredentialEnv, err = h.repo.ResolveProjectCredentialEnv(ctx, project.ID, s.projectCredentialIDs)
-				if err != nil {
-					return "", err
+				if use, _ := domain.ProjectCredentialAccess(project, s.UserID, platformAdmin); use {
+					projectCredentialEnv, err = h.repo.ResolveAvailableProjectCredentialEnv(ctx, project.ID, s.projectCredentialIDs)
+					if err != nil {
+						return "", err
+					}
+					s.recordProjectCredentialValues(projectCredentialEnv)
 				}
-				s.recordProjectCredentialValues(projectCredentialEnv)
 			}
 			if s.ExecutionRunnerID == "" {
 				var reason string
@@ -204,6 +210,7 @@ func (h *assistantHandlers) conversationExecutor(s *AgentToolSession, root strin
 					}
 				}
 				callCtx = gitwork.WithSSHKnownHostsLookup(callCtx, h.repo.PlatformSSHKnownHosts)
+				callCtx = runtime.WithPrivilegedSandboxSetting(callCtx, h.repo.PlatformRunnerPrivilegedSandbox)
 				result, err := h.conversationProcesses.Handle(callCtx, root, workspace, request.Sandbox, req, forward, factory)
 				if err != nil && req.Operation == "start" {
 					err = conversationNotStarted(err, false)
@@ -225,7 +232,7 @@ func (h *assistantHandlers) conversationExecutor(s *AgentToolSession, root strin
 			}
 			var response domain.RunnerWorkspaceResponse
 			for delay := 50 * time.Millisecond; ; delay *= 2 {
-				runner, runnerErr := h.conversationRunner(s, checkAccess)
+				runner, runnerErr := h.conversationRunner(callCtx, s, checkAccess)
 				if runnerErr != nil {
 					return preDispatchError(runnerErr)
 				}
