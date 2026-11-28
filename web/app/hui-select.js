@@ -205,7 +205,7 @@
         const label = el('span', 'hui-select-option-label', option.text);
         // An option that shows user data (a project name) keeps i18n.js from
         // rewriting fragments of it in the custom list as well.
-        if (option.hasAttribute('data-i18n-data')) label.setAttribute('data-i18n-data', '');
+        if (option.getAttribute?.('data-i18n-data') != null) label.setAttribute('data-i18n-data', '');
         const brand = option.getAttribute('data-brand');
         if (brand && /^[-a-z0-9]+\.(svg|png)$/.test(brand)) {
           const logo = el('img', 'hui-select-option-brand');
@@ -386,7 +386,8 @@
 
     function sync() {
       const current = select.options[Math.max(0, select.selectedIndex)];
-      value.toggleAttribute('data-i18n-data', !!current?.hasAttribute('data-i18n-data'));
+      if (current?.getAttribute?.('data-i18n-data') != null) value.setAttribute('data-i18n-data', '');
+      else value.removeAttribute?.('data-i18n-data');
       value.textContent = current ? current.text : '';
       trigger.classList.toggle('is-filtered', select.selectedIndex > 0);
       trigger.disabled = !!select.disabled;

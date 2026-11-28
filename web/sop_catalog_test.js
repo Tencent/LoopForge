@@ -214,6 +214,7 @@ class FakeEl {
 }
 const docListeners = {};
 const switched = [];
+const opened = [];
 Object.assign(ctx, {
   document: {
     body: { appendChild() {} },
@@ -223,6 +224,9 @@ Object.assign(ctx, {
   clone: v => JSON.parse(JSON.stringify(v)),
   renderWorkflowMeta() {}, renderCanvas() {}, renderProperties() {},
   switchView: name => switched.push(name),
+  // openSOPDesigner delegates to the guarded opener in app/flows.js, which
+  // this isolated harness does not load.
+  openWorkflowInDesigner: id => { opened.push(id); switched.push('flow'); return Promise.resolve(true); },
   toast() {},
 });
 Object.assign(ctx.window, { innerWidth: 1280, innerHeight: 800, addEventListener() {} });
@@ -247,6 +251,7 @@ click(openB);
 assert.ok(!menuOpen(), 'opening another card closes the menu');
 assert.strictEqual(moreA.attrs['aria-expanded'], 'false');
 assert.deepStrictEqual(switched, ['flow']);
+assert.deepStrictEqual(opened, ['own-shared']);
 
 click(moreA);
 click(cardB);
