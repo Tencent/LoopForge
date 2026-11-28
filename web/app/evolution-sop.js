@@ -185,7 +185,7 @@ function evoSOPListHTML(sops) {
 function evoSOPRowHTML(s) {
   const m = s.latestMetrics || {};
   const busy = evoSOPState.busyIds.has(s.workflowId) ? ' disabled' : '';
-  const score = m.score != null ? `${m.score} 分` : '—';
+  const score = m.score != null ? lfT(`${m.score} 分`, `${m.score} pts`) : '—';
   const metricsHTML = m.runs > 0
     ? `<span class="evo-sop-cell-metrics"><b>${escapeHTML(evoSOPFormatTokens(m.avgTokens))}</b><small>Token</small><i>·</i><b>${escapeHTML(evoSOPNum(m.avgTools, 1))}</b><small>工具</small><i>·</i><b class="is-score">${escapeHTML(score)}</b></span>`
     : '<span class="evo-muted">暂无运行数据</span>';
@@ -719,7 +719,7 @@ function evoSOPMetricsGridHTML(cur, prev, primaryPref = '') {
       label: 'LOOP 评分',
       value: cur.score != null ? `${cur.score}` : '—',
       unit: cur.score != null ? '/ 100' : '',
-      delta: evoSOPDeltaHTML(evoSOPMetricValue(cur, 'score'), evoSOPMetricValue(prev, 'score'), true, d => `${d > 0 ? '+' : ''}${Math.round(d)} 分`),
+      delta: evoSOPDeltaHTML(evoSOPMetricValue(cur, 'score'), evoSOPMetricValue(prev, 'score'), true, d => lfT(`${d > 0 ? '+' : ''}${Math.round(d)} 分`, `${d > 0 ? '+' : ''}${Math.round(d)} pts`)),
       note: scoreNote,
     },
     {
@@ -828,7 +828,7 @@ function evoSOPVersionsTableHTML(versions, assets = []) {
     return `<tr>
       <td><span class="mono">${escapeHTML(v.version)}</span>${v.current ? ` ${kbBadge('生效中', 'ok')}` : ''}${srcBadge ? ` ${srcBadge}` : ''}${v.changeNote ? `<small class="evo-sop-cell-sub">${escapeHTML(v.changeNote)}</small>` : ''}</td>
       <td class="num">${m.runs || 0}</td>
-      <td class="num"><b>${m.score != null ? `${m.score} 分` : '—'}</b></td>
+      <td class="num"><b>${m.score != null ? lfT(`${m.score} 分`, `${m.score} pts`) : '—'}</b></td>
       <td class="num">${escapeHTML(evoSOPFormatTokens(m.avgTokens))}</td>
       <td class="num">${m.runs > 0 ? `${escapeHTML(evoSOPNum(m.avgTools, 1))} 次` : '—'}</td>
       <td class="num">${escapeHTML(evoSOPFormatSec(m.avgDuration))}</td>

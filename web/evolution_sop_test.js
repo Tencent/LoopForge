@@ -12,6 +12,8 @@ const { createDOM } = require('./hui_fake_dom');
   w.relativeTime = () => '刚刚';
   w.toast = () => {};
   w.kbBadge = (text, tone) => `<span class="hui-badge" data-tone="${tone || ''}">${text}</span>`;
+  // lfT falls back to the Chinese copy in its absence; the fake DOM has no i18n scripts.
+  w.lfT = zh => zh;
   w.kbCaption = text => `<p class="kb-caption">${text}</p>`;
   w.kbPanel = (head, body) => `<section class="kb-panel">${head}${body}</section>`;
   w.kbPanelTitle = (title, meta) => `<h3>${title}${meta ? ` <span>${meta}</span>` : ''}</h3>`;
