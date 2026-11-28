@@ -207,6 +207,60 @@ test('agent catalog search, presets, validation, persistence, clone, and delete 
   assert.equal(app.evaluate(`state.data.agents.some(a=>a.id==='agent-copy')`), false);
 });
 
+test('agent usage ignores template shadows and keeps real workflow references', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  app.evaluate(`
+    state.projectFilter='project-1';state.agentScope='project';
+    state.data.agents=[{id:'template-role',projectId:'project-1',name:'Developer'}];
+    state.data.workflows=[
+      {id:'generic-flow',generic:true,nodes:[{agentId:'template-role'}]},
+      {id:'other-flow',projectId:'project-2',nodes:[{agentId:'template-role'}]}
+    ];
+    switchView('agents');renderAgents();
+  `);
+  const usage = () => app.document.querySelector('[data-agent-id="template-role"] .agent-row-uses').textContent;
+  const deleteButton = () => {
+    app.document.querySelector('[data-agent-more="template-role"]').click();
+    return app.document.querySelector('#agentRowMenu [data-agent-act="delete"]');
+  };
+  assert.equal(usage(), '未使用');
+  assert.equal(deleteButton().disabled, false);
+
+  app.evaluate(`
+    state.data.workflows.push({id:'project-flow',projectId:'project-1',nodes:[
+      {agentId:'template-role'},{agentId:'template-role'},{}
+    ]});renderAgents();
+  `);
+  assert.equal(usage(), '2 个节点');
+  assert.equal(deleteButton().disabled, true);
+
+  app.evaluate(`state.data.workflows.pop();renderAgents()`);
+  assert.equal(usage(), '未使用');
+  assert.equal(deleteButton().disabled, false);
+
+  // Shared roles resolve across projects and remain protected from deletion.
+  app.evaluate(`state.data.agents[0].shared=true;renderAgents()`);
+  assert.equal(usage(), '2 个节点');
+  assert.equal(deleteButton().disabled, true);
+
+  // A private role whose ID is not in a template still binds across projects.
+  app.evaluate(`
+    state.data.agents[0].shared=false;
+    state.data.workflows=state.data.workflows.filter(w=>!w.generic);renderAgents();
+  `);
+  assert.equal(usage(), '1 个节点');
+  assert.equal(deleteButton().disabled, true);
+
+  // Platform roles also keep references from generic templates.
+  app.evaluate(`
+    state.data.agents[0].projectId='';state.agentScope='shared';
+    state.data.workflows.push({id:'generic-flow',generic:true,nodes:[{agentId:'template-role'}]});
+    renderAgents();
+  `);
+  assert.equal(usage(), '2 个节点');
+});
+
 test('role editor refreshes configured CLIs and preserves an unavailable saved executor', async (t) => {
   const app = await loadApp();
   t.after(app.close);
