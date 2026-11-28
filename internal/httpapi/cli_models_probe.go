@@ -186,7 +186,10 @@ func discoverGeminiModelsWithClient(ctx context.Context, client *http.Client, ke
 		c.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 		client = &c
 	}
-	baseURL = strings.TrimSuffix(strings.TrimRight(baseURL, "/"), "/v1beta")
+	baseURL, err := domain.NormalizeGeminiBaseURL(baseURL)
+	if err != nil {
+		return nil, err
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/v1beta/models?pageSize=1000", nil)
 	if err != nil {
 		return nil, err
