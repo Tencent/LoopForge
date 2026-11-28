@@ -78,6 +78,24 @@ const GLOBAL_SAVE_TOOLS = new Set([
 ]);
 // repo.GenericBackendDeliveryWorkflowID, bound to new projects by default.
 const DEFAULT_PROJECT_WORKFLOW = "generic-backend-delivery";
+function issueDraftWithoutLoop(body, target) {
+  const mode = String(body.sopMode ?? "").trim().toLowerCase();
+  if (mode || target) return mode === "none";
+  const kind = String(body.kind ?? "").trim().toLowerCase();
+  const source = String(body.source ?? "").trim().toLowerCase();
+  if (kind === "issue" || source === "gongfeng") return false;
+  if (kind !== "requirement" && !["", "local", "tapd"].includes(source))
+    return false;
+  const hasSteps =
+    Array.isArray(body.sopBindings) &&
+    body.sopBindings.some((step) => String(step?.workflowId ?? "").trim());
+  return (
+    !String(body.workflowId ?? "").trim() &&
+    !String(body.playbookId ?? "").trim() &&
+    !hasSteps
+  );
+}
+
 export function operationSummary(
   draft,
   { projects = [], references = [], projectId = "" } = {},
@@ -93,12 +111,8 @@ export function operationSummary(
     draft.tool === "projects_save" && projects.some((p) => p.id === target);
   // Mirrors saveProject: a new project without a workflowId is bound to the
   // generic backend LOOP, so the card says so instead of showing nothing.
-  // A requirement that opts out of LOOP drops its workflowId on save.
   const withoutSOP =
-    draft.tool === "issues_save" &&
-    String(body.sopMode ?? "")
-      .trim()
-      .toLowerCase() === "none";
+    draft.tool === "issues_save" && issueDraftWithoutLoop(body, target);
   const sop = withoutSOP
     ? "不使用 LOOP"
     : body.workflowId

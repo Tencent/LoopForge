@@ -1,7 +1,11 @@
 package httpapi
 
 import (
+	"bytes"
+	"context"
+	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"testing"
 
@@ -131,4 +135,109 @@ func TestRequirementBackToSOPRejoinsScheduledClaims(t *testing.T) {
 	if stay.AutomationState != "ignored" || stay.WorkflowID != "sop-back-flow" {
 		t.Fatalf("an explicit automationState must win: %+v", stay)
 	}
+}
+
+func TestChatRequirementBindsOnlySelectedLOOP(t *testing.T) {
+	h, user := workbenchFixture(t)
+	e := engine.New(h.repo, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces")))
+	h.api = New(h.repo, e, tracker.NewService(), "", "")
+	const projectID, defaultID, chosenID = "workbench", "project-default", "chosen"
+	for _, id := range []string{defaultID, chosenID} {
+		wf := domain.WorkflowDefinition{ID: id, Name: id, ProjectID: projectID, SandboxProfileID: repo.TestNativeSandboxID, Nodes: []domain.WorkflowNode{{ID: "check", Name: "Check", Type: "approval"}}}
+		if err := h.repo.PutWorkflow(wf); err != nil {
+			t.Fatal(err)
+		}
+	}
+	project, _ := h.repo.Project(projectID)
+	project.WorkflowID = defaultID
+	project.SOPPlaybooks = []domain.SOPPlaybook{
+		{ID: "usual", Name: "Usual", Default: true, Bindings: []domain.IssueSOPBinding{{WorkflowID: defaultID}}},
+		{ID: "selected", Name: "Selected", Bindings: []domain.IssueSOPBinding{{WorkflowID: chosenID}}},
+	}
+	if err := h.repo.PutProject(project); err != nil {
+		t.Fatal(err)
+	}
+	ctx := withAssistantExecMode(withConversationSession(t.Context(), "chat-room"), assistantExecMode{AutoWrite: true})
+	save := func(t *testing.T, title string, fields map[string]any) domain.Issue {
+		t.Helper()
+		body := map[string]any{"projectId": projectID, "kind": "requirement", "title": title, "status": "todo"}
+		for k, v := range fields {
+			body[k] = v
+		}
+		result, err := h.callAssistantPlatform(ctx, user, projectID, assistantMCPCall{Server: "agentflow", Tool: "issues_save", Arguments: map[string]any{"body": body}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var saved domain.Issue
+		if err := json.Unmarshal([]byte(result), &saved); err != nil || saved.ID == "" {
+			t.Fatalf("issues_save response: %s (%v)", result, err)
+		}
+		stored, ok := h.repo.Issue(saved.ID)
+		if !ok {
+			t.Fatal("missing issue after issues_save")
+		}
+		return stored
+	}
+	for _, tc := range []struct {
+		name     string
+		fields   map[string]any
+		workflow string
+	}{
+		{"unspecified", nil, ""},
+		{"without LOOP", map[string]any{"sopMode": "none", "workflowId": chosenID}, ""},
+		{"named LOOP", map[string]any{"workflowId": chosenID}, chosenID},
+		{"selected playbook", map[string]any{"playbookId": "selected"}, chosenID},
+		{"selected steps", map[string]any{"sopBindings": []domain.IssueSOPBinding{{WorkflowID: chosenID}}}, chosenID},
+		{"opted into project default", map[string]any{"sopMode": "sop"}, defaultID},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			item := save(t, tc.name, tc.fields)
+			if item.WorkflowID != tc.workflow || item.WithoutSOP() != (tc.workflow == "") {
+				t.Fatalf("workflow=%q mode=%q, want workflow=%q", item.WorkflowID, item.SOPMode, tc.workflow)
+			}
+			if has, err := h.repo.IssueHasTasks(item.ID); err != nil || has {
+				t.Fatalf("save created a task: %v, %v", has, err)
+			}
+			if tc.workflow == "" {
+				if item.PlaybookID != "" || item.AutomationState != "ignored" || len(item.EffectiveSOPBindings()) != 0 {
+					t.Fatalf("unexpected delivery settings: %+v", item)
+				}
+				_, err := dispatchIssue(&deps{repo: h.repo, engine: e}, dispatchRequest{IssueID: item.ID, ScheduleJobID: "scheduled", WorkflowID: defaultID})
+				if cvBHTTPStatusRound2(err) != http.StatusConflict {
+					t.Fatalf("scheduled dispatch: %v", err)
+				}
+			}
+			updated := save(t, "Clarified "+tc.name, map[string]any{"id": item.ID})
+			if updated.WorkflowID != item.WorkflowID || updated.SOPMode != item.SOPMode {
+				t.Fatalf("clarification changed binding to %q, mode %q", updated.WorkflowID, updated.SOPMode)
+			}
+		})
+	}
+
+	t.Run("browser-confirmed draft", func(t *testing.T) {
+		args := map[string]any{"body": map[string]any{"projectId": projectID, "kind": "requirement", "title": "Confirmed in chatbot"}}
+		payload, err := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": map[string]any{"name": "issues_save", "arguments": args}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		req := httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewReader(payload))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set(chatSessionHeader, "chat-room")
+		req = req.WithContext(context.WithValue(req.Context(), requestUserContextKey{}, domainUserToAuth(user)))
+		rec := httptest.NewRecorder()
+		h.api.ServeHTTP(rec, req)
+		var response struct {
+			Result struct {
+				IsError           bool
+				StructuredContent struct{ Data domain.Issue }
+			}
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil || rec.Code != http.StatusOK || response.Result.IsError {
+			t.Fatalf("MCP response %d: %s", rec.Code, rec.Body.String())
+		}
+		got, ok := h.repo.Issue(response.Result.StructuredContent.Data.ID)
+		if !ok || !got.WithoutSOP() || got.WorkflowID != "" || got.AutomationState != "ignored" {
+			t.Fatalf("confirmed requirement: id=%q mode=%q workflow=%q", got.ID, got.SOPMode, got.WorkflowID)
+		}
+	})
 }

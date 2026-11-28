@@ -98,6 +98,7 @@ func conversationRequirementIssue(s *AgentToolSession, run domain.Run, conv doma
 		Priority:              "medium",
 		Kind:                  "requirement",
 		Source:                "local",
+		SOPMode:               domain.IssueSOPNone,
 		AutomationState:       "ignored",
 		AssigneeUserID:        s.UserID,
 		ConversationSessionID: s.ChatSessionID,
