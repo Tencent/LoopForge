@@ -56,6 +56,13 @@ func TestRunnerWebsocketControlAndWorkspace(t *testing.T) {
 	if err != nil || rejected.Status != http.StatusConflict || rejected.Error != domain.RunnerDockerSandboxLimitsUpgradeMessage {
 		t.Fatalf("legacy workspace request = %+v, err = %v", rejected, err)
 	}
+	rejected, err = hub.requestWorkspace(t.Context(), runnerID, domain.RunnerWorkspaceRequest{
+		RunID: "cvb-ws-run", Operation: domain.RunnerWorkspaceOperationPrepare,
+		Sandbox: &domain.RunnerSandboxSpec{Profile: domain.SandboxProfile{Driver: domain.SandboxDriverDocker, Privileged: true}},
+	})
+	if err != nil || rejected.Status != http.StatusConflict || rejected.Error != domain.RunnerPrivilegedSandboxUpgradeMessage {
+		t.Fatalf("legacy privileged workspace request = %+v, err = %v", rejected, err)
+	}
 
 	type cvBWorkspaceResult struct {
 		response domain.RunnerWorkspaceResponse

@@ -153,6 +153,9 @@ func hasFailed(wf domain.WorkflowDefinition, r domain.Run) bool {
 }
 
 func validate(wf domain.WorkflowDefinition) error {
+	if err := domain.ValidateWorkflowKnowledge(wf); err != nil {
+		return err
+	}
 	if err := domain.ValidateWorkflowPreparation(wf); err != nil {
 		return err
 	}

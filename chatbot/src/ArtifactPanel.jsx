@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import HarnessIcon from "./HarnessIcon";
-import { api } from "./api";
+import { api, messageOffset } from "./api";
 import { ArtifactPreview, RichContent } from "./RichContent";
 import { DraftCard } from "./SidePanel";
 import SopRunPanel, { runStatus } from "./SopRunPanel";
@@ -8,6 +8,7 @@ import ChangesPanel from "./ChangesPanel";
 import AgentBrowser from "./AgentBrowser";
 import WorkspaceIDE from "./WorkspaceIDE";
 import { SubagentSession, subagentName, subagentStatus } from "./SubagentSession";
+import { DeferredActivity } from "./ActivityTrace";
 import { collectSubagents, resumeMissed } from "./activity";
 import { IconButton } from "./ui";
 import { definitionTarget, actionName } from "./platform.js";
@@ -207,6 +208,7 @@ export default function ArtifactPanel({
     chat?.session?.messages || [],
     live ? chat?.live?.activity || [] : [],
     chat?.model || "",
+    messageOffset(chat?.session),
   );
   // A new subagent is keyed by its dispatch until its agent ID arrives, so
   // an opened one is found by either.
@@ -646,6 +648,8 @@ export default function ArtifactPanel({
               onSelectNode={setNodeId}
               onClose={() => setSelected(null)}
             />
+          ) : selectedAgent?.deferredActivity ? (
+            <DeferredActivity {...selectedAgent.deferredActivity} sessionId={chat.session.id} loadActivity={chat.loadActivity} />
           ) : selectedAgent ? (
             <SubagentSession
               agent={selectedAgent}
@@ -665,7 +669,22 @@ export default function ArtifactPanel({
               ) : selected.kind === "operation" ? (
                 <OperationPreview artifact={selected} runs={runs} />
               ) : (
-                <ArtifactPreview artifact={selected} />
+                <ArtifactPreview
+                  artifact={selected}
+                  knowledgeReads={
+                    selected.knowledgeReads ||
+                    (selected.nodeId
+                      ? // Never borrow another run's reads for the same node.
+                        (selected.runId
+                          ? runs?.find((r) => r.id === selected.runId)
+                          : runs?.find(
+                              (r) => r.nodes?.[selected.nodeId]?.knowledgeReads?.length,
+                            )
+                        )?.nodes?.[selected.nodeId]?.knowledgeReads || []
+                      : [])
+                  }
+                  attempt={selected.attempt}
+                />
               )}
               {selected.draft ? (
                 <DraftCard

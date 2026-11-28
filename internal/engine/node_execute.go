@@ -3,6 +3,7 @@ package engine
 import (
 	"agentflow/internal/domain"
 	"agentflow/internal/gitwork"
+	"agentflow/internal/knowledge"
 	"agentflow/internal/repo"
 	"agentflow/internal/runtime"
 	"context"
@@ -27,6 +28,13 @@ func (e *Engine) execute(ctx context.Context, runID string) {
 		}
 		e.clearRunning(runID)
 		return
+	}
+	if r.ExecutionContext.IsEvolutionReplay() {
+		if err := e.validateEvolutionReplayDefinition(workflowForRun(e.repo, r), r.RepositoryContexts()); err != nil {
+			e.finishAt(runID, r.Generation, "failed", err.Error())
+			e.clearRunning(runID)
+			return
+		}
 	}
 	generation := r.Generation
 	ctx, cancel := context.WithCancel(ctx)
@@ -390,6 +398,12 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 			return
 		}
 	}
+	if currentLease.ExecutionContext.IsEvolutionReplay() {
+		if err := e.validateEvolutionReplayDefinition(wf, currentLease.RepositoryContexts()); err != nil {
+			failNode(err, false)
+			return
+		}
+	}
 	if len(prepareWorkspace) > 0 && prepareWorkspace[0] != nil && node.Type != "approval" {
 		if err := prepareWorkspace[0](); err != nil {
 			failNode(fmt.Errorf("准备对话工作区：%w", err), false)
@@ -734,7 +748,7 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 			rawOutput, runErr := executeForTargets(current, node.ExecutionScope, func(target executionTarget) (string, error) {
 				bound := bindExecutionTarget(command, target)
 				targetSink := executionTargetSink(sink, target)
-				scriptAssets := e.resolveScriptMCPAssets(current.ExecutionContext.ProjectID, current.ExecutionContext.ResponsibleUserID)
+				scriptAssets := e.resolveRunScriptMCPAssets(current)
 				if execMachine := e.defaultExecutionRunner(current); execMachine != "" {
 					workspace := runnerWorkspaceRel(current, node.ID)
 					return e.dispatchRunnerScript(ctx, execMachine, current, node.ID, workspace, "shell", bound, target.directory(), effectiveNode.ArtifactOutputs, sb, sb.credentialSnapshot().GitHTTPCredentials["github.com"].Token, sb.credentialSnapshot().GitUserName, sb.credentialSnapshot().GitUserEmail, scriptAssets, targetSink)
@@ -782,6 +796,7 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 			err = fmt.Errorf("agent %q not found", node.AgentID)
 			break
 		}
+		agent = applyReplayAgent(e.repo, agent, current)
 		ex, errResolve := workflowNodeExecutor(e.repo, wf, node, agent)
 		if errResolve != nil {
 			err = errResolve
@@ -865,14 +880,46 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 					return "", assetErr
 				}
 			}
-			assets := e.resolveAssets(agent, current.ExecutionContext.ProjectID, wf.ID, current.ExecutionContext.ResponsibleUserID)
+			assets := e.resolveNodeAssets(ctx, agent, current, wf.ID, effectiveNode)
+			applyReplayAssets(e.repo, &assets, current)
 			warnMCPSkipped := func(message string) {
 				sink(domain.TelemetryEvent{Category: "mcp", Name: "mcp.skipped", Phase: "start", Level: "warn", Message: message})
 			}
-			if warning := knowledgeSkippedWarning(agent, assets); warning != "" {
-				warnMCPSkipped(warning)
+			effectiveRefs := effectiveNode.KnowledgeRefs
+			if current.ExecutionContext.KnowledgeRefs != nil {
+				effectiveRefs = *current.ExecutionContext.KnowledgeRefs
+			}
+			hasMountedKB := false
+			for _, server := range assets.MCPServers {
+				if server.ID == domain.KnowledgeMCPServerID || strings.HasPrefix(server.ID, domain.KnowledgeMCPServerID+"-") {
+					hasMountedKB = true
+					break
+				}
+			}
+			for _, ref := range effectiveRefs {
+				id := domain.KnowledgeMCPServerID + "-" + ref.ConnectorID
+				found := false
+				for _, server := range assets.MCPServers {
+					if server.ID == id {
+						found = true
+						break
+					}
+				}
+				if !found {
+					msg := "知识连接器未装配：" + ref.ConnectorID + "（不存在、已停用或不属于当前执行人）"
+					if current.ExecutionContext.KnowledgeRefs == nil && agent.KnowledgeBase && hasMountedKB {
+						msg = "知识连接器未装配：" + ref.ConnectorID + "（不存在、已停用或不属于当前执行人；已由角色级个人知识库继续提供保底检索）"
+					}
+					warnMCPSkipped(msg)
+				}
+			}
+			if current.ExecutionContext.KnowledgeRefs == nil {
+				if warning := knowledgeSkippedWarning(agent, assets); warning != "" {
+					warnMCPSkipped(warning)
+				}
 			}
 			options := runtime.InvocationOptions{RunID: runID, NodeID: node.ID, ResumeSessionID: resumeSessionID, Repositories: current.RepositoryContexts()}
+			options.DisableBrowser = current.ExecutionContext.IsEvolutionReplay()
 			if requiresSubmit {
 				options.GateResultPath = gateResultPath(nodeControlKey(current, node.ID), attempt)
 			}
@@ -968,9 +1015,12 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 					err = fmt.Errorf("%s，且执行器没有返回可恢复的 CLI session ID", firstProblem)
 				} else {
 					e.observe(runID, node.ID, domain.TelemetryEvent{Category: "verification", Name: "gate.submit.missing", Phase: "progress", Level: "warn", Message: firstProblem + "，恢复同一 CLI session 要求重新提交", Attributes: map[string]any{"iteration": iteration, "sessionId": sessionID}})
+					prevOutput := output
 					output, err = runOnce(gateMissingRetryMarker)
 					if e.dropLostCLISession(runID, node.ID, output, err) {
 						output, err = runOnce("")
+					} else if err == nil && domain.HasKnowledgeCitationMarkers(prevOutput) && !domain.HasKnowledgeCitationMarkers(output) {
+						output = prevOutput
 					}
 					if err == nil {
 						submitted, err = readGateResultFrom(outputs, submitPath)
@@ -1113,7 +1163,7 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 			break
 		}
 		if failedAction != "loop" {
-			e.observe(runID, node.ID, domain.TelemetryEvent{Category: "orchestration", Name: "agent.loop", Phase: "finish", Message: "门禁失败策略为 " + failedAction + "，跳过自修正", Attributes: map[string]any{"iteration": iteration, "onFailure": failedAction, "feedback": err.Error()}})
+			e.observe(runID, node.ID, domain.TelemetryEvent{Category: "orchestration", Name: "agent.loop", Phase: "finish", Message: agentLoopSkipMessage(failedAction), Attributes: map[string]any{"iteration": iteration, "onFailure": failedAction, "feedback": err.Error()}})
 			break
 		}
 		loopFeedback = err.Error()
@@ -1121,7 +1171,7 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 	}
 	e.attachLoopRetro(runID, node.ID, retroWorkspace, lastIteration, err, failedAction)
 	if err != nil {
-		e.freezeAvailableArtifacts(runID, effectiveNode, sb.Workspace(), reported, output)
+		frozen := e.freezeAvailableArtifacts(runID, effectiveNode, sb.Workspace(), reported, output)
 		if ctx.Err() != nil || runtime.IsSandboxInterrupt(err) {
 			if ctx.Err() == nil {
 				e.requeueInterruptedNode(runID, node.ID, executionAttempt, executionGeneration)
@@ -1139,8 +1189,10 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 					return
 				}
 				nr.Output, nr.Error, nr.Status, nr.Activity, nr.FinishedAt = output, err.Error(), "waiting_approval", "对话轮次用尽，等待确认是否重试", time.Now().UTC()
+				markKnowledgeReadsCited(nr.KnowledgeReads, executionAttempt, output, frozen)
 				e.event(r, node.ID, "agent.turns.exhausted", "对话轮次已用尽，请确认是否重试本节点")
 			})
+			e.persistCitedKnowledgeReads(runID, node.ID, executionAttempt)
 			return
 		}
 		if failedAction == "human" {
@@ -1150,6 +1202,7 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 					return
 				}
 				nr.Output, nr.Error, nr.Status, nr.Activity, nr.FinishedAt = output, err.Error(), "waiting_approval", "等待人工确认", time.Now().UTC()
+				markKnowledgeReadsCited(nr.KnowledgeReads, executionAttempt, output, frozen)
 				message := "Agent 请求人工确认"
 				if nr.GateResult != nil && strings.TrimSpace(nr.GateResult.ActionRequired) != "" {
 					message += "：" + nr.GateResult.ActionRequired
@@ -1158,6 +1211,7 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 				}
 				e.event(r, node.ID, "gate.waiting", message)
 			})
+			e.persistCitedKnowledgeReads(runID, node.ID, executionAttempt)
 			return
 		}
 		if maxIterations > 1 && loopOnExhausted == "human" {
@@ -1167,10 +1221,13 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 					return
 				}
 				nr.Output, nr.Error, nr.Status, nr.FinishedAt = output, err.Error(), "waiting_approval", time.Now().UTC()
-				e.event(r, node.ID, "agent.loop.exhausted", "Agent 自修正次数已耗尽，转人工判断："+err.Error())
+				markKnowledgeReadsCited(nr.KnowledgeReads, executionAttempt, output, frozen)
+				e.event(r, node.ID, "agent.loop.exhausted", agentLoopHumanMessage(lastIteration, maxIterations, failedAction)+err.Error())
 			})
+			e.persistCitedKnowledgeReads(runID, node.ID, executionAttempt)
 			return
 		}
+		e.markNodeKnowledgeReads(runID, node.ID, executionGeneration, executionAttempt, output, frozen)
 		failNode(err, failedAction == "reject" || (failedAction == "" && allowRejectOnFailure(node, err, gateRejected)))
 		return
 	}
@@ -1189,6 +1246,7 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 		sink(domain.TelemetryEvent{Category: "artifact", Name: "artifact.optional.skipped", Phase: "finish", Level: "warn", Message: warning})
 	})
 	if err != nil {
+		e.markNodeKnowledgeReads(runID, node.ID, executionGeneration, executionAttempt, output, nil)
 		failNode(fmt.Errorf("artifact contract: %w", err), nodeRejects(node) && !isArtifactHandoffFailure(err))
 		return
 	}
@@ -1205,6 +1263,7 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 		r.Artifacts = append(r.Artifacts, artifacts...)
 		nr.Output = output
 		nr.Error = ""
+		markKnowledgeReadsCited(nr.KnowledgeReads, executionAttempt, output, artifacts)
 		if manualGateName != "" {
 			nr.Status = "waiting_approval"
 			nr.FinishedAt = time.Now().UTC()
@@ -1242,6 +1301,7 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 		}
 		return
 	}
+	e.persistCitedKnowledgeReads(runID, node.ID, executionAttempt)
 	for _, artifact := range artifacts {
 		e.observe(runID, node.ID, domain.TelemetryEvent{Category: "artifact", Name: "artifact.published", Phase: "finish", Message: artifact.Name, Attributes: map[string]any{"artifactId": artifact.ID, "path": artifact.Path, "mediaType": artifact.MediaType, "size": artifact.Size, "sha256": artifact.SHA256}})
 	}
@@ -1346,6 +1406,61 @@ func lostCLISession(output string, err error) bool {
 		strings.Contains(msg, "conversation does not exist")
 }
 
+func (e *Engine) markNodeKnowledgeReads(runID, nodeID string, generation, attempt int, output string, artifacts []domain.Artifact) {
+	e.updateRun(runID, func(r *domain.Run) {
+		nr := r.Nodes[nodeID]
+		if !shouldCommitNodeOutcome(*r, nr, generation, attempt, false) {
+			return
+		}
+		if nr.Output == "" && output != "" {
+			nr.Output = output
+		}
+		markKnowledgeReadsCited(nr.KnowledgeReads, attempt, output, artifacts)
+	})
+	e.persistCitedKnowledgeReads(runID, nodeID, attempt)
+}
+
+func (e *Engine) persistCitedKnowledgeReads(runID, nodeID string, attempt int) {
+	if e.repo == nil {
+		return
+	}
+	run, ok := e.repo.RunState(runID)
+	if !ok {
+		return
+	}
+	nr := run.Nodes[nodeID]
+	if nr == nil {
+		return
+	}
+	var citedReads []domain.KnowledgeRead
+	for _, read := range nr.KnowledgeReads {
+		if read.Attempt == attempt {
+			citedReads = append(citedReads, read)
+		}
+	}
+	if len(citedReads) > 0 {
+		_ = knowledge.NewUsageCounter(e.repo).MarkCited(context.Background(), run.ExecutionContext.ResponsibleUserID, citedReads)
+	}
+}
+
+func markKnowledgeReadsCited(reads []domain.KnowledgeRead, attempt int, output string, artifacts []domain.Artifact) {
+	sources := make([]domain.KnowledgeCitationSource, 0, 1+len(artifacts))
+	sources = append(sources, domain.KnowledgeCitationSource{Label: "节点输出", Content: output})
+	for _, artifact := range artifacts {
+		label := strings.TrimSpace(artifact.Path)
+		if label == "" {
+			label = strings.TrimSpace(artifact.Name)
+		}
+		sources = append(sources, domain.KnowledgeCitationSource{Label: label, Content: artifact.Content})
+	}
+	for i := range reads {
+		if reads[i].Attempt != attempt {
+			continue
+		}
+		domain.MarkKnowledgeReadCitedSources(&reads[i], sources)
+	}
+}
+
 func clipHumanGateDetail(detail string) string {
 	detail = strings.Join(strings.Fields(detail), " ")
 	const limit = 300
@@ -1383,4 +1498,29 @@ func joinGateCommands(commands []string, artifacts []domain.ArtifactContract) st
 		return bound[0]
 	}
 	return "set -e\n" + strings.Join(bound, "\n")
+}
+
+// agentLoopSkipMessage explains why a failed iteration does not self-correct.
+// Only a gate configured with onFailure=loop retries; any other gate policy is
+// named, and a failure no gate decided (the executor itself failed) says so
+// instead of naming an empty policy.
+func agentLoopSkipMessage(failedAction string) string {
+	if failedAction == "" {
+		return "本轮执行失败（不是门禁未通过），不进入自修正"
+	}
+	return "门禁失败策略为 " + failedAction + "，跳过自修正"
+}
+
+// agentLoopHumanMessage prefixes the hand-off to a person when a looping role
+// stops. It claims the self-correction budget is spent only when every
+// iteration actually ran, and names the gate policy when a gate (rather than
+// the executor) ended the loop early, matching agentLoopSkipMessage.
+func agentLoopHumanMessage(iterations, maxIterations int, failedAction string) string {
+	if iterations >= maxIterations {
+		return "Agent 自修正次数已耗尽，转人工判断："
+	}
+	if failedAction == "" {
+		return fmt.Sprintf("Agent 第 %d 轮执行失败，未进入自修正，转人工判断：", iterations)
+	}
+	return fmt.Sprintf("Agent 第 %d 轮门禁未通过（失败策略为 %s），未进入自修正，转人工判断：", iterations, failedAction)
 }

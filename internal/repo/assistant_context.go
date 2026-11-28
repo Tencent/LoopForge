@@ -94,7 +94,7 @@ func (r *AssistantRepo) SetAssistantSessionIssue(userID int64, id, issueID strin
 			s.UpdatedAt = row.Updated.Add(time.Millisecond)
 		}
 		deriveAssistantParticipants(&s, s.Messages)
-		if err := tx.Model(&assistantSessionRow{}).Where("id = ? AND user_id = ?", s.ID, userID).Updates(map[string]any{"payload": mustJSON(s), "updated_at": s.UpdatedAt}).Error; err != nil {
+		if err := tx.Model(&assistantSessionRow{}).Where("id = ? AND user_id = ?", s.ID, userID).Updates(map[string]any{"payload": encodeAssistantSession(s), "updated_at": s.UpdatedAt}).Error; err != nil {
 			return err
 		}
 		saved = s
@@ -120,7 +120,7 @@ func (r *AssistantRepo) LinkAssistantSessionIssue(userID int64, id, issueID stri
 		}
 		s.IssueID = strings.TrimSpace(issueID)
 		linked = true
-		return tx.Model(&assistantSessionRow{}).Where("id = ? AND user_id = ?", row.ID, userID).Update("payload", mustJSON(s)).Error
+		return tx.Model(&assistantSessionRow{}).Where("id = ? AND user_id = ?", row.ID, userID).Update("payload", encodeAssistantSession(s)).Error
 	})
 	return linked, err
 }

@@ -2073,6 +2073,8 @@ html[data-theme="dark"] .edge-delete-btn:hover path{stroke:#ffffff !important}
 .issue-modal-card label.toggle-row{display:flex;align-items:center;gap:7px}
 .issue-modal-card .toggle-row input[type="checkbox"]{width:auto;flex:0 0 auto;margin:0;padding:0}
 .issue-modal-card textarea{resize:vertical}
+/* 长表单滚动时，取消/启动 SOP/保存始终固定在弹窗底部可见 */
+.issue-modal-card>.modal-actions{position:sticky;bottom:calc(-1 * var(--sp-6));z-index:4;margin:var(--sp-4) calc(-1 * var(--sp-6)) calc(-1 * var(--sp-6));padding:12px var(--sp-6) var(--sp-6);background:var(--v3-surface,var(--panel));border-top:1px solid var(--line-strong)}
 
 /* ================= 响应式 ================= */
 @media (max-width:1100px){
@@ -2226,10 +2228,13 @@ html[data-theme="light"] body{color-scheme:light}html[data-theme="light"] .platf
 .confirm-modal-footer .button.danger-btn:hover{background:#be123c;border-color:#be123c}
 
 /* ================= 堆叠式 Toast 通知系统 ================= */
-.toast-container{position:fixed;top:20px;right:24px;z-index:99999;display:flex;flex-direction:column;gap:10px;pointer-events:none}
+/* Bottom-right: page headers keep their primary actions (发布版本, 新建…) in the
+   top-right corner, and a toast stacked there covered the very button the user
+   just pressed, kept alive by the hover pause. Other toasts already sit at the bottom. */
+.toast-container{position:fixed;right:24px;bottom:24px;z-index:99999;display:flex;flex-direction:column;align-items:flex-end;gap:10px;max-width:calc(100vw - 48px);pointer-events:none}
 .toast-item{pointer-events:auto;min-width:260px;max-width:400px;padding:11px 10px 11px 14px;border-radius:10px;background:var(--hui-surface);border:1px solid var(--hui-border);box-shadow:var(--hui-popover-shadow);display:flex;align-items:center;gap:10px;font:500 13px/1.45 var(--hui-sans);color:var(--hui-text);animation:toastItemIn .2s cubic-bezier(0.16, 1, 0.3, 1);transition:all .2s ease}
-.toast-item.leaving{opacity:0;transform:translateY(-8px) scale(0.96)}
-@keyframes toastItemIn{from{opacity:0;transform:translateY(-10px) scale(0.95)}to{opacity:1;transform:translateY(0) scale(1)}}
+.toast-item.leaving{opacity:0;transform:translateY(8px) scale(0.96)}
+@keyframes toastItemIn{from{opacity:0;transform:translateY(10px) scale(0.95)}to{opacity:1;transform:translateY(0) scale(1)}}
 .toast-item-icon{flex-shrink:0;display:inline-flex;line-height:0}
 .toast-item-icon svg{width:16px;height:16px}
 .toast-item-msg{flex:1;min-width:0;word-break:break-word}
@@ -2309,7 +2314,23 @@ html[data-theme="light"] body{color-scheme:light}html[data-theme="light"] .platf
 #settingsView .personal-settings-return{justify-self:start;margin:0 0 12px -8px}
 #settingsView .personal-settings-return[hidden]{display:none}
 #settingsView .personal-settings-heading{align-items:center;gap:12px 20px;margin-bottom:28px}
-body:has(#settingsView.active) #toastContainer{top:auto;bottom:84px}
+/* Lift the toast stack above sticky footers that sit in the bottom-right corner:
+   the settings save bar and the Save/Cancel row of the right-hand drawers. The
+   SkillHub drawer keeps its actions in the header, so it has nothing to lift over.
+   The project wizard is a centred dialog whose footer moves with the viewport, so
+   no fixed offset clears it; it is left alone. */
+body:has(#settingsView.active, #kbConnDrawer.open, #kbDrawer.open, #repoDrawer.open) #toastContainer{bottom:84px}
+/* The workbench chat keeps its composer and 发送 button at the bottom (about 125px
+   tall with the toolbar), and the hover pause would park a toast on the button.
+   Its top-right corner holds the artifact panel's tabs and close button, so the
+   stack stays at the bottom and clears the composer instead. Declared after the
+   footer lift so a drawer left open over the workbench keeps the higher offset,
+   which clears the drawer footer too. Only while a conversation is open: on the
+   home page the composer is centred and grows downward into that band on short
+   viewports, so the chat frame reports its layout and the stack stays at 24px
+   (84px under a drawer) there. :where() keeps the specificity equal to the
+   footer lift's so the order above still decides. */
+body:has(#collaborationView.active:not(:where([data-chat-layout="home"]))) #toastContainer{bottom:136px}
 .credential-account{display:flex;align-items:center;gap:8px;min-width:0;max-width:45%;color:var(--hui-secondary)}
 .credential-account[hidden]{display:none}
 .credential-account>div{min-width:0}

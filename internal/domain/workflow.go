@@ -37,6 +37,7 @@ type WorkflowRequirement struct {
 }
 
 type WorkflowNode struct {
+	KnowledgeRefs []KnowledgeRef `json:"knowledgeRefs,omitempty"`
 	// TaskPrompt is what an approval node asks its approver to check
 	// (「需要确认什么」). Role nodes take their whole brief from the role's
 	// prompt; the field is not read for them.

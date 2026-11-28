@@ -134,7 +134,10 @@ function renderFlowHeader(){
   const meta=$('#workflowMeta');
   if(meta){
     if(!wf)meta.innerHTML='<span>还没有打开流程</span>';
-    else{const p=flowStatusPill(wf);meta.innerHTML=`<span class="fd-pill ${p.cls}"><span class="dot"></span>${p.label}</span><span>v${escapeHTML(wf.version||1)}</span><span class="fd-dotsep"></span><span class="v-step">${(wf.nodes||[]).length} 步</span><span class="fd-dotsep v-step-sep"></span>`}
+    else{
+      const p=flowStatusPill(wf),version=workflowVersionLabel(wf);
+      meta.innerHTML=`<span class="fd-pill ${p.cls}"><span class="dot"></span>${p.label}</span>${version?`<span>${escapeHTML(version)}</span><span class="fd-dotsep"></span>`:''}<span class="v-step">${(wf.nodes||[]).length} 步</span><span class="fd-dotsep v-step-sep"></span>`;
+    }
   }
   const chip=$('#sandboxChip');
   if(chip){
@@ -143,6 +146,7 @@ function renderFlowHeader(){
     if(label)label.textContent=wf?.autoSelectSandbox?sopAutoSandboxLabel():sb?.name||wf?.sandboxProfileId||'未设置沙箱';
   }
   const ro=flowReadOnly(wf),pending=!!(wf&&state.workflowDirty&&!ro);
+  const arrangeButton=$('#canvasArrange');if(arrangeButton)arrangeButton.disabled=ro||!wf?.nodes?.length;
   const save=$('#saveWorkflow');
   if(save){
     save.disabled=!pending;save.classList.toggle('dirty',pending);
@@ -182,7 +186,7 @@ function renderWorkflowMeta(){
   const sandboxSelect=$('#workflowSandbox');
   sandboxSelect.innerHTML=sopSandboxOptionsHTML(sopSandboxOptions());
   sandboxSelect.value=sopSandboxValue(wf);
-  const pill=$('#flowSettingsPill');if(pill)pill.textContent=catalogGeneric(wf)?(isPlatformAdmin()?'通用模板 · 可编辑':'通用模板'):`${wf.status==='published'?'已发布':'草稿'} · v${wf.version} · ${wf.nodes.length} 步`;
+  const pill=$('#flowSettingsPill');if(pill)pill.textContent=catalogGeneric(wf)?(isPlatformAdmin()?'通用模板 · 可编辑':'通用模板'):[wf.status==='published'?'已发布':'草稿',workflowVersionLabel(wf),`${wf.nodes.length} 步`].filter(Boolean).join(' · ');
   renderFlowHeader();
   if(typeof flowPalette!=='undefined')flowPalette.render();
 }
@@ -914,7 +918,7 @@ function renderAgentAssetsPanel(a){
   const d=ensureAgentDraft(a);
   const generic=catalogGeneric(state.workflow);
   const col=(title,sub,name,items,selected)=>{const vis=name==='mcpServers'?(generic?(items||[]):visibleMCPAssets(items)):(name==='rules'||name==='skills'?(items||[]).filter(item=>catalogVisible(item.projectId,item.shared)):visibleAssets(items));const picked=vis.filter(item=>name==='mcpServers'&&generic?genericMCPChecked(item.id,selected):(selected||[]).includes(item.id)).length;const empty=name==='mcpServers'?(generic?'通用模板绑定市场别名（如 github），运行时落到当前项目已安装的 MCP':'这个项目或你的个人范围还没有 MCP，先到「MCP 管理」里添加'):name==='rules'?'这个项目还没有可用规则，先到「规则管理」里添加或共享':name==='skills'?'这个项目还没有可用技能，先到「技能管理」里添加或共享':'这个项目还没有此类配置，先到「沙箱管理」里添加';return `<div class="as-asset-col"><div class="as-asset-col-head"><b>${title}</b><span>${sub}${picked?` · 已选 ${picked}`:''}</span></div><div class="as-asset-search"><span>⌕</span><input type="search" data-asset-filter="${name}" placeholder="搜索名称…"></div><div class="as-asset-list" data-asset-list="${name}">${vis.map(x=>`<label class="as-asset-item"><input type="checkbox" name="${name}" value="${escapeHTML(x.id)}" ${(name==='mcpServers'&&generic?genericMCPChecked(x.id,selected):(selected||[]).includes(x.id))?'checked':''}><div><b>${escapeHTML(x.name)}</b><small>${escapeHTML(x.description||x.id)}${x.shared&&x.projectId!==state.projectFilter?' · 共享':''}</small></div></label>`).join('')||`<div class="as-empty">${empty}</div>`}</div></div>`};
-  host.innerHTML=`<section class="as-section-block as-platform-mcp-section"><div class="as-section-head"><b>平台能力</b><small>独立开关，不占用 MCP 列表</small></div><label class="as-switch-row"><span><b>接入平台 MCP（LoopForge）</b><small>开启后，这个角色运行时通过平台 MCP（agentflow-platform）直接调用平台侧功能：需求、任务、运行、项目等平台操作。</small></span><input type="checkbox" name="platformMcp" ${d.platformMcp?'checked':''} role="switch"></label><label class="as-switch-row"><span><b>接入团队知识库</b><small>开启后，这个角色运行时可只读检索团队知识库（agentflow-knowledge），并自动附带「知识库使用规范」规则；产出的 knowledge.md 会进入知识沉淀审核队列。</small></span><input type="checkbox" name="knowledgeBase" ${d.knowledgeBase?'checked':''} role="switch"></label></section><div class="as-assets">${col('必须遵守','规则','rules',state.data.rules,d.rules)}${col('怎么干活','技能','skills',state.data.skills,d.skills)}${col('外部工具','MCP','mcpServers',generic?genericTemplateMCPOptions(d.mcpServers):state.data.mcpServers,d.mcpServers)}</div><section class="as-section-block as-hook-section"><div class="as-section-head"><b>运行时 Hook</b><small>在工具调用前后插一段脚本，比如拦危险命令。一般可以先不配。</small></div><div id="agentHookPanel"></div></section>`;
+  host.innerHTML=`<section class="as-section-block as-platform-mcp-section"><div class="as-section-head"><b>平台能力</b><small>独立开关，不占用 MCP 列表</small></div><label class="as-switch-row"><span><b>接入平台 MCP（LoopForge）</b><small>开启后，这个角色运行时通过平台 MCP（agentflow-platform）直接调用平台侧功能：需求、任务、运行、项目等平台操作。</small></span><input type="checkbox" name="platformMcp" ${d.platformMcp?'checked':''} role="switch"></label><label class="as-switch-row"><span><b>接入我的知识库</b><small>开启后，在 SOP 节点运行或对话 @角色 时自动挂载当前执行人已启用的个人知识库连接器作为默认保底（只读检索并标注引用来源），若节点同时关联了知识库则自动取并集。</small></span><input type="checkbox" name="knowledgeBase" ${d.knowledgeBase?'checked':''} role="switch"></label></section><div class="as-assets">${col('必须遵守','规则','rules',state.data.rules,d.rules)}${col('怎么干活','技能','skills',state.data.skills,d.skills)}${col('外部工具','MCP','mcpServers',generic?genericTemplateMCPOptions(d.mcpServers):state.data.mcpServers,d.mcpServers)}</div><section class="as-section-block as-hook-section"><div class="as-section-head"><b>运行时 Hook</b><small>在工具调用前后插一段脚本，比如拦危险命令。一般可以先不配。</small></div><div id="agentHookPanel"></div></section>`;
   host.querySelectorAll('[data-asset-filter]').forEach(input=>input.oninput=()=>{const q=input.value.trim().toLowerCase();input.closest('.as-asset-col').querySelectorAll('.as-asset-item').forEach(row=>row.hidden=!!q&&!row.textContent.toLowerCase().includes(q))});
   host.querySelectorAll('input[type=checkbox]').forEach(el=>el.onchange=()=>{renderAgentSummary();dirty()});
   const platformToggle=host.querySelector('input[name="platformMcp"]');
@@ -1098,7 +1102,8 @@ function renderProperties(){
     const scriptPreview=scriptLines?`<div class="script-snippet-preview" id="previewScriptNodeEditor" title="点击在代码编辑器中修改"><code>${escapeHTML(n.script.slice(0, 120))}${n.script.length>120?'…':''}</code></div>`:'';
     const scriptPane=n.type==='script'?`<div class="fd-row2"><div class="fd-field"><label>脚本语言</label><select class="select" data-p="scriptLanguage"><option value="shell" ${n.scriptLanguage!=='python'?'selected':''}>Shell</option><option value="python" ${n.scriptLanguage==='python'?'selected':''}>Python</option></select></div><div class="fd-field"><label>执行范围</label><select class="select" data-p="executionScope"><option value="run" ${n.executionScope!=='repositories'?'selected':''}>Run 工作区</option><option value="repositories" ${n.executionScope==='repositories'?'selected':''}>每个代码仓库</option></select></div></div><div class="fd-field"><label>脚本内容</label><button type="button" class="script-editor-launch-btn btn-open-code-editor" id="openScriptNodeEditor"><span>${flowPalette.icon('code',14)} 打开代码编辑器编写脚本</span><span class="script-btn-badge">${scriptCountText}</span></button>${scriptPreview}<p class="prop-hint">逐仓库执行时会自动进入每个仓库根目录，无需手写 cd。</p></div>`:'';
     const approvalPane=n.type==='approval'?`<div class="fd-field"><label>需要确认什么（可选）</label><textarea class="input" rows="4" data-p="taskPrompt" placeholder="例如：检查 MR 的改动范围和测试结果，确认可以上线">${escapeHTML(n.taskPrompt||'')}</textarea><p class="prop-hint">确认步骤会停在「待我确认」，批准后才继续；这段说明会和上下游一起展示给确认人。</p></div>`:'';
-    const main=`<section class="fd-sec"><div class="fd-sec-h"><span class="fd-sec-t">主配置</span></div><div class="fd-sec-b">${n.type==='agent'?agentBindCard(n):''}${sopSelect}${scriptPane}${approvalPane}</div></section>`;
+    const knowledgeBtn=n.type==='agent'?`<div class="fd-field"><button type="button" id="nodeKnowledgeRefs" class="fd-btn ghost sm">${flowPalette.icon('layers',13)}<span>关联知识库 · ${(n.knowledgeRefs||[]).length}</span></button><p class="prop-hint">为当前节点指定要检索的个人知识库连接器（若角色开启了「接入我的知识库」则自动取并集，同一连接器以节点指定的子知识库范围为准），引用会标记在产物里。</p></div>`:'';
+    const main=`<section class="fd-sec"><div class="fd-sec-h"><span class="fd-sec-t">主配置</span></div><div class="fd-sec-b">${n.type==='agent'?agentBindCard(n)+knowledgeBtn:''}${sopSelect}${scriptPane}${approvalPane}</div></section>`;
     const gates=n.type==='agent'?flowFold('gates','校验顺序',`${effectiveNodeArtifacts(n,workflowAgent(n.agentId)).length} 产物 · ${roleGates(workflowAgent(n.agentId)).length} 门禁`,nodeGatePane(n),false):'';
     const wantReject=state.flowWantReject??(n.onFailure==='reject');
     const targets=state.workflow.nodes.filter(x=>x.id!==n.id).map(x=>`<option value="${escapeHTML(x.id)}" ${x.id===n.rejectTo?'selected':''}>${escapeHTML(x.name)}</option>`).join('');
@@ -1107,6 +1112,10 @@ function renderProperties(){
     const adv=flowFold('adv','高级','重试 · 返工 · 统计',`<div class="fd-row2"><div class="fd-field"><label>单轮最多试几次</label><input class="input" type="number" min="1" max="9" data-p="maxAttempts" value="${n.maxAttempts||1}"></div><div class="fd-field"><label>最多返工几轮</label><input class="input" type="number" min="1" max="20" data-p="maxReworks" value="${n.maxReworks||3}"></div></div><div class="fd-field"><label>返工策略</label><select class="select" data-p="retryStrategy"><option value="targeted_fix" ${n.retryStrategy!=='full_redo'?'selected':''}>只修失败项</option><option value="full_redo" ${n.retryStrategy==='full_redo'?'selected':''}>整步重做</option></select></div>${n.type==='script'?`<label class="fd-check"><input type="checkbox" data-p="runOnWorkspaceRebuild" ${n.runOnWorkspaceRebuild?'checked':''}><span>工作区重建时先执行（脚本需可重复执行）</span></label>`:''}${metric}`,false);
     host.innerHTML=`${flowDrawerHead(n,kind,FLOW_NODE_TYPES[kind].label)}<div class="fd-db">${main}${gates}${fail}${adv}</div><div class="fd-df"><span class="fd-df-hint"><kbd>F2</kbd> 重命名 · <kbd>⌘D</kbd> 复制 · <kbd>Del</kbd> 删除 · <kbd>⌘Z</kbd> 撤销</span></div>`;
     bindNodeProperties(host,n);
+    host.querySelector('#nodeKnowledgeRefs')?.addEventListener('click',()=>window.editKnowledgeRefs(state.workflow.projectId||state.projectFilter,n.knowledgeRefs||[],refs=>{
+      if(flowReadOnly() || !state.workflow?.nodes.includes(n))throw new Error('流程版本已切换，请重新选择知识库');
+      flowHistory.record();n.knowledgeRefs=refs;dirty();renderProperties();
+    }));
   }
   host.querySelector('#closeNodeDrawer')?.addEventListener('click',closeNodeDrawer);
   const del=host.querySelector('#deletePropertyNode');if(del)del.onclick=()=>removeNode(n.id);
@@ -1302,7 +1311,9 @@ async function createSOPFromWizard(e){
       delete workflow.createdAt;delete workflow.updatedAt;
       saved=await api('/api/workflows',{method:'PUT',body:JSON.stringify(workflow)});
     }
-    state.data.workflows.unshift(saved);state.workflow=clone(saved);state.selectedNode=null;markWorkflowClean();
+    if(catalogGeneric(template))await reloadCatalogAfterAdoption(saved);
+    else state.data.workflows.unshift(saved);
+    state.workflow=clone(saved);state.selectedNode=null;markWorkflowClean();
     $('#sopCreateModal').classList.remove('open');renderAll();switchView('flow');
     const missing=catalogGeneric(template)?genericRequirementRows(saved).filter(r=>!r.ok):[];
     toast(missing.length?`LOOP 草稿已创建；${missing.length} 项运行依赖未配置（${missing.map(r=>r.label).join('、')}）`:'LOOP 草稿已创建，请继续设计节点',missing.length?'':'ok')
@@ -1311,7 +1322,7 @@ async function createSOPFromWizard(e){
       ?lfT('所选运行沙箱已不可用，请点击「刷新沙箱」后重新选择。','The selected sandbox is no longer available. Refresh sandboxes and select another one.')
       :err.message);
   }}
-async function cloneWorkflow(id){const src=id?(state.data.workflows||[]).find(w=>w.id===id):state.workflow;if(!src?.id)return toast('先选择一条 LOOP');const name=await afPrompt({title:'复制 LOOP',message:'请输入复制后的 LOOP 名称：',defaultValue:`${src.name} - 副本`});if(!name)return;const owner=await afPrompt({title:'LOOP 负责人',message:'请输入负责人（可留空）：',defaultValue:src.owner||''})??'';try{const copied=await api(`/api/workflows/${encodeURIComponent(src.id)}/clone`,{method:'POST',body:JSON.stringify({id:uid('sop'),name,owner,projectId:state.projectFilter||''})});state.data.workflows.unshift(copied);state.workflow=clone(copied);state.selectedNode=null;state.sopScope='project';markWorkflowClean();renderAll();toast('已复制到本项目')}catch(e){toast(e.message)}}
+async function cloneWorkflow(id){const src=id?(state.data.workflows||[]).find(w=>w.id===id):state.workflow;if(!src?.id)return toast('先选择一条 LOOP');const name=await afPrompt({title:'复制 LOOP',message:'请输入复制后的 LOOP 名称：',defaultValue:`${src.name} - 副本`});if(!name)return;const owner=await afPrompt({title:'LOOP 负责人',message:'请输入负责人（可留空）：',defaultValue:src.owner||''})??'';try{const copied=await api(`/api/workflows/${encodeURIComponent(src.id)}/clone`,{method:'POST',body:JSON.stringify({id:uid('sop'),name,owner,projectId:state.projectFilter||''})});if(catalogGeneric(src))await reloadCatalogAfterAdoption(copied);else state.data.workflows.unshift(copied);state.workflow=clone(copied);state.selectedNode=null;state.sopScope='project';markWorkflowClean();renderAll();toast('已复制到本项目')}catch(e){toast(e.message)}}
 
 async function deleteWorkflow(id){
   const w=(state.data.workflows||[]).find(x=>x.id===id);

@@ -31,6 +31,9 @@ type AnalyticsFilter struct {
 	// TimeZone is the IANA zone used by business-domain delivery trend buckets
 	// and by the analytics weekday × hour heatmap (default Asia/Shanghai).
 	TimeZone string
+	// IncludeEvolutionReplays keeps asset-evolution replay runs. Business
+	// lists and analytics leave it false so replays never skew metrics.
+	IncludeEvolutionReplays bool
 }
 
 type AnalyticsSummary struct {
@@ -257,7 +260,12 @@ type AnalyticsCoverage struct {
 }
 
 type AnalyticsDelivery struct {
-	IssueID      string `json:"issueId"`
+	IssueID string `json:"issueId"`
+	// ProjectID and IssueNumber let the dashboard show a platform requirement
+	// by the same <project key>-<number> key as the requirement list instead
+	// of its internal ID.
+	ProjectID    string `json:"projectId,omitempty"`
+	IssueNumber  int    `json:"issueNumber,omitempty"`
 	ExternalID   string `json:"externalId,omitempty"`
 	ExternalIID  int    `json:"externalIid,omitempty"`
 	Title        string `json:"title"`

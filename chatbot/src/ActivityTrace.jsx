@@ -328,11 +328,18 @@ function ActivityGroup({ block, live, interrupted, expandAll, badges }) {
     </div>
   );
 }
-function Narration({ blocks, live, interrupted, expandAll = false, badges }) {
+function Narration({
+  blocks,
+  live,
+  interrupted,
+  expandAll = false,
+  badges,
+  citationProps = null,
+}) {
   return blocks.map((block) =>
     block.type === "text" ? (
       <div key={block.id} className="reply-trace-text">
-        <RichContent message={block.text} />
+        <RichContent message={block.text} {...citationProps} />
       </div>
     ) : (
       <ActivityGroup
@@ -346,12 +353,38 @@ function Narration({ blocks, live, interrupted, expandAll = false, badges }) {
     ),
   );
 }
+// The history response already contains the visible answer. Fetch the trace
+// when the reader opens it, or follows a dispatch into a subagent's process.
+export function DeferredActivity({ sessionId, index, activityRef, loadActivity }) {
+  const [error, setError] = useState("");
+  const [attempt, setAttempt] = useState(0);
+  useEffect(() => {
+    let current = true;
+    setError("");
+    loadActivity(sessionId, index, activityRef).catch((e) => {
+      if (current) setError(e.message || "执行过程加载失败");
+    });
+    return () => { current = false; };
+  }, [sessionId, index, activityRef, loadActivity, attempt]);
+  return error ? (
+    <p role="alert" className="execution-empty">
+      {error} <button type="button" onClick={() => setAttempt(n => n + 1)}>重试</button>
+    </p>
+  ) : <p role="status" className="execution-empty">正在读取执行过程…</p>;
+}
+
 export function ReplyTimeline({
+  deferredActivity = null,
   steps = [],
   startedAt,
   finishedAt,
   live = false,
   interrupted = false,
+  knowledgeReads = null,
+  knowledgeSummary = null,
+  citationsEnabled = false,
+  streaming = false,
+  onCitationClick = null,
   approvals = [],
 }) {
   return (
@@ -363,7 +396,15 @@ export function ReplyTimeline({
         live={live}
         interrupted={interrupted}
         approvals={approvals}
+        deferredActivity={deferredActivity}
         narration={traceBlocks(steps, { live })}
+        citationProps={{
+          knowledgeReads,
+          knowledgeSummary,
+          citationsEnabled,
+          streaming,
+          onCitationClick,
+        }}
       />
     </div>
   );
@@ -374,6 +415,7 @@ export function ReplyTimeline({
 // the whole process into its elapsed-time line; opening it shows every note,
 // thought and step between the line and the answer.
 export default function ActivityTrace({
+  deferredActivity = null,
   steps = [],
   startedAt,
   finishedAt,
@@ -381,6 +423,7 @@ export default function ActivityTrace({
   interrupted = false,
   approvals = [],
   narration = null,
+  citationProps = null,
 }) {
   const [expanded, setExpanded] = useState(false);
   const [now, setNow] = useState(Date.now);
@@ -424,7 +467,13 @@ export default function ActivityTrace({
         <div className="execution-body" aria-label="执行过程">
           {blocks.length ? (
             <>
-              <Narration blocks={blocks} live interrupted={interrupted} badges={badges} />
+              <Narration
+                blocks={blocks}
+                live
+                interrupted={interrupted}
+                badges={badges}
+                citationProps={citationProps}
+              />
               {/* A CLI that names the tool differently still shows what waits. */}
               {unmatched.map((item) => (
                 <div className="execution-waiting" data-approval="waiting" key={item.id}>
@@ -479,12 +528,13 @@ export default function ActivityTrace({
       </summary>
       {expanded ? (
         <div className="execution-body" aria-label="执行过程">
-          {blocks.length ? (
+          {deferredActivity ? <DeferredActivity {...deferredActivity} /> : blocks.length ? (
             <Narration
               blocks={blocks}
               live={false}
               interrupted={interrupted}
               expandAll
+              citationProps={citationProps}
             />
           ) : (
             <p className="execution-empty">这条历史回复未保存执行过程。</p>

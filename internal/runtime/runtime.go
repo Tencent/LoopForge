@@ -102,6 +102,9 @@ type InvocationOptions struct {
 	RunnerLogin     bool
 	// BrowserMCP is resolved on the executing host, never sent to a runner.
 	BrowserMCP *domain.MCPServerDefinition `json:"-"`
+	// DisableBrowser keeps restricted validation runs from gaining an
+	// automatically provisioned browser MCP after their assets were filtered.
+	DisableBrowser bool
 }
 
 // CommandSpec is the closed process-launch contract between providers/engine

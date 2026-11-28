@@ -19,6 +19,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"agentflow/internal/domain"
@@ -70,22 +71,51 @@ func (h *assistantHandlers) workbenchReference(ref domain.AssistantReference, pr
 			break
 		}
 		ref.Name = v.Title
-		data = gin.H{"id": v.ID, "title": v.Title, "description": v.Description, "status": v.Status, "projectId": v.ProjectID,
+		issueData := gin.H{"id": v.ID, "title": v.Title, "description": v.Description, "status": v.Status, "projectId": v.ProjectID,
 			"repositoryId": v.RepositoryID, "repositoryIds": v.RepositoryIDs}
+		if branch := strings.TrimSpace(v.BaseBranch); branch != "" {
+			issueData["baseBranch"] = branch
+		}
+		if v.WithoutSOP() {
+			issueData["sopMode"] = domain.IssueSOPNone
+		} else {
+			if wfID := strings.TrimSpace(v.WorkflowID); wfID != "" {
+				if wf, exists := h.repo.Workflow(wfID); exists && workflowVisibleToProject(wf, project) {
+					issueData["workflowId"] = wf.ID
+					issueData["workflowName"] = wf.Name
+				}
+			}
+			if bound := h.issueBoundSOPs(v); len(bound) > 0 {
+				issueData["boundSops"] = bound
+			}
+		}
+		data = issueData
 	case "sop":
 		v, ok := h.repo.Workflow(ref.ID)
 		if !ok || !(v.Generic && project != "" || allowed(v.ProjectID, v.Shared)) {
 			break
 		}
 		ref.Name = v.Name
-		data = gin.H{"id": v.ID, "name": v.Name, "status": v.Status, "nodes": v.Nodes, "edges": v.Edges}
+		roleKB := map[string]bool{}
+		for _, n := range v.Nodes {
+			if n.Type == "agent" && n.AgentID != "" {
+				if ag, exists := h.repo.Agent(n.AgentID); exists && ag.KnowledgeBase {
+					roleKB[n.AgentID] = true
+				}
+			}
+		}
+		sopData := gin.H{"id": v.ID, "name": v.Name, "status": v.Status, "nodes": v.Nodes, "edges": v.Edges}
+		if len(roleKB) > 0 {
+			sopData["roleKnowledgeBase"] = roleKB
+		}
+		data = sopData
 	case "agent":
 		v, ok := h.repo.Agent(ref.ID)
 		if !ok || !allowed(v.ProjectID, v.Shared) {
 			break
 		}
 		ref.Name = v.Name
-		data = gin.H{"id": v.ID, "name": v.Name, "description": v.Description, "prompt": v.Prompt}
+		data = gin.H{"id": v.ID, "name": v.Name, "description": v.Description, "prompt": v.Prompt, "knowledgeBase": v.KnowledgeBase}
 	case "skill":
 		v, ok := h.repo.Skill(ref.ID)
 		if !ok || !allowed(v.ProjectID, v.Shared) {
@@ -251,6 +281,8 @@ func (h *assistantHandlers) buildWorkbenchContext(c *gin.Context, req *assistant
 	}
 	var mentioned []domain.AgentDefinition
 	var mentionedSkills []domain.SkillDefinition
+	var mentionedSOPs []domain.WorkflowDefinition
+	var issueSOPs []domain.WorkflowDefinition
 	addSkill := func(skill domain.SkillDefinition) {
 		for _, known := range req.skills {
 			if known.ID == skill.ID {
@@ -329,6 +361,18 @@ func (h *assistantHandlers) buildWorkbenchContext(c *gin.Context, req *assistant
 					mentionedSkills = append(mentionedSkills, skill)
 				}
 			}
+			if ref.Type == "sop" {
+				if wf, ok := h.repo.Workflow(ref.ID); ok {
+					mentionedSOPs = append(mentionedSOPs, wf)
+				}
+			}
+			if ref.Type == "issue" && req.ProjectID != "" {
+				if issue, ok := h.repo.Issue(ref.ID); ok && issue.ProjectID == req.ProjectID && issue.WorkflowID != "" {
+					if wf, ok := h.repo.Workflow(issue.WorkflowID); ok && (wf.Generic || wf.ProjectID == req.ProjectID || wf.Shared) {
+						issueSOPs = append(issueSOPs, wf)
+					}
+				}
+			}
 		}
 		for j, a := range m.Attachments {
 			attachmentOwner := user.ID
@@ -393,6 +437,30 @@ func (h *assistantHandlers) buildWorkbenchContext(c *gin.Context, req *assistant
 		}
 		context.WriteString("用户本轮 @ 了技能：" + use.String() + "用 Skill 工具按名称调用并照它的说明完成用户要做的事；如果把这件事派给子 Agent，在派发的 prompt 里写明要用这个技能。\n")
 	}
+	if req.RunID == "" && len(mentionedSOPs) > 0 {
+		var sops strings.Builder
+		for _, wf := range mentionedSOPs {
+			sops.WriteString("「" + wf.Name + "」(id=" + wf.ID + ")；")
+		}
+		context.WriteString("用户本轮 @ 了 SOP：" + sops.String() + "若用户要求执行或触发该 SOP，必须通过 runs_start（或对已有需求调用 issues_dispatch；非完全权限模式先用 workbench_tool_schema 查参数后放入 submit_assistant_reply 的 drafts）发起真实 SOP 运行，严禁在当前对话内直接代跑 SOP（门禁与产物契约仅在 SOP 运行时装配与强制校验）。若用户只是询问、修改该 SOP 定义，或希望结合该 SOP / 角色关联的知识库做内容概述、方案评估与判断，当前用户名下已匹配的个人知识库工具已自动挂载到本对话，可先调用知识库检索/读取工具查阅真实文档后再给出判断。\n")
+	}
+	if req.RunID == "" && len(issueSOPs) > 0 {
+		seenSOP := make(map[string]bool, len(mentionedSOPs)+len(issueSOPs))
+		for _, m := range mentionedSOPs {
+			seenSOP[m.ID] = true
+		}
+		var sops strings.Builder
+		for _, wf := range issueSOPs {
+			if seenSOP[wf.ID] {
+				continue
+			}
+			seenSOP[wf.ID] = true
+			sops.WriteString("「" + wf.Name + "」(id=" + wf.ID + ")；")
+		}
+		if sops.Len() > 0 {
+			context.WriteString("用户本轮 @ 的需求已绑定 SOP：" + sops.String() + "若用户要求执行、派发或推进该需求，必须通过 issues_dispatch（非完全权限模式先用 workbench_tool_schema 查参数后放入 submit_assistant_reply 的 drafts）发起真实 SOP 运行，严禁在当前对话内直接代跑 SOP（门禁与产物契约仅在 SOP 运行时装配与强制校验）。若用户只是围绕该需求提问、讨论，或希望结合关联知识库做概述与判断，该 SOP 节点/角色关联的个人知识库工具已自动挂载到本对话，先调用知识库检索/读取工具查阅真实文档后再回答。\n")
+		}
+	}
 	if req.RunID == "" {
 		if note := h.linkMentionedIssue(req, user); note != "" {
 			context.WriteString(note + "\n")
@@ -407,6 +475,188 @@ func (h *assistantHandlers) buildWorkbenchContext(c *gin.Context, req *assistant
 	}
 	req.contextText = beijingTimestamps(context.String())
 	return nil
+}
+
+// resolveMentionedKnowledgeRefs merges existing session KnowledgeRefs with any
+// personal knowledge bases referenced via @角色 (agent.KnowledgeBase), @SOP
+// (node.KnowledgeRefs + node role agent.KnowledgeBase) or @需求 (issue.WorkflowID
+// expanded to its bound SOP) in the current turn's user message, following the
+// A-Union precedence rule:
+//   1) Session saved.KnowledgeRefs take highest priority per ConnectorID.
+//   2) @SOP node.KnowledgeRefs owned by userID come next (across multiple nodes in
+//      the same SOP, mode="all" wins over "allowlist", and multiple "allowlist"
+//      entries for the same ConnectorID union their Sources).
+//   3) Any remaining enabled connectors owned by userID are appended with mode="all"
+//      if an explicitly @-mentioned role (or an @-mentioned SOP's node role) has
+//      KnowledgeBase == true.
+func (h *assistantHandlers) resolveMentionedKnowledgeRefs(userID int64, projectID string, saved assistantConversation, messages []assistantMessage) ([]domain.KnowledgeRef, bool) {
+	if saved.RunID != "" || saved.Shared || userID <= 0 || (saved.UserID > 0 && saved.UserID != userID) || h.deps == nil || h.deps.knowledgeSvc == nil || len(messages) == 0 {
+		return saved.KnowledgeRefs, false
+	}
+	var lastRefs []domain.AssistantReference
+	for i := len(messages) - 1; i >= 0; i-- {
+		if messages[i].Role == "" || messages[i].Role == "user" {
+			lastRefs = messages[i].References
+			break
+		}
+	}
+	if len(lastRefs) == 0 {
+		return saved.KnowledgeRefs, false
+	}
+	userConnectors := h.deps.knowledgeSvc.ListConnectors(userID)
+	enabledByID := make(map[string]domain.KnowledgeConnector, len(userConnectors))
+	for _, conn := range userConnectors {
+		if conn.Enabled {
+			enabledByID[conn.ID] = conn
+		}
+	}
+	if len(enabledByID) == 0 {
+		return saved.KnowledgeRefs, false
+	}
+
+	var sopNodeOrder []string
+	sopNodeByConn := map[string]domain.KnowledgeRef{}
+	addSOPNodeRef := func(ref domain.KnowledgeRef) {
+		cid := strings.TrimSpace(ref.ConnectorID)
+		if cid == "" {
+			return
+		}
+		if _, ok := enabledByID[cid]; !ok {
+			return
+		}
+		mode := strings.TrimSpace(ref.Mode)
+		if mode == "" {
+			mode = "all"
+		}
+		existing, exists := sopNodeByConn[cid]
+		if !exists {
+			sopNodeOrder = append(sopNodeOrder, cid)
+			cp := domain.KnowledgeRef{ConnectorID: cid, Mode: mode}
+			if mode == "allowlist" {
+				cp.Sources = append([]string(nil), ref.Sources...)
+			}
+			sopNodeByConn[cid] = cp
+			return
+		}
+		if existing.Mode == "all" || mode == "all" {
+			sopNodeByConn[cid] = domain.KnowledgeRef{ConnectorID: cid, Mode: "all"}
+			return
+		}
+		seenSrc := make(map[string]bool, len(existing.Sources))
+		mergedSrc := append([]string(nil), existing.Sources...)
+		for _, s := range existing.Sources {
+			seenSrc[s] = true
+		}
+		for _, s := range ref.Sources {
+			if !seenSrc[s] {
+				seenSrc[s] = true
+				mergedSrc = append(mergedSrc, s)
+			}
+		}
+		existing.Sources = mergedSrc
+		sopNodeByConn[cid] = existing
+	}
+
+	allowed := func(itemProject string, shared bool) bool {
+		if projectID == "" {
+			return itemProject == "" || shared
+		}
+		return itemProject == projectID || shared
+	}
+
+	roleToggle := false
+	addSOPKnowledge := func(wf domain.WorkflowDefinition) {
+		for _, node := range wf.Nodes {
+			if node.Type != "agent" {
+				continue
+			}
+			for _, nref := range node.KnowledgeRefs {
+				addSOPNodeRef(nref)
+			}
+			if node.AgentID != "" {
+				if ag, ok := h.repo.Agent(node.AgentID); ok && ag.KnowledgeBase {
+					roleToggle = true
+				}
+			}
+		}
+	}
+	for _, ref := range lastRefs {
+		switch ref.Type {
+		case "agent":
+			ag, ok := h.repo.Agent(ref.ID)
+			if !ok || !allowed(ag.ProjectID, ag.Shared) {
+				continue
+			}
+			if ag.KnowledgeBase {
+				roleToggle = true
+			}
+		case "sop":
+			wf, ok := h.repo.Workflow(ref.ID)
+			if !ok || !(wf.Generic || allowed(wf.ProjectID, wf.Shared)) {
+				continue
+			}
+			addSOPKnowledge(wf)
+		case "issue":
+			issue, ok := h.repo.Issue(ref.ID)
+			if !ok || projectID == "" || issue.ProjectID != projectID || issue.WorkflowID == "" {
+				continue
+			}
+			wf, ok := h.repo.Workflow(issue.WorkflowID)
+			if !ok || !(wf.Generic || allowed(wf.ProjectID, wf.Shared)) {
+				continue
+			}
+			addSOPKnowledge(wf)
+		}
+	}
+	if len(sopNodeOrder) == 0 && !roleToggle {
+		return saved.KnowledgeRefs, false
+	}
+
+	seen := make(map[string]bool, len(saved.KnowledgeRefs)+len(userConnectors))
+	var merged []domain.KnowledgeRef
+	for _, ref := range saved.KnowledgeRefs {
+		cid := strings.TrimSpace(ref.ConnectorID)
+		if cid == "" || seen[cid] {
+			continue
+		}
+		seen[cid] = true
+		merged = append(merged, ref)
+	}
+	for _, cid := range sopNodeOrder {
+		if seen[cid] {
+			continue
+		}
+		seen[cid] = true
+		merged = append(merged, sopNodeByConn[cid])
+	}
+	if roleToggle {
+		for _, conn := range userConnectors {
+			if !conn.Enabled || seen[conn.ID] {
+				continue
+			}
+			seen[conn.ID] = true
+			merged = append(merged, domain.KnowledgeRef{ConnectorID: conn.ID, Mode: "all"})
+		}
+	}
+	changed := !equalKnowledgeRefSlice(merged, saved.KnowledgeRefs) || (len(merged) > 0 && !saved.KnowledgeRestricted)
+	return merged, changed
+}
+
+func equalKnowledgeRefSlice(a, b []domain.KnowledgeRef) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i].ConnectorID != b[i].ConnectorID || a[i].Mode != b[i].Mode || len(a[i].Sources) != len(b[i].Sources) {
+			return false
+		}
+		for j := range a[i].Sources {
+			if a[i].Sources[j] != b[i].Sources[j] {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func (h *assistantHandlers) workbenchReferences(c *gin.Context) {
@@ -884,10 +1134,13 @@ func stripWorkbuddyLinks(message string) string {
 	return strings.TrimSpace(strings.Join(lines, "\n"))
 }
 
-func materializeWorkspaceImages(ownerID int64, conv *assistantConversation) bool {
+func materializeWorkspaceImages(ownerID int64, conv *assistantConversation, canImport func() bool) bool {
 	if conv == nil {
 		return false
 	}
+	// Most conversations have no legacy media. Only look up the generation
+	// once an attachment actually needs recovery.
+	idle := sync.OnceValue(canImport)
 	seen := map[string]bool{}
 	changed := false
 	for i := range conv.Messages {
@@ -903,17 +1156,20 @@ func materializeWorkspaceImages(ownerID int64, conv *assistantConversation) bool
 			continue
 		}
 		if hasImage {
-			if cleaned := stripMediaPathsInContent(message.Content); cleaned != message.Content {
+			if cleaned := stripMediaPathsInContent(message.Content); cleaned != message.Content && idle() {
 				message.Content = cleaned
 				changed = true
 			}
 			continue
 		}
-		if attachWorkspaceDeck(ownerID, message, seen) {
+		if attachWorkspaceDeck(ownerID, message, seen, idle) {
 			changed = true
 		}
 		if !strings.Contains(message.Content, "generated-images") && !strings.Contains(message.Content, ".png") && !strings.Contains(message.Content, ".jpg") && !strings.Contains(message.Content, ".webp") {
 			continue
+		}
+		if !idle() {
+			return false
 		}
 		since := message.CreatedAt.Add(-3 * time.Minute)
 		if message.StartedAt != nil && !message.StartedAt.IsZero() {
@@ -938,7 +1194,7 @@ func materializeWorkspaceImages(ownerID int64, conv *assistantConversation) bool
 	return changed
 }
 
-func attachWorkspaceDeck(ownerID int64, message *assistantMessage, seen map[string]bool) bool {
+func attachWorkspaceDeck(ownerID int64, message *assistantMessage, seen map[string]bool, idle func() bool) bool {
 	if message == nil || strings.Contains(message.Content, "```slides") || strings.Contains(message.Content, "```ppt") {
 		return false
 	}
@@ -958,6 +1214,9 @@ func attachWorkspaceDeck(ownerID int64, message *assistantMessage, seen map[stri
 	since := message.CreatedAt.Add(-3 * time.Minute)
 	if message.StartedAt != nil && !message.StartedAt.IsZero() {
 		since = message.StartedAt.Add(-3 * time.Second)
+	}
+	if !idle() {
+		return false
 	}
 	deck := workspaceDecks(ownerID, since, message.CreatedAt.Add(2*time.Minute))
 	if deck.Slides == "" && len(deck.Files) == 0 {
@@ -1214,9 +1473,38 @@ func (h *assistantHandlers) downloadAttachment(c *gin.Context) {
 		c.JSON(404, gin.H{"error": "附件不存在"})
 		return
 	}
-	c.Header("Content-Type", record.MimeType)
 	c.Header("X-Content-Type-Options", "nosniff")
-	c.Header("Cache-Control", "private, no-store")
+	if assistantImageMIME(record.MimeType) {
+		// IDs are immutable. Revalidate access before permitting a browser to reuse either representation.
+		id := c.Param("id")
+		c.Header("Cache-Control", "private, no-cache")
+		c.Header("ETag", strconv.Quote(id))
+		if c.Query("view") == "thumbnail" && thumbnailImageType(record.MimeType) {
+			thumbTag := strconv.Quote(id + "-thumbnail-v1")
+			// The preview tag is only issued after a preview was built, and the original never
+			// changes, so a matching validator can be answered without decoding the image again.
+			if attachmentETagMatches(c.Request.Header.Values("If-None-Match"), thumbTag) {
+				c.Header("ETag", thumbTag)
+				// ServeContent reads only the first If-None-Match line. Pass the matched tag
+				// so it checks higher-priority preconditions without reading the image.
+				req := c.Request.Clone(c.Request.Context())
+				req.Header.Set("If-None-Match", thumbTag)
+				http.ServeContent(c.Writer, req, "", info.ModTime(), bytes.NewReader(nil))
+				return
+			}
+			thumb := h.attachmentThumbnail(ownerID, id, file, info.Size())
+			if len(thumb) != 0 {
+				c.Header("ETag", thumbTag)
+				c.Header("Content-Type", http.DetectContentType(thumb))
+				c.Header("Content-Disposition", "inline")
+				http.ServeContent(c.Writer, c.Request, "", info.ModTime(), bytes.NewReader(thumb))
+				return
+			}
+		}
+	} else {
+		c.Header("Cache-Control", "private, no-store")
+	}
+	c.Header("Content-Type", record.MimeType)
 	c.Header("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": record.Name}))
 	http.ServeContent(c.Writer, c.Request, record.Name, info.ModTime(), file)
 }
@@ -1269,35 +1557,88 @@ func runNodeAgentID(r domain.Run, id string) string {
 	return ""
 }
 
+func workflowVisibleToProject(wf domain.WorkflowDefinition, project string) bool {
+	project = strings.TrimSpace(project)
+	return project != "" && (wf.Generic || wf.ProjectID == project || wf.Shared)
+}
+
+func (h *assistantHandlers) issueBoundSOPs(issue domain.Issue) []gin.H {
+	if issue.WithoutSOP() {
+		return nil
+	}
+	bindings := issue.EffectiveSOPBindings()
+	if len(bindings) == 0 {
+		return nil
+	}
+	out := make([]gin.H, 0, len(bindings))
+	for _, b := range bindings {
+		wf, ok := h.repo.Workflow(b.WorkflowID)
+		if ok && !workflowVisibleToProject(wf, issue.ProjectID) {
+			continue
+		}
+		item := gin.H{"workflowId": b.WorkflowID}
+		if ok && strings.TrimSpace(wf.Name) != "" {
+			item["name"] = strings.TrimSpace(wf.Name)
+		}
+		out = append(out, item)
+	}
+	return out
+}
+
+func (h *assistantHandlers) issueBoundSOPLabels(issue domain.Issue) []string {
+	if issue.WithoutSOP() {
+		return nil
+	}
+	bindings := issue.EffectiveSOPBindings()
+	if len(bindings) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(bindings))
+	for _, b := range bindings {
+		wf, ok := h.repo.Workflow(b.WorkflowID)
+		if ok && !workflowVisibleToProject(wf, issue.ProjectID) {
+			continue
+		}
+		if ok && strings.TrimSpace(wf.Name) != "" {
+			out = append(out, fmt.Sprintf("%s（%s）", strings.TrimSpace(wf.Name), b.WorkflowID))
+		} else {
+			out = append(out, b.WorkflowID)
+		}
+	}
+	return out
+}
+
 // workspaceTurnContext tells Main Bot which workspace the conversation is
 // bound to, which environments it used before, and what the requirements in
 // play already delivered, so it resumes the right work instead of following @
 // mentions mechanically.
 func (h *assistantHandlers) workspaceTurnContext(req *assistantRequest, user domain.User) string {
 	session, ok := h.repo.AssistantSession(assistantStorageOwner(h.repo, req.SessionID, user.ID), req.SessionID)
-	if !ok || session.Shared || session.RunID != "" {
+	if ok && (session.Shared || session.RunID != "") {
 		return ""
 	}
 	var b strings.Builder
-	current, bound := h.repo.RunState(session.WorkspaceRunID)
-	bound = bound && conversationMayBind(session, current, req.ProjectID)
-	if bound {
-		fmt.Fprintf(&b, "本对话当前绑定的工作区：%s。", describeConversationWorkspace(current))
-		if !current.IsWorkspace() {
-			b.WriteString(borrowedSOPNotice(current))
-		} else if req.ProjectID != "" {
-			b.WriteString("从这里派发 LOOP 会复用该工作区。如果本轮仍在使用它，派发后先结束回复，LOOP 会在工作区释放后开始。")
+	if ok {
+		current, bound := h.repo.RunState(session.WorkspaceRunID)
+		bound = bound && conversationMayBind(session, current, req.ProjectID)
+		if bound {
+			fmt.Fprintf(&b, "本对话当前绑定的工作区：%s。", describeConversationWorkspace(current))
+			if !current.IsWorkspace() {
+				b.WriteString(borrowedSOPNotice(current))
+			} else if req.ProjectID != "" {
+				b.WriteString("从这里派发 LOOP 会复用该工作区。如果本轮仍在使用它，派发后先结束回复，LOOP 会在工作区释放后开始。")
+			}
+			b.WriteString("\n")
 		}
-		b.WriteString("\n")
-	}
-	others := []string{}
-	for _, id := range ownWorkspaceRunIDs(session) {
-		if run, ok := h.repo.RunState(id); ok && id != session.WorkspaceRunID && run.IsWorkspace() && conversationMayBind(session, run, req.ProjectID) {
-			others = append(others, "- "+describeConversationWorkspace(run))
+		others := []string{}
+		for _, id := range ownWorkspaceRunIDs(session) {
+			if run, ok := h.repo.RunState(id); ok && id != session.WorkspaceRunID && run.IsWorkspace() && conversationMayBind(session, run, req.ProjectID) {
+				others = append(others, "- "+describeConversationWorkspace(run))
+			}
 		}
-	}
-	if len(others) > 0 {
-		b.WriteString("本对话之前在其他运行环境开过的工作区（传它的 sandboxProfileId 或 workspaceRunId 切回，文件和已克隆的仓库都在）：\n" + strings.Join(others, "\n") + "\n")
+		if len(others) > 0 {
+			b.WriteString("本对话之前在其他运行环境开过的工作区（传它的 sandboxProfileId 或 workspaceRunId 切回，文件和已克隆的仓库都在）：\n" + strings.Join(others, "\n") + "\n")
+		}
 	}
 	issues := []string{}
 	for _, issue := range turnIssues(h.deps, req.ProjectID, session.IssueID, lastMessageReferences(req.Messages)) {
@@ -1310,10 +1651,16 @@ func (h *assistantHandlers) workspaceTurnContext(req *assistantRequest, user dom
 		} else {
 			line += "：没跑过 LOOP"
 		}
+		if issue.WithoutSOP() {
+			line += "；交付方式：不使用 LOOP（在对话里澄清并直接改代码）"
+		} else if labels := h.issueBoundSOPLabels(issue); len(labels) > 0 {
+			line += "；已绑定 LOOP：" + strings.Join(labels, " → ")
+		}
 		issues = append(issues, line)
 	}
 	if len(issues) > 0 {
 		b.WriteString("本条消息 @ 的需求和本会话关联的主需求：\n" + strings.Join(issues, "\n") + "\n")
+		b.WriteString("如果需求已绑定 LOOP，说明用户已选定按该 LOOP 交付，不要再反问用户「直接改代码还是走 LOOP」或要求重新选择交付方式；用户只 @ 需求或要求澄清/分析需求时，直接结合需求描述（需要核对代码现状时可先打开工作区查看）指出模糊点、边界条件或验收标准来澄清，若需求已足够清晰则直接给出评估，并说明可先更新需求（issues_save）或准备就绪后按已绑定的 LOOP 派发（issues_dispatch）。如果需求标记为不使用 LOOP，默认围绕澄清和在对话工作区直接实现协作，不要主动建议改走 LOOP。\n")
 	}
 	if b.Len() == 0 {
 		return ""

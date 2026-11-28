@@ -382,7 +382,8 @@ func (h *catalogHandlers) agents(c *gin.Context) {
 				c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
 				return
 			}
-			if existing, ok := h.repo.Agent(v.ID); ok && existing.Shared && !v.Shared && h.sharedScheduleReferences("agent", v.ID) {
+			existing, hadExisting := h.repo.Agent(v.ID)
+			if hadExisting && existing.Shared && !v.Shared && h.sharedScheduleReferences("agent", v.ID) {
 				c.JSON(http.StatusConflict, map[string]string{"error": "该角色仍被共享任务引用，不能取消共享"})
 				return
 			}
@@ -392,6 +393,14 @@ func (h *catalogHandlers) agents(c *gin.Context) {
 			if err := h.repo.PutAgentWithSharing(v); err != nil {
 				respond(c, err)
 				return
+			}
+			if hadExisting && existing.Prompt != v.Prompt {
+				source, note := catalogEditSource(c.Request.Context())
+				var uid int64
+				if user, ok := h.requestUser(c.Request, true); ok {
+					uid = user.ID
+				}
+				_, _, _ = h.repo.RecordAssetEdit(domain.EvoAssetAgent, v.ID, existing.Prompt, v.Prompt, source, note, uid)
 			}
 			stored, _ := h.repo.Agent(v.ID)
 			c.JSON(200, stored)
@@ -720,10 +729,11 @@ func (h *catalogHandlers) rules(c *gin.Context) {
 				c.JSON(404, map[string]string{"error": "project not found"})
 				return
 			}
-			if existing, ok := h.repo.Rule(v.ID); ok && existing.ProjectID != "" && existing.ProjectID != v.ProjectID {
+			existing, hadExisting := h.repo.Rule(v.ID)
+			if hadExisting && existing.ProjectID != "" && existing.ProjectID != v.ProjectID {
 				c.JSON(409, map[string]string{"error": "rule id is already used by another project"})
 				return
-			} else if ok && existing.Shared && !v.Shared && h.sharedAgentReferences("rule", v.ID) {
+			} else if hadExisting && existing.Shared && !v.Shared && h.sharedAgentReferences("rule", v.ID) {
 				c.JSON(409, map[string]string{"error": "该规则仍被共享角色引用，不能取消共享"})
 				return
 			}
@@ -731,7 +741,19 @@ func (h *catalogHandlers) rules(c *gin.Context) {
 				c.JSON(400, map[string]string{"error": err.Error()})
 				return
 			}
-			respond(c, h.repo.PutRule(v))
+			if err := h.repo.PutRule(v); err != nil {
+				respond(c, err)
+				return
+			}
+			if hadExisting && existing.Content != v.Content {
+				source, note := catalogEditSource(c.Request.Context())
+				var uid int64
+				if user, ok := h.requestUser(c.Request, true); ok {
+					uid = user.ID
+				}
+				_, _, _ = h.repo.RecordAssetEdit(domain.EvoAssetRule, v.ID, existing.Content, v.Content, source, note, uid)
+			}
+			respond(c, nil)
 		}
 	}
 }
@@ -1046,6 +1068,10 @@ func (h *catalogHandlers) workflows(c *gin.Context) {
 			}
 			if err := domain.ValidateWorkflowPreparation(v); err != nil {
 				c.JSON(400, gin.H{"error": err.Error()})
+				return
+			}
+			if err := domain.ValidateWorkflowKnowledge(v); err != nil {
+				c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
 				return
 			}
 			if err := domain.ValidateWorkflowMetricStages(v); err != nil {

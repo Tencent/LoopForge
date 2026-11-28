@@ -321,6 +321,7 @@ func runnerFromRow(row runnerRow) domain.Runner {
 		ID: row.ID, Name: row.Name, Status: row.Status, OS: row.OS, Arch: row.Arch,
 		RunnerVersion: row.RunnerVersion, MaxConcurrency: row.MaxConcurrency,
 		NativeSandboxAvailable: row.NativeSandboxAvailable,
+		AllowPrivilegedSandbox: row.AllowPrivilegedSandbox,
 		SessionTokenHash:       row.SessionTokenHash,
 	}
 	if row.OwnerUserID != nil {

@@ -119,6 +119,7 @@ func (d *Daemon) conversationProcess(ctx context.Context, request domain.RunnerW
 			return sb, finish, nil
 		}
 	}
+	ctx = runtime.WithPrivilegedSandboxSetting(ctx, d.client.privilegedSandboxSetting)
 	result, err := d.conversationProcesses.Handle(ctx, root, workspace, request.Sandbox, req, forward, factory)
 	if err != nil {
 		response := runnerWorkspaceError(err)

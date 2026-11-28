@@ -697,3 +697,39 @@ func TestChatClarificationRunsAsTheStarter(t *testing.T) {
 		t.Fatalf("analysis ran after the starter was removed: %d rounds", len(f.inputs))
 	}
 }
+
+// A GitHub issue synced into the project keeps the tracker number in
+// issue.Number, so it shares the number of the platform requirement LOOP-7.
+// Each displayed key names exactly one requirement; the bare number stays
+// ambiguous and asks for a key.
+func TestChatClarificationKeysOfSyncedGitHubIssues(t *testing.T) {
+	f := newClarifyChatFixture(t, domain.BotChannelFeishu)
+	if err := f.s.PutIssue(domain.Issue{ID: "gh-repo-7", ProjectID: "p", Number: 7, Kind: "issue", Source: "github", Title: "导出报表超时",
+		ExternalRef: &domain.ExternalRef{Source: "github", ExternalID: "990007", ExternalIID: 7, ExternalType: "issue"}}); err != nil {
+		t.Fatal(err)
+	}
+	local, _ := f.s.Issue("iss-7")
+	gh, _ := f.s.Issue("gh-repo-7")
+	if got := f.h.botIssueLabel(gh); got != "#7" {
+		t.Fatalf("GitHub issue label = %q, want #7", got)
+	}
+	if got := f.h.botIssueLabel(local); got != "LOOP-7" {
+		t.Fatalf("platform requirement label = %q, want LOOP-7", got)
+	}
+	for ref, want := range map[string]string{"LOOP-7": "iss-7", "loop-7": "iss-7", "#7": "gh-repo-7", "导出报表超时": "gh-repo-7"} {
+		issue, refusal := f.h.findBotClarifyIssue(f.bot, domain.BotConversation{}, ref)
+		if refusal != "" || issue.ID != want {
+			t.Fatalf("ref %q = %q (%s), want %s", ref, issue.ID, refusal, want)
+		}
+	}
+	if _, refusal := f.h.findBotClarifyIssue(f.bot, domain.BotConversation{}, "7"); !strings.Contains(refusal, "对应多个需求") {
+		t.Fatalf("bare number refusal = %q", refusal)
+	}
+	// Without a platform requirement of that number the old key still resolves.
+	if err := f.s.DeleteIssue("iss-7"); err != nil {
+		t.Fatal(err)
+	}
+	if issue, refusal := f.h.findBotClarifyIssue(f.bot, domain.BotConversation{}, "LOOP-7"); refusal != "" || issue.ID != "gh-repo-7" {
+		t.Fatalf("legacy key = %q (%s)", issue.ID, refusal)
+	}
+}

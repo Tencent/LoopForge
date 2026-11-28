@@ -287,11 +287,12 @@ export const resumeMissed = (step) =>
 // dispatched it; a live dispatch has no saved reply yet and uses liveModel,
 // the model the running reply was sent with. agent.model is the latest
 // dispatch's, agent.models[step.id] each dispatch's.
-export function collectSubagents(messages = [], liveSteps = [], liveModel = "") {
+export function collectSubagents(messages = [], liveSteps = [], liveModel = "", offset = 0) {
   const agents = [];
-  // messageIndex is the saved reply that holds the dispatch; a live one has
-  // none yet, and its collected files are not attachments until it is saved.
-  const add = (step, messageIndex = null, replyModel = "") => {
+  // messageIndex is the saved reply that holds the dispatch (its stored index,
+  // see messageOffset); a live one has none yet, and its collected files are
+  // not attachments until it is saved.
+  const add = (step, messageIndex = null, replyModel = "", activityRef) => {
     const key = step.agentId || step.id;
     let agent = agents.find((item) => item.key === key || (step.agentId && item.agentId === step.agentId));
     if (!agent) {
@@ -305,6 +306,7 @@ export function collectSubagents(messages = [], liveSteps = [], liveModel = "") 
     if (model) agent.models[step.id] = model;
     agent.model = model || agent.model;
     agent.dispatches.push(step);
+    if (activityRef && !agent.deferredActivity) agent.deferredActivity = { index: messageIndex, activityRef };
     // What it published, and the role deliverables the platform collected
     // when it finished (a required one it did not write is marked missing).
     // A later dispatch that delivers the same file replaces the earlier row.
@@ -323,7 +325,7 @@ export function collectSubagents(messages = [], liveSteps = [], liveModel = "") 
     if (message.role !== "assistant") return;
     savedActivity(message)
       .filter(isDispatch)
-      .forEach((step) => add(step, index, message.model));
+      .forEach((step) => add(step, offset + index, message.model, message.activityRef));
   });
   liveSteps.filter(isDispatch).forEach((step) => add(step, null, liveModel));
   return agents;
@@ -428,7 +430,7 @@ export const savedActivity = (message) =>
     (message.activity || []).map((data, sequence) => ({ data, sequence })),
   );
 export function activityForReply(message, generation, liveSteps = []) {
-  if (message.activity?.length) return savedActivity(message);
+  if (message.activityRef || message.activity?.length) return savedActivity(message);
   if (message.generationId && message.generationId !== generation?.id) return [];
   // The old implementation retained only the most recent generation. Recover
   // that visible stream only when its text AND start time match this exact reply.
@@ -525,6 +527,12 @@ export function activityFace(step) {
     return { kind: "command", busy: "正在运行", done: "已运行" };
   if (/imagegen|generate.?image|生图|画图/.test(name))
     return { kind: "image", busy: "正在生成图片", done: "已生成图片" };
+  if (/kb_fetch|read_document/.test(name))
+    return { kind: "read", busy: "正在读取", done: "已读取" };
+  if (/search_knowledge|kb_search/.test(name))
+    return { kind: "search", busy: "正在搜索", done: "已搜索" };
+  if (/knowledge/.test(name))
+    return { kind: "read", busy: "正在读取", done: "已读取" };
   if (/browser|fetch|web.?search|navigate/.test(name))
     return { kind: "web", busy: "正在浏览", done: "已浏览" };
   if (/write|edit|patch/.test(name))
@@ -563,6 +571,8 @@ export function activityTarget(step) {
       detail =
         args.file_path ||
         args.filePath ||
+        args.knowledge_id ||
+        args.document_id ||
         args.command ||
         args.cmd ||
         args.query ||

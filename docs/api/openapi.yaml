@@ -28,7 +28,491 @@ tags:
   - name: Sync
   - name: Scheduling
   - name: Analytics
+  - name: Feedback
+  - name: Evolution
 paths:
+  /api/evolution/overview:
+    parameters:
+      - {name: projectId, in: query, required: true, schema: {type: string}}
+    get:
+      tags: [Evolution]
+      operationId: getEvolutionOverview
+      summary: Read project evolution overview
+      description: See docs/api/evolution.md for access, first-release replay restrictions and deployment requirements.
+      responses:
+        "200":
+          description: Successful operation
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/OpenObject"}
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: Unsupported scope, disabled L3, stale baseline or conflicting state
+  /api/evolution/diagnose:
+    post:
+      tags: [Evolution]
+      operationId: diagnoseEvolution
+      summary: Diagnose recent project runs
+      description: See docs/api/evolution.md for access, first-release replay restrictions and deployment requirements.
+      requestBody:
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/OpenObject"}
+      responses:
+        "200":
+          description: Successful operation
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/OpenObject"}
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: Unsupported scope, disabled L3, stale baseline or conflicting state
+  /api/evolution/findings:
+    parameters:
+      - {name: projectId, in: query, required: true, schema: {type: string}}
+    get:
+      tags: [Evolution]
+      operationId: listEvolutionFindings
+      summary: List project findings
+      description: See docs/api/evolution.md for access, first-release replay restrictions and deployment requirements.
+      responses:
+        "200":
+          description: Successful operation
+          content:
+            application/json:
+              schema: {type: array, items: {$ref: "#/components/schemas/OpenObject"}}
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: Unsupported scope, disabled L3, stale baseline or conflicting state
+  /api/evolution/findings/{id}/runs:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: string}}
+    get:
+      tags: [Evolution]
+      operationId: getEvolutionFindingRuns
+      summary: Read finding run evidence
+      description: See docs/api/evolution.md for access, first-release replay restrictions and deployment requirements.
+      responses:
+        "200":
+          description: Successful operation
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/OpenObject"}
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: Unsupported scope, disabled L3, stale baseline or conflicting state
+  /api/evolution/findings/{id}/dismiss:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: string}}
+    post:
+      tags: [Evolution]
+      operationId: dismissEvolutionFinding
+      summary: Dismiss a finding
+      description: See docs/api/evolution.md for access, first-release replay restrictions and deployment requirements.
+      requestBody:
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/OpenObject"}
+      responses:
+        "200":
+          description: Successful operation
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/OpenObject"}
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: Unsupported scope, disabled L3, stale baseline or conflicting state
+  /api/evolution/findings/{id}/snooze:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: string}}
+    post:
+      tags: [Evolution]
+      operationId: snoozeEvolutionFinding
+      summary: Snooze a finding
+      description: See docs/api/evolution.md for access, first-release replay restrictions and deployment requirements.
+      requestBody:
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/OpenObject"}
+      responses:
+        "200":
+          description: Successful operation
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/OpenObject"}
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: Unsupported scope, disabled L3, stale baseline or conflicting state
+  /api/evolution/proposals:
+    parameters:
+      - {name: projectId, in: query, required: true, schema: {type: string}}
+    get:
+      tags: [Evolution]
+      operationId: listEvolutionProposals
+      summary: List project proposals
+      description: See docs/api/evolution.md for access, first-release replay restrictions and deployment requirements.
+      responses:
+        "200":
+          description: Successful operation
+          content:
+            application/json:
+              schema: {type: array, items: {$ref: "#/components/schemas/OpenObject"}}
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: Unsupported scope, disabled L3, stale baseline or conflicting state
+    post:
+      tags: [Evolution]
+      operationId: createEvolutionProposal
+      summary: Generate a private project asset candidate or queue intent
+      description: See docs/api/evolution.md for access, first-release replay restrictions and deployment requirements.
+      requestBody:
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/OpenObject"}
+      responses:
+        "200":
+          description: Successful operation
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/OpenObject"}
+        "202":
+          description: Candidate generation started or later intent queued
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: Unsupported scope, disabled L3, stale baseline or conflicting state
+  /api/evolution/proposals/{id}:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: string}}
+    get:
+      tags: [Evolution]
+      operationId: getEvolutionProposal
+      summary: Read proposal content and validation
+      description: See docs/api/evolution.md for access, first-release replay restrictions and deployment requirements.
+      responses:
+        "200":
+          description: Successful operation
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/OpenObject"}
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: Unsupported scope, disabled L3, stale baseline or conflicting state
+  /api/evolution/proposals/{id}/replays/{rid}/compare:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: string}}
+      - {name: rid, in: path, required: true, schema: {type: string}}
+    get:
+      tags: [Evolution]
+      operationId: compareEvolutionReplay
+      summary: Compare source and replay nodes
+      description: See docs/api/evolution.md for access, first-release replay restrictions and deployment requirements.
+      responses:
+        "200":
+          description: Successful operation
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/OpenObject"}
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: Unsupported scope, disabled L3, stale baseline or conflicting state
+  /api/evolution/proposals/{id}/approve:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: string}}
+    post:
+      tags: [Evolution]
+      operationId: approveEvolutionProposal
+      summary: Start a private project trial or release a candidate
+      description: See docs/api/evolution.md for access, first-release replay restrictions and deployment requirements.
+      requestBody:
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/OpenObject"}
+      responses:
+        "200":
+          description: Successful operation
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/OpenObject"}
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: Unsupported scope, disabled L3, stale baseline or conflicting state
+  /api/evolution/proposals/{id}/canary/traffic:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: string}}
+    post:
+      tags: [Evolution]
+      operationId: adjustEvolutionTraffic
+      summary: Adjust the project trial traffic share
+      description: See docs/api/evolution.md for access, first-release replay restrictions and deployment requirements.
+      requestBody:
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/OpenObject"}
+      responses:
+        "200":
+          description: Successful operation
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/OpenObject"}
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: Unsupported scope, disabled L3, stale baseline or conflicting state
+  /api/evolution/proposals/{id}/reject:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: string}}
+    post:
+      tags: [Evolution]
+      operationId: rejectEvolutionProposal
+      summary: Reject a candidate or stop its trial
+      description: See docs/api/evolution.md for access, first-release replay restrictions and deployment requirements.
+      requestBody:
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/OpenObject"}
+      responses:
+        "200":
+          description: Successful operation
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/OpenObject"}
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: Unsupported scope, disabled L3, stale baseline or conflicting state
+  /api/evolution/queue/{id}/start:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: string}}
+    post:
+      tags: [Evolution]
+      operationId: startEvolutionQueueItem
+      summary: Generate a queued improvement using the latest asset
+      description: See docs/api/evolution.md for access, first-release replay restrictions and deployment requirements.
+      requestBody:
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/OpenObject"}
+      responses:
+        "200":
+          description: Successful operation
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/OpenObject"}
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: Unsupported scope, disabled L3, stale baseline or conflicting state
+  /api/evolution/queue/{id}/reject:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: string}}
+    post:
+      tags: [Evolution]
+      operationId: rejectEvolutionQueueItem
+      summary: Cancel a queued improvement
+      description: See docs/api/evolution.md for access, first-release replay restrictions and deployment requirements.
+      requestBody:
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/OpenObject"}
+      responses:
+        "200":
+          description: Successful operation
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/OpenObject"}
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: Unsupported scope, disabled L3, stale baseline or conflicting state
+  /api/evolution/policies:
+    parameters:
+      - {name: projectId, in: query, required: true, schema: {type: string}}
+    get:
+      tags: [Evolution]
+      operationId: listEvolutionPolicies
+      summary: List project evolution policies
+      description: See docs/api/evolution.md for access, first-release replay restrictions and deployment requirements.
+      responses:
+        "200":
+          description: Successful operation
+          content:
+            application/json:
+              schema: {type: array, items: {$ref: "#/components/schemas/OpenObject"}}
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: Unsupported scope, disabled L3, stale baseline or conflicting state
+  /api/evolution/policies/{kind}/{id}:
+    parameters:
+      - {name: kind, in: path, required: true, schema: {type: string, enum: [agent, rule]}}
+      - {name: id, in: path, required: true, schema: {type: string}}
+    put:
+      tags: [Evolution]
+      operationId: putEvolutionPolicy
+      summary: Set autonomy level; L3 requires deployment opt-in
+      description: See docs/api/evolution.md for access, first-release replay restrictions and deployment requirements.
+      requestBody:
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/OpenObject"}
+      responses:
+        "200":
+          description: Successful operation
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/OpenObject"}
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: Unsupported scope, disabled L3, stale baseline or conflicting state
+  /api/evolution/assets/{kind}/{id}/versions:
+    parameters:
+      - {name: kind, in: path, required: true, schema: {type: string, enum: [agent, rule]}}
+      - {name: id, in: path, required: true, schema: {type: string}}
+    get:
+      tags: [Evolution]
+      operationId: getEvolutionAssetVersions
+      summary: Read asset versions and live content
+      description: See docs/api/evolution.md for access, first-release replay restrictions and deployment requirements.
+      responses:
+        "200":
+          description: Successful operation
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/OpenObject"}
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: Unsupported scope, disabled L3, stale baseline or conflicting state
+  /api/evolution/assets/{kind}/{id}/rollback:
+    parameters:
+      - {name: kind, in: path, required: true, schema: {type: string, enum: [agent, rule]}}
+      - {name: id, in: path, required: true, schema: {type: string}}
+    post:
+      tags: [Evolution]
+      operationId: rollbackEvolutionAsset
+      summary: Manually restore an asset version
+      description: See docs/api/evolution.md for access, first-release replay restrictions and deployment requirements.
+      requestBody:
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/OpenObject"}
+      responses:
+        "200":
+          description: Successful operation
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/OpenObject"}
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: Unsupported scope, disabled L3, stale baseline or conflicting state
+  /api/evolution/samples:
+    parameters:
+      - {name: projectId, in: query, required: true, schema: {type: string}}
+    get:
+      tags: [Evolution]
+      operationId: listEvolutionSamples
+      summary: List project regression samples
+      description: See docs/api/evolution.md for access, first-release replay restrictions and deployment requirements.
+      responses:
+        "200":
+          description: Successful operation
+          content:
+            application/json:
+              schema: {type: array, items: {$ref: "#/components/schemas/OpenObject"}}
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: Unsupported scope, disabled L3, stale baseline or conflicting state
+  /api/runs/{id}/feedback:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: string}}
+    post:
+      tags: [Evolution]
+      operationId: createEvolutionFeedback
+      summary: Record run feedback
+      description: See docs/api/evolution.md for access, first-release replay restrictions and deployment requirements.
+      requestBody:
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/OpenObject"}
+      responses:
+        "201":
+          description: Successful operation
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/OpenObject"}
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: Unsupported scope, disabled L3, stale baseline or conflicting state
+  /api/runs/{id}/pin-sample:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: string}}
+    post:
+      tags: [Evolution]
+      operationId: pinEvolutionSample
+      summary: Pin a successful run as a regression sample
+      description: See docs/api/evolution.md for access, first-release replay restrictions and deployment requirements.
+      requestBody:
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/OpenObject"}
+      responses:
+        "201":
+          description: Successful operation
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/OpenObject"}
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: Unsupported scope, disabled L3, stale baseline or conflicting state
+    delete:
+      tags: [Evolution]
+      operationId: unpinEvolutionSample
+      summary: Remove a pinned regression sample
+      description: See docs/api/evolution.md for access, first-release replay restrictions and deployment requirements.
+      responses:
+        "200":
+          description: Successful operation
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/OpenObject"}
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: Unsupported scope, disabled L3, stale baseline or conflicting state
+  /api/runs/{id}/asset-pins:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: string}}
+    get:
+      tags: [Evolution]
+      operationId: getRunAssetPins
+      summary: Read asset hashes recorded at run start
+      description: See docs/api/evolution.md for access, first-release replay restrictions and deployment requirements.
+      responses:
+        "200":
+          description: Successful operation
+          content:
+            application/json:
+              schema: {type: array, items: {$ref: "#/components/schemas/OpenObject"}}
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: Unsupported scope, disabled L3, stale baseline or conflicting state
   /api/runs/{id}/wait:
     parameters:
       - {name: id, in: path, required: true, schema: {type: string}}
@@ -372,9 +856,24 @@ paths:
       tags: [Assistant]
       operationId: getAssistantSession
       summary: Load one assistant conversation
+      parameters:
+        - name: view
+          in: query
+          schema: {type: string, enum: [recent, transcript, activity, title]}
+          description: Omit for the complete stored conversation. Both recent (last 40 messages) and transcript (all messages) may return an activityRef in place of a large execution trace. Echo that reference when continuing the conversation. Use title for title metadata alone.
+        - name: index
+          in: query
+          schema: {type: integer, minimum: 0}
+          description: Stored message index for the activity view. Add messagesOffset to the position in a recent window.
+        - name: ref
+          in: query
+          schema: {type: string}
+          description: The activityRef returned for that message, required with view=activity.
       responses:
         "200":
-          description: Conversation including messages
+          description: Conversation, title metadata, or the requested execution trace
+        "409":
+          description: The referenced execution trace has changed
         "401":
           $ref: "#/components/responses/Unauthorized"
         "404":
@@ -2424,6 +2923,17 @@ paths:
           $ref: "#/components/responses/SkillhubUnavailable"
         "502":
           $ref: "#/components/responses/SkillhubUnavailable"
+  /api/knowledge/connectors:
+    get:
+      tags: [Assets]
+      operationId: listKnowledgeConnectors
+      summary: List the current user's personal knowledge connectors
+      description: Returns user-owned personal knowledge connectors (Obsidian, Notion, SiYuan, Feishu, WeKnora, MCP) with secrets redacted.
+      responses:
+        "200":
+          $ref: "#/components/responses/AssetList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
   /api/mcp-servers:
     get:
       tags: [Assets]
@@ -6233,6 +6743,8 @@ components:
       type: object
       additionalProperties: true
       properties:
+        projectId: {type: string, description: 'Project of the requirement; with issueNumber forms the <project key>-<number> key'}
+        issueNumber: {type: integer, description: 'Platform requirement number shown as <project key>-<number>'}
         mrs:
           type: array
           description: 'All associated MRs; singular mrUrl, mrIid and mrState remain primary-link compatibility fields'

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/repo"
 	"agentflow/internal/runeval"
 
 	"github.com/gin-gonic/gin"
@@ -147,6 +148,10 @@ func (h *runsHandlers) getRunEval(c *gin.Context) {
 		return
 	}
 	if rec, ok := h.repo.LatestRunEval(id); ok {
+		c.JSON(http.StatusOK, rec)
+		return
+	}
+	if rec, ok := h.repo.RunEval(repo.SOPDetectionEvalID(id)); ok && rec.Status != domain.RunEvalRunning {
 		c.JSON(http.StatusOK, rec)
 		return
 	}
@@ -380,8 +385,7 @@ func (h *runsHandlers) ensureProjectWorkflow(run domain.Run, projectID, workflow
 	wf.ProjectID = projectID
 	wf.Generic = false
 	wf.Shared = false
-	wf.Status = "draft"
-	wf.Revision = 0
+	wf.Status, wf.Version, wf.Revision = "draft", 1, 0
 	wf.CreatedAt, wf.UpdatedAt = time.Time{}, time.Time{}
 	if err := h.repo.PutWorkflow(wf); err != nil {
 		return domain.WorkflowDefinition{}, err

@@ -30,6 +30,63 @@ func BaselineAlignResolverAgent() domain.AgentDefinition {
 	}
 }
 
+func (r *CatalogRepo) evolutionAsset(tx *gorm.DB, kind, id string) (string, []byte, error) {
+	table := "agents"
+	if kind == domain.EvoAssetRule {
+		table = "rules"
+	} else if kind != domain.EvoAssetAgent {
+		return "", nil, errors.New("unsupported evolution asset")
+	}
+	var row struct{ Payload []byte }
+	if err := r.locking(tx.Table(table).Where("id = ?", id)).Take(&row).Error; err != nil {
+		return "", nil, err
+	}
+	if kind == domain.EvoAssetAgent {
+		var asset domain.AgentDefinition
+		if err := json.Unmarshal(row.Payload, &asset); err != nil {
+			return "", nil, err
+		}
+		return asset.Prompt, row.Payload, nil
+	}
+	var asset domain.RuleDefinition
+	if err := json.Unmarshal(row.Payload, &asset); err != nil {
+		return "", nil, err
+	}
+	return asset.Content, row.Payload, nil
+}
+
+func (r *CatalogRepo) writeEvolutionAsset(tx *gorm.DB, kind, id, content string, original []byte) error {
+	table := "agents"
+	var payload []byte
+	now := time.Now().UTC()
+	if kind == domain.EvoAssetAgent {
+		var asset domain.AgentDefinition
+		if err := json.Unmarshal(original, &asset); err != nil {
+			return err
+		}
+		asset.Prompt, asset.UpdatedAt = content, now
+		payload = mustJSON(asset)
+	} else if kind == domain.EvoAssetRule {
+		table = "rules"
+		var asset domain.RuleDefinition
+		if err := json.Unmarshal(original, &asset); err != nil {
+			return err
+		}
+		asset.Content, asset.UpdatedAt = content, now
+		payload = mustJSON(asset)
+	} else {
+		return errors.New("unsupported evolution asset")
+	}
+	result := tx.Table(table).Where("id = ? AND CAST(payload AS CHAR) = CAST(? AS CHAR)", id, string(original)).Updates(map[string]any{"payload": payload, "updated_at": timePtr(now)})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected != 1 {
+		return ErrEvoStale
+	}
+	return nil
+}
+
 // ---------- Agents ----------
 
 func (r *CatalogRepo) Agents() []domain.AgentDefinition {
@@ -203,6 +260,10 @@ func mcpDefinitionRow(v *domain.MCPServerDefinition) mcpServerRow {
 
 var ErrMCPServerChanged = errors.New("MCP 已被创建或更改，请刷新后重试")
 
+// ErrMCPImportDuplicateID is returned when a batch import contains two entries
+// that resolve to the same stored row (identical or collation-equivalent IDs).
+var ErrMCPImportDuplicateID = errors.New("导入批次中存在重复的 MCP id，请检查 id 大小写后重试")
+
 // MCPServerChange carries the stored definition used to authorize the write.
 // An empty Previous means the ID must be unused.
 type MCPServerChange struct {
@@ -214,12 +275,18 @@ type MCPServerChange struct {
 // An import either saves every definition or leaves the catalog untouched.
 func (r *CatalogRepo) SaveMCPServers(changes ...MCPServerChange) ([]domain.MCPServerDefinition, error) {
 	saved := make([]domain.MCPServerDefinition, 0, len(changes))
+	// writtenIDs tracks the canonical row IDs written so far in this transaction.
+	// A later entry whose DB lookup resolves to an already-written row is a
+	// duplicate regardless of how the application-level IDs compare textually
+	// (e.g. collation-equivalent non-ASCII strings like "Straße" / "STRASSE").
+	writtenIDs := make(map[string]struct{}, len(changes))
 	err := r.DB.Transaction(func(tx *gorm.DB) error {
 		for _, change := range changes {
-			v, err := r.saveMCPServer(tx, change)
+			v, err := r.saveMCPServer(tx, change, writtenIDs)
 			if err != nil {
 				return err
 			}
+			writtenIDs[v.ID] = struct{}{}
 			saved = append(saved, v)
 		}
 		return nil
@@ -230,7 +297,7 @@ func (r *CatalogRepo) SaveMCPServers(changes ...MCPServerChange) ([]domain.MCPSe
 	return saved, nil
 }
 
-func (r *CatalogRepo) saveMCPServer(tx *gorm.DB, change MCPServerChange) (domain.MCPServerDefinition, error) {
+func (r *CatalogRepo) saveMCPServer(tx *gorm.DB, change MCPServerChange, writtenIDs map[string]struct{}) (domain.MCPServerDefinition, error) {
 	v := change.Definition
 	v.Scope = strings.TrimSpace(v.Scope)
 	var row mcpServerRow
@@ -243,6 +310,12 @@ func (r *CatalogRepo) saveMCPServer(tx *gorm.DB, change MCPServerChange) (domain
 	case err != nil:
 		return v, err
 	default:
+		// The DB found a row for this ID (possibly via a collation-equivalent
+		// match). If this transaction already wrote that row, the batch contains
+		// duplicate IDs that the application-level ToLower check could not catch.
+		if _, dup := writtenIDs[row.ID]; dup {
+			return v, ErrMCPImportDuplicateID
+		}
 		var current domain.MCPServerDefinition
 		if err := json.Unmarshal(row.Payload, &current); err != nil {
 			return v, err
@@ -560,6 +633,14 @@ func workflowNeedsPublish(v domain.WorkflowDefinition) bool {
 	return v.Status != "published" || workflowPublishedRevision(v) != v.Revision
 }
 
+func nextWorkflowVersion(v domain.WorkflowDefinition) int {
+	// Older evaluation copies can carry the source version before their first publication.
+	if v.Version < 1 || workflowPublishedRevision(v) == 0 {
+		return 1
+	}
+	return v.Version + 1
+}
+
 // PublishWorkflow is idempotent until the saved definition changes.
 func (r *CatalogRepo) PublishWorkflow(id string) (domain.WorkflowDefinition, error) {
 	var published domain.WorkflowDefinition
@@ -585,8 +666,8 @@ func (r *CatalogRepo) publishStoredWorkflow(id string) (domain.WorkflowDefinitio
 	if !workflowNeedsPublish(v) {
 		return v, nil
 	}
+	v.Version = nextWorkflowVersion(v)
 	v.Status = "published"
-	v.Version++
 	if err := r.putWorkflow(v, true); err != nil {
 		return domain.WorkflowDefinition{}, err
 	}
@@ -599,6 +680,9 @@ func (r *CatalogRepo) putWorkflow(v domain.WorkflowDefinition, publishing bool) 
 		return errors.New("workflow id and name are required")
 	}
 	if err := domain.ValidateWorkflowPreparation(v); err != nil {
+		return err
+	}
+	if err := domain.ValidateWorkflowKnowledge(v); err != nil {
 		return err
 	}
 	if err := domain.ValidateWorkflowMetricStages(v); err != nil {

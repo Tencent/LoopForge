@@ -182,6 +182,7 @@ func (e *Engine) acquireRunEnvironment(ctx context.Context, run domain.Run, prof
 		}
 		profile, resources = spec.Profile, sandboxResourcesFromSnapshot(spec)
 	}
+	ctx = runtime.WithPrivilegedSandboxSetting(ctx, e.repo.PlatformRunnerPrivilegedSandbox)
 	sandbox, err := e.sandboxes.AcquireRunIn(ctx, run.ID, workspaceRunID(current), profile, requirements, credentials, resources)
 	if err != nil {
 		return nil, false, err
@@ -214,20 +215,25 @@ func (e *Engine) acquireRunEnvironment(ctx context.Context, run domain.Run, prof
 func (e *Engine) resolveRunCredentials(run domain.Run) runtime.RunCredentials {
 	userID := run.ExecutionContext.ResponsibleUserID
 	credentials := runtime.RunCredentials{
-		CodeBuddy:          resolveCodeBuddyCredential(e.repo, userID),
-		GitHTTPCredentials: e.repo.GitHTTPCredentialSecrets(context.Background(), userID),
+		CodeBuddy: resolveCodeBuddyCredential(e.repo, userID),
 	}
-	credentials.Extra = runtime.ExtraRunCredentials(userID)
-	credentials.GitSSHKeys = e.repo.GitSSHKeysForRemotes(userID, sshRepositoryURLs(run.RepositoryContexts()))
-	identity := resolveGitIdentity(e.repo, userID)
-	credentials.GitUserName = identity.name
-	credentials.GitUserEmail = identity.email
 	if user, ok := e.repo.User(userID); ok {
 		credentials.Codex = runtime.ProviderCredential{APIKey: user.CodexAPIKey, BaseURL: user.CodexBaseURL}
 		credentials.ClaudeCode = runtime.ProviderCredential{APIKey: user.ClaudeCodeAPIKey, BaseURL: user.ClaudeCodeBaseURL}
 		credentials.AgentCLI = runtime.AgentCLIUserCredentials(user)
 	}
-	scriptAssets, _, _ := runtime.PrepareMCPServers(e.resolveScriptMCPAssets(run.ExecutionContext.ProjectID, userID), runtime.MCPTarget{
+	// Replay only receives the model credentials required to produce output.
+	// Do not resolve deployment extras, Git credentials or project/personal MCPs.
+	if run.ExecutionContext.IsEvolutionReplay() {
+		return credentials
+	}
+	credentials.GitHTTPCredentials = e.repo.GitHTTPCredentialSecrets(context.Background(), userID)
+	credentials.Extra = runtime.ExtraRunCredentials(userID)
+	credentials.GitSSHKeys = e.repo.GitSSHKeysForRemotes(userID, sshRepositoryURLs(run.RepositoryContexts()))
+	identity := resolveGitIdentity(e.repo, userID)
+	credentials.GitUserName = identity.name
+	credentials.GitUserEmail = identity.email
+	scriptAssets, _, _ := runtime.PrepareMCPServers(e.resolveRunScriptMCPAssets(run), runtime.MCPTarget{
 		GitHTTPCredentials: credentials.GitHTTPCredentials,
 		ExtraCredentials:   credentials.Extra,
 	})

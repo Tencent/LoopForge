@@ -17,10 +17,18 @@ function assetMatchesQuery(a,query){const q=String(query||'').trim().toLowerCase
 function assetFilteredItems(){return assetScopeItems(state[assetScopeKey(state.assetType)]).filter(a=>assetMatchesQuery(a,state.assetQuery))}
 // Owned assets win over a same-id shared copy so the editable one opens.
 function assetFindVisible(id){if(!id)return null;const owned=assetScopeItems('project').find(x=>x.id===id);if(owned)return {asset:owned,scope:'project'};const shared=assetScopeItems('shared').find(x=>x.id===id);return shared?{asset:shared,scope:'shared'}:null}
-function assetProjectName(a){return (state.data.projects||[]).find(p=>p.id===a?.projectId)?.name||a?.projectId||'平台'}
+// Platform-owned assets (projectId "platform", e.g. generic-docker) have no
+// project entry; they read as 平台 rather than the raw id.
+function assetOwnerProjectName(a){return (state.data.projects||[]).find(p=>p.id===a?.projectId)?.name||(a?.projectId&&a.projectId!=='platform'?a.projectId:'')}
+function assetProjectName(a){return assetOwnerProjectName(a)||'平台'}
+// Names people typed stay as typed in English mode (data-i18n-skip): even a
+// whole-string dictionary hit would rename a project called 「测试」 to Testing.
+// Only the 平台 fallback is product copy and still translates.
+function assetProjectNameHTML(a){const name=assetOwnerProjectName(a);return name?`<span data-i18n-skip>${escapeHTML(name)}</span>`:'平台'}
+function assetUserDataAttr(value){return value?' data-i18n-skip':''}
 function assetIsBuiltin(a,type=state.assetType){return type==='sandboxes'&&a?.id==='generic-docker'}
 function assetStatusHTML(a){
-  if(!catalogOwned(a.projectId))return `<span class="asset-status is-from"><i></i>来自 ${escapeHTML(assetProjectName(a))}</span>`;
+  if(!catalogOwned(a.projectId))return `<span class="asset-status is-from"><i></i>来自 ${assetProjectNameHTML(a)}</span>`;
   return `<span class="asset-status ${a.shared?'is-on':''}"><i></i>${a.shared?'已共享':'未共享'}</span>`;
 }
 function assetMetaHTML(a){
@@ -33,19 +41,20 @@ function assetMetaHTML(a){
   }
   if(state.assetType==='sandboxes'){
     const driver=sandboxDriverOption(a.driver);meta.push(item('server',sandboxDriverLabel(driver)));
-    if(driver==='docker'&&a.dockerfile?.content)meta.push(item('layers',`Dockerfile ${a.dockerfile.content.trimEnd().split('\n').length} 行`));
+    if(driver==='docker'&&a.dockerfile?.content){const lines=a.dockerfile.content.trimEnd().split('\n').length;meta.push(item('layers',lfT(`Dockerfile ${lines} 行`,`Dockerfile · ${lines} ${lines===1?'line':'lines'}`)))}
   }
   const refs=assetReferenceNames(a).length;
-  meta.push(item(assetRefIconName(),refs?`${refs} 个${assetRefKindLabel()}引用`:'未被引用'));
+  meta.push(item(assetRefIconName(),refs?lfT(`${refs} 个${assetRefKindLabel()}引用`,`Used by ${refs} ${assetRefKindLabelEn(refs)}`):'未被引用'));
   return meta.join('');
 }
 function assetCardHTML(a){
   const readonly=!catalogOwned(a.projectId);const go=readonly?'查看':'编辑';
-  return `<article class="asset-card" role="link" tabindex="0" data-asset-id="${escapeHTML(a.id)}" aria-label="${go}${escapeHTML(assetKindLabel())}「${escapeHTML(a.name||a.id)}」"><div class="asset-card-top"><span class="asset-tile">${huiIcon(assetIconName())}</span><div class="asset-card-name"><h3>${escapeHTML(a.name||a.id)}</h3><code class="asset-mono">${escapeHTML(a.id)}</code></div></div><p class="asset-card-desc">${escapeHTML(a.description||'暂无说明')}</p><div class="asset-meta">${assetMetaHTML(a)}</div><div class="asset-card-foot">${assetStatusHTML(a)}<span class="asset-card-go">${go}${huiIcon('chevron-right')}</span></div></article>`;
+  const name=a.name||a.id,label=lfT(`${go}${assetKindLabel()}「${name}」`,`${readonly?'View':'Edit'} ${assetKindLabelEn()} "${name}"`);
+  return `<article class="asset-card" role="link" tabindex="0" data-asset-id="${escapeHTML(a.id)}" aria-label="${escapeHTML(label)}" data-i18n-data-attrs="aria-label"><div class="asset-card-top"><span class="asset-tile">${huiIcon(assetIconName())}</span><div class="asset-card-name"><h3 data-i18n-skip>${escapeHTML(name)}</h3><code class="asset-mono">${escapeHTML(a.id)}</code></div></div><p class="asset-card-desc"${assetUserDataAttr(a.description)}>${escapeHTML(a.description||'暂无说明')}</p><div class="asset-meta">${assetMetaHTML(a)}</div><div class="asset-card-foot">${assetStatusHTML(a)}<span class="asset-card-go">${go}${huiIcon('chevron-right')}</span></div></article>`;
 }
 function assetGridEmptyHTML(){
   const kind=assetKindLabel(),copy=assetPageCopy();
-  if(String(state.assetQuery||'').trim())return `<div class="asset-empty"><b>没有匹配「${escapeHTML(state.assetQuery.trim())}」的${escapeHTML(kind)}</b><p>换个关键词试试。</p></div>`;
+  if(String(state.assetQuery||'').trim())return `<div class="asset-empty"><b data-i18n-data>${escapeHTML(lfT(`没有匹配「${state.assetQuery.trim()}」的${kind}`,`No ${assetKindLabelEn()} matches "${state.assetQuery.trim()}"`))}</b><p>换个关键词试试。</p></div>`;
   if(state[assetScopeKey(state.assetType)]==='shared'){const hint=['rules','skills'].includes(state.assetType)?'请在资产所属项目中共享，或共享一个引用它的角色。':'请在沙箱所属项目中共享。';return `<div class="asset-empty"><b>其他项目还没有共享${escapeHTML(kind)}</b><p>${hint}</p></div>`}
   return `<div class="asset-empty"><b>当前项目还没有${/^[A-Za-z]/.test(kind)?' ':''}${escapeHTML(kind)}</b><p>${assetEmptyHint()}</p><button type="button" class="button primary" data-empty-new>${huiIcon('plus')}${escapeHTML(copy.create)}</button></div>`;
 }
@@ -53,7 +62,7 @@ function renderAssetGrid(){
   const list=$('#assetList');if(!list)return;
   const scope=state[assetScopeKey(state.assetType)];
   const items=assetFilteredItems();
-  const count=$('#assetCount');if(count)count.innerHTML=`${scope==='shared'?'共享':'本项目'}${escapeHTML(assetKindLabel())}<b>${items.length}</b>`;
+  const count=$('#assetCount');if(count)count.innerHTML=`${escapeHTML(lfT(`${scope==='shared'?'共享':'本项目'}${assetKindLabel()}`,scope==='shared'?`Shared ${assetKindLabelEn(true)}`:`${assetKindLabelEn(true).replace(/^./,c=>c.toUpperCase())} in this project`))}<b>${items.length}</b>`;
   list.innerHTML=items.map(assetCardHTML).join('')||assetGridEmptyHTML();
   const emptyAction=list.querySelector('[data-empty-new]');
   if($('#newAsset'))$('#newAsset').hidden=scope!=='project'||!!emptyAction;
@@ -100,7 +109,7 @@ function assetCurrent(){
 }
 function assetDetailHeadHTML(a,{creating=false,dirty=false}={}){
   const kind=assetKindLabel(),copy=assetPageCopy(),readonly=!creating&&!catalogOwned(a.projectId);
-  const badge=creating?'':readonly?`<span class="asset-badge is-from">来自 ${escapeHTML(assetProjectName(a))}</span>`:`<span class="asset-badge ${a.shared?'is-on':''}">${a.shared?'已共享':'未共享'}</span>`;
+  const badge=creating?'':readonly?`<span class="asset-badge is-from">来自 ${assetProjectNameHTML(a)}</span>`:`<span class="asset-badge ${a.shared?'is-on':''}">${a.shared?'已共享':'未共享'}</span>`;
   const title=creating?`新建${kind}`:(a.name||a.id);
   const desc=creating?`填写标识和名称后创建${state.assetType==='skills'?'，创建后即可上传文件':''}。`:(a.description||'暂无说明');
   let actions;
@@ -111,15 +120,15 @@ function assetDetailHeadHTML(a,{creating=false,dirty=false}={}){
     actions=`<span class="asset-dirty" data-asset-dirty ${dirty?'':'hidden'}><i></i>未保存</span>`+
       `<button type="button" class="button" data-asset-share>${huiIcon(a.shared?'close':'arrow-up')}${a.shared?'取消共享':'共享给其他项目'}</button>`+
       `<div class="asset-more"><button type="button" class="button hui-icon-button" id="assetMoreBtn" aria-haspopup="menu" aria-expanded="false" aria-controls="assetMoreMenu" aria-label="更多操作" title="更多操作">${huiIcon('more-horizontal')}</button>`+
-      `<div id="assetMoreMenu" class="hui-menu asset-menu" role="menu" inert><button type="button" role="menuitem" class="hui-menu-item is-danger" data-asset-delete ${blocked?'disabled aria-disabled="true"':''}>${huiIcon('trash')}<span class="hui-menu-label">删除${escapeHTML(kind)}</span></button>${blocked?`<p class="asset-menu-reason" data-asset-delete-reason>${escapeHTML(blocked)}</p>`:''}</div></div>`+
+      `<div id="assetMoreMenu" class="hui-menu asset-menu" role="menu" inert><button type="button" role="menuitem" class="hui-menu-item is-danger" data-asset-delete ${blocked?'disabled aria-disabled="true"':''}>${huiIcon('trash')}<span class="hui-menu-label">删除${escapeHTML(kind)}</span></button>${blocked?`<p class="asset-menu-reason" data-asset-delete-reason data-i18n-data>${escapeHTML(blocked)}</p>`:''}</div></div>`+
       `<button type="submit" form="assetForm" class="button primary" data-asset-save>${huiIcon('save')}保存修改</button>`;
   }
-  return `<div class="asset-dtitle"><button type="button" class="button hui-icon-button asset-back" data-asset-back aria-label="返回${escapeHTML(copy.page)}" title="返回${escapeHTML(copy.page)}">${huiIcon('arrow-left')}</button><div class="asset-dtitle-text"><h1><span class="asset-dname">${escapeHTML(title)}</span>${badge}</h1><p>${escapeHTML(desc)}</p></div></div><div class="asset-acts">${actions}</div>`;
+  return `<div class="asset-dtitle"><button type="button" class="button hui-icon-button asset-back" data-asset-back aria-label="返回${escapeHTML(copy.page)}" title="返回${escapeHTML(copy.page)}">${huiIcon('arrow-left')}</button><div class="asset-dtitle-text"><h1><span class="asset-dname"${creating?'':' data-i18n-skip'}>${escapeHTML(title)}</span>${badge}</h1><p${creating?'':assetUserDataAttr(a.description)}>${escapeHTML(desc)}</p></div></div><div class="asset-acts">${actions}</div>`;
 }
 function renderAssetDetailHead(a){
   const creating=state.selectedAsset==='__new__',copy=assetPageCopy();
   const crumbs=$('#assetCrumbs');
-  if(crumbs)crumbs.innerHTML=`<a href="${assetViewHash(state.assetType)}" data-asset-back>${escapeHTML(copy.crumb||`${copy.page} · ${copy.tab}`)}</a>${huiIcon('chevron-right')}<span class="is-current">${escapeHTML(creating?`新建${assetKindLabel()}`:(a.name||a.id))}</span>`;
+  if(crumbs)crumbs.innerHTML=`<a href="${assetViewHash(state.assetType)}" data-asset-back>${escapeHTML(copy.crumb||`${copy.page} · ${copy.tab}`)}</a>${huiIcon('chevron-right')}<span class="is-current"${creating?'':' data-i18n-skip'}>${escapeHTML(creating?`新建${assetKindLabel()}`:(a.name||a.id))}</span>`;
   const head=$('#assetDetailHead');if(!head)return;
   closeAssetMenu();
   head.innerHTML=assetDetailHeadHTML(a,{creating,dirty:!!state.assetDirty});
@@ -155,7 +164,7 @@ function updateAssetStuck(){
 }
 function assetRefsCardHTML(a){
   const refs=assetReferenceNames(a),kind=assetRefKindLabel();
-  return `<h4>被引用<span class="asset-side-count">${refs.length}</span></h4><ul class="asset-refs">${refs.length?refs.map(name=>`<li>${huiIcon(assetRefIconName())}<span>${escapeHTML(name)}</span></li>`).join(''):`<li class="is-none">还没有${kind}引用这个${escapeHTML(assetKindLabel())}</li>`}</ul>`;
+  return `<h4>被引用<span class="asset-side-count">${refs.length}</span></h4><ul class="asset-refs">${refs.length?refs.map(name=>`<li>${huiIcon(assetRefIconName())}<span data-i18n-skip>${escapeHTML(name)}</span></li>`).join(''):`<li class="is-none">还没有${kind}引用这个${escapeHTML(assetKindLabel())}</li>`}</ul>`;
 }
 function assetSkillSource(a){const s=a?.source;return state.assetType==='skills'&&s&&s.provider==='skillhub'?s:null}
 function assetSkillLatest(src){return typeof skillhubLatestFor==='function'?skillhubLatestFor(src):''}
@@ -172,7 +181,7 @@ function assetSkillSourceActionHTML(a){
 }
 function assetOverviewCardHTML(a){
   const readonly=!catalogOwned(a.projectId);
-  return `<h4>概览</h4><dl class="asset-kv"><dt>归属</dt><dd>${readonly?escapeHTML(assetProjectName(a)):'本项目'}</dd><dt>共享</dt><dd>${readonly?'其他项目共享':a.shared?'已共享':'未共享'}</dd>${assetIsBuiltin(a)?'<dt>类型</dt><dd>内置</dd>':''}${assetSkillSourceRowsHTML(a)}</dl>${assetSkillSourceActionHTML(a)}`;
+  return `<h4>概览</h4><dl class="asset-kv"><dt>归属</dt><dd>${readonly?assetProjectNameHTML(a):'本项目'}</dd><dt>共享</dt><dd>${readonly?'其他项目共享':a.shared?'已共享':'未共享'}</dd>${assetIsBuiltin(a)?'<dt>类型</dt><dd>内置</dd>':''}${assetSkillSourceRowsHTML(a)}</dl>${assetSkillSourceActionHTML(a)}`;
 }
 function bindAssetSourceActions(a){
   const card=$('#assetForm [data-asset-overview]');if(!card||!assetSkillSource(a))return;
@@ -202,7 +211,7 @@ function scrollAssetTop(){
 }
 async function confirmAssetLeave(){
   if(!state.selectedAsset||!state.assetDirty||!isProjectSharedAsset(activeViewName()))return true;
-  const ok=await afConfirm({title:'未保存的修改',message:`当前${assetKindLabel()}有未保存修改，离开将放弃这些修改。继续？`,confirmText:'放弃并离开',danger:true});
+  const ok=await afConfirm({title:lfT('未保存的修改','Unsaved changes'),message:lfT(`当前${assetKindLabel()}有未保存修改，离开将放弃这些修改。继续？`,`This ${assetKindLabelEn()} has unsaved changes. Leaving discards them. Continue?`),confirmText:'放弃并离开',danger:true});
   if(ok)state.assetDirty=false;
   return ok;
 }
@@ -259,7 +268,9 @@ async function toggleAssetShare(id){
 }
 function assetEmptyHint(){return ({rules:'规则是写给 Agent 的行为约束，例如编码规范、禁止事项。建好后在「角色定义」里绑定到角色。',skills:'技能是 Agent 可按需加载的说明和附加文件，例如某个框架的操作手册。建好后在「角色定义」里绑定到角色。',sandboxes:'沙箱决定 LOOP 节点和对话工作区在什么隔离环境里执行：docker 沙箱自带 Dockerfile，native 沙箱使用执行机器上已安装的工具。建好后在流程设置里选用；也可以直接用「共享」里的现成配置。'})[state.assetType]||''}
 function assetKindLabel(){return ({rules:'规则',skills:'技能',sandboxes:'沙箱'})[state.assetType]||'资产'}
+function assetKindLabelEn(plural=false){return (plural?{rules:'rules',skills:'skills',sandboxes:'sandboxes'}:{rules:'rule',skills:'skill',sandboxes:'sandbox'})[state.assetType]||(plural?'assets':'asset')}
 function assetRefKindLabel(){return ({rules:'角色',skills:'角色',sandboxes:'流程'})[state.assetType]||'引用'}
+function assetRefKindLabelEn(n){return n===1?(state.assetType==='sandboxes'?'LOOP':'role'):(state.assetType==='sandboxes'?'LOOPs':'roles')}
 function assetReferenceNames(a){
   if(!a?.id)return [];
   if(state.assetType==='rules')return (state.data.agents||[]).filter(x=>(x.rules||[]).includes(a.id)).map(x=>x.name||x.id);
@@ -270,9 +281,9 @@ function assetReferenceNames(a){
 function assetDeleteBlocked(a){
   if(!a?.id)return '无法删除';
   if(state.assetType==='sandboxes'&&a.id==='generic-docker')return `内置沙箱 ${a.id} 不能删除`;
-  if(a.shared)return `共享状态的${assetKindLabel()}不能删除，请先取消共享`;
+  if(a.shared)return lfT(`共享状态的${assetKindLabel()}不能删除，请先取消共享`,`A shared ${assetKindLabelEn()} can't be deleted. Stop sharing it first`);
   const refs=assetReferenceNames(a);
-  if(refs.length)return `${assetKindLabel()}仍被 ${refs.length} 个${assetRefKindLabel()}引用（${refs.join('、')}），请先解除引用`;
+  if(refs.length)return lfT(`${assetKindLabel()}仍被 ${refs.length} 个${assetRefKindLabel()}引用（${refs.join('、')}），请先解除引用`,`This ${assetKindLabelEn()} is still used by ${refs.length} ${assetRefKindLabelEn(refs.length)} (${refs.join(', ')}). Remove those references first`);
   return '';
 }
 async function deleteAsset(id){
@@ -282,13 +293,13 @@ async function deleteAsset(id){
   const blocked=assetDeleteBlocked(item);
   if(blocked)return toast(blocked);
   const label=assetKindLabel();
-  if(!await afConfirm({title:`删除${label}确认`,message:`确认删除${label}「${item.name}」？此操作不可恢复。`,confirmText:'确认删除',danger:true}))return;
+  if(!await afConfirm({title:lfT(`删除${label}确认`,`Delete ${assetKindLabelEn()}`),message:lfT(`确认删除${label}「${item.name}」？此操作不可恢复。`,`Delete ${assetKindLabelEn()} "${item.name}"? This can't be undone.`),messageData:true,confirmText:'确认删除',danger:true}))return;
   try{
     await api(`/api/${state.assetType}?id=${encodeURIComponent(id)}`,{method:'DELETE'});
     state.data[state.assetType]=(state.data[state.assetType]||[]).filter(x=>x.id!==id);
     if(state.selectedAsset===id)await closeAssetDetail({force:true});
     else renderAssets();
-    toast(`${label}已删除`);
+    toast(lfT(`${label}已删除`,`${assetKindLabelEn().replace(/^./,c=>c.toUpperCase())} deleted`));
   }catch(e){toast(e.message||'删除失败')}
 }
 function assetKind(){return assetKindLabel()}
@@ -311,23 +322,41 @@ function syncSandboxDriverFields(select){
 }
 function resolveAssetSaveIdentity(items,selectedID,requestedID){if(selectedID!=='__new__'){const existing=(items||[]).find(item=>item.id===selectedID);return existing?{id:existing.id,existing,created:false}:{error:'选中的资产已不存在，请刷新后重试'}}if((items||[]).some(item=>item.id===requestedID))return {error:'该标识已存在，请换一个标识，或回到列表打开已有资产修改'};return {id:requestedID,existing:null,created:true}}
 function assetPaneTabs(type=state.assetType){return ({rules:[['edit','编辑'],['preview','预览']],skills:[['files','文件']],sandboxes:[['setup','配置']]})[type]||[['edit','编辑']]}
-function assetPaneHint(type=state.assetType){return ({rules:'支持 Markdown',skills:'每次上传都会完整替换现有文件',sandboxes:'隔离方式决定沙箱在哪里、怎样执行'})[type]||''}
-function assetFieldLabel(text,help,forId=''){return `<div class="asset-field-label">${forId?`<label for="${forId}">${escapeHTML(text)}</label>`:`<span>${escapeHTML(text)}</span>`}${help?`<button type="button" class="field-help" aria-label="${escapeHTML(text)}说明" title="${escapeHTML(help)}">?</button>`:''}</div>`}
+function assetPaneHint(type=state.assetType){return ({rules:lfT('支持 Markdown','Markdown supported'),skills:'每次上传都会完整替换现有文件',sandboxes:'隔离方式决定沙箱在哪里、怎样执行'})[type]||''}
+function assetFieldLabel(text,help,forId=''){return `<div class="asset-field-label">${forId?`<label for="${forId}">${escapeHTML(text)}</label>`:`<span>${escapeHTML(text)}</span>`}${help?`<button type="button" class="field-help" aria-label="${escapeHTML(/说明$/.test(text)?text:`${text}说明`)}" title="${escapeHTML(help)}">?</button>`:''}</div>`}
 function sandboxSetupHTML(a){
   const driver=sandboxDriverOption(a.driver);
   const privilegeHelp=lfT('执行机器须允许特权沙箱。容器内进程可访问宿主机设备，并可能控制执行机器。','The execution machine must allow privileged sandboxes. Processes in the container can access host devices and may take control of the machine.');
   return `<div class="sandbox-setup">
-  ${assetFieldLabel('隔离方式','Docker 在 OCI 容器里执行；系统轻量隔离按执行机器的系统自动选择 seatbelt（macOS）或 bwrap（Linux），可以在用户的执行机器、云端 Runner 或平台本机上运行。')}
-  <select name="driver" class="asset-select" aria-label="隔离方式"><option value="docker" ${driver==='docker'?'selected':''}>${sandboxDriverLabel('docker')}</option><option value="native" ${driver==='native'?'selected':''}>${sandboxDriverLabel('native')}</option></select>
-  ${assetFieldLabel('工具链说明','Agent 自动选择沙箱时参考这些工具和版本。','assetSandboxToolchain')}
-  <input id="assetSandboxToolchain" name="toolchain" class="asset-input" maxlength="500" value="${escapeHTML(a.toolchain||'')}" placeholder="例如 Python 3.12、uv、PostgreSQL 客户端">
-  <div data-sandbox-drivers="docker">
-    ${assetFieldLabel('Dockerfile','保存在这个沙箱里。沙箱初始化时用它 docker build 出镜像；内容相同的沙箱共用同一个镜像。不要指向仓库目录或现成镜像名。','assetDockerfile')}
-    <textarea id="assetDockerfile" name="dockerfileContent" class="asset-editor" rows="14" spellcheck="false" placeholder="FROM node:22-bookworm-slim">${escapeHTML(a.dockerfile?.content||'')}</textarea>
-    ${assetFieldLabel('构建上下文文件','JSON 对象：键是构建上下文里的相对路径，值是文件内容，和 Dockerfile 一起保存，可在 Dockerfile 里 COPY。','assetDockerfileFiles')}
-    <textarea id="assetDockerfileFiles" name="dockerfileFiles" class="asset-editor is-short" rows="4" spellcheck="false" placeholder='{"packages.txt":"git\\ncurl"}'>${escapeHTML(JSON.stringify(a.dockerfile?.files||{},null,2))}</textarea>
+  <section class="sandbox-card">
+    <div class="sandbox-card-head">
+      <div><h3>运行环境与工具链</h3><p>选择隔离方式并说明沙箱预装的语言、工具与版本。</p></div>
+    </div>
+    <div class="sandbox-env-grid">
+      <div class="sandbox-field">
+        ${assetFieldLabel('隔离方式','Docker 在 OCI 容器里执行；系统轻量隔离按执行机器的系统自动选择 seatbelt（macOS）或 bwrap（Linux），可以在用户的执行机器、云端 Runner 或平台本机上运行。')}
+        <select name="driver" class="asset-select" aria-label="隔离方式"><option value="docker" ${driver==='docker'?'selected':''}>${sandboxDriverLabel('docker')}</option><option value="native" ${driver==='native'?'selected':''}>${sandboxDriverLabel('native')}</option></select>
+      </div>
+      <div class="sandbox-field">
+        ${assetFieldLabel('工具链说明','Agent 自动选择沙箱时参考这些工具和版本。','assetSandboxToolchain')}
+        <input id="assetSandboxToolchain" name="toolchain" class="asset-input" maxlength="500" value="${escapeHTML(a.toolchain||'')}" placeholder="例如 Python 3.12、uv、PostgreSQL 客户端">
+      </div>
+    </div>
+  </section>
+  <section class="sandbox-card" data-sandbox-drivers="docker">
+    <div class="sandbox-card-head">
+      <div><h3>容器构建与安全限制</h3><p>使用标准 Dockerfile 构建隔离镜像；内容相同的沙箱自动复用镜像缓存。</p></div>
+    </div>
+    <div class="sandbox-field">
+      ${assetFieldLabel('Dockerfile','保存在这个沙箱里。沙箱初始化时用它 docker build 出镜像；内容相同的沙箱共用同一个镜像。不要指向仓库目录或现成镜像名。','assetDockerfile')}
+      <textarea id="assetDockerfile" name="dockerfileContent" class="asset-editor is-dockerfile" rows="9" spellcheck="false" placeholder="FROM node:22-bookworm-slim">${escapeHTML(a.dockerfile?.content||'')}</textarea>
+    </div>
+    <div class="sandbox-field">
+      ${assetFieldLabel('构建上下文文件','JSON 对象：键是构建上下文里的相对路径，值是文件内容，和 Dockerfile 一起保存，可在 Dockerfile 里 COPY。','assetDockerfileFiles')}
+      <textarea id="assetDockerfileFiles" name="dockerfileFiles" class="asset-editor is-compact" rows="4" spellcheck="false" placeholder='{"packages.txt":"git\\ncurl"}'>${escapeHTML(JSON.stringify(a.dockerfile?.files||{},null,2))}</textarea>
+    </div>
     <div class="asset-switch-row">
-      <label for="assetReadOnlyRootFS"><b>容器根文件系统只读</b></label>
+      <label for="assetReadOnlyRootFS"><b>容器根文件系统只读</b><small>开启后系统目录只读、/tmp 使用内存盘，仅工作区 /workspace 可写；默认建议关闭。</small></label>
       <span class="asset-switch-controls">
         <button type="button" class="field-help" aria-label="容器根文件系统只读说明" title="开启后 /usr、/etc 等系统目录只读，/tmp 使用临时内存盘，缺少的 CLI 无法在容器内自动安装；工作区 /workspace 仍可写。默认建议关闭。">?</button>
         <input id="assetReadOnlyRootFS" name="readOnlyRootFS" type="checkbox" class="asset-switch" role="switch" ${a.readOnlyRootFS?'checked':''}>
@@ -335,31 +364,43 @@ function sandboxSetupHTML(a){
     </div>
     <details class="sandbox-advanced">
       <summary>${lfT('高级设置','Advanced settings')}</summary>
-      <div class="sandbox-resource-fields">
-        <div>
-          <label for="assetSandboxCPU" class="asset-field-label">CPU 上限（核）</label>
-          <input id="assetSandboxCPU" name="cpuCores" class="asset-input" type="number" inputmode="decimal" min="0.01" max="9223372036.854" step="0.001" aria-describedby="assetSandboxResourceHint" value="${a.cpuMillicores?a.cpuMillicores/1000:''}">
+      <div class="sandbox-advanced-body">
+        <div class="sandbox-resource-fields">
+          <div>
+            <label for="assetSandboxCPU" class="asset-field-label">CPU 上限（核）</label>
+            <input id="assetSandboxCPU" name="cpuCores" class="asset-input" type="number" inputmode="decimal" min="0.01" max="9223372036.854" step="0.001" aria-describedby="assetSandboxResourceHint" value="${a.cpuMillicores?a.cpuMillicores/1000:''}" placeholder="默认不限">
+          </div>
+          <div>
+            <label for="assetSandboxMemory" class="asset-field-label">内存上限（MiB）</label>
+            <input id="assetSandboxMemory" name="memoryMiB" class="asset-input" type="number" inputmode="numeric" min="6" max="8796093022207" step="1" aria-describedby="assetSandboxResourceHint" value="${escapeHTML(a.memoryMiB||'')}" placeholder="默认不限">
+          </div>
         </div>
-        <div>
-          <label for="assetSandboxMemory" class="asset-field-label">内存上限（MiB）</label>
-          <input id="assetSandboxMemory" name="memoryMiB" class="asset-input" type="number" inputmode="numeric" min="6" max="8796093022207" step="1" aria-describedby="assetSandboxResourceHint" value="${escapeHTML(a.memoryMiB||'')}">
+        <div id="assetSandboxResourceHint" class="asset-field-hint">留空使用执行机器配置。两处都配置上限时，较低值生效。</div>
+        <div class="asset-switch-row">
+          <label for="assetPrivileged"><b>${lfT('特权模式','Privileged mode')}</b><small>容器可访问宿主机设备，需执行机器开启特权许可。</small></label>
+          <span class="asset-switch-controls">
+            <button type="button" class="field-help" aria-label="${lfT('特权模式说明','About privileged mode')}" title="${escapeHTML(privilegeHelp)}">?</button>
+            <input id="assetPrivileged" name="privileged" type="checkbox" class="asset-switch" role="switch" ${a.privileged?'checked':''}>
+          </span>
         </div>
-      </div>
-      <div id="assetSandboxResourceHint" class="asset-field-hint">留空使用执行机器配置。两处都配置上限时，较低值生效。</div>
-      <div class="asset-switch-row">
-        <label for="assetPrivileged"><b>${lfT('特权模式','Privileged mode')}</b></label>
-        <span class="asset-switch-controls">
-          <button type="button" class="field-help" aria-label="${lfT('特权模式说明','About privileged mode')}" title="${escapeHTML(privilegeHelp)}">?</button>
-          <input id="assetPrivileged" name="privileged" type="checkbox" class="asset-switch" role="switch" ${a.privileged?'checked':''}>
-        </span>
       </div>
     </details>
-  </div>
-  <div data-sandbox-drivers="native">
-    <div class="asset-field-hint">系统轻量隔离直接使用执行机器上已安装的语言和工具，系统目录只读，只有工作区可写。需要的设置（如 JAVA_HOME、代理）写进下面的环境变量。仓库从执行机器的仓库缓存共享克隆，不重复下载。</div>
-  </div>
-  ${assetFieldLabel('环境变量','JSON 对象，叠加到沙箱基础环境并随资产保存；不要在这里保存凭证。平台凭证、HOME/TMPDIR 和遥测变量优先级更高。')}
-  <textarea name="environment" class="asset-editor is-env" rows="4" placeholder='{"NAME":"value"}'>${escapeHTML(JSON.stringify(a.environment||{},null,2))}</textarea>
+  </section>
+  <section class="sandbox-card sandbox-native-card" data-sandbox-drivers="native">
+    <div class="sandbox-native-callout">
+      <span class="sandbox-native-icon" aria-hidden="true">${huiIcon('server')}</span>
+      <div>
+        <b>系统轻量隔离</b>
+        <p>系统轻量隔离直接使用执行机器上已安装的语言和工具，系统目录只读，只有工作区可写。需要的设置（如 JAVA_HOME、代理）写进下面的环境变量。仓库从执行机器的仓库缓存共享克隆，不重复下载。</p>
+      </div>
+    </div>
+  </section>
+  <section class="sandbox-card">
+    <div class="sandbox-field">
+      ${assetFieldLabel('环境变量','JSON 对象，叠加到沙箱基础环境并随资产保存；不要在这里保存凭证。平台凭证、HOME/TMPDIR 和遥测变量优先级更高。','assetSandboxEnv')}
+      <textarea id="assetSandboxEnv" name="environment" class="asset-editor is-env" rows="4" spellcheck="false" placeholder='{"NAME":"value"}'>${escapeHTML(JSON.stringify(a.environment||{},null,2))}</textarea>
+    </div>
+  </section>
 </div>`}
 function assetMainPanesHTML(a,{creating,readonly}){
   const pane=(key,body)=>`<div class="asset-tabpanel" data-asset-pane="${key}" role="tabpanel">${body}</div>`;

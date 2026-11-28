@@ -585,6 +585,62 @@ describe("content and panels", () => {
     expect(screen.getByLabelText("会话产物")).toBeInTheDocument();
   });
 
+  test("scopes artifact knowledge reads to the selected run", () => {
+    const otherRunReads = [
+      {
+        id: "kr_other",
+        serverId: "srv",
+        tool: "search_knowledge",
+        status: "hit",
+        evidences: [{ id: "ev_other_1", title: "另一轮的文档.md", cited: true }],
+      },
+    ];
+    const artifact = {
+      id: "kb-art",
+      name: "报告.md",
+      kind: "code",
+      mimeType: "text/markdown",
+      content: "端口配置见 [[knowledge:ev_other_1]]。",
+      runId: "r-target",
+      nodeId: "n1",
+    };
+    const runs = [
+      { id: "r-target", nodes: { n1: { status: "succeeded" } } },
+      {
+        id: "r-other",
+        nodes: { n1: { status: "succeeded", knowledgeReads: otherRunReads } },
+      },
+    ];
+    const panel = (selected) => (
+      <div className="chat-shell">
+        <header className="conversation-header" />
+        <main className="conversation-main" />
+        <ArtifactPanel
+          artifacts={[artifact]}
+          runs={runs}
+          selected={selected}
+          setSelected={vi.fn()}
+          chat={chat}
+          onClose={vi.fn()}
+          open
+        />
+      </div>
+    );
+    const { container, rerender } = render(panel(artifact));
+    expect(container.textContent).toContain("端口配置见");
+    // The selected run has no reads for this node: never borrow another run's.
+    expect(screen.queryByText("产物引用来源")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /引用 \[1\] 另一轮的文档\.md/ }),
+    ).not.toBeInTheDocument();
+    // Without a runId the nodeId fallback keeps working.
+    rerender(panel({ ...artifact, runId: undefined }));
+    expect(screen.getByText("产物引用来源")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /引用 \[1\] 另一轮的文档\.md/ }),
+    ).toBeInTheDocument();
+  });
+
   test("loads repository choices and applies an import draft", async () => {
     const user = userEvent.setup();
     apiMock.mockResolvedValueOnce([
