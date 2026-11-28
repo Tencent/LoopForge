@@ -1399,7 +1399,17 @@ function obsDeliveryMRs(it){
 }
 // GitHub 的合并请求是 PR，编号写 #4；工蜂 / GitLab 是 MR，写 !3。后端把 GitHub 仓库存成
 // github:owner/repo（domain.ParseGongfengMRs），给人看时去掉这个内部前缀。
-function obsMRIsPR(mr){return String(mr?.project||'').startsWith('github:')||/\/pull\/\d+(?:[/?#]|$)/.test(String(mr?.url||''))}
+function obsMRIsPR(mr) {
+  if (String(mr?.project || '').startsWith('github:')) return true;
+  if (!mr?.url) return false;
+  try {
+    const url = new URL(mr.url, window.location.origin);
+    return (url.protocol === 'http:' || url.protocol === 'https:') &&
+      /\/pull\/\d+(?:\/|$)/i.test(url.pathname);
+  } catch {
+    return false;
+  }
+}
 function obsMRRefText(mr){
   const repo=String(mr?.project||'').replace(/^github:/,''),iid=Number(mr?.iid)||0;
   return [repo,iid?`${obsMRIsPR(mr)?'#':'!'}${iid}`:''].filter(Boolean).join(' ')||lfT('打开','Open');

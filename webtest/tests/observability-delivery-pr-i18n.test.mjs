@@ -26,7 +26,7 @@ const analytics = {
       lanes: [{ label: LOOP, started: true, status: 'succeeded' }] },
     { issueId: 'issue-3', projectId: 'project-1', issueNumber: 3, externalIid: 3, source: 'gongfeng', title: 'to_roman', workflowName: 'Fix', userId: 7,
       runStatus: 'succeeded', sopSucceeded: true, delivered: true, runCount: 2, tokens: 500, costCny: 1, costKnown: true,
-      mrs: [{ url: 'https://git.woa.com/team/shop/-/merge_requests/3', project: 'team/shop', iid: 3, state: 'merged' }] },
+      mrs: [{ url: 'https://git.example.test/team/shop/-/merge_requests/3', project: 'team/shop', iid: 3, state: 'merged' }] },
     { issueId: 'issue-4', projectId: 'project-1', issueNumber: 4, source: 'local', title: 'chat fix', directDelivery: true, userId: 7,
       runCount: 0, tokens: 10, costCny: 0, costKnown: true,
       // Older rows only carry the PR link fields.
@@ -56,7 +56,7 @@ test('delivery table, CSV and report write a GitHub PR as owner/repo #N and a �
   const app = await deliveryPage(t);
   assert.deepEqual(prCells(app), ['acme/shop #4 · 待合入', 'team/shop !3 · 已合入', '#7 · 待合入']);
   const links = [...app.document.querySelectorAll('#obsBody tr[data-edit-issue] td:nth-child(12) a')].map(a => a.getAttribute('href'));
-  assert.deepEqual(links, ['https://github.com/acme/shop/pull/4', 'https://git.woa.com/team/shop/-/merge_requests/3', 'https://github.com/acme/shop/pull/7']);
+  assert.deepEqual(links, ['https://github.com/acme/shop/pull/4', 'https://git.example.test/team/shop/-/merge_requests/3', 'https://github.com/acme/shop/pull/7']);
   const csv = app.evaluate('obsCsvContent(obsDeliveryTableDef(true).tables)');
   const report = app.evaluate('buildObsReportHTML()');
   for (const out of [csv, report]) {
@@ -128,4 +128,17 @@ test('Chinese 统计 → 交付 keeps its Chinese copy', async t => {
   assert.equal(row.cells[0].textContent, '工蜂 #3');
   assert.equal(row.cells[7].textContent, '2 次');
   assert.equal(row.cells[12].textContent, '已交付');
+});
+
+test('delivery references use the request path when an MR links back to a PR', async t => {
+  const app = await deliveryPage(t);
+  const cases = [
+    ['https://git.example.test/team/shop/-/merge_requests/3?back=/acme/shop/pull/4', 'team/shop !3'],
+    ['https://git.example.test/team/shop/-/merge_requests/3#/acme/shop/pull/4', 'team/shop !3'],
+    ['https://git.example.test/team/shop/pull/3?view=files', 'team/shop #3'],
+  ];
+  for (const [url, expected] of cases) {
+    const mr = { project: 'team/shop', iid: 3, url };
+    assert.equal(app.evaluate(`obsMRRefText(${JSON.stringify(mr)})`), expected);
+  }
 });
