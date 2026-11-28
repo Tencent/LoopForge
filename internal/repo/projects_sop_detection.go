@@ -15,7 +15,16 @@ func (r *ProjectsRepo) SOPDetectionProjects() ([]SOPDetectionProject, error) {
 	var rows []projectRow
 	// JSON true is returned as text on MySQL and an integer on SQLite.
 	enabled := r.sqlPayloadJSONText("sopDetection.enabled")
-	if err := r.DB.Select("id", "payload").Where(enabled+" = ? OR "+enabled+" = ?", "true", 1).Order("id").Find(&rows).Error; err != nil {
+	condition := enabled + " = ?"
+	args := []any{"true"}
+	if !r.isPostgres() {
+		// Postgres' #>> answers a JSON boolean with the text 'true' and has no
+		// integer form; binding an integer there fails, because the driver
+		// cannot encode an int into a text parameter.
+		condition += " OR " + enabled + " = ?"
+		args = append(args, 1)
+	}
+	if err := r.DB.Select("id", "payload").Where(condition, args...).Order("id").Find(&rows).Error; err != nil {
 		return nil, err
 	}
 	out := make([]SOPDetectionProject, 0, len(rows))

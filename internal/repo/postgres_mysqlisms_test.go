@@ -687,6 +687,37 @@ func TestPostgresScheduleExecutionSearchFindsTheErrorText(t *testing.T) {
 	}
 }
 
+// The SOP detection sweep asks the database for the projects that have SOP
+// detection enabled. MySQL answers a JSON boolean as the text 'true' and
+// sqlite as the integer 1, so the query binds both forms. Postgres' #>>
+// answers with the text 'true' and has no integer form, and binding an
+// integer there fails: the driver cannot encode an int into a text parameter.
+func TestPostgresSOPDetectionProjectsFindsTheEnabledProject(t *testing.T) {
+	store, _ := postgresFixtureStore(t)
+	if err := store.PutProject(domain.Project{ID: "pg-sop-project", Name: "PG SOP"}); err != nil {
+		t.Fatalf("put the project: %v", err)
+	}
+	if err := store.PutSOPDetection("pg-sop-project", domain.SOPDetectionConfig{Enabled: true, Model: "gpt"}); err != nil {
+		t.Fatalf("enable the SOP detection: %v", err)
+	}
+	if err := store.PutProject(domain.Project{ID: "pg-sop-off", Name: "PG SOP off"}); err != nil {
+		t.Fatalf("put the second project: %v", err)
+	}
+	if err := store.PutSOPDetection("pg-sop-off", domain.SOPDetectionConfig{Enabled: false}); err != nil {
+		t.Fatalf("disable the SOP detection: %v", err)
+	}
+	projects, err := store.ProjectsRepo.SOPDetectionProjects()
+	if err != nil {
+		t.Fatalf("list the SOP detection projects: %v", err)
+	}
+	if len(projects) != 1 || projects[0].ID != "pg-sop-project" {
+		t.Fatalf("the SOP detection projects = %+v, want only the enabled project", projects)
+	}
+	if projects[0].Config.Model != "gpt" {
+		t.Fatalf("the SOP detection config = %+v, want the stored one", projects[0].Config)
+	}
+}
+
 // postgresGenerationUpdatedAt reads the heartbeat of a generation.
 func postgresGenerationUpdatedAt(t *testing.T, store *Store, sessionID string) time.Time {
 	t.Helper()
