@@ -71,18 +71,18 @@
 .chat-shell.home-shell .home-welcome .home-welcome-title {
   position: relative;
   margin: 0;
-  color: var(--text);
+  color: var(--home-ink, var(--text));
   font-size: 36px;
-  font-weight: 600;
+  font-weight: 650;
   line-height: 1.2;
-  letter-spacing: -1px;
+  letter-spacing: -0.03em;
   white-space: nowrap;
 }
 
 .home-welcome-title-ink {
   display: block;
-  clip-path: inset(0 -1px);
-  animation: home-welcome-title-reveal calc(1120ms * var(--home-intro-tempo, .45)) calc(1480ms * var(--home-intro-tempo, .45)) linear both;
+  color: var(--home-ink, var(--text));
+  animation: home-welcome-title-reveal calc(700ms * var(--home-intro-tempo, .45)) 120ms var(--home-ease, cubic-bezier(0.22, 1, 0.36, 1)) both;
 }
 
 .home-welcome-title-light {
@@ -137,7 +137,7 @@
 
 .chat-shell.home-shell .home-welcome-subtitle {
   margin: 0;
-  color: var(--muted);
+  color: var(--home-secondary, var(--muted));
   font-size: 16px;
   font-weight: 400;
   line-height: 1.75;
@@ -163,37 +163,21 @@
 
 .home-welcome-subtitle-text {
   display: inline-block;
-  /* A soft advancing edge reveals strokes continuously, without letter jumps. */
-  -webkit-mask-image: linear-gradient(to right, #000 calc(50% - 12px), transparent calc(50% + 12px));
-  mask-image: linear-gradient(to right, #000 calc(50% - 12px), transparent calc(50% + 12px));
-  -webkit-mask-size: calc(200% + 24px) 100%;
-  mask-size: calc(200% + 24px) 100%;
-  -webkit-mask-repeat: no-repeat;
-  mask-repeat: no-repeat;
-  -webkit-mask-position: 0% 0;
-  mask-position: 0% 0;
-  animation: home-welcome-type calc(760ms * var(--home-intro-tempo, .45)) calc(2750ms * var(--home-intro-tempo, .45)) cubic-bezier(.22, .61, .36, 1) both;
+  animation: home-welcome-subtitle-fade 320ms 80ms cubic-bezier(.16, 1, .3, 1) both;
 }
 
 .home-welcome-caret {
-  position: absolute;
-  top: 20%;
-  left: 100%;
-  width: 1.5px;
-  height: 60%;
-  margin-left: 2px;
-  border-radius: 1px;
-  background: currentColor;
-  opacity: 0;
-  pointer-events: none;
-  animation:
-    home-welcome-caret-travel calc(760ms * var(--home-intro-tempo, .45)) calc(2750ms * var(--home-intro-tempo, .45)) cubic-bezier(.22, .61, .36, 1) both,
-    home-welcome-caret-fade calc(1200ms * var(--home-intro-tempo, .45)) calc(2750ms * var(--home-intro-tempo, .45)) linear both;
+  display: none;
+}
+
+@keyframes home-welcome-subtitle-fade {
+  from { opacity: 0; transform: translateY(3px); }
+  to { opacity: 1; transform: none; }
 }
 
 @keyframes home-welcome-title-reveal {
-  from { clip-path: inset(0 100% 0 -1px); }
-  to { clip-path: inset(0 -1px); }
+  from { opacity: 0.15; }
+  to { opacity: 1; }
 }
 
 @keyframes home-welcome-title-light {

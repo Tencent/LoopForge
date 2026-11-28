@@ -1,5 +1,5 @@
 import React from "react";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 const chat = {
@@ -108,6 +108,73 @@ describe("App 2-tab sidebar actions (personal / scheduled & scheduled rerun)", (
     fireEvent.click(scheduledTab);
     expect(scheduledTab).toHaveAttribute("aria-selected", "true");
     expect(await screen.findByText("每日巡检")).toBeTruthy();
+  });
+
+  test("guests see a sign-in hint on both tabs instead of an endless connecting label", async () => {
+    const user = chat.user;
+    const ready = chat.ready;
+    chat.user = { id: 0, loginName: "guest", chineseName: "访客", isGuest: true };
+    chat.ready = false;
+    globalThis.fetch = vi.fn(async () => ({ ok: true, status: 200, json: async () => [] }));
+    try {
+      render(<App />);
+      const toggle = screen.queryByRole("button", { name: "显示会话侧边栏" });
+      if (toggle) fireEvent.click(toggle);
+
+      expect(screen.getByText("登录后查看历史会话")).toBeTruthy();
+      expect(screen.queryByText("正在连接…")).toBeNull();
+
+      fireEvent.click(screen.getByRole("tab", { name: /定时任务/ }));
+      expect(screen.getByText("登录后查看历史会话")).toBeTruthy();
+      expect(screen.queryByText("正在连接…")).toBeNull();
+      expect(screen.queryByText("还没有定时任务会话")).toBeNull();
+    } finally {
+      chat.user = user;
+      chat.ready = ready;
+    }
+  });
+
+  test("crossing the desktop breakpoint hides the sidebar and widening restores the desktop choice", async () => {
+    const original = Object.getOwnPropertyDescriptor(window, "matchMedia");
+    const listeners = new Set();
+    const desktop = { matches: true };
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      value: (query) => ({
+        get matches() {
+          return query.includes("1001px") ? desktop.matches : false;
+        },
+        media: query,
+        addEventListener: (_, fn) => query.includes("1001px") && listeners.add(fn),
+        removeEventListener: (_, fn) => listeners.delete(fn),
+        addListener() {},
+        removeListener() {},
+      }),
+    });
+    const resize = (matches) =>
+      act(() => {
+        desktop.matches = matches;
+        listeners.forEach((fn) => fn({ matches }));
+      });
+    globalThis.fetch = vi.fn(async () => ({ ok: true, status: 200, json: async () => [] }));
+    try {
+      const { container } = render(<App />);
+      const shell = () => container.querySelector(".chat-shell");
+      expect(shell()).not.toHaveClass("sidebar-hidden");
+
+      resize(false);
+      expect(shell()).toHaveClass("sidebar-hidden");
+      resize(true);
+      expect(shell()).not.toHaveClass("sidebar-hidden");
+
+      fireEvent.click(screen.getByRole("button", { name: "隐藏会话侧边栏" }));
+      expect(shell()).toHaveClass("sidebar-hidden");
+      resize(false);
+      resize(true);
+      expect(shell()).toHaveClass("sidebar-hidden");
+    } finally {
+      Object.defineProperty(window, "matchMedia", original);
+    }
   });
 
   test("triggers scheduled job rerun from top context banner and sidebar quick button via POST", async () => {

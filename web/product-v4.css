@@ -11,19 +11,19 @@ html[data-theme="dark"]{--v4-canvas:var(--bg);--v4-navy:var(--panel);--v4-shadow
 :root {
   --rail-w: 56px;
   --sidebar-w: 304px;
-  --shell-canvas: #fff;
+  --shell-canvas: #f5f6fa;
   --shell-inset-x: 14px;
-  --rail-surface: #fff;
-  --rail-hover: #ededed;
-  --rail-active: #eaeaea;
+  --rail-surface: #f2f3f7;
+  --rail-hover: #e7e8ee;
+  --rail-active: #ebe8ff;
   --rail-ink: #18181b;
   --rail-muted: #66666f;
 }
 html[data-theme="dark"] {
-  --shell-canvas: #141417;
-  --rail-surface: #0a0a0b;
-  --rail-hover: #202025;
-  --rail-active: #26262c;
+  --shell-canvas: #101013;
+  --rail-surface: #0b0b0e;
+  --rail-hover: #1e1e24;
+  --rail-active: #25203a;
   --rail-ink: #ededf0;
   --rail-muted: #a1a1aa;
 }
@@ -168,8 +168,8 @@ body.no-sidebar .platform-sidebar {
 /* 选中背景留在原位，只有 Harness 图标内部播放动效。 */
 .platform-rail .rail-btn.active {
   background: var(--rail-active) !important;
-  color: var(--rail-ink) !important;
-  box-shadow: none !important;
+  color: var(--hui-accent, var(--rail-ink)) !important;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--hui-accent, #7b61ff) 24%, transparent) !important;
 }
 .platform-rail .rail-btn.active svg {
   stroke: currentColor;
@@ -202,7 +202,7 @@ body.no-sidebar .platform-sidebar {
   pointer-events: none;
   opacity: 0;
   visibility: hidden;
-  transition: opacity 0.15s ease, transform 0.15s ease, visibility 0.15s ease;
+  transition: opacity 0.14s ease, transform 0.14s ease, visibility 0s linear 0.14s;
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.22);
   z-index: 99999;
 }
@@ -218,14 +218,15 @@ body.no-sidebar .platform-sidebar {
   pointer-events: none;
   opacity: 0;
   visibility: hidden;
-  transition: opacity 0.15s ease, transform 0.15s ease, visibility 0.15s ease;
+  transition: opacity 0.14s ease, transform 0.14s ease, visibility 0s linear 0.14s;
   z-index: 99999;
 }
-.platform-rail [data-tooltip]:hover::after,
-.platform-rail [data-tooltip]:hover::before {
+.platform-rail [data-tooltip]:hover:not(:active):not([aria-expanded="true"])::after,
+.platform-rail [data-tooltip]:hover:not(:active):not([aria-expanded="true"])::before {
   opacity: 1;
   visibility: visible;
   transform: translateY(-50%) translateX(0);
+  transition-delay: 0.28s;
 }
 html[data-theme="dark"] .platform-rail [data-tooltip]::after {
   background: rgba(39, 39, 42, 0.96);
@@ -335,8 +336,8 @@ html[data-theme="dark"] .platform-rail [data-tooltip]::before {
   display: flex !important;
   align-items: center !important;
   justify-content: center !important;
-  background: linear-gradient(135deg, var(--blue), #8b5cf6) !important;
-  color: #fff !important;
+  background: var(--hui-accent, #7b61ff) !important;
+  color: var(--hui-on-accent, #fff) !important;
   font-size: 13px !important;
   font-weight: 700 !important;
   overflow: hidden !important;
@@ -768,7 +769,7 @@ html[data-theme="dark"] .status.paused{color:var(--amber)}
 
 .kanban-column{min-height:440px;border-radius:14px;background:var(--v3-surface);border-color:var(--v3-line);transition:border-color .15s,box-shadow .15s}
 .kanban-card{background:var(--v3-soft);border-color:var(--v3-line);border-radius:12px;transition:border-color .12s,box-shadow .12s,transform .12s}
-.kanban-card:hover{transform:translateY(-1px);box-shadow:0 4px 12px rgba(15,23,42,.08)}
+.kanban-card:hover{transform:none;box-shadow:0 2px 8px color-mix(in srgb,var(--hui-text, #18181b) 6%,transparent)}
 .kanban-column.drop-target{border-color:color-mix(in srgb,var(--v3-accent) 45%,var(--v3-line));background:color-mix(in srgb,var(--v3-accent-soft) 70%,var(--v3-surface));box-shadow:0 0 0 2px var(--blue-soft)}
 .command-results button.selected{background:var(--v3-soft);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--v3-accent) 35%,transparent)}
 .toast.toast-ok{border-color:color-mix(in srgb,var(--v3-success, #34d399) 40%,var(--v3-line));background:color-mix(in srgb,var(--v3-success, #34d399) 10%,var(--v3-surface))}
@@ -1191,13 +1192,13 @@ html[data-theme="dark"] .agent-studio-v2{box-shadow:0 18px 56px rgba(0,0,0,.42),
   border:1px solid var(--line);border-radius:12px;background:var(--panel);cursor:pointer;text-align:left;
   transition:border-color .15s,transform .15s,box-shadow .15s;
 }
-.as-preset:hover{border-color:color-mix(in srgb,var(--blue) 45%,var(--line));transform:translateY(-1px);box-shadow:var(--shadow-sm)}
+.as-preset:hover{border-color:var(--hui-accent,var(--blue));background:var(--hui-accent-soft,var(--blue-soft))}
 .as-preset.active{border-color:var(--blue);background:var(--blue-soft);box-shadow:0 0 0 2px var(--blue-soft)}
 .as-preset-icon{
   width:36px;height:36px;display:grid;place-items:center;border-radius:11px;
   background:var(--panel-2);color:var(--blue);font-size:14px;font-weight:850;
 }
-.as-preset.active .as-preset-icon{background:var(--blue);color:#fff}
+.as-preset.active .as-preset-icon{background:var(--blue);color:var(--hui-on-accent,#fff)}
 .as-preset b{font-size:13px;color:var(--text)}
 .as-preset small{font-size:11px;line-height:1.45;color:var(--muted)}
 
@@ -1380,15 +1381,15 @@ html[data-theme="dark"] .agent-studio-v2{box-shadow:0 18px 56px rgba(0,0,0,.42),
 
 /* Agents catalog — cleaner cards on list page */
 #agentsView .definition-card{
-  border-radius:18px;background:var(--panel);border:1px solid var(--line);
-  box-shadow:none;transition:border-color .18s,transform .18s,box-shadow .18s;
+  border-radius:14px;background:var(--hui-surface,var(--panel));border:1px solid var(--hui-border,var(--line));
+  box-shadow:var(--hui-panel-shadow,none);transition:border-color .16s ease,background-color .16s ease;
 }
 #agentsView .definition-card:hover{
-  transform:translateY(-2px);border-color:color-mix(in srgb,var(--blue) 40%,var(--line));
-  box-shadow:0 12px 32px color-mix(in srgb,var(--blue) 8%,transparent);
+  transform:none;border-color:var(--hui-border-strong,var(--line-strong));
+  box-shadow:var(--hui-panel-shadow,none);
 }
 #agentsView .agent-runtime-summary span{
-  border-radius:999px;padding:5px 10px;font-size:10.5px;
+  border-radius:999px;padding:4px 10px;font-size:12px;
 }
 #agentsView .definition-avatar{border-radius:14px;font-size:12px}
 
@@ -1477,7 +1478,9 @@ html[data-theme="dark"] .agent-studio-v2{box-shadow:0 18px 56px rgba(0,0,0,.42),
 }
 #runsView .run-detail-topbar .run-header-actions .button.small:hover,
 #runsView .run-detail-topbar .run-back-inline.button.small:hover{
-  transform:translateY(-1px);
+  transform:none;
+  border-color:var(--hui-border-strong,var(--line-strong));
+  background:var(--hui-soft,var(--panel-2));
 }
 #runsView .run-header-main{
   display:flex;
@@ -1927,7 +1930,7 @@ html[data-theme="dark"] .agent-studio-v2{box-shadow:0 18px 56px rgba(0,0,0,.42),
 .issue-clarify-option{padding:7px 12px;border:1px solid var(--line);border-radius:10px;background:var(--panel-2);color:var(--text);cursor:pointer;white-space:normal;word-break:break-word;overflow-wrap:anywhere;max-width:100%;text-align:left;line-height:1.45;height:auto;box-sizing:border-box;transition:background .15s ease,border-color .15s ease,color .15s ease,box-shadow .15s ease,transform .1s ease;user-select:none}
 .issue-clarify-option:hover{border-color:var(--line-strong);background:var(--panel-3);color:var(--text-strong);box-shadow:0 1px 4px rgba(15,23,42,.04)}
 .issue-clarify-option.selected{border-color:var(--blue);background:var(--blue-soft);color:var(--blue);font-weight:500;box-shadow:0 0 0 1px var(--blue)}
-.issue-clarify-option.selected:hover{border-color:var(--blue-dim);background:rgba(91,140,255,.22);color:var(--blue)}
+.issue-clarify-option.selected:hover{border-color:var(--blue-dim);background:var(--blue-soft);color:var(--blue)}
 .issue-clarify-option:active{transform:scale(.985)}
 .issue-clarify-other{width:100%;box-sizing:border-box;margin-top:9px;padding:9px 10px;border:1px solid var(--line);border-radius:9px;background:var(--panel);color:var(--text)}
 .issue-clarify-composer{margin-top:14px;padding:12px;border:1px solid var(--line);border-radius:12px;background:var(--panel)}.issue-clarify-composer textarea{width:100%;box-sizing:border-box;resize:vertical;border:0;outline:0;background:transparent;color:var(--text);font:inherit}.issue-clarify-composer>div{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:8px}.issue-clarify-composer span{color:var(--muted);font-size:11px}
@@ -2292,12 +2295,12 @@ html[data-theme="dark"] #runnersView{--rv-term:#0a0a0b;--rv-codex:#3f3f46}
 }
 #runnersView .runner-command-box pre::before{content:"$ ";color:var(--rv-term-dim);user-select:none}
 #runnersView #bindToken{color:var(--rv-accent)}
-#runnersView .runner-command-box .button{flex:none;justify-content:center;min-width:84px;height:28px;padding:0 10px;border:1px solid #fff;border-radius:7px;background:#fff;color:#252529;font-size:12px;font-weight:500;box-shadow:none;transition:background-color .16s,border-color .16s,color .16s}
-#runnersView .runner-command-box .button:hover{background:#e4e4e7;border-color:#e4e4e7}
-#runnersView .runner-command-box .button.copied{background:#dcfce7;border-color:#dcfce7;color:#166534}
-#runnersView .runner-command-box .button.dark{border-color:#fff;background:#fff;color:#252529}
-#runnersView .runner-command-box .button.dark:hover:not(:disabled){border-color:#e4e4e7;background:#e4e4e7;color:#252529}
-#runnersView .runner-command-box .button.dark.copied,#runnersView .runner-command-box .button.dark.copied:hover:not(:disabled){border-color:#dcfce7;background:#dcfce7;color:#166534}
+#runnersView .runner-command-box .button{flex:none;justify-content:center;min-width:84px;height:28px;padding:0 10px;border:1px solid rgba(255,255,255,.18);border-radius:7px;background:rgba(255,255,255,.10);color:#f4f4f5;font-size:12px;font-weight:500;box-shadow:none;transition:background-color .16s,border-color .16s,color .16s}
+#runnersView .runner-command-box .button:hover{background:rgba(255,255,255,.18);border-color:rgba(255,255,255,.28)}
+#runnersView .runner-command-box .button.copied{background:rgba(52,211,153,.16);border-color:rgba(52,211,153,.4);color:#86efac}
+#runnersView .runner-command-box .button.dark{border-color:rgba(255,255,255,.18);background:rgba(255,255,255,.10);color:#f4f4f5}
+#runnersView .runner-command-box .button.dark:hover:not(:disabled){border-color:rgba(255,255,255,.28);background:rgba(255,255,255,.18);color:#fff}
+#runnersView .runner-command-box .button.dark.copied,#runnersView .runner-command-box .button.dark.copied:hover:not(:disabled){border-color:rgba(52,211,153,.4);background:rgba(52,211,153,.16);color:#86efac}
 #runnersView .runner-command-box.compact{margin-top:8px}
 #runnersView .runner-command-box.compact pre{color:#a1a1aa;font-size:12px}
 #runnersView .runner-command-box.compact .button{min-width:64px;border-color:#3f3f46;background:transparent;color:#e4e4e7}
@@ -3263,8 +3266,8 @@ html[data-theme="dark"] #runnersView .runner-runtime-icon:is(.codex,.claude-code
 
 /* 列表页：数据少或为空时主列表卡片与空状态填满视图剩余高度；内容超出一屏时视图自然撑高，仍由 main 滚动。 */
 :is(#issuesView,#approvalsView,#sopsView,#agentsView,#assetsView,#botsView,#runnersView,#guideView).page-view.active{display:flex;flex-direction:column}
-#approvalsView .approval-list:has(>.approval-empty){flex:1 1 auto}
-#approvalsView .approval-list>.approval-empty{flex:1 1 auto;display:flex;flex-direction:column;align-items:center;justify-content:center}
+#approvalsView .approval-list:has(>.approval-empty){flex:0 0 auto}
+#approvalsView .approval-list>.approval-empty{flex:0 0 auto;min-height:280px;display:flex;flex-direction:column;align-items:center;justify-content:center}
 #sopsView .sop-page:has(>#sopCatalog>.empty-properties){flex:1 1 auto}
 #sopsView #sopCatalog:has(>.empty-properties){flex:1 1 auto;display:flex;flex-direction:column}
 #sopsView #sopCatalog>.empty-properties{flex:1 1 auto;grid-column:1/-1;justify-content:center}

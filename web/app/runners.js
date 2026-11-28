@@ -59,10 +59,11 @@ async function refreshRunners(silent){
     state.minRunnerVersion=def?.minRunnerVersion||'';
     state.minPrivilegedSandboxRunnerVersion=def?.minPrivilegedSandboxRunnerVersion||'';
     renderRunnersView();
-  }catch(e){if(!silent)toast(e.message)}
+  }catch(e){if(!silent&&!state.currentUser?.isGuest)toast(e.message)}
 }
 // 接入命令携带一次性绑定码（10 分钟有效）：复制即用，无需先创建访问密钥。
 async function ensureRunnerBindCode(silent){
+  if(state.currentUser?.isGuest)return;
   const cached=state.runnerBindCode;
   if(cached&&new Date(cached.expiresAt).getTime()>Date.now()+60_000)return;
   try{
@@ -265,7 +266,7 @@ function renderRunnersView(){
   const bindHTTPS=$('#bindHttpsOrigin'),bindHTTP=$('#bindHttpOrigin'),bindHost=$('#bindServerHost');
   if(bindHTTPS)bindHTTPS.textContent=httpsOrigin;if(bindHTTP)bindHTTP.textContent=httpOrigin;if(bindHost)bindHost.textContent=host;
   const tokenSpan=$('#bindToken');
-  if(tokenSpan)tokenSpan.textContent=state.runnerBindCode?.code||lfT('生成中…','Generating…');
+  if(tokenSpan)tokenSpan.textContent=state.runnerBindCode?.code||(state.currentUser?.isGuest?'<登录后自动生成>':lfT('生成中…','Generating…'));
   const copyBtn=$('#copyBindCommand');
   if(copyBtn)copyBtn.onclick=()=>{
     const text=$('#bindCliCommand')?.innerText||'';

@@ -1,22 +1,22 @@
 /* Flow designer (流程设计). Scoped under #flowView; overrides legacy .flow-node/.canvas/.properties rules. */
 #flowView{
-  --fd-bg:#f6f7fb;--fd-canvas:#f3f5f9;--fd-surface:#fff;--fd-soft:#f2f4f8;--fd-hover:rgba(15,23,42,.045);
-  --fd-line:rgba(15,23,42,.09);--fd-line-2:rgba(15,23,42,.16);
-  --fd-ink:#0f172a;--fd-ink-2:#334155;--fd-ink-3:#64748b;--fd-ink-4:#94a3b8;
-  --fd-accent:79 107 255;--fd-ok:16 163 127;--fd-rj:229 72 77;--fd-warn:217 119 6;
-  --fd-dot:rgba(15,23,42,.13);--fd-glass:rgba(255,255,255,.82);
-  --fd-shadow-sm:0 1px 2px rgba(15,23,42,.06),0 2px 8px rgba(15,23,42,.05);
-  --fd-shadow:0 4px 14px rgba(15,23,42,.08),0 1px 3px rgba(15,23,42,.06);
-  --fd-shadow-lg:0 18px 48px rgba(15,23,42,.16),0 4px 12px rgba(15,23,42,.08);
-  --fd-ease:cubic-bezier(.2,.8,.2,1);
+  --fd-bg:#fafafb;--fd-canvas:#f4f4f6;--fd-surface:#fff;--fd-soft:#f4f4f5;--fd-hover:rgba(24,24,27,.045);
+  --fd-line:#e5e5e8;--fd-line-2:#d4d4da;
+  --fd-ink:#18181b;--fd-ink-2:#3f3f46;--fd-ink-3:#71717a;--fd-ink-4:#a1a1aa;
+  --fd-accent:123 97 255;--fd-ok:21 128 61;--fd-rj:220 38 38;--fd-warn:217 119 6;
+  --fd-dot:rgba(24,24,27,.12);--fd-glass:rgba(255,255,255,.86);
+  --fd-shadow-sm:0 1px 2px rgba(24,24,27,.05),0 2px 6px rgba(24,24,27,.04);
+  --fd-shadow:0 4px 14px rgba(24,24,27,.08),0 1px 3px rgba(24,24,27,.05);
+  --fd-shadow-lg:0 18px 48px rgba(24,24,27,.14),0 4px 12px rgba(24,24,27,.06);
+  --fd-ease:cubic-bezier(.16,1,.3,1);
 }
 html[data-theme="dark"] #flowView{
-  --fd-bg:#0d1117;--fd-canvas:#0b0f15;--fd-surface:#151b24;--fd-soft:#1b2230;--fd-hover:rgba(255,255,255,.05);
-  --fd-line:rgba(255,255,255,.08);--fd-line-2:rgba(255,255,255,.15);
-  --fd-ink:#e6eaf2;--fd-ink-2:#c3cad6;--fd-ink-3:#8b95a7;--fd-ink-4:#5f6b7e;
-  --fd-accent:122 146 255;--fd-ok:52 199 154;--fd-rj:248 113 113;--fd-warn:245 166 35;
-  --fd-dot:rgba(255,255,255,.09);--fd-glass:rgba(21,27,36,.82);
-  --fd-shadow-sm:0 1px 2px rgba(0,0,0,.4);--fd-shadow:0 6px 18px rgba(0,0,0,.35);--fd-shadow-lg:0 20px 50px rgba(0,0,0,.5);
+  --fd-bg:#111114;--fd-canvas:#111114;--fd-surface:#18181c;--fd-soft:#202026;--fd-hover:rgba(237,237,240,.055);
+  --fd-line:#26262b;--fd-line-2:#34343c;
+  --fd-ink:#ededf0;--fd-ink-2:#c4c4cc;--fd-ink-3:#a1a1aa;--fd-ink-4:#71717a;
+  --fd-accent:160 138 255;--fd-ok:52 211 153;--fd-rj:248 113 113;--fd-warn:251 191 36;
+  --fd-dot:rgba(255,255,255,.08);--fd-glass:rgba(20,20,23,.86);
+  --fd-shadow-sm:0 1px 2px rgba(0,0,0,.38);--fd-shadow:0 6px 18px rgba(0,0,0,.35);--fd-shadow-lg:0 20px 50px rgba(0,0,0,.5);
 }
 #flowView [hidden]{display:none!important}
 .view#flowView.active{display:flex!important;flex-direction:column;height:100%;min-height:0;overflow:hidden;background:var(--fd-bg);color:var(--fd-ink)}
@@ -31,8 +31,8 @@ html[data-theme="dark"] #flowView{
 #flowView .fd-btn:disabled{cursor:default;opacity:.55}
 #flowView .fd-btn.ghost{border-color:transparent;background:transparent}
 #flowView .fd-btn.sm{height:28px;padding:0 10px;font-size:12px}
-#flowView .fd-btn.primary{background:rgb(var(--fd-accent));border-color:rgb(var(--fd-accent));color:#fff}
-#flowView .fd-btn.primary:hover:not(:disabled){background:rgb(var(--fd-accent) / .9);color:#fff}
+#flowView .fd-btn.primary{background:rgb(var(--fd-accent));border-color:rgb(var(--fd-accent));color:var(--hui-on-accent,#fff)}
+#flowView .fd-btn.primary:hover:not(:disabled){background:rgb(var(--fd-accent) / .9);color:var(--hui-on-accent,#fff)}
 #flowView .fd-btn.danger{color:rgb(var(--fd-rj))}
 #flowView .fd-btn.danger:hover:not(:disabled){background:rgb(var(--fd-rj) / .08);color:rgb(var(--fd-rj))}
 #flowView .fd-btn:focus-visible,#flowView .fd-icon-btn:focus-visible,#flowView .fd-switch:focus-visible{outline:2px solid rgb(var(--fd-accent) / .6);outline-offset:1px}
@@ -182,7 +182,7 @@ html[data-theme="dark"] #flowView{
 
 /* ---------- stage / canvas ---------- */
 #flowView .fd-stagewrap{--fd-drawer-width:368px;position:relative;flex:1;min-width:0;min-height:0;overflow:hidden}
-#flowView .fd-canvas{position:absolute;inset:0;min-height:0;overflow:hidden;border:0;border-radius:0;background-color:var(--fd-canvas);background-image:radial-gradient(circle,var(--fd-dot) 1px,transparent 1.2px);background-size:18px 18px;cursor:default;touch-action:none;outline:0}
+#flowView .fd-canvas{position:absolute;inset:0;min-height:0;overflow:hidden;border:0;border-radius:0;background-color:var(--fd-canvas);background-image:radial-gradient(circle,var(--fd-dot) 1.1px,transparent 1.2px);background-size:20px 20px;cursor:default;touch-action:none;outline:0}
 #flowView .fd-canvas.panning{cursor:grabbing}
 #flowView .fd-canvas.dragover{box-shadow:inset 0 0 0 2px rgb(var(--fd-accent) / .45)}
 #flowView .fd-drop-hint{position:absolute;inset:12px;border:1.5px dashed rgb(var(--fd-accent) / .45);border-radius:14px;pointer-events:none;opacity:0;transition:opacity .15s}
@@ -196,15 +196,15 @@ html[data-theme="dark"] #flowView{
 #flowView .fd-canvas.check-hidden{display:none}
 
 /* nodes */
-#flowView .flow-node.fd-node{--tint:var(--fd-accent);position:absolute;width:244px;min-height:0;padding:0;border:1px solid var(--fd-line-2);border-radius:12px;background:var(--fd-surface);box-shadow:var(--fd-shadow-sm);color:var(--fd-ink);cursor:grab;user-select:none;transition:box-shadow .15s,border-color .15s}
+#flowView .flow-node.fd-node{--tint:var(--fd-accent);position:absolute;width:248px;min-height:0;padding:0;border:1px solid var(--fd-line-2);border-radius:14px;background:var(--fd-surface);box-shadow:var(--fd-shadow-sm);color:var(--fd-ink);cursor:grab;user-select:none;transition:box-shadow .16s var(--fd-ease),border-color .16s var(--fd-ease)}
 #flowView .flow-node.fd-node:hover{border-color:rgb(var(--tint) / .55);box-shadow:var(--fd-shadow)}
-#flowView .flow-node.fd-node.sel{border-color:rgb(var(--fd-accent));box-shadow:0 0 0 3px rgb(var(--fd-accent) / .16),var(--fd-shadow)}
+#flowView .flow-node.fd-node.sel{border-color:rgb(var(--fd-accent));box-shadow:0 0 0 3px rgb(var(--fd-accent) / .18),var(--fd-shadow)}
 #flowView .flow-node.fd-node.dragging{cursor:grabbing;box-shadow:var(--fd-shadow-lg);z-index:30!important}
 #flowView .flow-node.fd-node.connecting{border-color:rgb(var(--fd-accent))}
 #flowView .flow-node.fd-node.drop-ok{border-color:rgb(var(--fd-ok));box-shadow:0 0 0 3px rgb(var(--fd-ok) / .2)}
 #flowView .flow-node.fd-node.drop-bad{border-color:rgb(var(--fd-rj));box-shadow:0 0 0 3px rgb(var(--fd-rj) / .16);cursor:not-allowed}
 #flowView .flow-node.fd-node::before{content:"";position:absolute;left:-1px;top:12px;bottom:12px;width:3px;border-radius:0 3px 3px 0;background:rgb(var(--tint))}
-#flowView .fd-nh{display:flex;align-items:center;gap:10px;padding:11px 10px 8px 13px}
+#flowView .fd-nh{display:flex;align-items:center;gap:10px;padding:11px 11px 10px 14px;background:color-mix(in srgb,var(--fd-soft) 55%,var(--fd-surface));border-bottom:1px solid var(--fd-line);border-radius:13px 13px 0 0;margin-bottom:8px}
 #flowView .fd-nt{flex:1;min-width:0}
 #flowView .fd-node .node-title{font-size:13.5px;font-weight:600;color:var(--fd-ink);line-height:1.3;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #flowView .fd-node .node-subtitle{margin-top:2px;font-size:11.5px;color:var(--fd-ink-3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}

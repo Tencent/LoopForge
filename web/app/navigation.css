@@ -13,8 +13,8 @@
   padding: 0 14px;
   border: 1px solid #e5e5e899;
   border-radius: 16px;
-  background: var(--shell-canvas) !important;
-  box-shadow: 0 2px 8px #00000006;
+  background: var(--hui-surface, #fff) !important;
+  box-shadow: 0 6px 24px rgba(15, 23, 42, .05), 0 1px 3px rgba(15, 23, 42, .04);
 }
 
 html[data-theme="dark"] .platform-sidebar {
@@ -25,7 +25,9 @@ html[data-theme="dark"] .platform-sidebar {
   --blue: #ededf0;
   --blue-soft: #26262c;
   --line: #26262b;
-  border-color: #36363e;
+  border-color: #303038;
+  background: var(--hui-surface, #141417) !important;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, .42);
 }
 
 body.management-mode .app-shell::before {

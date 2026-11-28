@@ -3,10 +3,10 @@
   --home-canvas: #fff;
   --home-sidebar: #fff;
   --home-ink: #18181b;
-  --home-secondary: #71717a;
+  --home-secondary: #52525b;
   --home-border: #e5e5e8;
-  --home-blue: #5273dc;
-  --home-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --home-blue: #7b61ff;
+  --home-ease: cubic-bezier(0.16, 1, 0.3, 1);
   grid-template-rows: 58px minmax(0, 1fr);
   color: var(--home-ink);
   background: var(--home-canvas);
@@ -125,6 +125,9 @@
   overflow-x: hidden;
   padding: clamp(32px, 10vh, 112px) 28px 32px;
   scrollbar-width: thin;
+  background:
+    radial-gradient(780px 340px at 50% 8%, color-mix(in srgb, var(--home-blue) 9%, transparent), transparent 72%),
+    var(--home-canvas);
 }
 .home-shell .welcome {
   width: 100%;
@@ -261,9 +264,10 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin: 0 1px 13px;
+  margin: 0 2px 12px;
   color: var(--home-secondary);
-  font-size: 11px;
+  font-size: 12px;
+  font-weight: 500;
 }
 .home-section-heading > button {
   display: inline-flex;
@@ -271,7 +275,7 @@
   gap: 3px;
   padding: 3px 0 3px 8px;
   color: var(--home-secondary);
-  font-size: 11px;
+  font-size: 12px;
 }
 .home-section-heading > button:hover {
   color: var(--home-blue);
@@ -282,65 +286,70 @@
   gap: 12px;
 }
 .home-starter {
-  --starter-color: #5577d5;
+  --starter-color: #7b61ff;
   display: flex;
   flex-direction: column;
   position: relative;
   min-width: 0;
-  padding: 16px;
+  padding: 16px 17px;
   overflow: hidden;
   border: 1px solid var(--home-border);
-  border-radius: 12px;
+  border-radius: 14px;
   background: var(--surface);
   text-align: left;
   transition:
-    border-color 220ms ease,
-    box-shadow 220ms ease,
-    transform 220ms ease;
+    border-color 180ms ease,
+    background-color 180ms ease,
+    box-shadow 180ms ease;
 }
 .home-starter-violet {
-  --starter-color: #8a6aca;
+  --starter-color: #7b61ff;
 }
 .home-starter-green {
-  --starter-color: #3a8c7d;
+  --starter-color: #16a34a;
 }
 .home-starter:hover,
 .home-starter:focus-visible {
   border-color: color-mix(
     in srgb,
-    var(--starter-color) 40%,
+    var(--starter-color) 42%,
     var(--home-border)
   );
-  box-shadow: 0 12px 26px -10px
-    color-mix(in srgb, var(--starter-color) 35%, transparent);
-  transform: translateY(-2px);
+  background: color-mix(
+    in srgb,
+    var(--starter-color) 3%,
+    var(--surface)
+  );
+  box-shadow: 0 8px 24px -12px
+    color-mix(in srgb, var(--starter-color) 28%, transparent);
+  transform: none;
 }
 .home-starter-top {
   display: flex;
   align-items: center;
   justify-content: space-between;
   width: 100%;
-  margin-bottom: 14px;
+  margin-bottom: 12px;
 }
 .home-starter-icon {
   display: grid;
   place-items: center;
   width: 34px;
   height: 34px;
-  border: 1px solid color-mix(in srgb, var(--starter-color) 8%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--starter-color) 14%, var(--home-border));
   border-radius: 10px;
-  background: color-mix(in srgb, var(--starter-color) 7%, var(--surface));
+  background: color-mix(in srgb, var(--starter-color) 8%, var(--surface));
   color: var(--starter-color);
-  transition: background-color 220ms ease;
+  transition: background-color 180ms ease;
 }
 .home-starter:is(:hover, :focus-visible) .home-starter-icon {
-  background: color-mix(in srgb, var(--starter-color) 13%, var(--surface));
+  background: color-mix(in srgb, var(--starter-color) 14%, var(--surface));
 }
 .home-starter-arrow {
   color: var(--muted);
   transition:
     color 180ms ease,
-    transform 220ms ease;
+    transform 180ms ease;
 }
 .home-starter:is(:hover, :focus-visible) .home-starter-arrow {
   color: var(--starter-color);
@@ -348,57 +357,62 @@
 }
 .home-starter > strong {
   color: var(--home-ink);
-  font-size: 13px;
-  font-weight: 550;
-  line-height: 1.6;
+  font-size: 13.5px;
+  font-weight: 600;
+  line-height: 1.5;
 }
 .home-starter-description {
   margin-top: 6px;
   color: var(--home-secondary);
-  font-size: 11px;
-  line-height: 1.9;
+  font-size: 12.5px;
+  line-height: 1.6;
+  text-wrap: pretty;
 }
 .home-starter-flow {
   display: flex;
-  align-items: center;
-  width: 100%;
-  margin-top: 18px;
-  color: var(--home-secondary);
-  font-size: 10px;
-}
-.home-starter-flow > span {
-  display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 5px;
+  width: 100%;
+  margin-top: auto;
+  padding-top: 14px;
+  color: var(--home-secondary);
+  font-size: 11px;
+}
+.home-starter-flow > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  border-radius: 99px;
+  background: var(--subtle);
+  border: 1px solid var(--home-border);
   white-space: nowrap;
 }
 .home-starter-flow > span + span::before {
-  content: "";
-  width: clamp(8px, 1.7vw, 24px);
-  height: 1px;
-  margin: 0 5px;
-  background: var(--home-border);
+  content: "→";
+  margin: 0 3px 0 -9px;
+  color: var(--muted);
+  font-size: 10px;
 }
 .home-starter-flow i {
-  width: 5px;
-  height: 5px;
-  border: 1px solid
-    color-mix(in srgb, var(--starter-color) 55%, var(--home-border));
-  border-radius: 50%;
+  display: none;
 }
-.home-starter-flow > span:last-child i {
-  background: var(--starter-color);
-  border-color: var(--starter-color);
+.home-starter-flow > span:last-child {
+  background: color-mix(in srgb, var(--starter-color) 11%, var(--surface));
+  border-color: color-mix(in srgb, var(--starter-color) 28%, transparent);
+  color: var(--starter-color);
+  font-weight: 500;
 }
 .home-footnote {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 5px;
-  margin: 26px 0 0;
+  gap: 6px;
+  margin: 24px 0 0;
   color: var(--home-secondary);
-  font-size: 10px;
-  line-height: 1.7;
+  font-size: 11.5px;
+  line-height: 1.6;
 }
 [data-theme="dark"] .home-shell {
   --home-canvas: #141417;
@@ -406,21 +420,21 @@
   --home-ink: #ededf0;
   --home-secondary: #a1a1aa;
   --home-border: #26262b;
-  --home-blue: #8ca6f2;
+  --home-blue: #a08aff;
   --surface: #141417;
 }
 [data-theme="dark"] .home-shell .home-starter-blue {
   --starter-color: #8ca6f2;
 }
 [data-theme="dark"] .home-shell .home-starter-violet {
-  --starter-color: #b29ade;
+  --starter-color: #a08aff;
 }
 [data-theme="dark"] .home-shell .home-starter-green {
-  --starter-color: #7fbdaf;
+  --starter-color: #4ade80;
 }
 [data-theme="dark"] .home-shell .home-starter:is(:hover, :focus-visible) {
-  box-shadow: 0 12px 26px -10px
-    color-mix(in srgb, var(--starter-color) 22%, transparent);
+  box-shadow: 0 10px 24px -10px
+    color-mix(in srgb, var(--starter-color) 20%, transparent);
 }
 @media (prefers-reduced-motion: reduce) {
   .home-starter:is(:hover, :focus-visible),

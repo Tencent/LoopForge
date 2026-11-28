@@ -9,12 +9,14 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  height: 42px;
+  min-height: 40px;
+  height: auto;
   min-width: 0;
-  margin: 0 14px -3px;
-  padding: 4px 10px 7px;
-  border: 0;
-  border-radius: 16px 16px 0 0;
+  margin: 0 12px 0;
+  padding: 6px 12px 8px;
+  border: 1px solid var(--line);
+  border-bottom: 0;
+  border-radius: 14px 14px 0 0;
   background: var(--subtle);
 }
 
