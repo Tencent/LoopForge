@@ -726,6 +726,14 @@ export default function App() {
     url.searchParams.delete("quickAccess");
     history.replaceState(history.state, "", url);
   }
+  // The workbench lifts its toasts over the composer only when the composer
+  // sits at the bottom (an open conversation). On the home page the composer
+  // is centred and grows downward, so a lifted toast would land on 发送.
+  const layout = chat.activeId ? "conversation" : "home";
+  useEffect(() => {
+    if (window.parent !== window)
+      window.parent.postMessage({ type: "agentflow-chat-layout", layout }, location.origin);
+  }, [layout]);
   useEffect(() => {
     const wide = sidebarViewport().matchMedia("(min-width:1001px)");
     const apply = () => setSidebarWidth(readSidebarWidth());
