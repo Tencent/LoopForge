@@ -342,9 +342,18 @@ func (h *catalogHandlers) agents(c *gin.Context) {
 		return
 	}
 	if c.Request.Method == http.MethodPut {
-		var v domain.AgentDefinition
-		if decode(c, &v) && v.ID != "" {
+		var req struct {
+			domain.AgentDefinition
+			Changes   json.RawMessage `json:"changes"`
+			UpdatedAt *time.Time      `json:"updatedAt"`
+		}
+		if decode(c, &req) && req.ID != "" {
+			v := req.AgentDefinition
 			v.ID, v.ProjectID = strings.TrimSpace(v.ID), strings.TrimSpace(v.ProjectID)
+			if len(req.Changes) != 0 {
+				h.editAgentContent(c, v.ID, v.ProjectID, req.UpdatedAt, req.Changes)
+				return
+			}
 			if existing, ok := h.repo.Agent(v.ID); ok {
 				// A role without a project is platform-wide: every project can
 				// use it, so only administrators may change it, as for rules
@@ -394,13 +403,8 @@ func (h *catalogHandlers) agents(c *gin.Context) {
 				respond(c, err)
 				return
 			}
-			if hadExisting && existing.Prompt != v.Prompt {
-				source, note := catalogEditSource(c.Request.Context())
-				var uid int64
-				if user, ok := h.requestUser(c.Request, true); ok {
-					uid = user.ID
-				}
-				_, _, _ = h.repo.RecordAssetEdit(domain.EvoAssetAgent, v.ID, existing.Prompt, v.Prompt, source, note, uid)
+			if hadExisting {
+				h.recordAgentPromptEdit(c, existing, v)
 			}
 			stored, _ := h.repo.Agent(v.ID)
 			c.JSON(200, stored)

@@ -4921,7 +4921,9 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/AgentDefinition"
+            anyOf:
+              - $ref: "#/components/schemas/AgentDefinition"
+              - $ref: "#/components/schemas/AgentContentEdit"
     RuleAsset:
       required: true
       content:
@@ -5945,6 +5947,26 @@ components:
         updatedAt:
           type: string
           format: date-time
+    AgentContentEdit:
+      type: object
+      required: [id, projectId, updatedAt, changes]
+      properties:
+        id:
+          type: string
+        projectId:
+          type: string
+        updatedAt:
+          type: string
+          format: date-time
+          description: The existing role's updatedAt from the read used to review this edit.
+        changes:
+          type: object
+          minProperties: 1
+          additionalProperties: false
+          properties:
+            name: {type: string, minLength: 1}
+            description: {type: string}
+            prompt: {type: string}
     AgentHook:
       type: object
       required: [id, name, event, language, script]
@@ -6079,6 +6101,9 @@ components:
           enum: [agent, script, command, approval, sop]
         agentId:
           type: string
+        prompt:
+          type: string
+          description: Instructions specific to an Agent node, included alongside the role's prompt on each new run of this workflow.
         executorId:
           type: string
         scriptLanguage:

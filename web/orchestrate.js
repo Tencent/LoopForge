@@ -4,6 +4,7 @@
 // to edit and replays the streamed draft as nodes and wires on the canvas.
 let aiBuildToken = 0;
 let aiBuild = null;
+let aiRoleReviewPending = false;
 
 const AI_FRAME_PATH = '/chatbot/';
 const AI_MESSAGES = {
@@ -307,7 +308,7 @@ async function handleAIOrchestratorMessage(event) {
       return finishAIOrchestration(data.draft?.body || null);
     case AI_MESSAGES.role:
       if (!aiBuild && data.projectId === state.projectFilter && data.workflowId === state.workflow?.id) {
-        configureAIRoleDraft(data.role);
+        return configureAIRoleDraft(data.role);
       }
       return;
     case AI_MESSAGES.end:
@@ -597,6 +598,7 @@ async function validateAIBuildRoles(build) {
 
 function configureAIRoleDraft(role) {
   if (!role?.name || catalogGeneric(state.workflow)) return;
+  if (Object.hasOwn(role, 'changes')) return reviewAIRoleChanges(role);
   const {id, name, description, prompt, executorId, model} = role;
   if (id && agentIdTaken(id)) return toast('这个角色标识已存在，请使用已保存的角色继续编排');
   openAgentWizard({id: '', name, description, prompt, executorId, model, projectId: state.projectFilter});
@@ -606,6 +608,54 @@ function configureAIRoleDraft(role) {
     syncAgentSlug();
   }
   setAgentCreateStep(2);
+}
+
+async function reviewAIRoleChanges({id, changes}) {
+  if (aiRoleReviewPending) return;
+  const fields = Object.entries(changes || {});
+  if (!id || !fields.length || fields.some(([field, value]) =>
+    !['name', 'description', 'prompt'].includes(field) || typeof value !== 'string')) {
+    return toast('角色修改草稿无效', 'err');
+  }
+  const context = aiOrchestratorContext();
+  const userID = state.currentUser?.id;
+  const stillOnCanvas = () => activeViewName() === 'flow' && $('#aiOrchestrator')?.hidden === false
+    && state.projectFilter === context.projectId && state.workflow?.id === context.workflowId
+    && state.currentUser?.id === userID;
+  aiRoleReviewPending = true;
+  try {
+    const current = await api('/api/agents/' + encodeURIComponent(id));
+    if (!stillOnCanvas()) return;
+    if (current.id !== id || current.projectId !== context.projectId) {
+      return toast('请在角色所属的项目修改该角色', 'err');
+    }
+    const confirmed = await afConfirm({
+      title: '保存角色修改',
+      message: '将更新「' + current.name + '」。引用该角色的流程会在后续运行中使用更新后的角色内容。',
+      confirmText: '保存修改',
+      info: true,
+    });
+    if (!confirmed || !stillOnCanvas()) return;
+
+    const saved = await api('/api/agents', {
+      method: 'PUT',
+      body: JSON.stringify({id, projectId: context.projectId, updatedAt: current.updatedAt, changes}),
+    });
+    if (state.currentUser?.id !== userID) return;
+    const index = state.data.agents.findIndex(agent => agent.id === id);
+    if (index >= 0) state.data.agents[index] = saved;
+    else state.data.agents.push(saved);
+    if (stillOnCanvas()) {
+      renderAgents();
+      renderCanvas();
+      renderProperties();
+      toast('角色修改已保存');
+    }
+  } catch (err) {
+    if (stillOnCanvas()) toast(err.message, 'err');
+  } finally {
+    aiRoleReviewPending = false;
+  }
 }
 
 function aiClone(value) {
@@ -621,6 +671,8 @@ function mergeAIEdit(base, incoming) {
     const prev = prevNodes.find(node => node.id === normalized.id);
     if (!prev) return normalized;
     const merged = {...prev, ...normalized};
+    // The expanded workflow omits prompt when an edit explicitly clears it.
+    if (!Object.hasOwn(raw, 'prompt')) delete merged.prompt;
     if (!raw.script && prev.script) merged.script = prev.script;
     if (!raw.position || !Number.isFinite(raw.position.x)) merged.position = prev.position;
     return merged;

@@ -70,6 +70,8 @@ curl -u "$AGENTFLOW_USER:$AGENTFLOW_PASS" -X PUT \
   "$AGENTFLOW_URL/api/agents"
 ```
 
+局部更新可提交 `id`、`projectId`、读取该角色时返回的 `updatedAt`，以及 `changes`。`changes` 支持 `name`、`description` 和 `prompt`，可只提供需要修改的字段。角色在审阅期间发生变化时返回 `409`。
+
 ### `GET /api/agents/{id}`
 
 返回完整 Agent，`200`；不存在 `404`。

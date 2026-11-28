@@ -147,6 +147,22 @@ func TestProjectContentWritesRequireMembership(t *testing.T) {
 	if code := call(owner, "PUT", "/api/agents", agent); code != 200 {
 		t.Fatalf("owner write agent: %d", code)
 	}
+	currentAgent, _ := s.Agent("a1")
+	roleEdit, err := json.Marshal(map[string]any{
+		"id": currentAgent.ID, "projectId": currentAgent.ProjectID, "updatedAt": currentAgent.UpdatedAt,
+		"changes": map[string]string{"prompt": "Updated prompt"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, cookie := range []*http.Cookie{other, viewer} {
+		if code := call(cookie, "PUT", "/api/agents", string(roleEdit)); code != 403 {
+			t.Fatalf("role content edit requires project write access: %d", code)
+		}
+	}
+	if code := call(member, "PUT", "/api/agents", string(roleEdit)); code != 200 {
+		t.Fatalf("member saves role content: %d", code)
+	}
 	if code := call(other, "DELETE", "/api/agents/a1", ""); code != 403 {
 		t.Fatalf("non-member delete agent: %d", code)
 	}
