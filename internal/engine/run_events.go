@@ -291,3 +291,35 @@ func appendControlTelemetry(r *domain.Run, nodeID, name, message string) {
 	r.TelemetrySequence++
 	r.Telemetry = append(r.Telemetry, domain.TelemetryEvent{ID: fmt.Sprintf("obs-%d", now.UnixNano()), RunID: r.ID, NodeID: nodeID, Sequence: r.TelemetrySequence, Timestamp: now, Category: "verification", Name: name, Phase: "finish", Level: "info", Message: message})
 }
+
+func (e *Engine) NodeKnowledgeReads(runID, nodeID string, attempt int) []domain.KnowledgeRead {
+	if e == nil || e.repo == nil || runID == "" || nodeID == "" {
+		return nil
+	}
+	e.stateMu.Lock()
+	defer e.stateMu.Unlock()
+	r, ok := e.repo.RunState(runID)
+	if !ok {
+		return nil
+	}
+	node := r.Nodes[nodeID]
+	if node == nil || len(node.KnowledgeReads) == 0 {
+		return nil
+	}
+	out := make([]domain.KnowledgeRead, 0, len(node.KnowledgeReads))
+	for _, kr := range node.KnowledgeReads {
+		if attempt > 0 && kr.Attempt > 0 && kr.Attempt != attempt {
+			continue
+		}
+		out = append(out, kr)
+	}
+	return out
+}
+
+func (e *Engine) RecordKnowledgeRead(runID, nodeID string, read domain.KnowledgeRead) {
+	e.updateRun(runID, func(r *domain.Run) {
+		if node := r.Nodes[nodeID]; node != nil && node.Status == "running" && node.Attempt == read.Attempt {
+			node.KnowledgeReads = append(node.KnowledgeReads, read)
+		}
+	})
+}

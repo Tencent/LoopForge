@@ -19,6 +19,9 @@ type ExecutorRunner struct{}
 func NewExecutorRunner() *ExecutorRunner { return &ExecutorRunner{} }
 
 func (r *ExecutorRunner) Run(ctx context.Context, sb Sandbox, invocationID string, ex domain.ExecutorDefinition, agent domain.AgentDefinition, assets domain.AgentAssetBundle, prompt string, options InvocationOptions, sink EventSink) (string, error) {
+	if options.DisableBrowser {
+		options.BrowserMCP = nil
+	}
 	provider := providerForKind(ex.Kind)
 	if err := ProvisionMCPAssets(ctx, sb, sb.Workspace(), assets, sink); err != nil {
 		return "", err
@@ -34,7 +37,7 @@ func (r *ExecutorRunner) Run(ctx context.Context, sb Sandbox, invocationID strin
 	if binary != "" {
 		ex.Binary = binary
 	}
-	if options.BrowserMCP == nil && BrowserWantedForExecutor(ex.Kind) {
+	if !options.DisableBrowser && options.BrowserMCP == nil && BrowserWantedForExecutor(ex.Kind) {
 		options.BrowserMCP = EnsureSandboxBrowser(ctx, sb, sb.Workspace(), options.RunID, sink)
 	}
 	compiled, err := materializeInvocationForDriver(sb.Workspace(), invocationID, ex, agent, assets, options, driver)
@@ -190,6 +193,9 @@ type PreparedRemote struct {
 // execution and requests no credentials: Agent CLI credentials stay on the
 // runner machine by design (cli-connect.md).
 func (r *ExecutorRunner) PrepareRemote(workspace string, inv RemoteInvocation) (*PreparedRemote, error) {
+	if inv.Options.DisableBrowser {
+		inv.Options.BrowserMCP = nil
+	}
 	provider := providerForKind(inv.Executor.Kind)
 	driver := strings.TrimSpace(inv.Driver)
 	if driver == "" || driver == "local" {

@@ -31,6 +31,9 @@ type AnalyticsFilter struct {
 	// TimeZone is the IANA zone used by business-domain delivery trend buckets
 	// and by the analytics weekday × hour heatmap (default Asia/Shanghai).
 	TimeZone string
+	// IncludeEvolutionReplays keeps asset-evolution replay runs. Business
+	// lists and analytics leave it false so replays never skew metrics.
+	IncludeEvolutionReplays bool
 }
 
 type AnalyticsSummary struct {

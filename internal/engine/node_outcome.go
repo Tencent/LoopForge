@@ -412,7 +412,8 @@ func (e *Engine) finishAtReason(id string, generation int, status, msg string, r
 		r.Status = status
 		e.event(r, "", "run."+status, msg)
 		// A child LOOP shares the parent's issue; only the top-level run delivers it.
-		if status == "succeeded" && r.ExecutionContext.IssueID != "" && r.ExecutionContext.ParentRunID == "" {
+		// Evolution replays never deliver.
+		if status == "succeeded" && r.ExecutionContext.IssueID != "" && r.ExecutionContext.ParentRunID == "" && !r.ExecutionContext.IsEvolutionReplay() {
 			snapshot := *r
 			delivered, deliveredAt = &snapshot, time.Now().UTC()
 		}

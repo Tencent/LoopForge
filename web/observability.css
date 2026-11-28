@@ -126,7 +126,7 @@
 .node-skip-reason p{margin:0;padding:10px;color:var(--muted);font-size:10px;line-height:1.55}
 .node-output>div{height:35px;display:flex;align-items:center;justify-content:space-between;padding:0 10px;border-bottom:1px solid var(--line);background:var(--bg-soft)}
 .node-output b{font-size:10px}
-.node-output button{border:0;background:transparent;color:var(--blue);cursor:pointer;font-size:9px}
+.node-output>div button{border:0;background:transparent;color:var(--blue);cursor:pointer;font-size:9px}
 .node-output pre,.node-error pre{max-height:220px;margin:0;padding:11px;overflow:auto;white-space:pre-wrap;word-break:break-word;background:#0b1220;color:#d7e1f2;font:10px/1.55 var(--mono)}
 .node-output.empty{padding:11px;background:var(--bg-soft)}
 .node-output.empty b{font-size:10px}

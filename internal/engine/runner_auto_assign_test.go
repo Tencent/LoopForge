@@ -399,11 +399,11 @@ func TestAutoAssignOfflineGraceAndRevocation(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	other := f.machine("other-shared", 2, false)
-	f.limit(other.ID, 1)
-	f.fixed("other-hold", other.ID)
+	owned := f.machine("owner-shared", f.ec.ResponsibleUserID, false)
+	f.limit(owned.ID, 1)
+	f.fixed("owner-hold", owned.ID)
 	recent := f.start(f.wf.ID, f.ec)
-	if err := f.s.SetRunnerSharedProjects(other.ID, other.OwnerUserID, nil); err != nil {
+	if err := f.s.SetRunnerSharedProjects(owned.ID, owned.OwnerUserID, nil); err != nil {
 		t.Fatal(err)
 	}
 	f.e.promoteQueuedRuns()

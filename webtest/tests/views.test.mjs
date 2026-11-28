@@ -11,7 +11,7 @@ test('boots with platform-shaped data and renders every routed view', async (t) 
   const views = [
     'collaboration', 'issues', 'runs', 'approvals', 'sops', 'flow', 'agents', 'mcp',
     'rules', 'skills', 'sandboxes', 'observability',
-    'projects', 'platform', 'runners', 'settings', 'guide', 'bots', 'aiSchedules',
+    'knowledge', 'projects', 'platform', 'runners', 'settings', 'guide', 'bots', 'aiSchedules',
   ];
   for (const view of views) {
     app.evaluate(`switchView(${JSON.stringify(view)})`);
@@ -20,7 +20,9 @@ test('boots with platform-shaped data and renders every routed view', async (t) 
   assert.ok(app.router.calls.some((call) => call.path === '/api/bootstrap'));
   assert.ok(app.document.querySelectorAll('.view').length > 10);
   assert.equal(app.document.querySelector('#pageTitle').textContent, '定时任务');
-  for (const removed of ['knowledge', 'metrics', 'businessDomains', 'businessDomainManagement']) {
+  assert.ok(app.document.querySelector('#knowledgeView'), 'knowledgeView exists');
+  assert.ok(app.document.querySelector('[data-view="knowledge"]'), 'knowledge nav entry exists');
+  for (const removed of ['metrics', 'businessDomains', 'businessDomainManagement']) {
     assert.equal(app.document.querySelector(`#${removed}View`), null, `${removed} was retired`);
     assert.equal(app.document.querySelector(`[data-view="${removed}"]`), null, `${removed} has no nav entry`);
   }

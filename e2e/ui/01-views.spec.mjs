@@ -8,13 +8,13 @@ import { test, expect, watchErrors } from './fixtures.mjs';
 const TITLES = {
   collaboration: 'AI 工作台', issues: '需求列表', aiSchedules: '定时任务', bots: '通道管理', assistant: 'AI 助手', runs: '运行记录',
   approvals: '待我确认', sops: '流程模板', flow: '流程设计', agents: '角色定义', mcp: '能力资产', rules: '能力资产', skills: '能力资产',
-  sandboxes: '沙箱管理', observability: '统计', projects: '项目配置', projectCredentials: '凭据管理',
+  knowledge: '我的知识库', sandboxes: '沙箱管理', observability: '统计', evolution: 'RSI工作台', projects: '项目配置', projectCredentials: '凭据管理',
   platform: '平台管理', runners: '执行机器', settings: '个人配置', guide: '访问密钥',
 };
 // Only offered for some roles; the app redirects otherwise.
 const CONDITIONAL = ['platform'];
 const ASSET_VIEWS = ['rules', 'skills', 'sandboxes'];
-const RETIRED = ['metrics', 'knowledge', 'businessDomains', 'businessDomainManagement'];
+const RETIRED = ['metrics', 'businessDomains', 'businessDomainManagement'];
 const projects = [process.env.AGENTFLOW_E2E_VIEW_PROJECT || 'welcome', null];
 
 test('legacy routes land on their replacements', async ({ page }) => {

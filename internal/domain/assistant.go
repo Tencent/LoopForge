@@ -51,6 +51,7 @@ type AssistantActivityEvent struct {
 }
 
 type AssistantMessage struct {
+	KnowledgeReads []KnowledgeRead          `json:"knowledgeReads,omitempty"`
 	Assets         []AssistantAssetRef      `json:"assets,omitempty"`
 	RunIDs         []string                 `json:"runIds,omitempty"`
 	Activity       []AssistantActivityEvent `json:"activity,omitempty"`
@@ -179,6 +180,8 @@ func (s AssistantSession) Mode() string {
 }
 
 type AssistantSession struct {
+	KnowledgeRestricted   bool                      `json:"knowledgeRestricted,omitempty"`
+	KnowledgeRefs         []KnowledgeRef            `json:"knowledgeRefs,omitempty"`
 	ExecutionTarget       *AssistantExecutionTarget `json:"executionTarget,omitempty"`
 	ExecutionTargetLocked bool                      `json:"executionTargetLocked"`
 	RuntimeMode           string                    `json:"runtimeMode,omitempty"`
@@ -235,6 +238,24 @@ type AssistantSession struct {
 	UpdatedAt          time.Time          `json:"updatedAt"`
 
 	ProjectCredentialIDs []string `json:"projectCredentialIds,omitempty"`
+	// ProjectCredentialObservations are server-owned and contain metadata only.
+	ProjectCredentialObservations map[string]AssistantProjectCredentialObservation `json:"-"`
+}
+
+type AssistantProjectCredentialStatus string
+
+const (
+	// Legacy observations were only saved for available credentials.
+	AssistantProjectCredentialAvailable    AssistantProjectCredentialStatus = ""
+	AssistantProjectCredentialUnavailable  AssistantProjectCredentialStatus = "unavailable"
+	AssistantProjectCredentialAccessDenied AssistantProjectCredentialStatus = "access-denied"
+)
+
+type AssistantProjectCredentialObservation struct {
+	Variables  []string                         `json:"variables,omitempty"`
+	UpdatedAt  time.Time                        `json:"updatedAt,omitzero"`
+	Status     AssistantProjectCredentialStatus `json:"status,omitempty"`
+	ObservedAt time.Time                        `json:"observedAt,omitzero"`
 }
 
 type AssistantTask struct {

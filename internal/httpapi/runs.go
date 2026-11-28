@@ -102,9 +102,10 @@ func (h *runsHandlers) runs(c *gin.Context) {
 	}
 	if r.Method == http.MethodPost {
 		var req struct {
-			WorkflowID string `json:"workflowId"`
-			Input      string `json:"input"`
-			ProjectID  string `json:"projectId"`
+			WorkflowID    string                 `json:"workflowId"`
+			Input         string                 `json:"input"`
+			ProjectID     string                 `json:"projectId"`
+			KnowledgeRefs *[]domain.KnowledgeRef `json:"knowledgeRefs,omitempty"`
 		}
 		if !decode(c, &req) {
 			return
@@ -144,6 +145,16 @@ func (h *runsHandlers) runs(c *gin.Context) {
 			c.JSON(http.StatusConflict, map[string]string{"error": "手动运行需要登录用户或已配置 Owner 的项目"})
 			return
 		}
+		var runKnowledgeRefs *[]domain.KnowledgeRef
+		if req.KnowledgeRefs != nil {
+			if err := h.validateUserKnowledgeRefs(executionContext.ResponsibleUserID, *req.KnowledgeRefs); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+				return
+			}
+			copied := make([]domain.KnowledgeRef, len(*req.KnowledgeRefs))
+			copy(copied, *req.KnowledgeRefs)
+			runKnowledgeRefs = &copied
+		}
 		var repositories []domain.RepositoryContext
 		if wf, ok := h.repo.Workflow(req.WorkflowID); ok && wf.Generic && strings.TrimSpace(project.DefaultRepositoryID) != "" {
 			repositoryID := strings.TrimSpace(project.DefaultRepositoryID)
@@ -154,6 +165,7 @@ func (h *runsHandlers) runs(c *gin.Context) {
 			}
 			repositories = []domain.RepositoryContext{repositoryRunContext(repoDef)}
 		}
+		executionContext.KnowledgeRefs = runKnowledgeRefs
 		if scopedWorkflow {
 			executionContext.SharedScheduleID, executionContext.SharedScheduleVersion = scope.Version.ID, scope.Version.Version
 		}
@@ -519,6 +531,15 @@ func slimTelemetryEvent(e domain.TelemetryEvent) domain.TelemetryEvent {
 		}
 		e.Attributes = safe
 		e.Source = domain.TelemetrySource{Layer: e.Source.Layer, Adapter: e.Source.Adapter, Provider: e.Source.Provider, Protocol: e.Source.Protocol}
+	} else if e.Name == "knowledge.call" {
+		safe := map[string]any{}
+		for _, key := range []string{"knowledgeReadId", "attempt", "query", "targets", "hits", "origin"} {
+			if value, ok := e.Attributes[key]; ok {
+				safe[key] = value
+			}
+		}
+		e.Attributes = safe
+		e.Source = domain.TelemetrySource{Adapter: e.Source.Adapter, Protocol: e.Source.Protocol}
 	} else {
 		e.Attributes = nil
 		e.Source = domain.TelemetrySource{Adapter: e.Source.Adapter, Protocol: e.Source.Protocol}
@@ -545,10 +566,20 @@ func logDumpNodeLabel(nodeID string) string {
 }
 
 func clipRunText(value string, n int) string {
-	if len(value) <= n {
+	if n <= 0 {
+		return ""
+	}
+	runes := []rune(value)
+	if len(runes) <= n {
 		return value
 	}
-	return value[:n] + "…"
+	clipped := string(runes[:n])
+	if openIdx := strings.LastIndex(clipped, "[[knowledge:"); openIdx >= 0 {
+		if !strings.Contains(clipped[openIdx:], "]]") {
+			clipped = strings.TrimRight(clipped[:openIdx], " \t")
+		}
+	}
+	return clipped + "…"
 }
 
 func decisionExpectation(nodeID string, expected *domain.NodeDecisionExpectation) []engine.NodeExpectation {

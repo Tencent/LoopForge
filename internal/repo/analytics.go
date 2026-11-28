@@ -147,9 +147,8 @@ func (r *AnalyticsRepo) analyticsWithRuns(filter domain.AnalyticsFilter, prefetc
 	for _, issue := range issueList {
 		issuesByID[issue.ID] = issue
 	}
-	// RunSummaries intentionally omits workflow snapshots on MySQL list paths.
-	// Full scans need the frozen name/version/category/node bindings; overview
-	// uses the live workflow catalog instead so the page does not hydrate every snapshot.
+	// Run summaries carry only lightweight snapshot metadata. Full scans load
+	// the frozen category and node bindings for the matching runs as well.
 	if r.DB != nil && !overview {
 		runIDs := make([]string, 0, len(runList))
 		for _, run := range runList {
@@ -374,7 +373,7 @@ func (r *AnalyticsRepo) analyticsWithRuns(filter domain.AnalyticsFilter, prefetc
 			acc.nodeTypes = analyticsNodeTypes(workflow.Nodes)
 		}
 		if !isExternal {
-			accumulateVersion(versions, run.WorkflowID, workflowName, workflow.Version, workflowDefs[run.WorkflowID].Version, run, duration, complete, execDuration)
+			accumulateVersion(versions, run.WorkflowID, workflowName, workflowDefs[run.WorkflowID].Version, run, duration, complete, execDuration)
 			accumulateBreakdown(categories, category, "", run, reworks, duration, complete, execDuration)
 			if acc := categories[category]; acc != nil && issueID != "" {
 				if acc.issueIDs == nil {
@@ -1154,8 +1153,13 @@ func accumulateNode(values map[string]*analyticsAccumulator, key, name string, n
 }
 
 // accumulateVersion 按 LOOP 版本聚合，用于版本对比（样本不足时前端标注）。
-func accumulateVersion(values map[string]*analyticsVersionAccumulator, workflowID, workflowName string, snapshotVersion int, fallbackVersion int, run domain.Run, duration int64, complete bool, execDuration int64) {
-	version := snapshotVersion
+func accumulateVersion(values map[string]*analyticsVersionAccumulator, workflowID, workflowName string, fallbackVersion int, run domain.Run, duration int64, complete bool, execDuration int64) {
+	snapshot := run.WorkflowSnapshot
+	// Trial runs before the first release may have the same number as the release.
+	if snapshot.PublishedRevision == 0 && (snapshot.Status == "draft" || snapshot.Status == "archived") {
+		return
+	}
+	version := snapshot.Version
 	if version <= 0 {
 		version = fallbackVersion
 	}

@@ -95,6 +95,7 @@ type runnerControlConn struct {
 	ownerUserID                 int64
 	supportsSSHHostKeyProbe     bool
 	supportsDockerSandboxLimits bool
+	supportsPrivilegedSandbox   bool
 	ws                          *websocket.Conn
 	send                        chan runnerControlMessage
 	done                        chan struct{}
@@ -238,6 +239,11 @@ func runnerWorkspaceSSHKnownHosts(ctx context.Context, request domain.RunnerWork
 // send delivers one request; sent reports whether it reached the socket's
 // queue, after which it must not be retried elsewhere.
 func (h *runnerControlHub) send(ctx context.Context, conn *runnerControlConn, request domain.RunnerWorkspaceRequest) (domain.RunnerWorkspaceResponse, bool, error) {
+	if request.Sandbox != nil && request.Sandbox.Profile.Privileged && !conn.supportsPrivilegedSandbox {
+		return domain.RunnerWorkspaceResponse{
+			Status: http.StatusConflict, Code: domain.WorkspaceErrorConversationSetup, Error: domain.RunnerPrivilegedSandboxUpgradeMessage,
+		}, false, nil
+	}
 	if request.Sandbox != nil && request.Sandbox.Profile.HasResourceLimits() && !conn.supportsDockerSandboxLimits {
 		return domain.RunnerWorkspaceResponse{
 			Status: http.StatusConflict, Code: domain.WorkspaceErrorConversationSetup, Error: domain.RunnerDockerSandboxLimitsUpgradeMessage,
@@ -334,10 +340,11 @@ func (h *runnerControlHub) resolveWorkspace(conn *runnerControlConn, requestID s
 	}
 }
 
-func (h *runnerControlHub) register(runner domain.Runner, ws *websocket.Conn, supportsSSHHostKeyProbe, supportsDockerSandboxLimits bool) *runnerControlConn {
+func (h *runnerControlHub) register(runner domain.Runner, ws *websocket.Conn, supportsSSHHostKeyProbe, supportsDockerSandboxLimits, supportsPrivilegedSandbox bool) *runnerControlConn {
 	c := &runnerControlConn{
 		runnerID: runner.ID, ownerUserID: runner.OwnerUserID, ws: ws, supportsSSHHostKeyProbe: supportsSSHHostKeyProbe,
 		supportsDockerSandboxLimits: supportsDockerSandboxLimits,
+		supportsPrivilegedSandbox:   supportsPrivilegedSandbox,
 		send:                        make(chan runnerControlMessage, 64), done: make(chan struct{}),
 	}
 	h.mu.Lock()
@@ -646,7 +653,7 @@ func (h *runnersHandlers) runnerControlConnect(c *gin.Context) {
 		return
 	}
 	conn := h.runnerControls.register(runner, ws, c.GetHeader(domain.RunnerSSHHostKeyProbeHeader) == "1",
-		c.GetHeader(domain.RunnerDockerSandboxLimitsHeader) == "1")
+		c.GetHeader(domain.RunnerDockerSandboxLimitsHeader) == "1", c.GetHeader(domain.RunnerPrivilegedSandboxHeader) == "1")
 	defer h.runnerControls.unregister(conn)
 	connCtx, cancel := context.WithCancel(c.Request.Context())
 	defer cancel()
