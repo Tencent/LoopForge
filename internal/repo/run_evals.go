@@ -120,7 +120,7 @@ func (r *RunsRepo) trimRunEvals(db *gorm.DB, runID string) error {
 			"SELECT id FROM run_evals WHERE run_id = ? AND id NOT LIKE 'sop-check-%' ORDER BY created_at DESC, id DESC LIMIT 18446744073709551615 OFFSET ?",
 			runID, maxRunEvalsPerRun).Scan(&ids).Error
 	} else {
-		err = db.Model(&runEvalRow{}).Where("run_id = ? AND id NOT "+r.likeOperator()+" ?", runID, "sop-check-%").Order("created_at DESC, id DESC").Limit(math.MaxInt64).Offset(maxRunEvalsPerRun).Pluck("id", &ids).Error
+		err = db.Model(&runEvalRow{}).Where("run_id = ? AND id NOT "+likeOperatorFor(db)+" ?", runID, "sop-check-%").Order("created_at DESC, id DESC").Limit(math.MaxInt64).Offset(maxRunEvalsPerRun).Pluck("id", &ids).Error
 	}
 	if err != nil {
 		return err

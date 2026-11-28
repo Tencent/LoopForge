@@ -2,6 +2,7 @@ package repo
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -141,21 +142,11 @@ func TestPostgresRunEvalTrimKeepsTheDetectionRows(t *testing.T) {
 	if err := store.DB.Model(&runEvalRow{}).Where("run_id = ?", runID).Order("id").Pluck("id", &ids).Error; err != nil {
 		t.Fatalf("read the evaluations: %v", err)
 	}
-	kept := 0
-	for _, id := range ids {
-		if id == "SOP-CHECK-oldest" {
-			kept++
-			continue
-		}
-		if strings.HasPrefix(id, "eval-") {
-			kept++
-		}
-	}
-	if !containsString(ids, "SOP-CHECK-oldest") {
+	if !slices.Contains(ids, "SOP-CHECK-oldest") {
 		t.Fatalf("the trim dropped the detection row: %v", ids)
 	}
-	if kept != 11 {
-		t.Fatalf("the kept evaluations = %d, want the detection row and the newest ten", kept)
+	if len(ids) != 11 {
+		t.Fatalf("the kept evaluations = %d, want the detection row and the newest ten", len(ids))
 	}
 }
 
@@ -400,14 +391,15 @@ func TestPostgresPromoteBucketQuery(t *testing.T) {
 }
 
 // A workspace lease can be taken over from a background save, whose lease
-// token carries the "save:" prefix.
+// token carries the "save:" prefix. The token spells the prefix in another
+// case, so only the case-insensitive operator finds the takeover.
 func TestPostgresWorkspaceLeaseQuery(t *testing.T) {
 	store, rec := postgresFixtureStore(t)
 	runID := "pg-case-lease-run"
 	postgresCaseRun(t, store, runID, "pg-case-lease-project")
 	now := time.Now().UTC()
 	if err := store.DB.Exec(
-		"INSERT INTO run_workspace_checkpoints (run_id, last_used_at, lease_token, lease_until, lease_renewed_at) VALUES (?, ?, 'save:background', ?, ?)",
+		"INSERT INTO run_workspace_checkpoints (run_id, last_used_at, lease_token, lease_until, lease_renewed_at) VALUES (?, ?, 'SAVE:background', ?, ?)",
 		runID, now, now.Add(10*time.Minute), now,
 	).Error; err != nil {
 		t.Fatalf("seed the background save lease: %v", err)
@@ -422,14 +414,4 @@ func TestPostgresWorkspaceLeaseQuery(t *testing.T) {
 	if !rec.contains("lease_token ILIKE") {
 		t.Fatal("the lease query did not use the case-insensitive operator")
 	}
-}
-
-// containsString reports whether the list holds the value.
-func containsString(values []string, want string) bool {
-	for _, value := range values {
-		if value == want {
-			return true
-		}
-	}
-	return false
 }
