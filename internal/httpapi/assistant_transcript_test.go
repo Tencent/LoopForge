@@ -396,3 +396,222 @@ func TestSteerRefreshesTheModelListBeforeFallingBack(t *testing.T) {
 		t.Fatalf("steer model = %+v, want claude-opus-5.5", current.Steer)
 	}
 }
+
+// A turn that switches phases (opening a workspace, falling back to the
+// platform, a handoff) streams the paragraphs of every phase, while the CLI
+// result of the last phase repeats all of that phase's paragraphs. Cursor glues
+// them together without the blank line, so neither the whole-reply nor the
+// last-paragraph comparison matched and the phase was stored twice.
+func TestAssistantVisibleReplyDropsTheLastPhaseResult(t *testing.T) {
+	events := []domain.AssistantActivityEvent{
+		{Kind: "text", Text: "先查看仓库和运行环境。"},
+		{Kind: "tool", ID: "open"},
+		{Kind: "status", Text: assistantWorkspaceFallbackStatus},
+		{Kind: "text", Text: "工作区这次没有打开。我先核对需求。"},
+		{Kind: "tool", ID: "issue"},
+		{Kind: "text", Text: "代码还没改。\n\n- 验收：每位会员最多借 3 本。"},
+	}
+	want := "先查看仓库和运行环境。\n\n工作区这次没有打开。我先核对需求。\n\n代码还没改。\n\n- 验收：每位会员最多借 3 本。"
+	for name, final := range map[string]string{
+		"glued":     "工作区这次没有打开。我先核对需求。代码还没改。\n\n- 验收：每位会员最多借 3 本。",
+		"separated": "工作区这次没有打开。我先核对需求。\n\n代码还没改。\n\n- 验收：每位会员最多借 3 本。",
+	} {
+		if got := assistantVisibleReply(final, events); got != want {
+			t.Fatalf("%s: last phase stored twice:\n%s", name, got)
+		}
+	}
+	// A summary that never streamed is still appended once.
+	final := "工作区这次没有打开。我先核对需求。代码还没改。\n\n- 验收：每位会员最多借 3 本。\n\n下一轮继续实现。"
+	if got := assistantVisibleReply(final, events); got != want+"\n\n下一轮继续实现。" {
+		t.Fatalf("new tail: %q", got)
+	}
+	// The last segment alone can hold several paragraphs; a result that glues
+	// them and adds a summary keeps them once and appends only the summary.
+	single := []domain.AssistantActivityEvent{
+		{Kind: "text", Text: "先看代码。"},
+		{Kind: "tool", ID: "read"},
+		{Kind: "text", Text: "改好了。\n\n测试通过。"},
+	}
+	if got := assistantVisibleReply("改好了。测试通过。\n\n下一步合入。", single); got != "先看代码。\n\n改好了。\n\n测试通过。\n\n下一步合入。" {
+		t.Fatalf("last segment glued: %q", got)
+	}
+	if got := assistantVisibleReply("改好了。测试通过。", single); got != "先看代码。\n\n改好了。\n\n测试通过。" {
+		t.Fatalf("last segment glued, no tail: %q", got)
+	}
+	// Text that merely starts like the last phase is not mistaken for it.
+	final = "工作区这次没有打开。我先核对需求。另一个结论。"
+	if got := assistantVisibleReply(final, events); !strings.HasSuffix(got, "\n\n"+final) {
+		t.Fatalf("different result dropped: %q", got)
+	}
+}
+
+func TestAssistantVisibleReplyKeepsWhitespaceCorrections(t *testing.T) {
+	const earlier = "I checked both setting names."
+	const streamed = "The configured value is \"read only\"."
+	const corrected = "The configured value is \"readonly\"."
+	events := []domain.AssistantActivityEvent{
+		{Kind: "text", Text: earlier},
+		{Kind: "tool", ID: "lookup"},
+		{Kind: "text", Text: streamed},
+	}
+	for _, final := range []string{corrected, corrected + " Keep the default."} {
+		got := assistantVisibleReply(final, events)
+		if !strings.HasPrefix(got, earlier) || !strings.HasSuffix(got, final) {
+			t.Fatalf("stored %q, want the earlier phase and final %q", got, final)
+		}
+	}
+}
+
+func TestAssistantVisibleReplyPreservesRicherMarkdownAndFinalLiterals(t *testing.T) {
+	for _, tc := range []struct{ streamed, final, want string }{
+		{"## Heading\n| key | value |", "##Heading|key|value|", "## Heading\n| key | value |"},
+		{"The literal is \"a + b\".", "The literal is \"a+b\".", "The literal is \"a+b\"."},
+		{"Set read only.", "Set readonly.", "Set readonly."},
+	} {
+		for _, prefix := range []string{"", "Earlier work."} {
+			events := []domain.AssistantActivityEvent{}
+			want := tc.want
+			if prefix != "" {
+				events = append(events, domain.AssistantActivityEvent{Kind: "text", Text: prefix}, domain.AssistantActivityEvent{Kind: "tool", ID: "read"})
+				want = prefix + "\n\n" + want
+			}
+			events = append(events, domain.AssistantActivityEvent{Kind: "text", Text: tc.streamed})
+			if got := assistantVisibleReply(tc.final, events); got != want {
+				t.Errorf("stream=%q final=%q: got %q, want %q", tc.streamed, tc.final, got, want)
+			}
+		}
+	}
+}
+
+// The CLI result of a multi-phase turn may differ from the streamed paragraphs
+// in layout whitespace only. That is the same paragraph and is stored once;
+// a changed literal is still a correction.
+func TestAssistantVisibleReplyMatchesPhasesDespiteLayoutWhitespace(t *testing.T) {
+	two := []domain.AssistantActivityEvent{
+		{Kind: "text", Text: "先看代码。"},
+		{Kind: "tool", ID: "read"},
+		{Kind: "text", Text: "已修复。 "},
+	}
+	if got := assistantVisibleReply("已修复。\n\n总结：改了 1 个文件。", two); got != "先看代码。\n\n已修复。 \n\n总结：改了 1 个文件。" {
+		t.Fatalf("trailing space: %q", got)
+	}
+	for name, second := range map[string]string{"trailing space": "第二阶段完成。 ", "double space": "第二阶段  完成。", "tab": "第二阶段\t完成。"} {
+		three := []domain.AssistantActivityEvent{
+			{Kind: "text", Text: "第一阶段。"},
+			{Kind: "tool", ID: "a"},
+			{Kind: "text", Text: second},
+			{Kind: "tool", ID: "b"},
+			{Kind: "text", Text: "第三阶段。"},
+		}
+		final := strings.ReplaceAll(strings.TrimSpace(second), "  ", " ")
+		final = strings.ReplaceAll(final, "\t", " ") + "\n\n第三阶段。\n\n总结。"
+		want := "第一阶段。\n\n" + strings.Trim(second, "\r\n") + "\n\n第三阶段。\n\n总结。"
+		if got := assistantVisibleReply(final, three); got != want {
+			t.Errorf("%s: got %q, want %q", name, got, want)
+		}
+	}
+	// A literal that changed in the result is not the streamed paragraph.
+	literal := []domain.AssistantActivityEvent{
+		{Kind: "text", Text: "先看配置。"},
+		{Kind: "tool", ID: "read"},
+		{Kind: "text", Text: "值是 \"read only\"。"},
+		{Kind: "tool", ID: "check"},
+		{Kind: "text", Text: "完成。"},
+	}
+	final := "值是 \"readonly\"。\n\n完成。"
+	if got := assistantVisibleReply(final, literal); !strings.HasSuffix(got, "\n\n"+final) {
+		t.Fatalf("literal correction lost: %q", got)
+	}
+	// A repeated final copy that differs only in layout is dropped once.
+	if got := dropRepeatedReply("完成 了。\n\n完成  了。"); got != "完成 了。" {
+		t.Fatalf("layout-only repeat kept: %q", got)
+	}
+}
+
+func TestAssistantVisibleReplyKeepsIndentationInsideFences(t *testing.T) {
+	const block = "```go\nfunc main() {\n\n\tfmt.Println(\"a b\")\n}\n```"
+	for _, tc := range []struct{ name, streamed, final, want string }{
+		{"removed indentation", block, strings.Replace(block, "\tfmt", "fmt", 1), block},
+		{"corrected literal", block, strings.Replace(block, "a b", "ab", 1), strings.Replace(block, "a b", "ab", 1)},
+		{"corrected inline code", "Use `read only`.", "Use `readonly`.", "Use `readonly`."},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			events := []domain.AssistantActivityEvent{{Kind: "text", Text: "Earlier."}, {Kind: "tool", ID: "read"}, {Kind: "text", Text: tc.streamed}}
+			if got := assistantVisibleReply(tc.final, events); got != "Earlier.\n\n"+tc.want {
+				t.Fatalf("got %q, want final phase %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestAssistantVisibleReplyAcceptsSpaceBetweenPhaseParagraphs(t *testing.T) {
+	const expected = "先看代码。\n\n改好了。\n\n测试通过。\n\n下一步合入。"
+	events := []domain.AssistantActivityEvent{{Kind: "text", Text: "先看代码。"}, {Kind: "tool", ID: "read"}, {Kind: "text", Text: "改好了。\n\n测试通过。"}}
+	for _, sep := range []string{" ", "\u3000"} {
+		if got := assistantVisibleReply("改好了。"+sep+"测试通过。\n\n下一步合入。", events); got != expected {
+			t.Errorf("separator %q: got %q", sep, got)
+		}
+	}
+}
+
+func TestAssistantVisibleReplyPreservesIndentationWhenQuoteSpansLines(t *testing.T) {
+	// A lone apostrophe in a comment (# don't …) or a contraction inside a
+	// fenced block must not cause replyContentTokens to treat everything up to
+	// the next single-quote on a later line as one token, which would make the
+	// two sides look equal even when the CLI has flattened the indentation.
+	const block = "```python\n# don't flatten this\ndef f():\n    return 'x'\n```"
+	const want = "Earlier.\n\n" + block
+	events := []domain.AssistantActivityEvent{
+		{Kind: "text", Text: "Earlier."},
+		{Kind: "tool", ID: "write"},
+		{Kind: "text", Text: block},
+	}
+	// The CLI strips leading spaces from each line, repeating either the
+	// whole reply or only the last phase.
+	for _, final := range []string{
+		"Earlier.\n\n```python\n# don't flatten this\ndef f():\nreturn 'x'\n```",
+		"```python\n# don't flatten this\ndef f():\nreturn 'x'\n```",
+	} {
+		if got := assistantVisibleReply(final, events); got != want {
+			t.Errorf("indentation inside fenced block was lost:\ngot  %q\nwant %q", got, want)
+		}
+	}
+}
+
+// A real Cursor turn: the CLI result glued the phases together, so the fence
+// that opened the code block ended up mid-sentence. The streamed layout,
+// with the fence on its own line, is the copy to keep.
+func TestAssistantVisibleReplyKeepsFenceWhenCLIGluesPhases(t *testing.T) {
+	const code = "```python\ndef keep_value(value):\n    return value\n```"
+	events := []domain.AssistantActivityEvent{
+		{Kind: "text", Text: "先看看目录。"},
+		{Kind: "tool", ID: "ls"},
+		{Kind: "text", Text: "接着读代码。"},
+		{Kind: "tool", ID: "read"},
+		{Kind: "text", Text: code},
+	}
+	const want = "先看看目录。\n\n接着读代码。\n\n" + code
+	for name, final := range map[string]string{
+		"glued":           "先看看目录。接着读代码。" + code,
+		"glued flattened": "先看看目录。接着读代码。```python\ndef keep_value(value):\nreturn value\n```",
+	} {
+		if got := assistantVisibleReply(final, events); got != want {
+			t.Errorf("%s: stored %q\nwant %q", name, got, want)
+		}
+	}
+}
+
+// A lone backtick inside a code block must not swallow the lines up to the
+// next backtick, or flattened indentation reads as the same content.
+func TestAssistantVisibleReplyPreservesIndentationAfterLoneBacktick(t *testing.T) {
+	const block = "Done.\n\n```go\n// split on the ` rune\nfunc f() {\n\treturn\n}\n```"
+	final := "Done.\n\n```go\n// split on the ` rune\nfunc f() {\nreturn\n}\n```"
+	got := assistantVisibleReply(final, []domain.AssistantActivityEvent{
+		{Kind: "text", Text: "Done."},
+		{Kind: "tool", ID: "write"},
+		{Kind: "text", Text: "```go\n// split on the ` rune\nfunc f() {\n\treturn\n}\n```"},
+	})
+	if got != block {
+		t.Fatalf("indentation after a lone backtick was lost:\ngot  %q\nwant %q", got, block)
+	}
+}

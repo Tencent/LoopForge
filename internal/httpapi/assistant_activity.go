@@ -3,10 +3,13 @@ package httpapi
 import (
 	"agentflow/internal/domain"
 	"fmt"
+	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"time"
 	"unicode"
+	"unicode/utf8"
 )
 
 // Coalesce token deltas while retaining the order of thinking, tools and status.
@@ -197,13 +200,28 @@ func replyCompact(text string) string {
 	return strings.Join(strings.Fields(text), "")
 }
 
-// replyRicher keeps the copy that still has its spaces and line breaks when
-// two strings are the same once whitespace is ignored.
-func replyRicher(primary, alternate string) string {
-	if len(alternate) > len(primary) {
-		return alternate
+// When only whitespace differs, keep richer Markdown layout. A change to a
+// word boundary or a quoted value is an actual correction from the final reply.
+// A fence marker delimits a block. Compare the words and literals inside it individually.
+// Quoted literals are single-line: a lone apostrophe in a comment (# don't …) or
+// contraction inside a code block must not absorb the rest of the block up to the
+// next matching quote on a later line. The same holds for a lone backtick
+// (// split on the ` rune) inside a code block.
+var replyContentTokens = regexp.MustCompile("`{3,}" + `|"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'|` + "`[^`\n]*`" + `|[\pL\pN_]+`)
+
+func replyRicher(streamed, final string) string {
+	if len(final) >= len(streamed) || !replySameContent(streamed, final) {
+		return final
 	}
-	return primary
+	return streamed
+}
+
+// replySameContent reports whether two texts differ only in layout
+// whitespace: the same words in the same order, and identical quoted or
+// code literals.
+func replySameContent(a, b string) bool {
+	return a == b || (replyCompact(a) == replyCompact(b) &&
+		slices.Equal(replyContentTokens.FindAllString(a, -1), replyContentTokens.FindAllString(b, -1)))
 }
 
 func replyParagraphs(text string) []string {
@@ -221,12 +239,12 @@ func replyParagraphs(text string) []string {
 func dropRepeatedReply(text string) string {
 	parts := replyParagraphs(text)
 	originalCount := len(parts)
-	for len(parts) >= 2 && replyCompact(parts[len(parts)-1]) == replyCompact(parts[len(parts)-2]) {
+	for len(parts) >= 2 && replySameContent(parts[len(parts)-1], parts[len(parts)-2]) {
 		parts = parts[:len(parts)-1]
 	}
 	if len(parts) >= 2 && len(parts)%2 == 0 {
 		mid := len(parts) / 2
-		if replyCompact(strings.Join(parts[:mid], "\n\n")) == replyCompact(strings.Join(parts[mid:], "\n\n")) {
+		if replySameContent(strings.Join(parts[:mid], "\n\n"), strings.Join(parts[mid:], "\n\n")) {
 			parts = parts[:mid]
 		}
 	}
@@ -276,10 +294,7 @@ func assistantVisibleReply(final string, events []domain.AssistantActivityEvent)
 	// paragraph and append just the new tail.
 	last := parts[len(parts)-1]
 	if replyCompact(final) == replyCompact(last) {
-		if len(final) > len(last) && strings.HasSuffix(joined, last) {
-			return strings.TrimSuffix(joined, last) + final
-		}
-		return joined
+		return strings.TrimSuffix(joined, last) + replyRicher(last, final)
 	}
 	if strings.HasPrefix(final, last) {
 		suffix := trimAssistantReplyText(strings.TrimPrefix(final, last))
@@ -288,7 +303,70 @@ func assistantVisibleReply(final string, events []domain.AssistantActivityEvent)
 		}
 		return dropRepeatedReply(joined + "\n\n" + suffix)
 	}
+	// A turn that switches phases (opening a workspace, falling back to the
+	// platform, a handoff) streams every phase, while the result of the last
+	// phase repeats all of that phase's paragraphs, sometimes glued together
+	// without the blank line. Match it against the trailing paragraphs,
+	// down to the last segment alone: one segment can hold several
+	// paragraphs that the result glues together.
+	for i := 1; i < len(parts); i++ {
+		rest, ok := cutReplyPhase(final, parts[i:])
+		if !ok {
+			continue
+		}
+		if rest = trimAssistantReplyText(strings.TrimLeftFunc(rest, unicode.IsSpace)); rest == "" {
+			return joined
+		}
+		return dropRepeatedReply(joined + "\n\n" + rest)
+	}
 	return dropRepeatedReply(joined + "\n\n" + final)
+}
+
+// A CLI may glue paragraphs together at a phase boundary, and its result can
+// differ from the streamed text in layout whitespace (a trailing space, a
+// doubled space between words). Such a paragraph is the same paragraph; a
+// changed word boundary or literal is not (see replySameContent).
+func cutReplyPhase(text string, parts []string) (string, bool) {
+	matched := false
+	for _, part := range parts {
+		for _, paragraph := range replyParagraphs(part) {
+			var ok bool
+			if text, ok = cutReplyParagraph(text, paragraph); !ok {
+				return "", false
+			}
+			matched = true
+		}
+	}
+	return text, matched
+}
+
+// cutReplyParagraph removes paragraph from the start of text, skipping
+// whitespace in text, and returns what follows when the consumed prefix has
+// the same content as paragraph.
+func cutReplyParagraph(text, paragraph string) (string, bool) {
+	want := replyCompact(paragraph)
+	if want == "" {
+		return "", false
+	}
+	end := len(text)
+	for i, r := range text {
+		if want == "" {
+			end = i
+			break
+		}
+		if unicode.IsSpace(r) {
+			continue
+		}
+		head, size := utf8.DecodeRuneInString(want)
+		if head != r {
+			return "", false
+		}
+		want = want[size:]
+	}
+	if want != "" || !replySameContent(text[:end], paragraph) {
+		return "", false
+	}
+	return text[end:], true
 }
 
 // stripAssistantCLINotices drops the CLI's "Tool ... does not exist" lines
