@@ -200,13 +200,7 @@ func (a sopExecutorAccess) firstSavedModel(kind string) string {
 func templateSOPRoleIDs(st *repo.Store, wf domain.WorkflowDefinition) map[string]bool {
 	source := wf.ID
 	if !wf.Generic {
-		source = ""
-		for _, tag := range wf.Tags {
-			if id, found := strings.CutPrefix(tag, "generic-source:"); found {
-				source = id
-				break
-			}
-		}
+		source = wf.GenericSource()
 	}
 	template, ok := st.GenericTemplateByWorkflow(source)
 	if !ok {

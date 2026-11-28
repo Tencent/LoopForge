@@ -195,6 +195,34 @@ type WorkflowDefinition struct {
 	ExecutorDefaults map[string]AssistantDefaults `json:"executorDefaults,omitempty"`
 }
 
+// GenericSourceTagPrefix marks a project LOOP adopted from a built-in generic
+// template; the suffix is the template id. The server writes it on adoption
+// and reads it to let the copied template roles follow the responsible user's
+// default executor, so it is provenance, not a user label.
+const GenericSourceTagPrefix = "generic-source:"
+
+// GenericSource returns the template id this LOOP was adopted from, if any.
+func (wf WorkflowDefinition) GenericSource() string {
+	for _, tag := range wf.Tags {
+		if id, found := strings.CutPrefix(tag, GenericSourceTagPrefix); found && strings.TrimSpace(id) != "" {
+			return id
+		}
+	}
+	return ""
+}
+
+// KeepGenericSource carries the stored provenance tag over to an edit whose
+// tags no longer include one: editors replace the free-form tag list, and
+// dropping the marker would silently switch every copied role to its pinned
+// CLI instead of the responsible user's default.
+func (wf *WorkflowDefinition) KeepGenericSource(previous WorkflowDefinition) {
+	source := previous.GenericSource()
+	if source == "" || wf.GenericSource() != "" {
+		return
+	}
+	wf.Tags = append(append([]string(nil), wf.Tags...), GenericSourceTagPrefix+source)
+}
+
 // UnmarshalJSON migrates the pre-workflow-sandbox shape while the legacy node
 // field is still visible. Conflicting node profiles cannot describe one shared
 // workflow sandbox and are rejected instead of being silently guessed.

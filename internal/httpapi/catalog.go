@@ -1034,6 +1034,7 @@ func (h *catalogHandlers) workflows(c *gin.Context) {
 			previousProjectID := ""
 			if previous, exists := h.repo.Workflow(v.ID); exists {
 				previousProjectID = previous.ProjectID
+				v.KeepGenericSource(previous)
 				if (needsNotificationAccess || len(previous.Notifications) > 0) && !h.notifications.access(c, previous.ProjectID, true) {
 					return
 				}

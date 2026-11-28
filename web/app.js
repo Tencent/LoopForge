@@ -1103,7 +1103,7 @@ function bind(){
   $('#workflowOwner').oninput=e=>{if(!state.workflow)return;state.workflow.owner=e.target.value;dirty()};
   $('#workflowSandbox').onchange=e=>{if(!state.workflow)return;setSOPSandboxChoice(state.workflow,e.target.value);dirty()};
   $('#workflowStatus').onchange=e=>{if(!state.workflow)return;state.workflow.status=e.target.value;dirty()};
-  $('#workflowTags').oninput=e=>{if(!state.workflow)return;state.workflow.tags=e.target.value.split(',').map(x=>x.trim()).filter(Boolean);dirty()};
+  $('#workflowTags').oninput=e=>{if(!state.workflow)return;state.workflow.tags=withGenericSourceTags(e.target.value.split(',').map(x=>x.trim()).filter(Boolean),state.workflow.tags);dirty()};
   $('#workflowMetricCategory').onchange=e=>{if(!state.workflow)return;state.workflow.metricCategory=e.target.value;dirty()};
   $('#workflowSOPLane').onchange=e=>{if(!state.workflow)return;state.workflow.sopLane=e.target.value;dirty()};
   $('#workflowDescription').oninput=e=>{if(!state.workflow)return;state.workflow.description=e.target.value;dirty()};

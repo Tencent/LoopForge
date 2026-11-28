@@ -44,13 +44,20 @@ function bindIssueDeletionContext(root){
   });
 }
 const issueStatuses=[['backlog','Backlog'],['todo','Todo'],['in_progress','In progress'],['in_review','In review'],['done','Done'],['closed','Closed'],['blocked','Blocked'],['cancelled','Cancelled']];
+function newestTask(tasks){
+  return [...tasks].sort((a,b)=>new Date(b.createdAt||0)-new Date(a.createdAt||0)||String(b.id).localeCompare(String(a.id)))[0]||null;
+}
 function latestIssueTask(i){
   const tasks=(state.data.tasks||[]).filter(t=>t.issueId===i.id);
-  if(tasks.length){
-    tasks.sort((a,b)=>new Date(b.createdAt||0)-new Date(a.createdAt||0)||String(b.id).localeCompare(String(a.id)));
-    return tasks[0];
-  }
+  if(tasks.length)return newestTask(tasks);
   return (state.data.tasks||[]).find(x=>x.id===i.latestTaskId)||null;
+}
+// Newest task of one LOOP lane. The server accepts rerun only for a lane that has already
+// run, so every dispatch entry decides "first run vs rerun" per lane, not per requirement.
+function latestIssueLaneTask(i,workflowId){
+  const id=String(workflowId||'').trim();
+  if(!i?.id||!id)return null;
+  return newestTask((state.data.tasks||[]).filter(t=>t.issueId===i.id&&t.workflowId===id));
 }
 function latestIssueRun(i, task){
   const runs=state.data.runs||[];
