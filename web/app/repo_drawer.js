@@ -1,6 +1,6 @@
 // Repository add/edit drawer for the project detail page. Saves write straight
 // to /api/repositories; #repositoryModal stays for its other callers.
-const repoDrawerState={projectId:'',repoId:'',nameTouched:false,saving:false,returnFocus:null};
+const repoDrawerState={projectId:'',repoId:'',nameTouched:false,saving:false,returnFocus:null,branchExecutorId:''};
 function repoDrawerOpen(){return !!$('#repoDrawer')?.classList.contains('open')}
 function setRepoDrawerSwitch(on){const sw=$('#repoDrawerDefault');if(!sw)return;sw.classList.toggle('on',!!on);sw.setAttribute('aria-checked',String(!!on))}
 function repoDrawerError(show){
@@ -28,12 +28,8 @@ function fillRepoBranchNaming(form,naming){
   fields.workBranchPrefix.value=preset?prefix:'custom';
   fields.workBranchCustomPrefix.value=preset?'':prefix;
   fields.workBranchPrompt.value=naming?.prompt||'';
-  const executors=(state.data.executors||[]).filter(executor=>executor.kind);
-  fields.workBranchExecutorId.replaceChildren(
-    new Option(lfT('选择 CLI','Choose a CLI'),''),
-    ...executors.map(executor=>repoBranchOption(executor.id,executor.name||executor.id,window.AgentFlowAssistantModels.cliIcon(executor.kind))),
-  );
-  fields.workBranchExecutorId.value=naming?.executorId||'';
+  repoDrawerState.branchExecutorId=naming?.mode==='ai'?naming.executorId||'':'';
+  fillRepoBranchExecutors(form,repoDrawerState.branchExecutorId);
   fillRepoBranchModels(form,naming?.model||'');
   syncRepoBranchNaming(form);
 }
@@ -41,6 +37,26 @@ function repoBranchOption(id,name,icon){
   const option=new Option(name,id);
   if(icon)option.dataset.brand=icon.split('/').at(-1);
   return option;
+}
+// AI branch naming runs on the dispatching user's credentials, like role
+// nodes, so the picker offers the same configured CLIs as the role editor
+// (executorConfigured). A saved CLI that is not configured for this user stays
+// visible but disabled, so editing other fields keeps the stored setting.
+function fillRepoBranchExecutors(form,selected=''){
+  const executors=(state.data.executors||[]).filter(executor=>executor.kind);
+  const usable=executors.filter(executor=>executorConfigured(executor.id));
+  const icon=executor=>window.AgentFlowAssistantModels.cliIcon(executor.kind);
+  const options=[new Option(usable.length||selected?lfT('选择 CLI','Choose a CLI'):executorModelCatalogRequest?lfT('检查配置中…','Checking configuration…'):lfT('无可用 CLI，请先在个人配置中配置','No configured CLI. Configure one in Settings.'),'')];
+  if(selected&&!usable.some(executor=>executor.id===selected)){
+    const saved=executors.find(executor=>executor.id===selected);
+    const status=executorModelCatalogRequest?lfT('检查配置中','checking'):lfT('未配置','not configured');
+    const option=repoBranchOption(selected,`${saved?.name||selected}（${status}）`,saved?icon(saved):'');
+    option.disabled=true;
+    options.push(option);
+  }
+  options.push(...usable.map(executor=>repoBranchOption(executor.id,executor.name||executor.id,icon(executor))));
+  form.elements.workBranchExecutorId.replaceChildren(...options);
+  form.elements.workBranchExecutorId.value=selected;
 }
 function fillRepoBranchModels(form,model='',custom=false){
   const fields=form.elements,executor=fields.workBranchExecutorId.value,choice=fields.workBranchModelChoice;
@@ -69,10 +85,15 @@ function syncRepoBranchNaming(form){
   form.querySelector('[data-work-branch-custom-prefix]').hidden=form.elements.workBranchPrefix.value!=='custom';
   if(isAI){
     const user=state.currentUser?.id;
-    loadExecutorModelCatalogs().then(()=>{
+    const loading=loadExecutorModelCatalogs();
+    // Repaint while the catalog loads so the picker says "checking" instead
+    // of reporting configured CLIs as missing until the request returns.
+    fillRepoBranchExecutors(form,form.elements.workBranchExecutorId.value);
+    loading.then(()=>{
       if(repoDrawerOpen()&&state.currentUser?.id===user&&form.elements.workBranchNamingMode.value==='ai'){
         const manual=form.elements.workBranchModelChoice.value===AGENT_CUSTOM_MODEL;
         const model=repoBranchModel(form);
+        fillRepoBranchExecutors(form,form.elements.workBranchExecutorId.value);
         fillRepoBranchModels(form,model,manual&&!model);
       }
     });
@@ -160,6 +181,11 @@ async function saveRepoDrawer(e){
   }
   if(payload.workBranchNaming.mode==='ai'&&(!payload.workBranchNaming.executorId||!payload.workBranchNaming.model)){
     return toast(lfT('请选择 AI 分支命名的 CLI 和模型','Choose the CLI and model for AI branch naming'),'warn');
+  }
+  const branchExecutor=payload.workBranchNaming.executorId;
+  if(payload.workBranchNaming.mode==='ai'&&branchExecutor!==repoDrawerState.branchExecutorId&&!executorConfigured(branchExecutor)){
+    f.elements.workBranchExecutorId.focus();
+    return toast(executorModelCatalogRequest?lfT('正在检查执行器配置，请稍后再试','Checking executor configuration, try again shortly'):lfT('请选用已配置的 CLI','Choose a configured CLI'),'warn');
   }
   repoDrawerState.saving=true;$('#repoDrawerSave').disabled=true;
   try{

@@ -20,7 +20,7 @@ type evoFeedbackResponse struct {
 func (h *evolutionHandlers) feedbackFinding(run domain.Run, sig domain.EvoSignal) evoFeedbackResponse {
 	out := evoFeedbackResponse{EvoSignal: sig}
 	if run.IsWorkspace() {
-		out.Message = "反馈已保存。工作区对话暂不支持资产进化，请在绑定已保存角色的 SOP 运行中验证。"
+		out.Message = "反馈已保存。工作区对话暂不支持资产进化，请在绑定已保存角色的 LOOP 运行中验证。"
 		return out
 	}
 	if !domain.TerminalRunStatus(run.Status) {
@@ -34,7 +34,7 @@ func (h *evolutionHandlers) feedbackFinding(run domain.Run, sig domain.EvoSignal
 	}
 	agent, ok := h.evolvableAgent(run.WorkflowSnapshot, node.AgentID)
 	if !ok {
-		out.Message = "反馈已保存。该节点未绑定可进化的已保存角色，请在 SOP 中绑定项目角色后新建运行。"
+		out.Message = "反馈已保存。该节点未绑定可进化的已保存角色，请在 LOOP 中绑定项目角色后新建运行。"
 		return out
 	}
 	if h.repo.EvoLevel(domain.EvoAssetAgent, agent.ID) == domain.EvoLevelOff {

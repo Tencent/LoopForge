@@ -2466,6 +2466,7 @@ eval(code.slice(code.indexOf('function huiIcon('), code.indexOf('// stage.key al
 eval(code.slice(code.indexOf('function waitingNodeId('), code.indexOf('function failedNodeId(')));
 eval(code.slice(code.indexOf('function restoredSOPResumeNode('), code.indexOf('function approvalCalloutHTML(')));
 eval(code.slice(code.indexOf('function approvalStatusBadgeHTML('), code.indexOf('function closeApprovalMoreMenus(')));
+eval(code.slice(code.indexOf('function issueKeyFor('), code.indexOf('function issueMatchesQuery(')));
 const between = (html, from, to) => html.slice(html.indexOf(from), html.indexOf(to, html.indexOf(from)));
 const node = {id:'gate', name:'confirm-brief', type:'agent'};
 const waiting = {id:'run-1', status:'waiting', workflowSnapshot:{nodes:[node]}, nodes:{gate:{status:'waiting_approval'}}};

@@ -132,7 +132,7 @@ test('SOP workbench home: filters, search, preferences priority dialog, polling 
     makeSopSummary({
       workflowId: 'wf-feat', workflowName: '需求研发交付', currentVersion: 'v2',
       enabled: true, preferences: ['tokens', 'clean', 'duration'], batchSize: 15, model: '',
-      stage: 'optimize', pendingRuns: 15, lastRunNote: '最近 1 次 · SOP 轨迹效率异常',
+      stage: 'optimize', pendingRuns: 15, lastRunNote: '最近 1 次 · LOOP 轨迹效率异常',
       latestMetrics: { runs: 0 },
     }),
     makeSopSummary({
@@ -191,7 +191,7 @@ test('SOP workbench home: filters, search, preferences priority dialog, polling 
   assert.equal(app.evaluate('evoPollInteractionPaused()'), true, 'focused search must pause polling redraws');
   search.value = '不存在的关键词';
   search.dispatchEvent(new app.window.Event('input', { bubbles: true }));
-  assert.match($('#evoSopListHost').textContent, /暂无匹配的 SOP/);
+  assert.match($('#evoSopListHost').textContent, /暂无匹配的 LOOP/);
   $('[data-evo-sop-reset]').click();
   assert.equal(app.document.querySelectorAll('.evo-sop-row').length, 3);
 
@@ -280,7 +280,7 @@ test('SOP workbench home: filters, search, preferences priority dialog, polling 
   app.router.get('/api/evolution/overview?projectId=project-1', { ...overview, sops: [] });
   await app.evaluate('evoRefresh().then(evoRender)');
   await settle(4);
-  assert.match($('#evoSopListHost').textContent, /当前项目暂无 SOP/);
+  assert.match($('#evoSopListHost').textContent, /当前项目暂无 LOOP/);
 });
 
 test('SOP workbench detail: canvas trend, versions rollback labels, gray publish guard, change split/inline diff, and actions', async (t) => {

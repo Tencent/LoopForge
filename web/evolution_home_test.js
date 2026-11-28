@@ -34,7 +34,7 @@ const {createDOM}=require('./hui_fake_dom');
   assert.equal(dom.document.querySelectorAll('.evo-home-tabs button').length,3);
   assert.equal(dom.document.querySelectorAll('.evo-home-row').length,1);
   assert.equal(dom.document.querySelector('.evo-home-summary').textContent,'跳过摘要');
-  assert.equal(dom.document.querySelector('.evo-home-columns').textContent,'问题 / 关联 SOP改动摘要当前阶段更新');
+  assert.equal(dom.document.querySelector('.evo-home-columns').textContent,'问题 / 关联 LOOP改动摘要当前阶段更新');
   assert.doesNotMatch(html,/阻塞 1|成功 3\/3/);
   evo.overview={recent:[{...p,status:'rejected'}]};
   evo.list={status:'active',page:0};html=api.evoHomeHTML();

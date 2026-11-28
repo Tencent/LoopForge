@@ -172,6 +172,7 @@ func TestDockerSandboxReplacesContainerWhenPrivilegeChanges(t *testing.T) {
 			}
 			args := strings.Split(strings.TrimSpace(string(data)), "\n")
 			if slices.Contains(args, "--privileged") != tc.privileged ||
+				slices.Contains(args, "--cgroupns=private") != tc.privileged ||
 				slices.Contains(args, "--cap-drop=ALL") == tc.privileged ||
 				slices.Contains(args, "no-new-privileges") == tc.privileged ||
 				!slices.Contains(args, "--read-only") {
@@ -185,6 +186,123 @@ func TestDockerSandboxReplacesContainerWhenPrivilegeChanges(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestDockerSandboxPreparesPrivilegedCgroup(t *testing.T) {
+	t.Run("create and reuse run root cgroup setup only when privileged", func(t *testing.T) {
+		for _, tc := range []struct {
+			name       string
+			privileged bool
+			reuse      bool
+			cgroupns   string
+			wantCreate bool
+		}{
+			{name: "privileged create", privileged: true, wantCreate: true},
+			{name: "privileged reuse", privileged: true, reuse: true, cgroupns: "private", wantCreate: false},
+			{name: "privileged host cgroupns recreated", privileged: true, reuse: true, cgroupns: "host", wantCreate: true},
+			{name: "unprivileged create", privileged: false, wantCreate: true},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				workspace := t.TempDir()
+				bin := t.TempDir()
+				logFile := filepath.Join(t.TempDir(), "docker.log")
+				script := `#!/bin/sh
+set -eu
+log="${CVR_DOCKER_LOG}"
+printf '%s\n' "$*" >> "$log"
+case "$*" in
+  "inspect --type container --format "*" box")
+    if [ "${CVR_DOCKER_REUSE:-0}" = "1" ]; then
+      printf '{"mounts":[{"Destination":"/workspace","Source":"%s"}],"privileged":true,"cgroupnsMode":"%s"}\n' "$CVR_DOCKER_WORKSPACE" "${CVR_DOCKER_CGROUPNS:-}"
+      exit 0
+    fi
+    echo 'Error: No such container' >&2; exit 1 ;;
+  "image inspect "*) exit 0 ;;
+  "exec box "*) echo /workspace; exit 0 ;;
+  *) exit 0 ;;
+esac
+`
+				if err := os.WriteFile(filepath.Join(bin, "docker"), []byte(script), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+				t.Setenv("CVR_DOCKER_LOG", logFile)
+				t.Setenv("CVR_DOCKER_WORKSPACE", workspace)
+				if tc.reuse {
+					t.Setenv("CVR_DOCKER_REUSE", "1")
+					t.Setenv("CVR_DOCKER_CGROUPNS", tc.cgroupns)
+				}
+				sb := &dockerSandbox{
+					name:              "box",
+					workspace:         workspace,
+					profile:           domain.SandboxProfile{Driver: "docker", Privileged: tc.privileged, ReadOnlyRootFS: true},
+					dockerfile:        domain.DockerfileDefinition{Content: "FROM scratch"},
+					privilegedSetting: func(context.Context) (bool, error) { return true, nil },
+				}
+				if err := sb.BindWorkspace(t.Context()); err != nil {
+					t.Fatal(err)
+				}
+				data, err := os.ReadFile(logFile)
+				if err != nil {
+					t.Fatal(err)
+				}
+				calls := string(data)
+				hasCreate := strings.Contains(calls, "create --name box ")
+				if hasCreate != tc.wantCreate {
+					t.Fatalf("create=%v want=%v calls:\n%s", hasCreate, tc.wantCreate, calls)
+				}
+				if tc.wantCreate && tc.privileged && !strings.Contains(calls, " --privileged --cgroupns=private ") {
+					t.Fatalf("expected --privileged --cgroupns=private in calls:\n%s", calls)
+				}
+				hasCgroupSetup := strings.Contains(calls, "exec --user 0:0 box sh -c ") &&
+					strings.Contains(calls, "/sys/fs/cgroup/init") &&
+					strings.Contains(calls, "cgroup.subtree_control")
+				if hasCgroupSetup != tc.privileged {
+					t.Fatalf("cgroup setup=%v want=%v calls:\n%s", hasCgroupSetup, tc.privileged, calls)
+				}
+			})
+		}
+	})
+
+	t.Run("cgroup setup failure cleans up new container", func(t *testing.T) {
+		workspace := t.TempDir()
+		bin := t.TempDir()
+		logFile := filepath.Join(t.TempDir(), "docker.log")
+		script := `#!/bin/sh
+set -eu
+printf '%s\n' "$*" >> "${CVR_DOCKER_LOG}"
+case "$*" in
+  "inspect --type container --format "*" box") echo 'Error: No such container' >&2; exit 1 ;;
+  "image inspect "*) exit 0 ;;
+  "exec --user 0:0 box "*) echo "write error: device or resource busy" >&2; exit 1 ;;
+  "exec box "*) echo /workspace; exit 0 ;;
+  *) exit 0 ;;
+esac
+`
+		if err := os.WriteFile(filepath.Join(bin, "docker"), []byte(script), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+		t.Setenv("CVR_DOCKER_LOG", logFile)
+		sb := &dockerSandbox{
+			name:              "box",
+			workspace:         workspace,
+			profile:           domain.SandboxProfile{Driver: "docker", Privileged: true},
+			dockerfile:        domain.DockerfileDefinition{Content: "FROM scratch"},
+			privilegedSetting: func(context.Context) (bool, error) { return true, nil },
+		}
+		err := sb.BindWorkspace(t.Context())
+		if err == nil || !strings.Contains(err.Error(), "prepare privileged sandbox cgroup") || sb.started {
+			t.Fatalf("expected cgroup setup error and started=false, got started=%v err=%v", sb.started, err)
+		}
+		data, readErr := os.ReadFile(logFile)
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		if !strings.Contains(string(data), "rm -f box") {
+			t.Fatalf("expected failed container cleanup, calls:\n%s", data)
+		}
+	})
 }
 
 func TestDockerSandboxUsesRelayNetworkOnlyWhenRequested(t *testing.T) {

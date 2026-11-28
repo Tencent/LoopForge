@@ -123,7 +123,7 @@ Access to the Docker socket is equivalent to root on the host. Two safeguards fo
 
 Sandbox editors can request privileged mode for an individual Docker profile under **Advanced settings**. In **Settings → Execution machines**, administrators can change **Allow privileged Docker sandboxes** for platform Workers and cloud pool machines. Owners can change it for their own connected Runner. The setting defaults to off. The saved choice applies to subsequent starts immediately, including after an upgrade from a deployment that used a startup variable.
 
-Enable this setting on machines whose users are trusted to run privileged workloads. Privileged containers can access host devices and may gain control of the Docker host. Privileged sandboxes on connected machines require Runner `0.13.2` or later. Automatic LOOP sandbox selection considers ordinary sandboxes, and a privileged profile can be selected explicitly. A non-root execution service continues to map default-root images to its UID and GID to keep workspace files accessible.
+Enable this setting on machines whose users are trusted to run privileged workloads. Privileged containers can access host devices and may gain control of the Docker host. Privileged sandboxes on connected machines require Runner `0.13.2` or later. Automatic LOOP sandbox selection considers ordinary sandboxes, and a privileged profile can be selected explicitly. Privileged Docker sandboxes run in a private cgroup namespace (`--cgroupns=private`) and enable cgroup v2 controller delegation inside that namespace on startup without altering host cgroup settings. A non-root execution service continues to map default-root images to its UID and GID to keep workspace files accessible.
 
 ### Docker sandbox resource limits
 

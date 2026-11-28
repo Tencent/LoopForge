@@ -77,6 +77,13 @@ func controlledBaseEnvironment(base []string) []string {
 		"GIT_SSH=",
 		"GIT_SSH_COMMAND=",
 		"GIT_SSH_VARIANT=",
+		// A commit identity exported for the control plane process (common in
+		// containers and CI) would override the requester's identity that
+		// bindWorkspaceGitEnvironment installs as the Git system default.
+		"GIT_AUTHOR_NAME=",
+		"GIT_AUTHOR_EMAIL=",
+		"GIT_COMMITTER_NAME=",
+		"GIT_COMMITTER_EMAIL=",
 	}
 	filtered := make([]string, 0, len(base))
 	for _, entry := range base {

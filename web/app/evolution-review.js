@@ -6,7 +6,7 @@ function evoReviewVersionHTML(asset,p,finding){
   const version=p?.baseVersion?`v${p.baseVersion}`:'修改前',after=p?.releasedVersion?`v${p.releasedVersion}`:'修改稿';
   const workflows=evoFindingWorkflows(finding).map(w=>w.name);
   const object=`${evoKindLabel(asset.assetKind)} · ${asset.assetName||asset.assetId}`;
-  const workflow=workflows.length===1?`<span>SOP · ${escapeHTML(workflows[0])}</span>`:workflows.length>1?`<span data-tooltip="${escapeHTML(workflows.join('、'))}">${workflows.length} 个 SOP</span>`:'';
+  const workflow=workflows.length===1?`<span>LOOP · ${escapeHTML(workflows[0])}</span>`:workflows.length>1?`<span data-tooltip="${escapeHTML(workflows.join('、'))}">${workflows.length} 个 LOOP</span>`:'';
   return `${workflow}<span>${escapeHTML(object)}</span>${p?`<span>${version}</span>${evoReviewIcon('arrow-right')}<span>${after}</span>`:''}`;
 }
 function evoReviewDiffPreview(lines){
