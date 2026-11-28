@@ -312,7 +312,7 @@ function issueActor(i){
 }
 function issueOutcome(i){
   const health=issueRunHealth(i),stage=issueCurrentStage(i);
-  if(issueManuallyClosed(i))return{key:'closed',short:'已关闭',title:'需求已关闭',body:'该需求已在 LoopForge 中手动关闭。如需继续修改或执行，请先重新打开。'};
+  if(issueManuallyClosed(i))return{key:'closed',short:'已关闭',title:'需求已关闭',body:'仍可编辑和澄清需求。启动 LOOP 前，请先重新打开需求。'};
   if(issueTrackerClosed(i)&&!issueMergedDelivery(i))return{key:'closed',short:'已关闭',title:gongfengIssueClosed(i)?'工蜂已关闭':'外部工作项已关闭',body:'请先在外部系统重新打开工作项，等待状态同步后再执行。'};
   if(deliveryLocked(i)){const label=deliveryLockedLabel(i);const short=label==='MR 已合入'?'已合入':label==='已合入基线'?'已合入基线':label==='关闭'?'关闭':'已交付';return{key:'closed',short,title:label,body:label==='MR 已合入'?'关联 MR 已合入默认分支。如需继续修改，请用重新触发再开一条 LOOP。':label==='已合入基线'?'关联 MR 已合入集成分支，尚未进默认分支。如需继续修改，请用重新触发再开一条 LOOP。':label==='关闭'?'需求已关闭。如需继续修改或执行，请用重新触发再开一条 LOOP。':'LOOP 已全部通过。如需继续修改，请用重新触发再开一条 LOOP。'};}
   if((i.status||'')==='done')return{key:'closed',short:stage.label==='交付闭环'?'已交付':'已完成',title:stage.label==='交付闭环'?'交付闭环':'需求已完成',body:stage.label==='交付闭环'?'LOOP 已全部通过。如需继续修改，请先重新打开后再触发新的 LOOP。':'需求已完成。'};

@@ -494,6 +494,7 @@ function openIssue(issue=null){
   f.elements.workflowId.innerHTML=`<option value="">使用来源默认流程</option>`+runnableWorkflowOptions().map(w=>`<option value="${w.id}">${escapeHTML(w.name)}</option>`).join('');
   const v=issue||{id:'',projectId:state.projectFilter||projects[0]?.id||'',title:'',description:'',priority:'medium',status:'backlog',workflowId:'',repositoryId:'',repositoryIds:[],baseBranch:''};
   ['id','projectId','title','description','priority','status','workflowId','baseBranch','tapdId'].forEach(k=>f.elements[k].value=v[k]||'');
+  f.elements.status.disabled=issueManuallyClosed(v);
   f.elements.baseBranch.value=storedIssueWorkBranch(v);
   f.elements.automationIgnored.checked=v.automationState==='ignored';
   fillIssueRepositories(v.projectId,(v.repositoryIds&&v.repositoryIds.length)?v.repositoryIds:(v.repositoryId?[v.repositoryId]:null));

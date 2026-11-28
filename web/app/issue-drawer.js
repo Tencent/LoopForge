@@ -242,7 +242,8 @@ function clarificationOverviewCard(issue){
     return `<div class="clarify-overview ${cls}"><span>${failed||pending?'!':'✓'}</span><div><b>${title}</b><small>${escapeHTML((c.summary||'').slice(0,120))}${c.summary&&c.summary.length>120?'…':''}</small></div><button class="button ghost small" data-start-clarify>查看</button></div>`;
   }
   if(c.status==='in_progress'){
-    return `<div class="clarify-overview"><span>…</span><div><b>澄清尚未完成</b><small>继续回答关键问题，进度已经保存；不影响直接触发 LOOP</small></div><button class="button ghost small" data-start-clarify>继续</button></div>`;
+    const hint=issueExecutionBlocked(issue)?'继续回答关键问题，进度已经保存':'继续回答关键问题，进度已经保存；不影响直接触发 LOOP';
+    return `<div class="clarify-overview"><span>…</span><div><b>澄清尚未完成</b><small>${hint}</small></div><button class="button ghost small" data-start-clarify>继续</button></div>`;
   }
   return `<div class="clarify-overview"><span>?</span><div><b>描述不够清楚？</b><small>结合原单和代码问清关键细节</small></div><button class="button ghost small" data-start-clarify>帮我问清楚</button></div>`;
 }
@@ -456,7 +457,10 @@ async function retryIssueClarificationWriteBack(){
     if(idx>=0)state.data.issues[idx]=updated;
     renderIssueDetailTab();
     renderIssues();
-    toast(updated.clarification?.writeBackStatus==='succeeded'?'已写回原单评论，现在可以触发需求了！':updated.clarification?.writeBackStatus==='pending'?'结论已保存，尚未写回原单':`写回仍未成功：${updated.clarification?.writeBackError||'未知错误'}`,updated.clarification?.writeBackStatus==='succeeded'?'ok':'err');
+    const status=updated.clarification?.writeBackStatus;
+    if(status==='succeeded')toast('澄清完成，已写回原单','ok');
+    else if(status==='pending')toast('结论已保存，尚未写回原单','err');
+    else toast(`写回仍未成功：${updated.clarification?.writeBackError||'未知错误'}`,'err');
   }catch(e){toast(e.message,'err')}
 }
 async function closeIssueById(issueId){
@@ -582,20 +586,21 @@ function clarifyHistoryHTML(c){
 }
 function clarifyPane(issue,project){
   const c=recoverClarifyView(issue.clarification||{}),source=issue.source==='gongfeng'?'工蜂 Issue':issue.source==='tapd'?'TAPD 需求':'工作项';
+  const blocked=issueExecutionBlocked(issue);
   if(c.status==='ready'&&submittedClarifyDraft?.issueId===issue.id)submittedClarifyDraft=null;
   const writeBack=c.writeBackStatus==='succeeded'?`已写回 ${source}`:c.writeBackStatus==='failed'?'写回失败':c.writeBackStatus==='skipped'?'仅保存到 LoopForge':'';
   if(c.status==='ready'&&c.summary){
     const pending=c.writeBackStatus==='pending'&&(issue.source==='tapd'||issue.source==='gongfeng')&&issue.externalRef;
     const retry=c.writeBackStatus==='failed'?`<button class="button primary small" data-retry-clarify>重试写回原单</button>`:'';
-    const confirm=pending?`<button class="button primary small" data-retry-clarify title="确认写回原单（追加评论）之后，即可开始触发需求">确认写回原单（追加评论）</button>`:'';
+    const confirm=pending?`<button class="button primary small" data-retry-clarify>确认写回原单（追加评论）</button>`:'';
     const external=issue.externalRef?.externalUrl?`<a class="button ghost small" href="${escapeHTML(safeURL(issue.externalRef.externalUrl))}" target="_blank" rel="noopener noreferrer">打开原单 ↗</a>`:'';
-    const trigger=!pending&&!issueExecutionBlocked(issue)?`<button class="button primary small" data-dispatch-issue="${escapeHTML(issue.id)}" title="按澄清结论触发 LOOP">触发需求</button>`:'';
-    const blockedHint=!pending&&issueExecutionBlocked(issue)?(issueTrackerClosed(issue)&&!issueManuallyClosed(issue)?closedTrackerHint(issue):deliveredHint(issue)):'';
-    const stepGuide=pending?`<div class="clarify-next-step-callout"><div class="clarify-step-badge active"><span class="step-num">1</span><span>确认写回原单（追加评论）</span></div><span class="clarify-step-arrow">➔</span><div class="clarify-step-badge"><span class="step-num">2</span><span>触发需求执行 LOOP</span></div></div>`:'';
+    const trigger=!pending&&!blocked?`<button class="button primary small" data-dispatch-issue="${escapeHTML(issue.id)}" title="按澄清结论触发 LOOP">触发需求</button>`:'';
+    const blockedHint=blocked?`<span class="muted">${escapeHTML(blocked)}</span>`:'';
+    const stepGuide=pending&&!blocked?`<div class="clarify-next-step-callout"><div class="clarify-step-badge active"><span class="step-num">1</span><span>确认写回原单（追加评论）</span></div><span class="clarify-step-arrow">➔</span><div class="clarify-step-badge"><span class="step-num">2</span><span>触发需求执行 LOOP</span></div></div>`:'';
     const head=pending
-      ?`<div class="clarify-ready-head"><span class="clarify-check warn">!</span><div><b>请确认澄清结论并写回原单</b><small>结论已追加到平台说明。确认写回原单（追加评论）后，即可开始触发需求执行 LOOP（不会修改原单描述）</small></div></div>${stepGuide}`
-      :`<div class="clarify-ready-head"><span class="clarify-check">✓</span><div><b>澄清已完成${c.writeBackStatus==='succeeded'?` · 已写回 ${source} 评论`:''}</b><small class="${c.writeBackStatus==='failed'?'danger':''}">${escapeHTML(writeBack||'结论已保存到平台说明')}，可直接触发需求执行 LOOP</small></div></div>`;
-    const actionTip=pending
+      ?`<div class="clarify-ready-head"><span class="clarify-check warn">!</span><div><b>请确认澄清结论并写回原单</b><small>${blocked?'结论已保存到平台说明。确认后会作为评论写回原单。':'结论已追加到平台说明。确认写回原单（追加评论）后，即可开始触发需求执行 LOOP（不会修改原单描述）'}</small></div></div>${stepGuide}`
+      :`<div class="clarify-ready-head"><span class="clarify-check">✓</span><div><b>澄清已完成${c.writeBackStatus==='succeeded'?` · 已写回 ${source} 评论`:''}</b><small class="${c.writeBackStatus==='failed'?'danger':''}">${escapeHTML(writeBack||'结论已保存到平台说明')}${blocked?'':'，可直接触发需求执行 LOOP'}</small></div></div>`;
+    const actionTip=pending&&!blocked
       ?`<div class="clarify-action-hint">确认写回原单（追加评论）后，即可开始触发需求</div>`
       :(trigger?`<div class="clarify-action-hint ok">可直接点击「触发需求」开始执行</div>`:'');
     return `<div class="clarify-workspace">${head}${clarifyVisibleSummary(c.summary)?`<div class="clarify-summary">${escapeHTML(clarifyVisibleSummary(c.summary))}</div>`:''}${c.writeBackError?`<div class="clarify-error">${escapeHTML(c.writeBackError)}</div>`:''}${clarifyHistoryHTML(c)}<div class="clarify-actions">${confirm}${trigger}${blockedHint}${retry}${external}<button class="button ghost small" data-reclarify>再问一轮</button>${actionTip}</div></div>`;
@@ -606,14 +611,16 @@ function clarifyPane(issue,project){
   const questionHTML=analyzing?'':clarifyQuestionCardsHTML(questions,saved);
   const submittedHTML=analyzing?clarifySubmittedHTML(saved?.reply):'';
   if(c.status!=='in_progress'&&!analyzing){
-    const intro=`<div class="clarify-orb">?</div><h3>描述不够清楚？一起问明白</h3><p>可选步骤。分析师只围绕这张单本身，结合本项目代码问清阻塞开工的细节；不澄清也可以直接触发 LOOP。</p>`;
+    const introCopy=blocked?'可结合项目代码继续澄清这条需求。':'可选步骤。分析师只围绕这张单本身，结合本项目代码问清阻塞开工的细节；不澄清也可以直接触发 LOOP。';
+    const intro=`<div class="clarify-orb">?</div><h3>描述不够清楚？一起问明白</h3><p>${introCopy}</p>`;
     return `<div class="clarify-workspace clarify-empty">${intro}<div class="clarify-start-row">${clarifyModelPickerHTML(false)}<button class="button primary" data-start-clarify>开始澄清</button></div></div>`;
   }
   const lastError=(!analyzing&&c.lastError)?`<div class="clarify-error req-clarify-retry"><span>${escapeHTML(c.lastError)}</span><button type="button" class="button primary small" data-retry-clarify-turn>重新分析</button></div>`:'';
   const rounds=(c.history||[]).filter(m=>m.role==='assistant').length;
   // Own text node so the sentence matches an English entry; a trailing count does not.
   const roundNote=(!analyzing&&!c.lastError)?`已澄清 ${rounds||0} 轮。`:'';
-  const nextHint=analyzing?'正在后台分析，关闭详情不会中断':(c.lastError?'上次分析未完成，可重新分析':'回答后点「继续澄清」。分析师确认够用后会给出结论；也可以随时直接触发 LOOP。');
+  const answerHint=blocked?'回答后点「继续澄清」。':'回答后点「继续澄清」。分析师确认够用后会给出结论；也可以随时直接触发 LOOP。';
+  const nextHint=analyzing?'正在后台分析，关闭详情不会中断':(c.lastError?'上次分析未完成，可重新分析':answerHint);
   const composerInput=analyzing?'':`<textarea id="issueClarifyInput" rows="3" placeholder="${questions.length?'点选上面的答案，或补充说明':'补充你认为重要的信息'}">${escapeHTML(saved?.extra||'')}</textarea>`;
   return `<div class="clarify-workspace"><div class="clarify-intro"><span>AI</span><div><b>${analyzing?'正在分析这张':'继续完善这张'}${issue.source==='gongfeng'?' Issue':'需求'}</b><small>${analyzing?'关闭详情不会中断，再打开可继续看过程':'每轮只问最关键的 1–3 个问题，只围绕这张单本身'}</small></div>${clarifyModelPickerHTML(analyzing)}</div>${clarifyVisibleSummary(c.summary)?`<div class="clarify-summary compact">${escapeHTML(clarifyVisibleSummary(c.summary))}</div>`:''}${clarifyHistoryHTML(c)}${submittedHTML}${questionHTML}${lastError}<div id="issueClarifyThinking" class="req-thinking-stream" hidden></div><div class="issue-clarify-composer">${composerInput}<div><span id="issueClarifyHint">${nextHint}${roundNote?` <span>${roundNote}</span>`:''}</span><span><button class="button ghost small" data-stop-clarify ${analyzing?'':'hidden'}>停止</button> <button class="button primary small" data-continue-clarify${analyzing?' disabled':''}>${analyzing?'分析中…':(c.lastError?'重新分析':'继续澄清')}</button></span></div></div></div>`;
 }
@@ -763,7 +770,7 @@ function conversationRepoCards(issue,data){
 // 对话需求的阶段卡片：合入为绿、进行中为蓝；没合入就关闭的保持中性，不当成交付成功。
 function conversationHeadState(issue){
   const st=issueCurrentStage(issue);
-  if(issueManuallyClosed(issue))return{tone:'',label:'需求已关闭',hint:'需求已在 LoopForge 中手动关闭，需要继续时先重新打开'};
+  if(issueManuallyClosed(issue))return{tone:'',label:'需求已关闭',hint:'仍可编辑和澄清需求。'};
   if(issueTrackerClosed(issue)&&!issueMergedDelivery(issue))return{tone:'',label:st.label,hint:'外部工作项已关闭'};
   if(deliveryLocked(issue)){
     const merged=issueMergedDelivery(issue);
