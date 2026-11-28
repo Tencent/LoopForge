@@ -121,6 +121,17 @@ test('run detail: tabs render and a waiting approval is approved from the UI', a
   await expect(page.locator('[data-run-tab="review"]')).toHaveClass(/active/);
   await expect(page.locator('#runReviewFrame')).toHaveAttribute('aria-label', 'LOOP 会话审阅');
   await expect(page.locator('#runReviewFrame')).not.toHaveAttribute('title', /./);
+  // Review mode keeps the header compact: the run meta lives in the run-info
+  // panel, the title keeps a readable width, and the review frame starts
+  // inside the viewport.
+  await expect(page.locator('.run-detail-header > .run-header-meta')).toHaveCount(0);
+  await expect(page.locator('[data-run-tab="review"]')).toHaveAttribute('role', 'tab');
+  await expect(page.locator('[data-run-tab="review"]')).toHaveAttribute('aria-selected', 'true');
+  const titleBox = await page.locator('.run-detail-header h2').boundingBox();
+  expect(titleBox.width).toBeGreaterThan(120);
+  expect(titleBox.height).toBeLessThan(80);
+  const viewport = page.viewportSize();
+  expect((await page.locator('#runReviewFrame').boundingBox()).y).toBeLessThan(viewport.height);
   const review = page.frameLocator('#runReviewFrame');
   await expect(review.getByRole('region', { name: '人工审核' })).toBeVisible();
   await expect(review.getByRole('separator', { name: '调整产物侧栏宽度' }))
@@ -138,6 +149,8 @@ test('run detail: tabs render and a waiting approval is approved from the UI', a
     await page.locator(`[data-run-tab="${tab}"]`).click();
     const scope = page.locator(`[data-run-pane="${tab}"] [data-run-observation-scope]`);
     await expect(scope).toHaveValue('all');
+    await expect(scope).toBeVisible();
+    expect((await page.locator(`[data-run-pane="${tab}"]`).boundingBox()).height).toBeGreaterThan(100);
     expect(Math.abs((await detailTabs.boundingBox()).y - initialTabsTop)).toBeLessThan(3);
     await expect(page.locator('.run-detail-main > .approval-callout')).toHaveCount(0);
   }
