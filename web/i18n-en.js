@@ -1086,6 +1086,79 @@ Object.assign(window.LF_I18N_EN, {
   "容器可访问宿主机设备，需执行机器开启特权许可。": "Allows container access to host devices; the execution machine must permit privileged mode.",
   "默认不限": "Unlimited",
 });
+// Page descriptions, empty states and hints that were still falling back to
+// Chinese on the Runs, Projects, Sandboxes, Knowledge, AI schedules, Assistant,
+// Access keys, Approvals and Requirements pages.
+Object.assign(window.LF_I18N_EN, {
+  "并发规则": "Concurrency rules",
+  "平台所有项目共用执行名额，默认 10 条顶层 LOOP，平台管理员可在「执行机器」调整。个人和共享机器按各自上限计数。": "Execution slots are shared by all projects: 10 top-level LOOPs by default; platform admins can adjust this in Runners. Personal and shared runners count against their own limits.",
+  "超出名额后按排队顺序启动。开启自动分配的 LOOP 等待兼容的执行机器，子 LOOP 共用父流程名额。": "Runs beyond the limit start in queue order. LOOPs with auto-assignment wait for a compatible runner, and sub-LOOPs share the parent run's slot.",
+  "失败、暂停、待确认的 LOOP 空闲 1 小时后自动归档工作区并释放名额，继续或重试时自动恢复。已开始的 LOOP 取消后，工作区清理完成即释放名额。": "A failed, paused or pending-confirmation LOOP archives its workspace and frees its slot after 1 hour idle, and restores it on resume or retry. A cancelled LOOP frees its slot once workspace cleanup finishes.",
+  "平台执行机器默认同时运行 10 条顶层 LOOP，所有项目共用，平台管理员可调整。": "Platform runners run 10 top-level LOOPs at a time by default, shared by all projects and adjustable by platform admins.",
+  "暂无进行中的运行": "No LOOPs in progress",
+  "换个关键词，或到需求列表查看对应需求的执行结果。": "Try another keyword, or open Requirements to see the result of each requirement.",
+  "项目是需求、仓库、团队和默认 LOOP 的统一边界。点击项目进入详情配置。": "A project is the shared boundary for requirements, repositories, the team and the default LOOP. Open a project to configure it.",
+  "项目是需求、仓库与团队的统一边界，先创建第一个项目。": "A project is the shared boundary for requirements, repositories and the team. Create the first one.",
+  "我参与的": "I'm in",
+  "待完善": "Needs setup",
+  "未绑定代码仓库": "No repository bound",
+  "维护当前项目的运行沙箱：隔离方式、Dockerfile 和环境变量。": "Maintain this project's run sandboxes: isolation, Dockerfile and environment variables.",
+  "维护当前项目的运行沙箱。": "Maintain this project's run sandboxes.",
+  "本项目沙箱": "Project sandboxes",
+  "接入并管理仅你本人可见的外部只读知识库连接器，供 AI 对话与 SOP 运行按需引用。": "Connect and manage external read-only knowledge connectors only you can see, for AI chat and LOOP runs to cite on demand.",
+  "个人隔离": "Personal isolation",
+  "：连接器与凭据仅归属当前账号，其他成员无法查看或调用。": ": connectors and credentials belong to this account only; other members cannot see or call them.",
+  "只读安全代理": "Read-only secure proxy",
+  "：密钥 AES-GCM 加密托管，沙箱通过无状态代理检索并标注出处，支持按工具白名单精准放行只读工具。": ": keys are hosted with AES-GCM encryption; sandboxes search through a stateless proxy that cites sources and allows only read-only tools on an explicit allowlist.",
+  "还没有接入个人知识库连接器": "No personal knowledge connector yet",
+  "可从上方常用知识库模板快速配置，或选择一个连接器类型接入你的自有知识库；配置仅对你本人可见，可在 AI 对话、SOP 节点与手动运行中引用。": "Start from a common knowledge template above, or pick a connector type to connect your own knowledge base. The configuration is visible only to you and can be cited in AI chat, LOOP nodes and manual runs.",
+  "共享任务市场": "Shared task marketplace",
+  "执行记录": "Executions",
+  "任务以最后保存人的身份和完全权限执行。关闭页面后，任务会继续运行。": "The task runs as the last saver with full permissions. It keeps running after you close the page.",
+  "当前项目还没有 AI 定时任务，点击右上角「新建 AI 定时任务」。": "This project has no AI scheduled task yet. Click New AI scheduled task in the top right.",
+  "AI 工作台里和你对话、帮你动手的助手。设置消息发送方式、角色与 LOOP 的主动派发，以及每次对话都要遵守的规则；只对你自己生效。": "The assistant that talks with you and gets things done in the AI workspace. Configure message delivery, role and LOOP dispatch, and the rules every conversation follows. Only applies to you.",
+  "消息发送": "Message delivery",
+  "生成中发送消息": "Send while generating",
+  "排队会等当前回复结束；立即发送会打断当前回复，保留已输出内容并继续处理新消息。": "Queue waits for the current reply to finish; Send now interrupts it, keeps the output so far and handles the new message.",
+  "还没有访问密钥，创建后即可接入 REST API 和 MCP。": "No access key yet. Create one to use the REST API and MCP.",
+  "没有需要你拍板的需求": "Nothing needs your decision",
+  "流程停在人工确认节点时会出现在这里。": "LOOPs waiting at a human approval step appear here.",
+  "批量操作": "Bulk actions"
+});
+
+// Page copy that spans inline markup and the remaining per-page hints.
+Object.assign(window.LF_I18N_EN, {
+  "常用知识库 · 快速接入": "Common knowledge bases · Quick setup",
+  "常用知识库模板": "Common knowledge base templates",
+  "快速配置": "Quick setup",
+  "接入此类型": "Connect this type",
+  "通过只读 REST API 接入个人或团队 WeKnora 实例（支持列子库、混合检索与分块原文读取）": "Connect a personal or team WeKnora instance over its read-only REST API (sub-library listing, hybrid search and chunk text reading).",
+  "接入遵循 Streamable HTTP MCP 协议的任意只读知识库服务 (含 LightCloud 等), 仅放行 readOnlyHint Tool": "Connect any read-only knowledge base that speaks Streamable HTTP MCP (including LightCloud); only tools marked readOnlyHint are allowed.",
+  "接入遵循 Streamable HTTP MCP 协议的任意只读知识库服务（含 LightCloud 等），仅放行 readOnlyHint Tool": "Connect any read-only knowledge base that speaks Streamable HTTP MCP (including LightCloud); only tools marked readOnlyHint are allowed.",
+  "帮我批准审查模型": "Review model for approvals",
+  "打开后 AI 助手会更主动地把事情交给角色或 LOOP。派角色不需要确认；走 LOOP 在「请求批准」下先征求同意，「帮我批准」下由 AI 审查直接裁决，「完全权限」下直接启动。": "When on, the AI assistant hands work to roles or LOOPs more eagerly. Assigning a role needs no confirmation; for LOOPs it asks first under \"Ask for approval\", decides directly under \"Approve for me\", and starts at once under \"Full access\".",
+  "「帮我批准」模式由 AI 独立审查平台及外部操作并直接放行或拒绝，无需人工审批。默认沿用当前对话的 CLI 与模型（最低思考强度）；也可指定已配置的 CLI 模型或独立轻量 API 节省 Token。": "In \"Approve for me\" mode the AI reviews platform and external operations on its own and either allows or denies them without human approval. By default it reuses the CLI and model of the current conversation (lowest thinking effort); you can also pick a configured CLI model or a separate lightweight API to save tokens.",
+  "快捷选择": "Quick pick",
+  "帮我批准审查方式": "Approval review method",
+  "跟随当前对话 CLI 和模型": "Follow the current conversation CLI and model",
+  "更多": "More",
+  "共 0 个项目": "0 projects",
+});
+
+Object.assign(window.LF_I18N_EN, {
+  "派角色不需要确认": "Assigning a role needs no confirmation",
+  "个任务": " tasks",
+});
+
+Object.assign(window.LF_I18N_EN, {
+  "排队": "Queue",
+  "立即发送": "Send now",
+});
+
+Object.assign(window.LF_I18N_EN, {
+  "暂无项目说明": "No project description",
+});
+
 // Capability assets (rules, skills, MCP) and sandboxes. Names, descriptions and
 // project names on these pages are user data and keep the language they were typed in.
 Object.assign(window.LF_I18N_EN, {
@@ -1097,7 +1170,7 @@ Object.assign(window.LF_I18N_EN, {
   "维护当前项目的运行沙箱：隔离方式、Dockerfile 和环境变量。": "Maintain this project's run sandboxes: isolation, Dockerfile and environment variables.",
   "查看其他项目共享的沙箱；共享沙箱只读，可直接用于本项目。": "Sandboxes shared by other projects. They are read-only and can be used in this project directly.",
   "请在沙箱所属项目中共享。": "Share it from the project that owns the sandbox.",
-  "沙箱决定 LOOP 节点和对话工作区在什么隔离环境里执行：docker 沙箱自带 Dockerfile，native 沙箱使用执行机器上已安装的工具。建好后在流程设置里选用；也可以直接用「共享」里的现成配置。": "A sandbox decides the isolated environment LOOP nodes and chat workspaces run in: a docker sandbox brings its own Dockerfile, a native sandbox uses the tools installed on the execution machine. Pick it in the LOOP settings once created, or use a ready-made one under \"Shared\".",
+  "沙箱决定 LOOP 节点和对话工作区在什么隔离环境里执行：docker 沙箱自带 Dockerfile，native 沙箱使用执行机器上已安装的工具。建好后在流程设置里选用；也可以直接用「共享」里的现成配置。": "A sandbox decides where LOOP nodes and conversation workspaces run: a Docker sandbox carries its own Dockerfile, while a native sandbox uses the tools installed on the runner. Pick it in the LOOP settings once created, or use a ready-made Shared profile.",
   "面包屑": "Breadcrumb",
   "返回能力资产": "Back to capability assets",
   "返回沙箱管理": "Back to sandboxes",
@@ -1164,81 +1237,6 @@ Object.assign(window.LF_I18N_EN, {
   "在对话里澄清和改代码": "Clarify and change code in chat",
   "这条需求不使用 LOOP，在对话里澄清需求、直接改代码；定时任务不会自动认领它。": "This requirement uses no LOOP: clarify and change code in chat; scheduled jobs won't pick it up.",
 });
-
-// Page descriptions, empty states and hints that were still falling back to
-// Chinese on the Runs, Projects, Sandboxes, Knowledge, AI schedules, Assistant,
-// Access keys, Approvals and Requirements pages.
-Object.assign(window.LF_I18N_EN, {
-  "并发规则": "Concurrency rules",
-  "平台所有项目共用执行名额，默认 10 条顶层 LOOP，平台管理员可在「执行机器」调整。个人和共享机器按各自上限计数。": "Execution slots are shared by all projects: 10 top-level LOOPs by default; platform admins can adjust this in Runners. Personal and shared runners count against their own limits.",
-  "超出名额后按排队顺序启动。开启自动分配的 LOOP 等待兼容的执行机器，子 LOOP 共用父流程名额。": "Runs beyond the limit start in queue order. LOOPs with auto-assignment wait for a compatible runner, and sub-LOOPs share the parent run's slot.",
-  "失败、暂停、待确认的 LOOP 空闲 1 小时后自动归档工作区并释放名额，继续或重试时自动恢复。已开始的 LOOP 取消后，工作区清理完成即释放名额。": "A failed, paused or pending-confirmation LOOP archives its workspace and frees its slot after 1 hour idle, and restores it on resume or retry. A cancelled LOOP frees its slot once workspace cleanup finishes.",
-  "平台执行机器默认同时运行 10 条顶层 LOOP，所有项目共用，平台管理员可调整。": "Platform runners run 10 top-level LOOPs at a time by default, shared by all projects and adjustable by platform admins.",
-  "暂无进行中的运行": "No LOOPs in progress",
-  "换个关键词，或到需求列表查看对应需求的执行结果。": "Try another keyword, or open Requirements to see the result of each requirement.",
-  "项目是需求、仓库、团队和默认 LOOP 的统一边界。点击项目进入详情配置。": "A project is the shared boundary for requirements, repositories, the team and the default LOOP. Open a project to configure it.",
-  "项目是需求、仓库与团队的统一边界，先创建第一个项目。": "A project is the shared boundary for requirements, repositories and the team. Create the first one.",
-  "我参与的": "I'm in",
-  "待完善": "Needs setup",
-  "未绑定代码仓库": "No repository bound",
-  "维护当前项目的运行沙箱：隔离方式、Dockerfile 和环境变量。": "Maintain this project's run sandboxes: isolation, Dockerfile and environment variables.",
-  "维护当前项目的运行沙箱。": "Maintain this project's run sandboxes.",
-  "本项目沙箱": "Project sandboxes",
-  "沙箱决定 LOOP 节点和对话工作区在什么隔离环境里执行：docker 沙箱自带 Dockerfile，native 沙箱使用执行机器上已安装的工具。建好后在流程设置里选用；也可以直接用「共享」里的现成配置。": "A sandbox decides where LOOP nodes and conversation workspaces run: a Docker sandbox carries its own Dockerfile, while a native sandbox uses the tools installed on the runner. Pick it in the LOOP settings once created, or use a ready-made Shared profile.",
-  "接入并管理仅你本人可见的外部只读知识库连接器，供 AI 对话与 SOP 运行按需引用。": "Connect and manage external read-only knowledge connectors only you can see, for AI chat and LOOP runs to cite on demand.",
-  "个人隔离": "Personal isolation",
-  "：连接器与凭据仅归属当前账号，其他成员无法查看或调用。": ": connectors and credentials belong to this account only; other members cannot see or call them.",
-  "只读安全代理": "Read-only secure proxy",
-  "：密钥 AES-GCM 加密托管，沙箱通过无状态代理检索并标注出处，支持按工具白名单精准放行只读工具。": ": keys are hosted with AES-GCM encryption; sandboxes search through a stateless proxy that cites sources and allows only read-only tools on an explicit allowlist.",
-  "还没有接入个人知识库连接器": "No personal knowledge connector yet",
-  "可从上方常用知识库模板快速配置，或选择一个连接器类型接入你的自有知识库；配置仅对你本人可见，可在 AI 对话、SOP 节点与手动运行中引用。": "Start from a common knowledge template above, or pick a connector type to connect your own knowledge base. The configuration is visible only to you and can be cited in AI chat, LOOP nodes and manual runs.",
-  "共享任务市场": "Shared task marketplace",
-  "执行记录": "Executions",
-  "任务以最后保存人的身份和完全权限执行。关闭页面后，任务会继续运行。": "The task runs as the last saver with full permissions. It keeps running after you close the page.",
-  "当前项目还没有 AI 定时任务，点击右上角「新建 AI 定时任务」。": "This project has no AI scheduled task yet. Click New AI scheduled task in the top right.",
-  "AI 工作台里和你对话、帮你动手的助手。设置消息发送方式、角色与 LOOP 的主动派发，以及每次对话都要遵守的规则；只对你自己生效。": "The assistant that talks with you and gets things done in the AI workspace. Configure message delivery, role and LOOP dispatch, and the rules every conversation follows. Only applies to you.",
-  "消息发送": "Message delivery",
-  "生成中发送消息": "Send while generating",
-  "排队会等当前回复结束；立即发送会打断当前回复，保留已输出内容并继续处理新消息。": "Queue waits for the current reply to finish; Send now interrupts it, keeps the output so far and handles the new message.",
-  "还没有访问密钥，创建后即可接入 REST API 和 MCP。": "No access key yet. Create one to use the REST API and MCP.",
-  "没有需要你拍板的需求": "Nothing needs your decision",
-  "流程停在人工确认节点时会出现在这里。": "LOOPs waiting at a human approval step appear here.",
-  "批量操作": "Bulk actions"
-});
-
-// Page copy that spans inline markup and the remaining per-page hints.
-Object.assign(window.LF_I18N_EN, {
-  "常用知识库 · 快速接入": "Common knowledge bases · Quick setup",
-  "常用知识库模板": "Common knowledge base templates",
-  "快速配置": "Quick setup",
-  "接入此类型": "Connect this type",
-  "通过只读 REST API 接入个人或团队 WeKnora 实例（支持列子库、混合检索与分块原文读取）": "Connect a personal or team WeKnora instance over its read-only REST API (sub-library listing, hybrid search and chunk text reading).",
-  "接入遵循 Streamable HTTP MCP 协议的任意只读知识库服务 (含 LightCloud 等), 仅放行 readOnlyHint Tool": "Connect any read-only knowledge base that speaks Streamable HTTP MCP (including LightCloud); only tools marked readOnlyHint are allowed.",
-  "接入遵循 Streamable HTTP MCP 协议的任意只读知识库服务（含 LightCloud 等），仅放行 readOnlyHint Tool": "Connect any read-only knowledge base that speaks Streamable HTTP MCP (including LightCloud); only tools marked readOnlyHint are allowed.",
-  "帮我批准审查模型": "Review model for approvals",
-  "打开后 AI 助手会更主动地把事情交给角色或 LOOP。派角色不需要确认；走 LOOP 在「请求批准」下先征求同意，「帮我批准」下由 AI 审查直接裁决，「完全权限」下直接启动。": "When on, the AI assistant hands work to roles or LOOPs more eagerly. Assigning a role needs no confirmation; for LOOPs it asks first under \"Ask for approval\", decides directly under \"Approve for me\", and starts at once under \"Full access\".",
-  "「帮我批准」模式由 AI 独立审查平台及外部操作并直接放行或拒绝，无需人工审批。默认沿用当前对话的 CLI 与模型（最低思考强度）；也可指定已配置的 CLI 模型或独立轻量 API 节省 Token。": "In \"Approve for me\" mode the AI reviews platform and external operations on its own and either allows or denies them without human approval. By default it reuses the CLI and model of the current conversation (lowest thinking effort); you can also pick a configured CLI model or a separate lightweight API to save tokens.",
-  "快捷选择": "Quick pick",
-  "帮我批准审查方式": "Approval review method",
-  "跟随当前对话 CLI 和模型": "Follow the current conversation CLI and model",
-  "更多": "More",
-  "共 0 个项目": "0 projects",
-});
-
-Object.assign(window.LF_I18N_EN, {
-  "派角色不需要确认": "Assigning a role needs no confirmation",
-  "个任务": " tasks",
-});
-
-Object.assign(window.LF_I18N_EN, {
-  "排队": "Queue",
-  "立即发送": "Send now",
-});
-
-Object.assign(window.LF_I18N_EN, {
-  "暂无项目说明": "No project description",
-});
-
 // 执行机器 page: static copy in index.html. runners.js renders its dynamic copy with lfT.
 Object.assign(window.LF_I18N_EN, {
   "连接电脑或 CVM，可将机器共享给多个项目。": "Connect a computer or CVM and share it with multiple projects.",
