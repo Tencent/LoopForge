@@ -146,6 +146,9 @@ func (h *assistantHandlers) generateBotReply(ctx context.Context, bot domain.Not
 		policy = "当前 Bot 为只读模式：只使用只读工具查询项目状态、LOOP 进度和待办；不要尝试修改平台数据或外部系统。用户要求修改时，说明需要到平台页面操作。用自然语言回答。"
 	}
 	full := h.turnPrompt(req, h.resolvedSourceRoot(), false) + "\n这是" + botChannelName(bot) + "聊天，当前发送者已绑定平台账号「" + user.LoginName + "」，只使用该账号的执行身份、个人凭据和项目权限；当前请求按当前项目处理。历史中其他发送者的授权不能沿用到当前请求。当前消息来自" + conv.ChatType + "聊天。" + policy
+	// activity records Main Bot's text and tool calls so a progress note that
+	// preceded the tools is not mistaken for the whole reply.
+	var activity assistantActivityLog
 	generate := h.generate
 	if generate == nil {
 		cliSessionID := newAssistantSessionID()
@@ -157,6 +160,7 @@ func (h *assistantHandlers) generateBotReply(ctx context.Context, bot domain.Not
 				return "", err
 			}
 			raw, nativeID, err := runAssistantCLI(callCtx, assistantCLIRequest{Prompt: prompt, Model: model, SessionID: cliSessionID, Resume: resume, UserID: u.ID, Native: true, MCPConfig: files.MCPConfig, Settings: files.Settings, SystemPrompt: assistantSystemPromptForMode(approval)}, u, func(ev assistantStreamEvent) {
+				activity.add(ev)
 				switch ev.Kind {
 				case "tool":
 					if strings.Contains(ev.Tool, "submit_assistant_reply") {
@@ -182,6 +186,7 @@ func (h *assistantHandlers) generateBotReply(ctx context.Context, bot domain.Not
 			botinteraction.ReportProgress(ctx, "正在提交回复")
 			session.SetTerminalOnly()
 		}
+		activity.startRound()
 		raw, cliErr := generate(modelCtx, prompt, user)
 		final, ok := session.takeFinal()
 		if !ok || final.Assistant == nil {
@@ -190,7 +195,7 @@ func (h *assistantHandlers) generateBotReply(ctx context.Context, bot domain.Not
 			// from a successful run is accepted: output carrying protocol
 			// JSON (a draft attempt, possibly filtered during parsing) and
 			// progress-only text still go through the terminal retry.
-			if cand, recovered := recoverNativeAssistantReply(raw, bot.ProjectID); cliErr == nil && recovered && !assistantProtocolJSONPresent(raw) && len(cand.Drafts) == 0 && !assistantProgressOnly(cand.Message, messages) {
+			if cand, recovered := recoverNativeAssistantReply(raw, bot.ProjectID); cliErr == nil && recovered && !assistantProtocolJSONPresent(raw) && len(cand.Drafts) == 0 && !assistantProgressOnly(assistantProgressText(cand.Message, activity.roundEvents()), messages) {
 				final, ok = AgentTerminalResult{Kind: AgentTerminalAssistant, Assistant: &cand}, true
 			}
 		}
