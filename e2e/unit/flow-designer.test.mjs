@@ -47,6 +47,8 @@ function load({ workflows = [], projectId = 'p1', elements = {}, groups = [], ag
     workflowAgents: () => agents,
     workflowAgent: id => agents.find(a => a.id === id) || null,
     workflowStages: wf => [wf.nodes],
+    // Mirrors sops.js, which the LOOP switcher calls since #1320.
+    workflowVersionLabel: w => (w.publishedRevision || w.status === 'published' ? `v${w.version || 1}` : ''),
     rememberOpenWorkflow: () => {},
     renderAll: () => {},
   };

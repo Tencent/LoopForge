@@ -174,7 +174,7 @@ func (h *evolutionHandlers) runProposalJob(p domain.EvoProposal, finding domain.
 		}
 	}
 	if len(evidence) == 0 {
-		h.failProposal(p, "没有可回放的样本（样本运行可能已删除、仍在运行，或不属于可回放的 SOP）")
+		h.failProposal(p, "没有可回放的样本（样本运行可能已删除、仍在运行，或不属于可回放的 LOOP）")
 		return
 	}
 	system, prompt := evolution.BuildImproverPrompt(asset.Kind, asset.Name, asset.Content, finding, evidence, h.experienceLines(p))

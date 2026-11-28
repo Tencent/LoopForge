@@ -38,7 +38,7 @@ func (e *Engine) validateEvolutionReplayDefinition(wf domain.WorkflowDefinition,
 			continue
 		}
 		if node.Type != "agent" && node.Type != "" {
-			return fmt.Errorf("进化回放暂不支持节点「%s」的 %s 类型（脚本、命令和子 SOP 不在首版范围内）", node.ID, node.Type)
+			return fmt.Errorf("进化回放暂不支持节点「%s」的 %s 类型（脚本、命令和子 LOOP 不在首版范围内）", node.ID, node.Type)
 		}
 		agent, ok := workflowAgent(e.repo, wf, node.AgentID)
 		if !ok {
