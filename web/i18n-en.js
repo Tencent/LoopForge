@@ -1260,3 +1260,13 @@ Object.assign(window.LF_I18N_EN, {
   "自动分配 · 平台云端": "Auto-assign · platform cloud",
   "自动分配失败": "Auto-assign failed",
 });
+
+// These sentences cross markup boundaries. Keep separators and spaces in
+// the translated text nodes so emphasis, listeners and other markup survive.
+window.LF_I18N_INLINE_EN = {
+  "平台所有项目共用执行名额": "Execution slots are shared by all projects",
+  "，默认 10 条顶层 LOOP，平台管理员可在「执行机器」调整。个人和共享机器按各自上限计数。": ": 10 top-level LOOPs by default. Platform admins can adjust this in Runners. Personal and shared runners count against their own limits.",
+  "打开后 AI 助手会更主动地把事情交给角色或 LOOP。": "When on, the AI assistant hands work to roles or LOOPs more eagerly. ",
+  "；": "; ",
+  "走 LOOP 在「请求批准」下先征求同意，「帮我批准」下由 AI 审查直接裁决，「完全权限」下直接启动。": 'for LOOPs it asks first under "Ask for approval", decides directly under "Approve for me", and starts at once under "Full access".',
+};

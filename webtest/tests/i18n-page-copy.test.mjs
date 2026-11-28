@@ -80,12 +80,18 @@ test('English mode translates copy split by inline markup as one sentence', asyn
   const split = document.getElementById('split');
   // The initial pass ran on an empty body, so re-inserting the nodes replays the
   // same MutationObserver path the app uses for asynchronously rendered views.
+  const emphasis = split.querySelector('strong > em');
+  const limit = tip.querySelector('b');
   document.body.appendChild(tip);
   document.body.appendChild(split);
   await new Promise(r => setTimeout(r, 20));
   assert.ok(!/[㐀-鿿]/.test(tip.textContent), `tip still Chinese: ${tip.textContent}`);
   assert.ok(!/[㐀-鿿]/.test(split.textContent), `split still Chinese: ${split.textContent}`);
-  assert.match(split.textContent, /hands work to roles or LOOPs more eagerly/);
+  assert.equal(tip.querySelector('b'), limit);
+  assert.equal(limit.textContent, 'Execution slots are shared by all projects');
+  assert.equal(split.querySelector('strong > em'), emphasis);
+  assert.equal(emphasis.textContent, 'Assigning a role needs no confirmation');
+  assert.match(split.textContent, /more eagerly\. Assigning a role needs no confirmation; for LOOPs/);
   assert.match(document.getElementById('data').textContent, /UI 走查/);
   window.close();
 });
