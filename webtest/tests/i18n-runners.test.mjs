@@ -19,10 +19,10 @@ const offline = { ...runner, id: 'runner-old', name: 'old-box', status: 'offline
 const shared = { ...runner, id: 'runner-team', name: 'team-box', ownerUserId: 2, runtimes: [runner.runtimes[0]] };
 const platformRunner = { name: '平台执行机器（云端）', status: 'online', runLimit: 10, canEditLimit: true, allowPrivilegedSandbox: true, load: { runningRuns: 0, occupiedRuns: 1 } };
 
-async function runnersPage(lang, defaults) {
+async function runnersPage(lang, defaults, runners = [runner, offline, shared]) {
   const app = await loadApp({ lang });
   app.router.post('/api/runners/bind-codes', { code: 'BIND123', expiresAt: '2099-01-01T00:00:00Z' });
-  app.router.get('/api/runners?projectId=p1', [runner, offline, shared]);
+  app.router.get('/api/runners?projectId=p1', runners);
   app.router.get('/api/runners/default?projectId=p1', { minRunnerVersion: '0.8.0', platformRunner, ...defaults });
   app.evaluate(`
     state.currentUser={id:1,loginName:'owner'};
@@ -87,6 +87,36 @@ test('English 执行机器 page renders whole English phrases, not mixed fragmen
     app.evaluate('runnerAuthDescription.local'), app.evaluate('runnerAuthDescription.personal')]) {
     assert.doesNotMatch(text, HAN, text);
   }
+});
+
+// A personal Runner that reports a local A2A service gets an extra runtime row.
+const a2aRuntime = { provider: 'a2a', status: 'online', authMode: 'local', version: '0.3' };
+const a2aRunner = { ...runner, runtimes: [...runner.runtimes, a2aRuntime] };
+const a2aDisabled = { ...runner, id: 'runner-off', name: 'off-box', runtimes: [{ ...a2aRuntime, status: 'disabled' }] };
+const a2aShared = { ...shared, runtimes: [a2aRuntime] };
+
+test('English 执行机器 page names the local A2A Agent row in English', async (t) => {
+  const app = await runnersPage('en', { runnerId: 'runner-mac', personalRunnerId: 'runner-mac' }, [a2aRunner, a2aDisabled, a2aShared]);
+  t.after(app.close);
+  const { document, window } = app;
+  const view = document.querySelector('#runnersView');
+  const rows = [...view.querySelectorAll('#runnersList .runner-runtime-row')].filter(row => /A2A/.test(row.textContent));
+  // Only the owner's enabled A2A runtime shows; disabled and shared runners do not.
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].querySelector('.runner-runtime-name b').textContent, 'Local A2A Agent');
+  assert.equal(rows[0].querySelector('.runner-auth-fixed').textContent, 'Local service');
+  assert.doesNotMatch(window.lfTranslate(rows[0].textContent), HAN);
+  assert.ok(rows[0].closest('.runner-card').textContent.includes('mac-mini'));
+  assert.deepEqual(leftoverChinese(window, view), []);
+});
+
+test('Chinese 执行机器 page keeps the local A2A Agent row in Chinese', async (t) => {
+  const app = await runnersPage('', { runnerId: 'runner-mac', personalRunnerId: 'runner-mac' }, [a2aRunner]);
+  t.after(app.close);
+  const rows = [...app.document.querySelectorAll('#runnersList .runner-runtime-row')].filter(row => /A2A/.test(row.textContent));
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].querySelector('.runner-runtime-name b').textContent, '本机 A2A Agent');
+  assert.equal(rows[0].querySelector('.runner-auth-fixed').textContent, '本机服务');
 });
 
 test('English 执行机器 dialogs: share, remove and the auth help are English', async (t) => {
