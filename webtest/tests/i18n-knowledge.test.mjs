@@ -52,6 +52,7 @@ const ROUTES = [
       title: '发布与回滚', searchHitCount: 1, readCount: 0, citedCount: 0, callCount: 2,
       // Callers without a title: the server falls back to the Chinese kind name.
       topCallers: [
+        { kind: 'sop', label: '个人对话', callCount: 1, runId: 'run-named' },
         { kind: 'scheduled', label: '定时任务', subLabel: '定时任务', callCount: 1 },
         { kind: 'chat', label: '个人对话', subLabel: '个人对话', callCount: 1 },
       ],
@@ -98,7 +99,7 @@ test('English mode leaves no Chinese copy in 我的知识库 (gallery, connector
   // User data is shown as written, not run through fragment translation.
   assert.ok(root.querySelector('.kb-card h3, h3[data-i18n-data]').textContent.includes('团队 Obsidian 笔记'));
   const pills = [...root.querySelectorAll('.kb-usage-caller-name')].map(el => el.textContent);
-  assert.deepEqual(pills, ['库存缺陷修复 LOOP · 开发实现', CHAT_TITLE, 'Scheduled task', 'Personal chat']);
+  assert.deepEqual(pills, ['库存缺陷修复 LOOP · 开发实现', CHAT_TITLE, '个人对话', 'Scheduled task', 'Personal chat']);
 });
 
 test('English mode leaves no Chinese copy in the knowledge call history and keeps user titles intact', async (t) => {
@@ -122,7 +123,7 @@ test('caller sub-labels drop repeated role/node names and the kind already shown
   app.evaluate("switchView('knowledge')");
   await settle(12);
   const names = [...app.document.querySelectorAll('.kb-usage-caller-name')].map(el => el.textContent);
-  assert.deepEqual(names, ['库存缺陷修复 LOOP · 开发实现', CHAT_TITLE, '定时任务', '个人对话']);
+  assert.deepEqual(names, ['库存缺陷修复 LOOP · 开发实现', CHAT_TITLE, '个人对话', '定时任务', '个人对话']);
 });
 
 test('English caller pills translate server fallback names and use the shared dictionary wording', async (t) => {

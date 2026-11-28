@@ -1047,7 +1047,7 @@
   // (or "SOP 运行") when a caller has no title; show the localized name instead.
   function callerPillLabel(label, kind) {
     const text = String(label || '').trim();
-    if (!text || text === (CALLER_KIND_ZH[kind] || CALLER_KIND_ZH.chat)) return formatUsageCallerKindLabel(kind);
+    if (!text || (kind !== 'sop' && text === (CALLER_KIND_ZH[kind] || CALLER_KIND_ZH.chat))) return formatUsageCallerKindLabel(kind);
     if (kind === 'sop' && text === 'SOP 运行') return lfT('SOP 运行', 'SOP run');
     return text;
   }
@@ -1137,9 +1137,9 @@
           const titleText = subLabel ? `${kindLabel} · ${label} (${subLabel})` : `${kindLabel} · ${label}`;
           const jumpAttr = callerJumpAttrs(c);
           if (jumpAttr) {
-            return `<button type="button" class="kb-usage-caller-pill is-link" ${jumpAttr} title="${kbEsc(titleText)}" data-i18n-data><span class="kb-usage-caller-tag">${kbEsc(kindLabel)}</span><span class="kb-usage-caller-name">${kbEsc(label)}${subLabel ? ` · ${kbEsc(subLabel)}` : ''}</span>${countText ? `<span class="kb-usage-caller-cnt">${kbEsc(countText)}</span>` : ''}</button>`;
+            return `<button type="button" class="kb-usage-caller-pill is-link" ${jumpAttr} title="${kbEsc(titleText)}" data-i18n-data><span class="kb-usage-caller-tag">${kbEsc(kindLabel)}</span><span class="kb-usage-caller-name" data-i18n-skip>${kbEsc(label)}${subLabel ? ` · ${kbEsc(subLabel)}` : ''}</span>${countText ? `<span class="kb-usage-caller-cnt">${kbEsc(countText)}</span>` : ''}</button>`;
           }
-          return `<span class="kb-usage-caller-pill" title="${kbEsc(titleText)}" data-i18n-data><span class="kb-usage-caller-tag">${kbEsc(kindLabel)}</span><span class="kb-usage-caller-name">${kbEsc(label)}${subLabel ? ` · ${kbEsc(subLabel)}` : ''}</span>${countText ? `<span class="kb-usage-caller-cnt">${kbEsc(countText)}</span>` : ''}</span>`;
+          return `<span class="kb-usage-caller-pill" title="${kbEsc(titleText)}" data-i18n-data><span class="kb-usage-caller-tag">${kbEsc(kindLabel)}</span><span class="kb-usage-caller-name" data-i18n-skip>${kbEsc(label)}${subLabel ? ` · ${kbEsc(subLabel)}` : ''}</span>${countText ? `<span class="kb-usage-caller-cnt">${kbEsc(countText)}</span>` : ''}</span>`;
         }).join('')}
       </div>
     `;
