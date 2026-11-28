@@ -465,8 +465,9 @@ async function closeIssueById(issueId){
   if(issueManuallyClosed(issue)||issueTrackerClosed(issue))return toast('该需求单已处于关闭状态');
   if(!issueCanClose(issue))return toast('需求正在澄清或执行 LOOP，请先停止后再关闭','err');
   const ok=await afConfirm({
-    title:'手动关闭需求',
-    message:`确定手动关闭需求「${issue.title||issue.id}」？关闭后可在状态里筛「已关闭」。`,
+    title:lfT('手动关闭需求','Close requirement'),
+    message:lfT(`确定手动关闭需求「${issue.title||issue.id}」？关闭后可在状态里筛「已关闭」。`,`Close requirement "${issue.title||issue.id}" manually? You can find it later under the "Closed" status filter.`),
+    messageData:true,
     confirmText:'确认关闭'
   });
   if(!ok)return;
@@ -999,8 +1000,9 @@ async function deleteIssueById(issueId){
   if(!issueCanDelete(issue))return toast(issueDeletionBlock(issue).reason,'err');
   const force=issue.deletionRequiresForce===true;
   const title=force?'强制删除需求':'删除需求';
+  const titleEn=force?'Force delete requirement':'Delete requirement';
   const external=issue.source==='tapd'||issue.source==='gongfeng';
-  if(!await afConfirm({title,message:`确定${title}「${issue.title||issue.id}」？${issueDeletionWarning(force,external)}`,danger:true,confirmText:force?'确认强制删除':'确认删除'}))return;
+  if(!await afConfirm({title:lfT(title,titleEn),message:lfT(`确定${title}「${issue.title||issue.id}」？${issueDeletionWarning(force,external)}`,`${titleEn} "${issue.title||issue.id}"? ${issueDeletionWarningEn(force,external)}`),messageData:true,danger:true,confirmText:force?'确认强制删除':'确认删除'}))return;
   try{
     await api(issueDeletePath(issueId,force),{method:'DELETE'});
     state.data.issues=(state.data.issues||[]).filter(i=>i.id!==issueId);

@@ -64,6 +64,12 @@ func (h issuesHandlers) importTAPD(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, map[string]string{"error": "project not found"})
 		return
 	}
+	// Importing writes requirements into the project (and may overwrite an
+	// existing TAPD-sourced issue), so it needs the same writer check as the
+	// other issue mutations in issues()/issue().
+	if !h.requireProjectWriter(c, req.ProjectID) {
+		return
+	}
 	ids := tapdImportRepositoryIDs(req.RepositoryID, req.RepositoryIDs)
 	if len(ids) == 0 {
 		c.JSON(http.StatusBadRequest, map[string]string{"error": "请至少选择一个代码仓库"})

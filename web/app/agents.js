@@ -505,7 +505,7 @@ async function persistAgentRequest(f,creating){const existing=state.data.agents.
 async function deleteAgent(id){
   const a=(state.data.agents||[]).find(x=>x.id===id);
   if(!a)return toast('角色不存在或已删除');
-  if(!await afConfirm({title:'删除角色确认',message:`确认删除角色「${a.name}」？此操作不可恢复。`,confirmText:'确认删除',isDanger:true}))return;
+  if(!await afConfirm({title:lfT('删除角色确认','Delete role'),message:lfT(`确认删除角色「${a.name}」？此操作不可恢复。`,`Delete role "${a.name}"? This can't be undone.`),messageData:true,confirmText:'确认删除',isDanger:true}))return;
   try{
     await api(`/api/agents/${encodeURIComponent(id)}`,{method:'DELETE'});
     state.data.agents=state.data.agents.filter(x=>x.id!==id);

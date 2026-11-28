@@ -124,7 +124,7 @@ async function projectWizardRemoveRepo(repoId){
   const w=projectWizard,project=projectWizardProject(),repo=projectWizardRepos().find(r=>r.id===repoId);
   if(!w||w.saving||!project||!repo)return false;
   const name=repo.name||repo.gongfengProjectId||repo.id,isDefault=project.defaultRepositoryId===repo.id;
-  const confirmed=await afConfirm({title:'移除仓库',message:`确定移除仓库「${name}」吗？${isDefault?'\n\n这是当前的默认仓库，移除后会把剩余的第一个仓库设为默认。':''}`,danger:true,confirmText:'移除',cancelText:'取消'});
+  const confirmed=await afConfirm({title:lfT('移除仓库','Remove repository'),message:lfT(`确定移除仓库「${name}」吗？${isDefault?'\n\n这是当前的默认仓库，移除后会把剩余的第一个仓库设为默认。':''}`,`Remove repository "${name}"?${isDefault?'\n\nThis is the current default repository; after removal the first remaining repository becomes the default.':''}`),messageData:true,danger:true,confirmText:'移除',cancelText:'取消'});
   if(!confirmed||projectWizard!==w)return false;
   let notice=`已移除仓库「${name}」`,tone='ok';
   const ok=await projectWizardRequest(async()=>{

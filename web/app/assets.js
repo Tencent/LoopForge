@@ -252,6 +252,7 @@ async function closeAssetDetail({force=false}={}){
 // A shared skill is installed into every conversation and scheduled task on
 // the platform, not only offered for binding, so sharing one asks first.
 const SHARED_SKILL_NOTICE='共享后，这个技能会自动装入平台上所有用户的对话和定时任务（包括其他项目和无项目的对话），模型可以直接调用。继续？';
+const SHARED_SKILL_NOTICE_EN='Once shared, this skill is automatically installed into every conversation and scheduled task on the platform (including other projects and project-less chats), and models can call it directly. Continue?';
 async function toggleAssetShare(id){
   const item=(state.data[state.assetType]||[]).find(x=>x.id===id);
   if(!item||!catalogOwned(item.projectId))return toast('只能共享本项目的资产');
@@ -723,7 +724,7 @@ async function uploadSkillMd(input){
 }
 async function deleteSkillFile(path){
   if(!path)return;
-  if(!await afConfirm({title:'删除文件',message:`确定删除 ${path} 吗？此操作不可恢复。`,confirmText:'确认删除',danger:true}))return;
+  if(!await afConfirm({title:lfT('删除文件','Delete file'),message:lfT(`确定删除 ${path} 吗？此操作不可恢复。`,`Delete ${path}? This can't be undone.`),messageData:true,confirmText:'确认删除',danger:true}))return;
   const id=state.selectedAsset;
   try{
     const res=await fetch(`/api/skills/${encodeURIComponent(id)}/files/${path.split('/').map(encodeURIComponent).join('/')}`,{method:'DELETE'});

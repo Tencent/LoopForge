@@ -1327,7 +1327,7 @@ async function cloneWorkflow(id){const src=id?(state.data.workflows||[]).find(w=
 async function deleteWorkflow(id){
   const w=(state.data.workflows||[]).find(x=>x.id===id);
   if(!w)return toast('LOOP 不存在或已删除');
-  if(!await afConfirm({title:'删除 LOOP 确认',message:`确认删除 LOOP「${w.name}」？此操作不可恢复，关联的运行记录会保留但流程定义将移除。`,confirmText:'确认删除',isDanger:true}))return;
+  if(!await afConfirm({title:lfT('删除 LOOP 确认','Delete LOOP'),message:lfT(`确认删除 LOOP「${w.name}」？此操作不可恢复，关联的运行记录会保留但流程定义将移除。`,`Delete LOOP "${w.name}"? This can't be undone. Run records are kept, but the flow definition is removed.`),messageData:true,confirmText:'确认删除',isDanger:true}))return;
   try{
     await api(`/api/workflows/${encodeURIComponent(id)}`,{method:'DELETE'});
     state.data.workflows=state.data.workflows.filter(x=>x.id!==id);

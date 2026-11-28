@@ -15,6 +15,9 @@ function issueDeletePath(id,force){
 function issueDeletionWarning(force,external){
   return `需求、评论和澄清记录将被删除。${force?'关联的任务、运行记录、日志、产物和执行工作区将一并清理。':''}删除后无法恢复。${external?'外部原单会保留，后续同步可能重新导入。':''}`;
 }
+function issueDeletionWarningEn(force,external){
+  return `The requirement, its comments and clarification records will be deleted.${force?' The related tasks, runs, logs, artifacts and execution workspaces will also be cleaned up.':''}This can't be undone.${external?' The external ticket is kept and may be re-imported by a later sync.':''}`;
+}
 function issueDeletionContextHTML(issue,{menu=false}={}){
   const block=issueDeletionBlock(issue);
   if(!block)return '';

@@ -281,7 +281,7 @@ function bindConfirmModal(modal){
 function afConfirm(options){
   const opt=typeof options==='string'?{message:options}:(options||{});
   return afOpenDialog(()=>{
-    const danger=!!opt.danger;
+    const danger=!!(opt.danger||opt.isDanger);
     $('#confirmTitle').textContent=opt.title||(danger?'危险操作确认':'操作确认');
     // messageData: the message quotes user data (a name), so English mode only takes whole-message dictionary hits.
     const message=$('#confirmMessage');

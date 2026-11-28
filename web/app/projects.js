@@ -400,7 +400,7 @@ function syncProjectAdminRouteState(){
 async function confirmDiscardProjectDraft(){
   if(!projectAdminDirty())return true;
   const name=String(state.projectDraft?.name||'').trim()||'新项目';
-  return afConfirm({title:'放弃未保存的修改？',message:`「${name}」有未保存的修改，离开后这些修改会丢失。`,danger:true,confirmText:'放弃修改',cancelText:'继续编辑'});
+  return afConfirm({title:lfT('放弃未保存的修改？','Discard unsaved changes?'),message:lfT(`「${name}」有未保存的修改，离开后这些修改会丢失。`,`"${name}" has unsaved changes that will be lost if you leave.`),messageData:true,danger:true,confirmText:'放弃修改',cancelText:'继续编辑'});
 }
 function openProjectAdminDetail(id,tab='basic'){
   if(id==='new')return openProjectWizard();
@@ -605,7 +605,7 @@ function projectDeleteRow(project){
 }
 async function deleteProjectAdmin(projectId){
   const project=(state.data.projects||[]).find(p=>p.id===projectId);if(!project)return;
-  const ok=await afConfirm({title:'删除项目',message:`确定删除项目「${project.name||project.id}」吗？\n\n项目会从列表中移除，需求、运行记录和设置保留，可以恢复；标识 ${project.id} 仍被占用。`,danger:true,confirmText:'确定删除'});
+  const ok=await afConfirm({title:lfT('删除项目','Delete project'),message:lfT(`确定删除项目「${project.name||project.id}」吗？\n\n项目会从列表中移除，需求、运行记录和设置保留，可以恢复；标识 ${project.id} 仍被占用。`,`Delete project "${project.name||project.id}"?\n\nThe project is removed from the list; its requirements, runs and settings are kept and can be restored. The ID ${project.id} stays reserved.`),messageData:true,danger:true,confirmText:'确定删除'});
   if(!ok)return;
   try{
     await api('/api/projects/'+encodeURIComponent(project.id),{method:'DELETE'});
@@ -624,7 +624,7 @@ async function deleteProjectAdmin(projectId){
 async function deleteProjectRepository(repoId){
   const repo=(state.data.repositories||[]).find(r=>r.id===repoId);if(!repo)return;
   const project=(state.data.projects||[]).find(p=>p.id===repo.projectId),isDefault=project?.defaultRepositoryId===repo.id;
-  const ok=await afConfirm({title:'删除关联仓库',message:`确定删除仓库「${repo.name||repo.gongfengProjectId||repo.id}」吗？已在执行中的 LOOP 不受影响，该操作不可恢复。${isDefault?'\n\n这是当前的默认仓库，删除后默认仓库将变为「暂未绑定」。':''}`,danger:true,confirmText:'确定删除'});
+  const ok=await afConfirm({title:lfT('删除关联仓库','Delete repository'),message:lfT(`确定删除仓库「${repo.name||repo.gongfengProjectId||repo.id}」吗？已在执行中的 LOOP 不受影响，该操作不可恢复。${isDefault?'\n\n这是当前的默认仓库，删除后默认仓库将变为「暂未绑定」。':''}`,`Delete repository "${repo.name||repo.gongfengProjectId||repo.id}"? Running LOOPs are unaffected. This can't be undone.${isDefault?'\n\nThis is the current default repository; after deletion the default becomes "not bound".':''}`),messageData:true,danger:true,confirmText:'确定删除'});
   if(!ok)return;
   try{
     captureProjectAdminForm();
