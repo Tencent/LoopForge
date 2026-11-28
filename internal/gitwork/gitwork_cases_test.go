@@ -34,8 +34,13 @@ func TestGitIdentityAndStageUntracked(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte("secret"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	// Git tracing emits diagnostics on stderr even when listing files succeeds.
+	t.Setenv("GIT_TRACE", "1")
 	if err := StageUntracked(dir); err != nil {
 		t.Fatal(err)
+	}
+	if err := StageUntracked(t.TempDir()); err == nil || !strings.Contains(err.Error(), "not a git repository") {
+		t.Fatalf("missing repository diagnostic: %v", err)
 	}
 	out, _ := exec.Command("git", "-C", dir, "diff", "--name-only").Output()
 	if !strings.Contains(string(out), "keep.go") || strings.Contains(string(out), ".env") {

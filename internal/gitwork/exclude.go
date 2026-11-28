@@ -1,6 +1,7 @@
 package gitwork
 
 import (
+	"bytes"
 	"fmt"
 	"os/exec"
 	"path/filepath"
@@ -554,9 +555,11 @@ func UnquoteLsFilesPath(rel string) string {
 // show up in diffs and are picked up by `git add -u`.
 func StageUntracked(workspace string) error {
 	cmd := exec.Command("git", "-C", workspace, "ls-files", "-z", "--others", "--exclude-standard")
-	out, err := cmd.CombinedOutput()
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
 	if err != nil {
-		return fmt.Errorf("list untracked files: %w: %s", err, strings.TrimSpace(string(out)))
+		return fmt.Errorf("list untracked files: %w: %s", err, strings.TrimSpace(stderr.String()))
 	}
 	var files []string
 	for _, rel := range strings.Split(string(out), "\x00") {
