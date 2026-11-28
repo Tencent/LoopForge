@@ -388,7 +388,10 @@ func mergeIssueEdit(v, existing domain.Issue) domain.Issue {
 	if v.LatestTaskID == "" {
 		v.LatestTaskID = existing.LatestTaskID
 	}
-	if v.Source == "" {
+	// Source records where the item came from; only intake and tracker sync
+	// set it. An edit that echoes a guessed source (the assistant drafted
+	// "source":"local" for a synced GitHub issue) must not relabel the item.
+	if strings.TrimSpace(existing.Source) != "" || v.Source == "" {
 		v.Source = existing.Source
 	}
 	if v.ExternalRef == nil {
