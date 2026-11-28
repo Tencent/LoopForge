@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { loadApp, settle } from '../lib/load-app.mjs';
+import { chooseOption, loadApp, settle } from '../lib/load-app.mjs';
 
 // Regressions for UI state bugs found in the full sweep: LOOP designer edits
 // dropped on open, a stale run-list LOOP filter, Escape wiping the composer,
@@ -112,4 +112,36 @@ test('project switcher options and project card names are marked as user data', 
   app.evaluate('renderProjectSwitcher()');
   const option = app.document.querySelector('#projectSwitcher option[value="project-1"]');
   assert.ok(option.hasAttribute('data-i18n-data'));
+});
+
+test('switching projects preserves rejected edits and opens the target after confirmation', async (t) => {
+  const app = await withLoops(t);
+  app.evaluate(`state.projectFilter='project-1';
+    state.data.projects.push({id:'project-2',name:'Beta',key:'BETA'});
+    state.data.workflows.push({id:'beta-flow',name:'Beta flow',projectId:'project-2',nodes:[],edges:[]});
+    renderProjectSwitcher();`);
+  const picker = app.document.querySelector('#projectSwitcher');
+  chooseOption(picker, 'project-2');
+  await settle();
+  assert.equal(picker.value, 'project-1');
+  assert.equal(app.evaluate('state.workflow.name'), 'LOOP A (edited)');
+  assert.equal(app.evaluate('state.workflowDirty'), true);
+  assert.equal(app.evaluate('window.__confirms.length'), 1);
+
+  app.evaluate('window.__answer=true');
+  chooseOption(picker, 'project-2');
+  await settle();
+  assert.equal(app.evaluate('state.projectFilter'), 'project-2');
+  assert.equal(app.evaluate('state.workflow.id'), 'beta-flow');
+  assert.equal(app.evaluate('state.workflowDirty'), false);
+});
+
+test('switching projects keeps an edited shared LOOP visible in the target project', async (t) => {
+  const app = await withLoops(t);
+  app.evaluate(`state.projectFilter='project-1';state.workflow.shared=true;
+    state.data.projects.push({id:'project-2',name:'Beta',key:'BETA'});renderProjectSwitcher();`);
+  assert.equal(await app.evaluate("selectProject('project-2')"), true);
+  assert.equal(app.evaluate('state.workflow.name'), 'LOOP A (edited)');
+  assert.equal(app.evaluate('state.workflowDirty'), true);
+  assert.equal(app.evaluate('window.__confirms.length'), 0);
 });

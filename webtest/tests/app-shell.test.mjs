@@ -215,6 +215,98 @@ test('generic workflow hydration, project switching, flow routes, and shell keyb
   assert.equal(app.window.localStorage.getItem('agentflow.sidebarWidth'), null);
 });
 
+test('a LOOP link from another project switches to that project instead of opening a different LOOP', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  app.evaluate(`
+    state.data.projects.push({id:'project-2',name:'Beta'});
+    state.data.workflows.push({id:'flow-2',name:'Beta Flow',projectId:'project-2',nodes:[],edges:[]});
+    state.projectFilter='project-1';
+    state.workflow=clone(state.data.workflows.find(x=>x.id==='flow-1'));
+    state.currentView='flow';
+  `);
+  app.window.localStorage.setItem('agentflow.activeProject', 'project-1');
+
+  app.window.history.replaceState(null, '', '#/flow/flow-2');
+  await app.evaluate(`applyFlowRoute()`);
+  assert.equal(app.evaluate(`state.projectFilter`), 'project-2');
+  assert.equal(app.evaluate(`state.workflow.id`), 'flow-2');
+  assert.equal(app.window.location.hash, '#/flow/flow-2');
+  assert.equal(app.window.localStorage.getItem('agentflow.activeProject'), 'project-2');
+  assert.equal(app.window.localStorage.getItem('agentflow.activeWorkflow'), 'flow-2');
+  assert.equal(app.document.querySelector('#projectSwitcher').value, 'project-2');
+
+  // A LOOP nobody can open keeps the current one and says so.
+  app.window.history.replaceState(null, '', '#/flow/missing-flow');
+  await app.evaluate(`applyFlowRoute()`);
+  assert.equal(app.evaluate(`state.workflow.id`), 'flow-2');
+  assert.equal(app.window.location.hash, '#/flow/flow-2');
+  assert.match(app.document.querySelector('#toastContainer').textContent, /链接中的 LOOP 不存在/);
+});
+
+test('boot follows a LOOP link to its project unless the URL names a project', async (t) => {
+  const shell = sampleBootstrap();
+  shell.projects.push({ id: 'project-2', name: 'Beta', key: 'BETA' });
+  shell.workflows.push({ id: 'flow-2', projectId: 'project-2', name: 'Beta Flow', nodes: [], edges: [] });
+  const routes = [{ path: '/api/bootstrap', body: shell }];
+
+  const linked = await loadApp({ routes, hash: '#/flow/flow-2', dispatchReady: false });
+  t.after(linked.close);
+  linked.window.localStorage.setItem('agentflow.activeProject', 'project-1');
+  await linked.evaluate(`boot()`);
+  assert.equal(linked.evaluate(`state.projectFilter`), 'project-2');
+  assert.equal(linked.evaluate(`state.workflow.id`), 'flow-2');
+  assert.equal(linked.window.localStorage.getItem('agentflow.activeProject'), 'project-2');
+
+  const pinned = await loadApp({ routes, hash: '#/flow/flow-2', dispatchReady: false });
+  t.after(pinned.close);
+  pinned.window.history.replaceState({}, '', '/?projectId=project-1#/flow/flow-2');
+  await pinned.evaluate(`boot()`);
+  assert.equal(pinned.evaluate(`state.projectFilter`), 'project-1');
+  assert.equal(pinned.evaluate(`state.workflow.id`), 'flow-1');
+  // The LOOP exists in another project; the pinned project wins, and the
+  // message says so instead of claiming the LOOP does not exist.
+  assert.match(pinned.document.querySelector('#toastContainer').textContent, /属于另一个项目/);
+
+  // A second link in the same tab must honor the same project pin as boot.
+  assert.equal(pinned.window.location.hash, '#/flow/flow-1');
+  pinned.window.location.hash = '#/flow/flow-2';
+  await settle(6);
+  assert.equal(pinned.evaluate('state.projectFilter'), 'project-1');
+  assert.equal(pinned.evaluate('state.workflow.id'), 'flow-1');
+  assert.equal(pinned.window.location.hash, '#/flow/flow-1');
+});
+
+test('a LOOP link to a platform template opens the template without switching projects', async (t) => {
+  const shell = sampleBootstrap();
+  shell.projects.push({ id: 'project-2', name: 'Beta', key: 'BETA' });
+  shell.workflows.push({ id: 'flow-2', projectId: 'project-2', name: 'Beta Flow', nodes: [], edges: [] });
+  shell.workflows.push({ id: 'generic-1', name: 'Backend template', generic: true, projectId: '', nodes: [], edges: [] });
+  const routes = [{ path: '/api/bootstrap', body: shell }, { path: '/api/workflows/generic-1/agents', body: [] }];
+
+  // A template runs from any project, so its link must not be reported as
+  // missing nor switch the project out from under the user.
+  const linked = await loadApp({ routes, hash: '#/flow/generic-1', dispatchReady: false });
+  t.after(linked.close);
+  linked.window.localStorage.setItem('agentflow.activeProject', 'project-2');
+  await linked.evaluate(`boot()`);
+  assert.equal(linked.evaluate(`state.projectFilter`), 'project-2');
+  assert.equal(linked.evaluate(`state.workflow.id`), 'generic-1');
+  assert.doesNotMatch(linked.document.querySelector('#toastContainer').textContent, /链接中的 LOOP 不存在/);
+
+  // Same through the hash route in an open tab.
+  const inPlace = await loadApp({ routes, dispatchReady: false });
+  t.after(inPlace.close);
+  await inPlace.evaluate(`boot()`);
+  inPlace.evaluate(`state.currentView='flow'`);
+  inPlace.window.history.replaceState(null, '', '#/flow/generic-1');
+  await inPlace.evaluate(`applyFlowRoute()`);
+  assert.equal(inPlace.evaluate(`state.workflow.id`), 'generic-1');
+  assert.equal(inPlace.evaluate(`state.projectFilter`), 'project-1');
+  assert.equal(inPlace.window.location.hash, '#/flow/generic-1');
+  assert.doesNotMatch(inPlace.document.querySelector('#toastContainer').textContent, /链接中的 LOOP 不存在/);
+});
+
 test('boot exchanges an authentication callback, cleans the URL, and loads the selected project shell', async (t) => {
   const app = await loadApp({ dispatchReady: false });
   t.after(app.close);
