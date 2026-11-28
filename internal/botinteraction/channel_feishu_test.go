@@ -88,12 +88,20 @@ func (f *fakeFeishuOpenAPI) handler(t *testing.T) http.Handler {
 		}
 		json.NewDecoder(r.Body).Decode(&body)
 		var content struct {
-			Text string `json:"text"`
+			Body struct {
+				Elements []struct {
+					Content string `json:"content"`
+				} `json:"elements"`
+			} `json:"body"`
 		}
 		json.Unmarshal([]byte(body.Content), &content)
+		text := ""
+		if len(content.Body.Elements) > 0 {
+			text = content.Body.Elements[0].Content
+		}
 		f.mu.Lock()
 		f.uuids = append(f.uuids, body.UUID)
-		f.texts = append(f.texts, content.Text)
+		f.texts = append(f.texts, text)
 		code, status := f.replyCode, f.replyHTTP
 		f.mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")

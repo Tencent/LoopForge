@@ -31,11 +31,19 @@ func TestFeishuPushCreatesOpenIDMessageWithUUID(t *testing.T) {
 		}
 		json.NewDecoder(r.Body).Decode(&body)
 		var content struct {
-			Text string `json:"text"`
+			Body struct {
+				Elements []struct {
+					Content string `json:"content"`
+				} `json:"elements"`
+			} `json:"body"`
 		}
 		json.Unmarshal([]byte(body.Content), &content)
+		text := ""
+		if len(content.Body.Elements) > 0 {
+			text = content.Body.Elements[0].Content
+		}
 		mu.Lock()
-		got.path, got.idType, got.receiveID, got.uuid, got.text = r.URL.Path, r.URL.Query().Get("receive_id_type"), body.ReceiveID, body.UUID, content.Text
+		got.path, got.idType, got.receiveID, got.uuid, got.text = r.URL.Path, r.URL.Query().Get("receive_id_type"), body.ReceiveID, body.UUID, text
 		c := code
 		mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
@@ -106,7 +114,7 @@ func TestDingTalkPushTokenCacheAndClassification(t *testing.T) {
 	if res := ch.Push(context.Background(), bot, cred, msg); res.Outcome != Delivered || res.PlatformMessageID != "pqk-1" {
 		t.Fatalf("push = %+v", res)
 	}
-	if lastBody["robotCode"] != "ding-client" || lastBody["msgKey"] != "sampleText" || !strings.Contains(lastBody["msgParam"].(string), "等待处理") {
+	if lastBody["robotCode"] != "ding-client" || lastBody["msgKey"] != "sampleMarkdown" || !strings.Contains(lastBody["msgParam"].(string), "等待处理") {
 		t.Fatalf("body = %v", lastBody)
 	}
 	if ids, _ := lastBody["userIds"].([]any); len(ids) != 1 || ids[0] != "staff-1" {

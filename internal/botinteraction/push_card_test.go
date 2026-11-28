@@ -321,7 +321,9 @@ func TestFeishuReplySendsCardWhenGiven(t *testing.T) {
 	if res := conn.Reply(context.Background(), OutboundMessage{Text: "t", Route: ReplyRoute{MessageID: "om_1"}, Card: card}); res.Outcome != Delivered || msgType != "interactive" {
 		t.Fatalf("card reply = %+v %s", res, msgType)
 	}
-	if res := conn.Reply(context.Background(), OutboundMessage{Text: "t", Route: ReplyRoute{MessageID: "om_1"}}); res.Outcome != Delivered || msgType != "text" {
+	// A reply without an action card is still a card: the lark_md body renders
+	// the model's Markdown, which a text message would show raw.
+	if res := conn.Reply(context.Background(), OutboundMessage{Text: "t", Route: ReplyRoute{MessageID: "om_1"}}); res.Outcome != Delivered || msgType != "interactive" {
 		t.Fatalf("text reply = %+v %s", res, msgType)
 	}
 }
@@ -593,5 +595,21 @@ func TestDraftCardAcceptsLOOPAndLegacySOPNote(t *testing.T) {
 		if strings.Join(keys, ",") != "draft_confirm,draft_confirm_start,draft_cancel" {
 			t.Fatalf("%s actions = %v", label, keys)
 		}
+	}
+}
+
+func TestMarkdownReplyRendersAndLinks(t *testing.T) {
+	if got := markdownLinks("打开 http://10.0.0.1:8090/bind?x=1。继续"); !strings.Contains(got, "[http://10.0.0.1:8090/bind?x=1](http://10.0.0.1:8090/bind?x=1)。") {
+		t.Fatalf("links = %q", got)
+	}
+	if kept := "见 [详情](http://a.test)"; markdownLinks(kept) != kept {
+		t.Fatalf("existing markdown rewritten: %q", markdownLinks(kept))
+	}
+	out := string(feishuMarkdownJSON("**加粗** 正文"))
+	if !strings.Contains(out, `"schema":"2.0"`) || !strings.Contains(out, `"tag":"markdown"`) || !strings.Contains(out, "**加粗** 正文") {
+		t.Fatalf("card = %s", out)
+	}
+	if title := markdownTitle("# 标题行\n正文"); title != "标题行" {
+		t.Fatalf("title = %q", title)
 	}
 }
