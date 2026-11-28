@@ -330,7 +330,7 @@ func TestDockerGitToolsRefreshAfterLegacyContainerBecomesIdle(t *testing.T) {
 	sb := sandbox.(*dockerSandbox)
 	t.Cleanup(func() { _ = sb.Close(context.Background()) })
 	if out, err := exec.CommandContext(ctx, "docker", "run", "-d", "--network", "none", "--name", sb.name,
-		"-v", workspace+":/workspace", "--entrypoint", "sh", gitHelperDockerTestImage, "-c", "exec sleep infinity").CombinedOutput(); err != nil {
+		"-v", workspace+":/workspace", "--entrypoint", "sh", gitHelperDockerTestImage, "-c", dockerWorkspaceKeepalive).CombinedOutput(); err != nil {
 		t.Fatalf("create legacy test container: %v (%s)", err, out)
 	}
 	workflow := domain.WorkflowDefinition{Nodes: []domain.WorkflowNode{{

@@ -165,7 +165,7 @@ func TestDockerWorkspaceRecreatesLegacyMaskedContainer(t *testing.T) {
 	bind := []string{"run", "--pull=never", "--network", "none", "-d", "-v", workspace + ":/workspace"}
 	legacy := append(append([]string{}, bind...), "--name", sb.name,
 		"-v", emptyFile+":/workspace/.agentflow/isolation/empty-file:ro", "-v", emptyFile+":/workspace/AGENTS.md:ro",
-		"alpine:3.20", "sleep", "120")
+		"--entrypoint", "sh", "alpine:3.20", "-c", dockerWorkspaceKeepalive)
 	companion := append(append([]string{}, bind...), "--name", sb.name+legacyDockerScriptSuffix, "alpine:3.20", "sleep", "120")
 	for _, args := range [][]string{legacy, companion} {
 		if out, err := exec.CommandContext(ctx, "docker", args...).CombinedOutput(); err != nil {

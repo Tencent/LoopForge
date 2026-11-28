@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -55,6 +56,40 @@ func TestHandleRunnerWorkspaceBrowserReportsEnsureFailure(t *testing.T) {
 	}
 	if state.Available || state.Reason != "平台已关闭 Agent 浏览器" {
 		t.Fatalf("ensure failure state=%+v", state)
+	}
+}
+
+func TestNativeBrowserEnsureWithDockerDaemonUnavailable(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("AGENTFLOW_BROWSER", "always")
+	t.Setenv("TMPDIR", root)
+	t.Setenv("PATH", root+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("AGENTFLOW_CHROMIUM", filepath.Join(root, "chromium"))
+	t.Setenv("CHROMIUM_LAUNCHED", filepath.Join(root, "chromium-launched"))
+	for name, script := range map[string]string{
+		"docker":   "#!/bin/sh\necho 'Cannot connect to the Docker daemon' >&2\nexit 1\n",
+		"chromium": "#!/bin/sh\ntouch \"$CHROMIUM_LAUNCHED\"\nexit 1\n",
+	} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(script), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	const runID = "native-browser-without-docker"
+	if err := os.MkdirAll(filepath.Join(root, "runs", runID, "workspace"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	d := &Daemon{cfg: Config{DefaultWorkspaceRoot: root}}
+	request := domain.RunnerWorkspaceRequest{
+		RunID: runID, WorkspaceLayout: domain.RunnerWorkspaceLayoutShared,
+		Browser:  &domain.BrowserRequest{Operation: "start", Ensure: true},
+		Sandbox:  &domain.RunnerSandboxSpec{Profile: domain.SandboxProfile{Driver: domain.SandboxDriverNative}},
+		Workflow: &domain.WorkflowDefinition{},
+	}
+	got := d.handleRunnerWorkspaceBrowser(t.Context(), request)
+	var state domain.BrowserState
+	_, launched := os.Stat(os.Getenv("CHROMIUM_LAUNCHED"))
+	if got.Status != http.StatusOK || json.Unmarshal(got.Payload, &state) != nil || !strings.Contains(state.Reason, "Chromium 启动后立即退出") || launched != nil {
+		t.Fatalf("native Ensure did not launch Chromium: response=%+v reason=%q launched=%v", got, state.Reason, launched)
 	}
 }
 

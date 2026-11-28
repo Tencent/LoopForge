@@ -3,7 +3,10 @@ package engine
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -11,6 +14,53 @@ import (
 	"agentflow/internal/repo"
 	"agentflow/internal/runtime"
 )
+
+func TestDockerWorkspaceProbeTimeoutFailsNodeInsteadOfRequeueing(t *testing.T) {
+	bin := t.TempDir()
+	entered := filepath.Join(bin, "entered")
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("PROBE_ENTERED", entered)
+	t.Setenv("AGENTFLOW_ISOLATED_IMAGE", "fixture-workspace-image")
+	if err := os.WriteFile(filepath.Join(bin, "docker"), []byte(`#!/bin/sh
+case "$1" in
+  inspect) echo "Error response from daemon: No such container: $6" >&2; exit 1;;
+  exec) [ "$6" = workspace-probe ] || exit 99; touch "$PROBE_ENTERED"; exec sleep 60;;
+  ps|image|create|start|rm) exit 0;;
+  *) exit 99;;
+esac`), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	e, st := cvEEngine(t)
+	e.sandboxes = runtime.NewManagerWithLimit(t.TempDir(), 1)
+	e.ConfigureExecution("probe-timeout", "probe-timeout-host", time.Minute, true)
+	node := domain.WorkflowNode{ID: "script", Type: "script", ScriptLanguage: "shell", Script: "false", MaxAttempts: 1}
+	wf := domain.WorkflowDefinition{ID: "probe-timeout", Nodes: []domain.WorkflowNode{node}, SandboxSnapshot: &domain.RunnerSandboxSpec{
+		Profile:    domain.SandboxProfile{Driver: domain.SandboxDriverDocker},
+		Dockerfile: &domain.DockerfileDefinition{Content: runtime.IsolatedDockerfile},
+	}}
+	run := domain.Run{ID: "probe-timeout", Status: "running", WorkflowID: wf.ID, WorkflowSnapshot: wf,
+		Nodes: map[string]*domain.NodeRun{node.ID: {NodeID: node.ID, Status: "pending"}}}
+	if err := st.PutRun(run); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.acquireLease(run); err != nil {
+		t.Fatal(err)
+	}
+	e.executeNode(t.Context(), run.ID, wf, node)
+	if _, err := os.Stat(entered); err != nil || t.Context().Err() != nil {
+		t.Fatalf("expected a Docker login probe timeout with a live parent: %v", err)
+	}
+	got, _ := st.RunState(run.ID)
+	failed := got.Nodes[node.ID]
+	if failed.Status != "failed" || failed.Attempt != 1 || runtime.IsSandboxInterrupt(errors.New(failed.Error)) || strings.Contains(failed.Error, "signal: killed") {
+		t.Fatalf("startup timeout must fail the current attempt: status=%s attempt=%d error=%q", failed.Status, failed.Attempt, failed.Error)
+	}
+	for _, want := range []string{"workspace shell probe", "fixture-workspace-image", "agentflow-", "timed out"} {
+		if !strings.Contains(failed.Error, want) {
+			t.Errorf("missing %q from %q", want, failed.Error)
+		}
+	}
+}
 
 func TestDirectScriptNodeSuccessFailureAndResolution(t *testing.T) {
 	st, err := repo.OpenTest()

@@ -31,8 +31,12 @@ func (e *Engine) HandleBrowserRequest(ctx context.Context, run domain.Run, req *
 		}
 		return response
 	}
-	if req.Ensure && !runtime.BrowserRunning(ctx, run.ID) {
-		if err := e.ensureRunBrowser(ctx, run); err != nil {
+	if req.Ensure {
+		profile, _, err := e.workspaceSandboxProfile(run)
+		if err == nil && runtime.BrowserNeedsStart(ctx, run.ID, profile.Driver == domain.SandboxDriverDocker) {
+			err = e.ensureRunBrowser(ctx, run)
+		}
+		if err != nil {
 			payload, _ := json.Marshal(domain.BrowserState{Reason: err.Error()})
 			return domain.RunnerWorkspaceResponse{Payload: payload}
 		}
@@ -97,7 +101,11 @@ func (e *Engine) ensureRunBrowser(ctx context.Context, run domain.Run) error {
 	if err != nil {
 		return err
 	}
-	if runtime.EnsureSandboxBrowser(ctx, env.sandbox, env.Workspace(), run.ID, nil) == nil {
+	browser, err := runtime.PrepareSandboxBrowser(ctx, env.sandbox, env.Workspace(), run.ID, nil)
+	if err != nil {
+		return err
+	}
+	if browser == nil {
 		return errors.New("Agent 浏览器启动失败：当前运行环境不支持，或 Chromium 不可用")
 	}
 	return nil

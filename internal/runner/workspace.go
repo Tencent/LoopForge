@@ -88,7 +88,11 @@ func (d *Daemon) ensureRunnerBrowser(ctx context.Context, request domain.RunnerW
 		return "执行机无法打开该任务的沙箱：" + err.Error()
 	}
 	defer release()
-	if runtime.EnsureSandboxBrowser(ctx, sandbox, root, request.RunID, nil) == nil {
+	browser, err := runtime.PrepareSandboxBrowser(ctx, sandbox, root, request.RunID, nil)
+	if err != nil {
+		return err.Error()
+	}
+	if browser == nil {
 		return "Agent 浏览器启动失败：当前运行环境不支持，或 Chromium 不可用"
 	}
 	return ""
@@ -100,7 +104,7 @@ func (d *Daemon) handleRunnerWorkspaceBrowser(ctx context.Context, request domai
 	if request.Browser == nil {
 		return domain.RunnerWorkspaceResponse{Status: 400, Error: "invalid browser request"}
 	}
-	if request.Browser.Ensure && !runtime.BrowserRunning(ctx, request.RunID) {
+	if request.Browser.Ensure && runtime.BrowserNeedsStart(ctx, request.RunID, request.Sandbox != nil && request.Sandbox.Profile.Driver == domain.SandboxDriverDocker) {
 		if reason := d.ensureRunnerBrowser(ctx, request); reason != "" {
 			return runnerWorkspacePayload(domain.BrowserState{Reason: reason})
 		}

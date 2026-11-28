@@ -18,7 +18,7 @@ import (
 func installFakeDockerBuild(t *testing.T, buildScript string) {
 	t.Helper()
 	bin := t.TempDir()
-	script := "#!/bin/sh\ncase \"$1\" in\n  inspect) echo \"No such container\" >&2; exit 1 ;;\n  image) exit 1 ;;\n  build)\n" + buildScript + "\n  ;;\nesac\nexit 0\n"
+	script := "#!/bin/sh\ncase \"$1\" in\n  inspect) printf '\\n'; echo \"Error response from daemon: No such container: $6\" >&2; exit 1 ;;\n  image) exit 1 ;;\n  build)\n" + buildScript + "\n  ;;\nesac\nexit 0\n"
 	if err := os.WriteFile(filepath.Join(bin, "docker"), []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -48,7 +48,7 @@ func (b *buildEvents) snapshot() []procwatch.Event {
 
 // Issue #124: a slow docker build on the first command streamed nothing and,
 // when killed, put every line it had printed into the error.
-func TestDockerBuildReportsProgressAndKeepsOnlyTheTail(t *testing.T) {
+func TestDockerBuildReportsProgressWithoutRawOutputInError(t *testing.T) {
 	installFakeDockerBuild(t, `    i=0
     while :; do
       i=$((i+1))
@@ -76,20 +76,24 @@ func TestDockerBuildReportsProgressAndKeepsOnlyTheTail(t *testing.T) {
 	}()
 
 	_, err := sb.Exec(ctx, CommandSpec{Argv: []string{"true"}}, nil)
-	if err == nil || !strings.Contains(err.Error(), "docker build") {
+	if err == nil || !strings.Contains(err.Error(), "build workspace image") {
 		t.Fatalf("err = %v", err)
 	}
 	events := <-during
 	if len(events) < 2 || events[0].Stage != "image" || events[0].Kind != procwatch.Started || events[1].Kind != procwatch.Progress ||
-		!strings.Contains(events[1].Message, "构建沙箱镜像 backend：#5 [2/3] RUN apt-get update") {
+		!strings.Contains(events[1].Message, "正在构建沙箱镜像 backend") {
 		t.Fatalf("no visible progress while building: %+v", events)
 	}
-	// More lines were printed than the error keeps; it carries the last 20 at most.
-	if n := strings.Count(err.Error(), "RUN apt-get update"); n == 0 || n > 20 {
-		t.Fatalf("error carries %d build lines", n)
+	if strings.Contains(err.Error(), "RUN apt-get update") {
+		t.Fatalf("error carries raw build output: %v", err)
 	}
 	if last := rec.snapshot(); last[len(last)-1].Kind != procwatch.Failed {
 		t.Fatalf("failure not reported: %+v", last[len(last)-1])
+	}
+	for _, event := range rec.snapshot() {
+		if strings.Contains(event.Message, "RUN apt-get update") {
+			t.Fatalf("event carries raw build output: %+v", event)
+		}
 	}
 }
 
