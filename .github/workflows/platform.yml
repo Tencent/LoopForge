@@ -51,9 +51,6 @@ jobs:
           min=$(tr -d '[:space:]' < scripts/coverage-go.min)
           test -n "$min"
           bash scripts/coverage-go.sh --profile "${{ runner.temp }}/go.cover" --profile "${{ runner.temp }}/go-browser.cover" --min "$min"
-      - name: Browser-free UI tests for the platform console
-        run: npm ci --no-audit --no-fund && npm run coverage
-        working-directory: webtest
       - name: Install pinned CLIs for local protocol acceptance
         run: npm install --global @openai/codex@0.162.1 @anthropic-ai/claude-code@2.1.300
       - name: Check real CLI credentials, MCP, stream parsing and native-tool restrictions
@@ -69,6 +66,17 @@ jobs:
       - run: bash scripts/scan-secrets.sh
         env:
           LOOPFORGE_GITLEAKS_TOKEN: ${{ github.token }}
+  webtest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: '22'
+      - name: Browser-free UI tests for the platform console
+        run: npm ci --no-audit --no-fund && npm run coverage
+        working-directory: webtest
   browser:
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -253,13 +261,17 @@ jobs:
     # in GitHub; the workflow does not change repository settings.
     name: platform-required
     if: always()
-    needs: [core, browser, first-run]
+    needs: [core, webtest, browser, first-run]
     runs-on: ubuntu-latest
     steps:
       - name: Require every platform job to pass
         working-directory: ${{ runner.temp }}
         run: |
-          if [[ "${{ needs.core.result }}" != "success" || "${{ needs.browser.result }}" != "success" || "${{ needs.first-run.result }}" != "success" ]]; then
-            echo "core=${{ needs.core.result }} browser=${{ needs.browser.result }} first-run=${{ needs.first-run.result }}" >&2
+          if [[ "${{ needs.core.result }}" != "success" ||
+                "${{ needs.webtest.result }}" != "success" ||
+                "${{ needs.browser.result }}" != "success" ||
+                "${{ needs.first-run.result }}" != "success" ]]; then
+            echo "core=${{ needs.core.result }} webtest=${{ needs.webtest.result }}" \
+                 "browser=${{ needs.browser.result }} first-run=${{ needs.first-run.result }}" >&2
             exit 1
           fi
