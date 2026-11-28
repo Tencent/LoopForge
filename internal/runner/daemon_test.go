@@ -53,7 +53,14 @@ func TestBindInvocationCredentials(t *testing.T) {
 	t.Run("personal claude injects key and base URL", func(t *testing.T) {
 		inv := &domain.RunnerInvocation{CredentialSource: domain.RuntimeAuthPersonal, ClaudeCodeAPIKey: "claude-secret", ClaudeCodeBaseURL: "https://claude.example"}
 		_, env, err := bindInvocationCredentials(inv, []runtime.CredentialBinding{runtime.BindClaudeCode}, []string{"claude", "-p", "prompt"})
-		if err != nil || env["ANTHROPIC_API_KEY"] != "claude-secret" || env["ANTHROPIC_BASE_URL"] != "https://claude.example" {
+		if err != nil || env["ANTHROPIC_API_KEY"] != "claude-secret" || env["ANTHROPIC_AUTH_TOKEN"] != "claude-secret" || env["ANTHROPIC_BASE_URL"] != "https://claude.example" {
+			t.Fatalf("env=%v err=%v", env, err)
+		}
+	})
+	t.Run("personal claude keeps the official endpoint on x-api-key", func(t *testing.T) {
+		inv := &domain.RunnerInvocation{CredentialSource: domain.RuntimeAuthPersonal, ClaudeCodeAPIKey: "claude-secret"}
+		_, env, err := bindInvocationCredentials(inv, []runtime.CredentialBinding{runtime.BindClaudeCode}, []string{"claude", "-p", "prompt"})
+		if err != nil || env["ANTHROPIC_API_KEY"] != "claude-secret" || env["ANTHROPIC_AUTH_TOKEN"] != "" || env["ANTHROPIC_BASE_URL"] != "https://api.anthropic.com" {
 			t.Fatalf("env=%v err=%v", env, err)
 		}
 	})
