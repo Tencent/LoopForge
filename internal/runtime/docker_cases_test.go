@@ -360,6 +360,67 @@ func TestDockerSandboxUsesRelayNetworkOnlyWhenRequested(t *testing.T) {
 	}
 }
 
+func TestDockerSandboxInheritsContainerExtraHosts(t *testing.T) {
+	workspace := t.TempDir()
+	cvRInstallFakeDocker(t, workspace)
+	argsFile := filepath.Join(t.TempDir(), "create-args")
+	t.Setenv("CVR_DOCKER_CREATE_ARGS", argsFile)
+	t.Setenv("CVR_DOCKER_EXTRA_HOSTS", `["registry.internal:10.0.0.5","registry.internal:10.0.0.6","invalid-entry"]`)
+	ctx := context.Background()
+	sandbox, err := createDocker(ctx, "extra-hosts", workspace, domain.SandboxProfile{Driver: "docker"}, SandboxRequirements{}, domain.DockerfileDefinition{Content: "FROM scratch"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sandbox.Close(ctx)
+	if err := sandbox.(*dockerSandbox).BindWorkspace(ctx); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	args := string(data)
+	if !strings.Contains(args, "\n--add-host\nregistry.internal:10.0.0.5\n") {
+		t.Fatalf("docker create lost the inherited extra host: %s", args)
+	}
+	if got := strings.Count(args, "registry.internal"); got != 1 {
+		t.Fatalf("docker create repeated the extra host %d times: %s", got, args)
+	}
+	if strings.Contains(args, "invalid-entry") {
+		t.Fatalf("docker create forwarded an invalid extra host: %s", args)
+	}
+}
+
+func TestDockerSandboxConversationKeepsInheritedHostMapping(t *testing.T) {
+	workspace := t.TempDir()
+	cvRInstallFakeDocker(t, workspace)
+	argsFile := filepath.Join(t.TempDir(), "create-args")
+	t.Setenv("CVR_DOCKER_CREATE_ARGS", argsFile)
+	t.Setenv("CVR_DOCKER_EXTRA_HOSTS", `["host.docker.internal:10.0.0.9"]`)
+	t.Setenv("AGENTFLOW_CONVERSATION_RELAY_HOST", "host.docker.internal")
+	t.Setenv("AGENTFLOW_CONVERSATION_DOCKER_NETWORK", "sop-network")
+	ctx := context.Background()
+	sandbox, err := createDocker(ctx, "extra-hosts-race", workspace, domain.SandboxProfile{Driver: "docker"}, SandboxRequirements{ConversationRoot: t.TempDir()}, domain.DockerfileDefinition{Content: "FROM scratch"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sandbox.Close(ctx)
+	if err := sandbox.(*dockerSandbox).BindWorkspace(ctx); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	args := string(data)
+	if !strings.Contains(args, "\n--add-host\nhost.docker.internal:10.0.0.9\n") {
+		t.Fatalf("docker create lost the inherited host mapping: %s", args)
+	}
+	if strings.Contains(args, "host.docker.internal:host-gateway") {
+		t.Fatalf("docker create replaced the inherited host mapping: %s", args)
+	}
+}
+
 func TestDockerDiscoveryImagesAndBuildHelpers(t *testing.T) {
 	workspace := t.TempDir()
 	cvRInstallFakeDocker(t, workspace)
@@ -590,6 +651,8 @@ if [ "${1-}" = inspect ] && [ "${2-}" = -f ]; then
   exit 0
 fi
 case "$*" in
+  "inspect --type container --format {{json .HostConfig.ExtraHosts}} "*)
+    printf '%s\n' "${CVR_DOCKER_EXTRA_HOSTS:-null}"; exit 0 ;;
   "inspect --type container --format "*" box")
     printf '{"mounts":[{"Destination":"/workspace","Source":"%s"}],"privileged":%s}\n' "$workspace" "${CVR_DOCKER_EXISTING_PRIVILEGED:-false}"; exit 0 ;;
   "inspect --type container "*) echo 'Error: No such container' >&2; exit 1 ;;
