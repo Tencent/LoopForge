@@ -533,7 +533,7 @@ function issueTriggerLabel(issue,data,convo){
   return issueWithoutSOP(issue)?'对话处理':'尚未触发';
 }
 function overviewPane(issue,data){
-  const project=(state.data.projects||[]).find(p=>p.id===issue.projectId),workflow=(state.data.workflows||[]).find(w=>w.id===(issue.workflowId||project?.workflowId)),repo=(state.data.repositories||[]).find(r=>r.id===(issue.repositoryId||project?.defaultRepositoryId));
+  const project=(state.data.projects||[]).find(p=>p.id===issue.projectId),workflow=(state.data.workflows||[]).find(w=>w.id===(issue.workflowId||project?.workflowId)),repos=issueBoundRepositories(issue,project);
   // 对话工作区不是 LOOP 运行：不提供运行、日志和 LOOP 操作入口。
   const convo=conversationWorkspaceIssue(issue,data.run);
   const run=convo?null:data.run,out=issueOutcome(issue),stage=issueCurrentStage(issue),task=data.task;
@@ -553,7 +553,7 @@ function overviewPane(issue,data){
   const ch=convo?conversationHeadState(issue):null;
   const banner=ch?`<div class="issue-outcome conv-outcome ${escapeHTML(ch.tone)}"><span class="conv-outcome-kicker">对话交付</span><b>${escapeHTML(ch.label)}</b><p>${escapeHTML(ch.hint||'')}</p><div class="issue-outcome-actions">${actions}</div></div>`
     :`<div class="issue-outcome ${out.key}"><b>${escapeHTML(out.title)}</b><p>${escapeHTML(out.body)}</p><div class="issue-outcome-actions">${actions}</div></div>`;
-  const facts=`<div class="detail-grid">${drawerFact('责任人',issueAssigneeName(issue)||'未指定')}${drawerFact('优先级',issuePriorityLabel(issue.priority))}${drawerFact('来源',issueSourceLabel(issue))}${metricsIssueSource(issue)==='local'?drawerFact('统计关联 TAPD',escapeHTML(issue.tapdId||'未绑定（仍参与统计）')):''}${drawerFact('触发方式',escapeHTML(issueTriggerLabel(issue,data,convo)))}${drawerFact('关联 LOOP',convo?'无 · 对话里直接改代码':(issueWithoutSOP(issue)?'不使用 LOOP':escapeHTML(workflow?.name||'未关联')))}${drawerFact('代码仓库',escapeHTML(repo?.name||'未绑定'))}${convo?drawerFact('工作分支',escapeHTML(conversationWorkBranchNames(issue,data)||'—')):drawerFact('继续开发分支',escapeHTML(storedIssueWorkBranch(issue)||'自动新建'))}</div>`;
+  const facts=`<div class="detail-grid">${drawerFact('责任人',issueAssigneeName(issue)||'未指定')}${drawerFact('优先级',issuePriorityLabel(issue.priority))}${drawerFact('来源',issueSourceLabel(issue))}${metricsIssueSource(issue)==='local'?drawerFact('统计关联 TAPD',escapeHTML(issue.tapdId||'未绑定（仍参与统计）')):''}${drawerFact('触发方式',escapeHTML(issueTriggerLabel(issue,data,convo)))}${drawerFact('关联 LOOP',convo?'无 · 对话里直接改代码':(issueWithoutSOP(issue)?'不使用 LOOP':escapeHTML(workflow?.name||'未关联')))}${drawerFact('代码仓库',escapeHTML(repos.map(r=>r.name).join('、')||'未绑定'))}${convo?drawerFact('工作分支',escapeHTML(conversationWorkBranchNames(issue,data)||'—')):drawerFact('继续开发分支',escapeHTML(storedIssueWorkBranch(issue)||'自动新建'))}</div>`;
   const description=issue.description?`<div class="markdown-body">${renderRequirementMarkdown(issue.description)}</div>`:'';
   const images=(data.images||[]).map(image=>{
     const url=`/api/issues/${encodeURIComponent(issue.id)}/images/${encodeURIComponent(image.id)}`;
@@ -728,7 +728,7 @@ function conversationRepoCards(issue,data){
   const lower=s=>String(s||'').toLowerCase();
   const cards=branches.map(b=>({name:b.repository||'仓库',path:pathOf(b.webUrl),webUrl:b.webUrl,work:b.workBranch,base:b.baseBranch,mrs:[]}));
   mrs.forEach(mr=>{
-    const project=String(mr.project||''),repo=lower(mr.repository||project.split('/').pop());
+    const project=repoPathLabel(mr.project),repo=lower(mr.repository||project.split('/').pop());
     let card=cards.find(c=>(project&&lower(c.path)===lower(project))||lower(c.name)===repo);
     if(!card){card={name:mr.repository||project.split('/').pop()||'仓库',path:project,webUrl:'',work:'',base:'',mrs:[]};cards.push(card)}
     const mrRoot=String(mr.url||'').match(/^(https?:\/\/.+?)\/(?:(?:-\/)?merge_requests|pull)\//)?.[1];
@@ -754,7 +754,7 @@ function conversationRepoCards(issue,data){
     const tail=!target?'':target===c.work?'<span class="conv-flow-note">直接提交在这个分支上</span>':`<span class="conv-arrow" aria-hidden="true">→</span><span class="conv-branch is-base" title="目标分支">${escapeHTML(target)}</span>`;
     const flow=`<div class="conv-repo-flow">${work}${tail}</div>`;
     const acts=[
-      ...c.mrs.map(m=>{const pr=/\/pull\/\d+/.test(String(m.url||'')),iid=m.iid||String(m.url).match(/(?:merge_requests|pull)\/(\d+)/)?.[1]||'';return `<a class="button ghost small" href="${escapeHTML(safeURL(m.url))}" ${newTab}>${escapeHTML(iid?(pr?`PR #${iid}`:`MR !${iid}`):(pr?'打开 PR':'打开 MR'))} ↗</a>`}),
+      ...c.mrs.map(m=>{const ref=deliveryMRRef(m),word=deliveryMRWord(m);return `<a class="button ghost small" href="${escapeHTML(safeURL(m.url))}" ${newTab}>${escapeHTML(ref?`${word} ${ref}`:`打开 ${word}`)} ↗</a>`}),
       links.compare?`<a class="button ghost small" href="${escapeHTML(safeURL(links.compare))}" ${newTab} title="${escapeHTML(target)}...${escapeHTML(c.work)}">查看改动 ↗</a>`:''
     ].filter(Boolean).join('');
     return `<div class="conv-repo"><div class="conv-repo-head">${name}${badge}</div>${flow}${acts?`<div class="conv-repo-actions">${acts}</div>`:''}</div>`;
@@ -865,9 +865,9 @@ function deliveryRepoFacts(issue,repos){
   const mrs=deliveryMRList(issue),multi=repos.length>1;
   return repos.map(r=>{
     const mr=mrs.find(m=>(m.repositoryId&&m.repositoryId===r.id)||(r.project&&String(m.project||'').toLowerCase()===r.project.toLowerCase()));
-    const iid=mr&&(mr.iid||String(mr.url).match(/merge_requests\/(\d+)/)?.[1]);
-    const link=(label,url)=>`<div class="detail-fact"><span>${label}</span><b><a href="${escapeHTML(safeURL(url))}" target="_blank" rel="noopener noreferrer">${escapeHTML(url===mr?.url&&iid?`!${iid}`:'打开')} ↗</a></b></div>`;
-    const grid=`<div class="detail-grid">${multi?'':drawerFact('仓库',escapeHTML(r.name))}${drawerFact('仓库路径',escapeHTML(r.project||'—'))}${drawerFact('配置主分支',escapeHTML(r.defaultBranch||'—'))}${drawerFact('目标主分支',escapeHTML(r.baseBranch||'—'))}${drawerFact('工作分支',escapeHTML(r.workBranch||'待新建'))}${mr?link('交付 PR',mr.url):''}${r.webUrl?link('仓库链接',r.webUrl):''}</div>`;
+    const ref=mr?deliveryMRRef(mr):'';
+    const link=(label,url)=>`<div class="detail-fact"><span>${label}</span><b><a href="${escapeHTML(safeURL(url))}" target="_blank" rel="noopener noreferrer">${escapeHTML(url===mr?.url&&ref?ref:'打开')} ↗</a></b></div>`;
+    const grid=`<div class="detail-grid">${multi?'':drawerFact('仓库',escapeHTML(r.name))}${drawerFact('仓库路径',escapeHTML(repoPathLabel(r.project)||'—'))}${drawerFact('配置主分支',escapeHTML(r.defaultBranch||'—'))}${drawerFact('目标主分支',escapeHTML(r.baseBranch||'—'))}${drawerFact('工作分支',escapeHTML(r.workBranch||'待新建'))}${mr?link(`交付 ${deliveryMRWord(mr)}`,mr.url):''}${r.webUrl?link('仓库链接',r.webUrl):''}</div>`;
     return multi?`<div class="delivery-repo"><div class="delivery-repo-name">${escapeHTML(r.name)}</div>${grid}</div>`:grid;
   }).join('');
 }

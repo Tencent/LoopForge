@@ -740,7 +740,7 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.GET("/deploy/bind-cli.sh", serveBindCLIScript)
 	g.GET("/deploy/agentflow-runner", serveRunnerBinary)
 	g.GET("/deploy/agentflow-gate-mcp", serveGateMCPBinary)
-	mcpHandler := mcpserver.New(mcpserver.LocalInvoker{Handler: g}).HTTPHandler()
+	mcpHandler := mcpserver.New(assistantDraftInvoker{next: mcpserver.LocalInvoker{Handler: g}, asst: asst}).HTTPHandler()
 	g.Any("/mcp", func(c *gin.Context) {
 		ctx := withConversationSession(c.Request.Context(), c.GetHeader(chatSessionHeader))
 		mcpHandler.ServeHTTP(c.Writer, c.Request.WithContext(ctx))

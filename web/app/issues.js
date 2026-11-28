@@ -388,7 +388,7 @@ function issueListProgress(i,run,w){
   return raw;
 }
 function issueRow(i){
-  const {project:p,run,workflow:w}=issueExecution(i),boundRepos=(state.data.repositories||[]).filter(x=>(i.repositoryIds||[]).includes(x.id)||x.id===i.repositoryId||(!((i.repositoryIds||[]).length||i.repositoryId)&&x.id===p?.defaultRepositoryId)),issueRepos=[boundRepos.find(x=>x.id===i.repositoryId),...boundRepos.filter(x=>x.id!==i.repositoryId)].filter(Boolean),repo=issueRepos[0],repoLabel=issueRepos.length>1?`${repo?.name||'未绑定'} 等${issueRepos.length}个`:repo?.name||'未绑定',health=issueRunHealth(i),stage=issueCurrentStage(i),progress=issueListProgress(i,run,w);
+  const {project:p,run,workflow:w}=issueExecution(i),issueRepos=issueBoundRepositories(i,p),repo=issueRepos[0],repoLabel=issueRepos.length>1?`${repo?.name||'未绑定'} 等${issueRepos.length}个`:repo?.name||'未绑定',health=issueRunHealth(i),stage=issueCurrentStage(i),progress=issueListProgress(i,run,w);
   const sop=issueSOPLabel(i);
   const laneDots=issueLaneDots(i);
   const convo=conversationIssueProgress(i,run);

@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"strings"
 
+	"agentflow/internal/application"
 	"agentflow/internal/domain"
+	"agentflow/internal/mcpserver"
 )
 
 type assistantExecModeKey struct{}
@@ -119,6 +121,25 @@ func (h *assistantHandlers) mergeIssueSaveBody(body any, path map[string]string)
 		base[key] = value
 	}
 	return base
+}
+
+// assistantDraftInvoker runs /mcp tool calls. The workbench executes a draft
+// the user confirmed through /mcp with the chat session header, not through
+// dispatchAssistantMCPCall, so the partial-body merge auto mode applies to
+// issues_save has to happen here too. Models put only the fields they change
+// in the draft; without the merge, confirming "switch the LOOP" saved an empty
+// description and reset priority and status to their defaults. Calls without
+// the header keep the plain PUT /api/issues semantics.
+type assistantDraftInvoker struct {
+	next mcpserver.Invoker
+	asst *assistantHandlers
+}
+
+func (i assistantDraftInvoker) Invoke(ctx context.Context, op application.Operation, input mcpserver.ToolInput) (mcpserver.InvokeResult, error) {
+	if op.Name == "issues_save" && conversationSessionFrom(ctx) != "" {
+		input.Body = i.asst.mergeIssueSaveBody(input.Body, input.Path)
+	}
+	return i.next.Invoke(ctx, op, input)
 }
 
 func (h *assistantHandlers) applyAssistantDrafts(ctx context.Context, user domain.User, projectID string, drafts []assistantDraft) []assistantDraft {

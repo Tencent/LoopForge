@@ -1311,6 +1311,8 @@ Object.assign(window.LF_I18N_EN, {
   "对话处理": "Handled in chat",
   "在对话里澄清和改代码": "Clarify and change code in chat",
   "这条需求不使用 LOOP，在对话里澄清需求、直接改代码；定时任务不会自动认领它。": "This requirement uses no LOOP: clarify and change code in chat; scheduled jobs won't pick it up.",
+  "打开 MR": "Open MR",
+  "交付 MR": "Delivery MR",
 });
 Object.assign(window.LF_I18N_EN, {
   "共享任务市场": "Shared task market",
