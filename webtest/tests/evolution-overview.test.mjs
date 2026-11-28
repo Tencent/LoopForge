@@ -68,7 +68,7 @@ test('task details have a separate page and returning preserves pagination, filt
   search.dispatchEvent(new app.window.Event('input',{bubbles:true}));
   assert.equal($('[data-evo-task-search]'),search);
   assert.equal(app.document.querySelectorAll('.evo-home-row').length,1);
-  assert.match($('.evo-home-asset').textContent,/SOP · Delivery Flow/);
+  assert.match($('.evo-home-asset').textContent,/LOOP · Delivery Flow/);
   $('.evo-home-row').click(); await settle(4);
   $('[data-evo-list-back]').click(); await settle(5);
   assert.equal($('[data-evo-task-filter="sort"]').value, 'recent');

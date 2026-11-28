@@ -118,3 +118,25 @@ test("a requirement draft artifact is listed under its title even when the draft
     ["format_currency 负数格式", "评审员"],
   );
 });
+
+test("a recent tail names its artifacts by stored message index, like the full transcript", () => {
+  const messages = Array.from({ length: 46 }, (_, index) => ({
+    role: index % 2 ? "assistant" : "user",
+    content: index === 39 || index === 45
+      ? JSON.stringify({
+        message: "```svg\n<svg/>\n```",
+        drafts: [{ tool: "issues_save", body: { title: `DRAFT-${index}` } }],
+      })
+      : `MSG-${index}`,
+  }));
+  const full = collectArtifacts({ id: "long", messages });
+  const tail = collectArtifacts({ id: "long", messagesPartial: true, messagesOffset: 6, messages: messages.slice(6) });
+  const named = (items) => items.map(({ id, name, messageIndex, draftIndex }) => ({ id, name, messageIndex, draftIndex }));
+  assert.deepEqual(named(tail), named(full));
+  assert.deepEqual(
+    full.filter((item) => item.draft).map((item) => [item.id, item.name]),
+    [["draft-39-0", "DRAFT-39"], ["draft-45-0", "DRAFT-45"]],
+  );
+  // A complete transcript ignores a stale offset.
+  assert.deepEqual(named(collectArtifacts({ id: "long", messagesOffset: 6, messages })), named(full));
+});

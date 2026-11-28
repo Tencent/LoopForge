@@ -25,10 +25,20 @@ describe("message image attachments", () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => vi.useRealTimers());
 
+  test("falls back to the saved thumbnail if the browser-local screenshot cannot be decoded", () => {
+    render(<Attachment attachment={image} sessionId="s1" localPreviewURL="blob:local-shot" />);
+    expect(source()).toBe("blob:local-shot");
+    fireEvent.error(screen.getByAltText("shot.png"));
+    expect(source()).toBe("/api/assistant/attachments/a1?sessionId=s1&view=thumbnail");
+    fireEvent.load(screen.getByAltText("shot.png"));
+    fireEvent.click(screen.getByAltText("shot.png"));
+    expect(screen.getByRole("dialog").querySelector("img")).toHaveAttribute("src", "/api/assistant/attachments/a1?sessionId=s1");
+  });
+
   test("retries a failed first fetch before showing the failure", () => {
     const onOpen = vi.fn();
     render(<Attachment attachment={image} sessionId="s1" onOpen={onOpen} />);
-    expect(source()).toBe("/api/assistant/attachments/a1?sessionId=s1");
+    expect(source()).toBe("/api/assistant/attachments/a1?sessionId=s1&view=thumbnail");
 
     fireEvent.error(screen.getByAltText("shot.png"));
     expect(screen.queryByText("图片加载失败")).toBeNull();
@@ -75,6 +85,7 @@ describe("message image attachments", () => {
     expect(
       screen.getByRole("dialog", { name: "查看大图 shot.png" }),
     ).toBeInTheDocument();
+    expect(screen.getByRole("dialog").querySelector("img")).toHaveAttribute("src", "/api/assistant/attachments/a1?sessionId=s1");
     expect(onOpen).not.toHaveBeenCalled();
   });
 });

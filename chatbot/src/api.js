@@ -46,6 +46,14 @@ export const attachmentURL = (attachment, sessionId) =>
   /^data:[^,]*;base64,/.test(attachment.localDataUrl || "")
     ? attachment.localDataUrl
     : `/api/assistant/attachments/${encodeURIComponent(attachment.id)}?sessionId=${encodeURIComponent(sessionId)}`;
+export function attachmentThumbnailURL(url, mimeType) {
+  if (!url?.startsWith("/api/assistant/attachments/") ||
+      !["image/png", "image/jpeg", "image/webp"].includes(mimeType)) return url;
+  const preview = new URL(url, window.location.origin);
+  preview.searchParams.set("view", "thumbnail");
+  return preview.pathname + preview.search;
+}
+
 export function newId() {
   const bytes = crypto.getRandomValues(new Uint8Array(16));
   return (
@@ -81,11 +89,20 @@ export function visibleText(message) {
   }
   return text;
 }
+// Stored index of session.messages[0]. A view=recent tail starts later in the
+// transcript; anything named after a message position (draft-<index>-<n>,
+// block-<index>-<n>) must use the stored index so it keeps naming the same
+// message once the full transcript replaces the tail.
+export function messageOffset(session) {
+  return session?.messagesPartial ? Math.max(0, Number(session.messagesOffset) || 0) : 0;
+}
 export function collectArtifacts(session) {
   if (!session) return [];
   const artifacts = [];
   const seen = new Set();
-  (session.messages || []).forEach((message, messageIndex) => {
+  const offset = messageOffset(session);
+  (session.messages || []).forEach((message, position) => {
+    const messageIndex = offset + position;
     for (const attachment of message.attachments || []) {
       if (seen.has(attachment.id)) continue;
       seen.add(attachment.id);

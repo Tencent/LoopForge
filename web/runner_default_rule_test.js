@@ -8,7 +8,7 @@ function extract(name) {
   return code.slice(start, code.indexOf('\n}', start) + 2);
 }
 
-const context = {state: {minRunnerVersion: '0.8.0'}};
+const context = {state: {minRunnerVersion: '0.8.0'}, lfT: zh => zh};
 vm.createContext(context);
 vm.runInContext(extract('runnerVersionAtLeast') + extract('runnerDefaultBlocker'), context);
 const blocker = r => context.runnerDefaultBlocker(r);
@@ -24,5 +24,5 @@ context.state.minRunnerVersion = '';
 assert.equal(blocker({status: 'online', runnerVersion: '0.1.0'}), '');
 
 assert.ok(code.includes('${defaultBlocker?`disabled title='), 'set-default button must use runnerDefaultBlocker');
-assert.ok(code.includes("Runner ${escapeHTML(r.runnerVersion||'未知')}"), 'card shows the runner version');
+assert.ok(code.includes("Runner ${escapeHTML(r.runnerVersion||lfT('未知','unknown'))}"), 'card shows the runner version');
 console.log('runner default rule ok');

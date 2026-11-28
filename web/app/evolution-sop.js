@@ -1,4 +1,4 @@
-// SOP 维度 RSI 工作台：首页按 SOP 展示状态/偏好/核心指标/开关；详情页展示核心指标、版本与灰度趋势、本次修改与问题。
+// LOOP 维度 RSI 工作台：首页按 LOOP 展示状态/偏好/核心指标/开关；详情页展示核心指标、版本与灰度趋势、本次修改与问题。
 // 视觉令牌与图标沿用 Harness UI（MIT），见 harness-ui-LICENSE.txt。
 
 const EVO_SOP_PREFS = [
@@ -20,7 +20,7 @@ const EVO_SOP_STAGES = {
   gray: ['灰度中', 'ok'],
 };
 const EVO_SOP_METRICS = [
-  { key: 'score', label: 'SOP 评分', higherBetter: true, format: v => v == null ? '—' : `${Math.round(v)}`, unit: '分' },
+  { key: 'score', label: 'LOOP 评分', higherBetter: true, format: v => v == null ? '—' : `${Math.round(v)}`, unit: '分' },
   { key: 'tokens', label: '平均 Token', higherBetter: false, format: v => evoSOPFormatTokens(v), unit: '' },
   { key: 'tools', label: '平均工具调用', higherBetter: false, format: v => v == null ? '—' : `${evoSOPNum(v, 1)}`, unit: '次' },
   { key: 'duration', label: '平均执行耗时', higherBetter: false, format: v => evoSOPFormatSec(v), unit: '' },
@@ -115,7 +115,7 @@ function evoSOPIsEnabledView() {
   return Array.isArray(evo.overview?.sops) && evoSOPState.mode !== 'assets';
 }
 
-// ---------- 首页（SOP 维度） ----------
+// ---------- 首页（LOOP 维度） ----------
 
 function evoSOPHomeHTML() {
   const sops = evo.overview?.sops || [];
@@ -135,15 +135,15 @@ function evoSOPHomeHTML() {
 
   return `<div class="evo-sop-home">
     ${evoHomeStatusHTML()}
-    <section class="evo-sop-panel" aria-label="SOP 进化列表">
+    <section class="evo-sop-panel" aria-label="LOOP 进化列表">
       <div class="evo-sop-toolbar">
-        <div class="evo-sop-filters" role="group" aria-label="按 SOP 状态筛选">
+        <div class="evo-sop-filters" role="group" aria-label="按 LOOP 状态筛选">
           ${filters.map(([k, label, n]) => `<button type="button" class="evo-sop-filter-btn" data-evo-sop-filter="${k}" aria-pressed="${evoSOPState.filter === k}">${label}<span>${n}</span></button>`).join('')}
         </div>
         <div class="evo-sop-toolbar-right">
           <label class="evo-home-search">
             ${evoReviewIcon('search')}
-            <input class="kb-input" type="search" data-evo-sop-search data-evo-key="sop-search" aria-label="搜索 SOP" placeholder="搜索 SOP 名称或说明" value="${escapeHTML(evoSOPState.q)}">
+            <input class="kb-input" type="search" data-evo-sop-search data-evo-key="sop-search" aria-label="搜索 LOOP" placeholder="搜索 LOOP 名称或说明" value="${escapeHTML(evoSOPState.q)}">
           </label>
         </div>
       </div>
@@ -162,16 +162,16 @@ function evoSOPListHTML(sops) {
   if (!sops.length) {
     return `<section class="evo-home-empty" aria-labelledby="evoSopEmptyTitle">
       <div class="evo-home-empty-mark">${evoReviewIcon('workflow')}</div>
-      <h2 id="evoSopEmptyTitle">当前项目暂无 SOP</h2>
-      <p>创建并运行 SOP 后，这里会按 SOP 持续统计核心消耗与评分，并按偏好自动沉淀优化建议。</p>
+      <h2 id="evoSopEmptyTitle">当前项目暂无 LOOP</h2>
+      <p>创建并运行 LOOP 后，这里会按 LOOP 持续统计核心消耗与评分，并按偏好自动沉淀优化建议。</p>
       <div class="evo-home-empty-actions">${evoHomeButton(`${evoReviewIcon('play')}查看运行`, 'data-evo-home-runs')}</div>
     </section>`;
   }
   if (!filtered.length) {
-    return `<div class="evo-home-filter-empty">暂无匹配的 SOP ${evoHomeButton('清除筛选', 'data-evo-sop-reset')}</div>`;
+    return `<div class="evo-home-filter-empty">暂无匹配的 LOOP ${evoHomeButton('清除筛选', 'data-evo-sop-reset')}</div>`;
   }
   const head = `<div class="evo-sop-columns" aria-hidden="true">
-    <span>SOP 与最近分析</span>
+    <span>LOOP 与最近分析</span>
     <span>优化偏好 · 周期</span>
     <span>近批指标（Token / 工具 / 评分）</span>
     <span>状态</span>
@@ -474,7 +474,7 @@ async function evoSOPSavePolicy(workflowId, patch, control) {
         evoSOPUpdateList();
       }
     }
-    toast('SOP 进化配置已更新', 'ok');
+    toast('LOOP 进化配置已更新', 'ok');
     return saved;
   } catch (err) {
     evoSOPState.busyIds.delete(workflowId);
@@ -490,7 +490,7 @@ async function evoSOPSavePolicy(workflowId, patch, control) {
   }
 }
 
-// ---------- SOP 详情页 ----------
+// ---------- LOOP 详情页 ----------
 
 function evoCloseSOP(restore = false) {
   evoSOPState.view = null;
@@ -544,7 +544,7 @@ async function evoSOPLoadDetail(view) {
   } catch (err) {
     if (evoSOPState.view !== view || view.seq !== seq || pid !== evoProjectId()) return;
     view.loading = false;
-    view.error = err.message || '读取 SOP 详情失败';
+    view.error = err.message || '读取 LOOP 详情失败';
     evoSOPRenderDetail();
   }
 }
@@ -562,12 +562,12 @@ function evoSOPRenderDetail() {
 
 function evoSOPDetailHTML(view) {
   const d = view.detail;
-  const back = `<button type="button" class="evo-back" data-evo-sop-back>‹ 返回 SOP 列表</button>`;
+  const back = `<button type="button" class="evo-back" data-evo-sop-back>‹ 返回 LOOP 列表</button>`;
   if (view.error) {
-    return `<section id="evoSopDetailPage" class="evo-sop-detail">${back}<div class="evo-home-check-error" role="alert">读取 SOP 详情失败：${escapeHTML(view.error)} <button type="button" class="kb-btn small" data-evo-sop-reload>重试</button></div></section>`;
+    return `<section id="evoSopDetailPage" class="evo-sop-detail">${back}<div class="evo-home-check-error" role="alert">读取 LOOP 详情失败：${escapeHTML(view.error)} <button type="button" class="kb-btn small" data-evo-sop-reload>重试</button></div></section>`;
   }
   if (!d) {
-    return `<section id="evoSopDetailPage" class="evo-sop-detail">${back}<div class="kb-empty">正在读取 SOP 详情…</div></section>`;
+    return `<section id="evoSopDetailPage" class="evo-sop-detail">${back}<div class="kb-empty">正在读取 LOOP 详情…</div></section>`;
   }
 
   const busy = evoSOPState.busyIds.has(d.workflowId) ? ' disabled' : '';
@@ -612,7 +612,7 @@ function evoSOPDetailHTML(view) {
     ${evoSOPCalloutHTML(d)}
     ${evoSOPMetricsGridHTML(curM, prevM, primaryPref)}
 
-    <div class="evo-sop-tabs" role="tablist" aria-label="SOP 详情视图">
+    <div class="evo-sop-tabs" role="tablist" aria-label="LOOP 详情视图">
       <button type="button" role="tab" data-evo-sop-tab="trend" aria-selected="${view.tab === 'trend'}">历史版本趋势</button>
       <button type="button" role="tab" data-evo-sop-tab="change" aria-selected="${view.tab === 'change'}">本次修改与问题${d.problems?.length ? `<span class="kb-count">${d.problems.length}</span>` : ''}</button>
     </div>
@@ -626,7 +626,7 @@ function evoSOPDetailHTML(view) {
 function evoSOPCalloutHTML(d) {
   if (!d.enabled) {
     return `<div class="evo-sop-callout is-muted" role="status">
-      <div><strong>已关闭此 SOP 的自动进化</strong><p>仍会记录每次运行的消耗与评分，但不会自动生成新的优化提案。</p></div>
+      <div><strong>已关闭此 LOOP 的自动进化</strong><p>仍会记录每次运行的消耗与评分，但不会自动生成新的优化提案。</p></div>
     </div>`;
   }
   const p = d.activeProposal;
@@ -716,7 +716,7 @@ function evoSOPMetricsGridHTML(cur, prev, primaryPref = '') {
     {
       key: 'score',
       primary: true,
-      label: 'SOP 评分',
+      label: 'LOOP 评分',
       value: cur.score != null ? `${cur.score}` : '—',
       unit: cur.score != null ? '/ 100' : '',
       delta: evoSOPDeltaHTML(evoSOPMetricValue(cur, 'score'), evoSOPMetricValue(prev, 'score'), true, d => `${d > 0 ? '+' : ''}${Math.round(d)} 分`),
@@ -780,16 +780,16 @@ function evoSOPTrendTabHTML(view, d) {
     </div>
 
     <div class="evo-sop-chart-box">
-      <canvas id="evoSopTrendCanvas" height="220" aria-label="SOP 核心指标趋势图"></canvas>
+      <canvas id="evoSopTrendCanvas" height="220" aria-label="LOOP 核心指标趋势图"></canvas>
       <div id="evoSopChartEmpty" class="evo-sop-chart-empty" hidden></div>
     </div>
 
     ${scope === 'versions' ? evoSOPVersionsTableHTML(d.versions || [], d.assets || []) : evoSOPGrayTableHTML(d.grayRounds || [], view.expandedGray)}
 
     <details class="evo-sop-method">
-      <summary>指标与 SOP 评分是怎么算出来的？</summary>
+      <summary>指标与 LOOP 评分是怎么算出来的？</summary>
       <ul>
-        <li><b>SOP 评分（0–100）</b>：当运行存在自动评测结果（RunEval）时，直接取该批次评测均分；暂无评测时按连续公式加权：一次成功运行为结果稳定性 65 分（成功 40 + 无返工 15 + 工具无报错 10）+ 连续效率 35 分（Token 15 + 工具 10 + 耗时 10，平滑曲线计分）；返工成功按 0.6 倍计入效率分；失败运行不计效率加分（8–18 分），确保「失败 &lt; 返工成功 &lt; 一次成功」。</li>
+        <li><b>LOOP 评分（0–100）</b>：当运行存在自动评测结果（RunEval）时，直接取该批次评测均分；暂无评测时按连续公式加权：一次成功运行为结果稳定性 65 分（成功 40 + 无返工 15 + 工具无报错 10）+ 连续效率 35 分（Token 15 + 工具 10 + 耗时 10，平滑曲线计分）；返工成功按 0.6 倍计入效率分；失败运行不计效率加分（8–18 分），确保「失败 &lt; 返工成功 &lt; 一次成功」。</li>
         <li><b>核心指标口径</b>：所有统计仅包含非回放的终态业务运行；每个正式版本取该版本最近一轮（最多 N 次）运行的均值，灰度数据则按同一时间窗内的旧版对照组与候选版分流运行分别汇总。</li>
       </ul>
     </details>
@@ -837,7 +837,7 @@ function evoSOPVersionsTableHTML(versions, assets = []) {
     </tr>`;
   }).join('');
   return `<div class="evo-sop-table-wrap"><table class="evo-sop-data-table">
-    <thead><tr><th>版本</th><th class="num">统计运行数</th><th class="num">SOP 评分</th><th class="num">平均 Token</th><th class="num">平均工具调用</th><th class="num">平均耗时</th><th class="num">一次成功率</th>${hasActions ? '<th class="num">版本回滚</th>' : ''}</tr></thead>
+    <thead><tr><th>版本</th><th class="num">统计运行数</th><th class="num">LOOP 评分</th><th class="num">平均 Token</th><th class="num">平均工具调用</th><th class="num">平均耗时</th><th class="num">一次成功率</th>${hasActions ? '<th class="num">版本回滚</th>' : ''}</tr></thead>
     <tbody>${rows}</tbody>
   </table></div>`;
 }
@@ -1198,7 +1198,7 @@ function evoSOPChangeTabHTML(view, d) {
   </div>`;
 }
 
-// ---------- SOP 详情操作 ----------
+// ---------- LOOP 详情操作 ----------
 
 async function evoSOPStartGray(proposalId, btn) {
   const view = evoSOPState.view;
@@ -1277,7 +1277,7 @@ async function evoSOPTriggerOptimize(workflowId, btn) {
       method: 'POST',
       body: JSON.stringify({ projectId: pid }),
     });
-    toast('已发起 SOP 优化，正在生成修改稿并回放验证', 'ok');
+    toast('已发起 LOOP 优化，正在生成修改稿并回放验证', 'ok');
     await evoRefresh();
     if (evoSOPState.view === view) await evoSOPLoadDetail(view);
   } catch (err) {
