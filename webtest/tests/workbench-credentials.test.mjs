@@ -2,6 +2,37 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { loadApp, settle } from '../lib/load-app.mjs';
 
+test('credential list tints only configured monochrome images and keeps wizard logos unchanged', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  app.evaluate(`
+    state.currentUser={...state.data.users[0],id:1,isGuest:false,claudeCodeApiKeyConfigured:true,codexApiKeyConfigured:false,codeBuddyApiKeyConfigured:true};
+    state.data.users[0]=state.currentUser;
+    renderPersonalSettings();
+  `);
+  const logo = (key) => app.document.querySelector(`[data-credential-row="${key}"] .credential-logo`);
+  assert.ok(logo('claudeCodeApiKey').classList.contains('is-configured'));
+  assert.ok(logo('claudeCodeApiKey').classList.contains('is-tinted'));
+  assert.match(logo('claudeCodeApiKey').style.getPropertyValue('--credential-logo-image'), /\/images\/credentials\/claude\.svg/);
+  assert.ok(logo('codexApiKey').classList.contains('is-dim'));
+  assert.equal(logo('codexApiKey').style.getPropertyValue('--credential-logo-image'), '');
+  assert.ok(logo('codeBuddyApiKey').classList.contains('is-configured'));
+  assert.equal(logo('codeBuddyApiKey').style.getPropertyValue('--credential-logo-image'), '');
+  const icon = app.document.createElement('div');
+  icon.innerHTML = app.evaluate(`credentialLogo({icon:'key',monochrome:true},'is-configured')`);
+  assert.equal(icon.firstElementChild.style.getPropertyValue('--credential-logo-image'), '');
+  assert.ok(!icon.firstElementChild.classList.contains('is-tinted'));
+  assert.ok(icon.querySelector('svg'));
+  app.evaluate(`openCredentialWizard('codexApiKey')`);
+  const wizardLogo = app.document.querySelector('#credentialWizard .credential-logo.monochrome');
+  assert.ok(wizardLogo);
+  assert.equal(wizardLogo.style.getPropertyValue('--credential-logo-image'), '');
+  assert.ok(!wizardLogo.classList.contains('is-tinted'));
+  app.evaluate(`state.data.users[0].claudeCodeApiKeyConfigured=false;repaintCredentialRow('claudeCodeApiKey')`);
+  assert.ok(logo('claudeCodeApiKey').classList.contains('is-dim'));
+  assert.equal(logo('claudeCodeApiKey').style.getPropertyValue('--credential-logo-image'), '');
+});
+
 test('personal settings lists a managed Git credential even without personal Git records', async (t) => {
   const app = await loadApp();
   t.after(app.close);
