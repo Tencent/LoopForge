@@ -104,7 +104,7 @@ func (d *Daemon) handleRunnerWorkspaceBrowser(ctx context.Context, request domai
 	if request.Browser == nil {
 		return domain.RunnerWorkspaceResponse{Status: 400, Error: "invalid browser request"}
 	}
-	if request.Browser.Ensure && runtime.BrowserNeedsStart(ctx, request.RunID) {
+	if request.Browser.Ensure && runtime.BrowserNeedsStart(ctx, request.RunID, request.Sandbox != nil && request.Sandbox.Profile.Driver == domain.SandboxDriverDocker) {
 		if reason := d.ensureRunnerBrowser(ctx, request); reason != "" {
 			return runnerWorkspacePayload(domain.BrowserState{Reason: reason})
 		}

@@ -82,8 +82,11 @@ func BrowserRunning(ctx context.Context, runID string) bool {
 }
 
 // BrowserNeedsStart only requests startup when absence or staleness is known.
-func BrowserNeedsStart(ctx context.Context, runID string) bool {
-	endpoint, err := resolveBrowserEndpoint(ctx, runID)
+func BrowserNeedsStart(ctx context.Context, runID string, docker bool) bool {
+	if !docker {
+		return hostBrowserEndpoint(ctx, runID).Kind == ""
+	}
+	endpoint, err := resolveDockerBrowserEndpoint(ctx, runID)
 	return (err == nil && endpoint.Kind == "") || errors.Is(err, errDockerWorkspaceUnavailable)
 }
 
@@ -245,6 +248,12 @@ func (s *dockerSandbox) ensureBrowser(ctx context.Context, runID string, sink Ev
 	s.browserMu.Lock()
 	defer s.browserMu.Unlock()
 	generation, err := s.browserWorkspaceGeneration(ctx)
+	if errors.Is(err, errDockerWorkspaceUnavailable) {
+		if err := s.ensureStarted(ctx); err != nil {
+			return domain.MCPServerDefinition{}, err
+		}
+		generation, err = s.browserWorkspaceGeneration(ctx)
+	}
 	if err != nil {
 		return domain.MCPServerDefinition{}, err
 	}
@@ -266,7 +275,7 @@ func (s *dockerSandbox) ensureBrowser(ctx context.Context, runID string, sink Ev
 	if err != nil {
 		return domain.MCPServerDefinition{}, err
 	}
-	if sidecar == nil || !*sidecar.Running || sidecar.Image != image || sidecar.Labels[browserRunLabel] != runID || sidecar.Labels[browserGenerationLabel] != generation {
+	if sidecar == nil || !*sidecar.Running || sidecar.Image != image || sidecar.Labels[browserRunLabel] != runID || sidecar.Labels[browserOwnerLabel] != s.name || sidecar.Labels[browserGenerationLabel] != generation {
 		if current, err := s.browserWorkspaceGeneration(ctx); err != nil || current != generation {
 			if err == nil {
 				err = fmt.Errorf("%w: %s changed generation", errDockerWorkspaceUnavailable, s.name)
@@ -274,8 +283,8 @@ func (s *dockerSandbox) ensureBrowser(ctx context.Context, runID string, sink Ev
 			return domain.MCPServerDefinition{}, err
 		}
 		if sidecar != nil {
-			if output, err := exec.CommandContext(ctx, "docker", "rm", "-f", sidecar.ID).CombinedOutput(); err != nil && !dockerObjectGone(string(output), err) {
-				return domain.MCPServerDefinition{}, dockerStageError("remove obsolete browser sidecar", name, output, err)
+			if err := removeDockerContainer(ctx, sidecar.ID); err != nil {
+				return domain.MCPServerDefinition{}, fmt.Errorf("remove obsolete browser sidecar %s: %w", name, err)
 			}
 		}
 		args := []string{"run", "-d", "--name", name, "--init",
@@ -305,28 +314,15 @@ func (s *dockerSandbox) ensureBrowser(ctx context.Context, runID string, sink Ev
 
 const browserGenerationLabel = "agentflow.browser.generation"
 
-type dockerBrowserInspection struct {
-	ID, Image string
-	Running   *bool
-	Labels    map[string]string
-}
-
-func inspectDockerBrowser(ctx context.Context, name string) (*dockerBrowserInspection, error) {
-	ctx, cancel := context.WithTimeout(ctx, dockerInspectLimit)
-	defer cancel()
-	const format = `{"ID":{{json .Id}},"Image":{{json .Config.Image}},"Running":{{.State.Running}},"Labels":{{json .Config.Labels}}}`
-	out, err := exec.CommandContext(ctx, "docker", "inspect", "--type", "container", "--format", format, name).CombinedOutput()
-	if ctx.Err() != nil {
-		return nil, ctx.Err()
+func inspectDockerBrowser(ctx context.Context, name string) (*dockerWorkspaceState, error) {
+	sidecar, err := inspectDockerContainerState(ctx, "inspect browser sidecar", name)
+	if err != nil {
+		return nil, err
 	}
-	if dockerObjectGone(string(out), err) {
+	if sidecar.Status == "missing" {
 		return nil, nil
 	}
-	if err != nil {
-		return nil, dockerStageError("inspect browser sidecar", name, out, err)
-	}
-	var sidecar dockerBrowserInspection
-	if json.Unmarshal(out, &sidecar) != nil || !validDockerContainerID(sidecar.ID) || sidecar.Running == nil || sidecar.Image == "" {
+	if sidecar.Image == "" {
 		return nil, fmt.Errorf("invalid Docker browser sidecar metadata for %s", name)
 	}
 	return &sidecar, nil
@@ -353,6 +349,14 @@ func waitDockerBrowserReady(ctx context.Context, name string, checkWorkspace fun
 		}
 		if ready {
 			return nil
+		}
+		state, err := inspectDockerContainerState(ctx, "inspect browser sidecar readiness", name)
+		if err != nil {
+			return err
+		}
+		switch state.Status {
+		case "missing", "exited", "dead", "removing":
+			return fmt.Errorf("Docker browser sidecar readiness (%s): %s", name, state.diagnostics("browser sidecar startup command"))
 		}
 		select {
 		case <-ctx.Done():
@@ -608,12 +612,23 @@ func lookupBrowserEndpoint(ctx context.Context, runID string) (browserEndpoint, 
 }
 
 func resolveBrowserEndpoint(ctx context.Context, runID string) (browserEndpoint, error) {
+	if endpoint := hostBrowserEndpoint(ctx, runID); endpoint.Kind != "" {
+		return endpoint, nil
+	}
+	return resolveDockerBrowserEndpoint(ctx, runID)
+}
+
+func hostBrowserEndpoint(ctx context.Context, runID string) browserEndpoint {
 	if raw, err := os.ReadFile(filepath.Join(hostBrowserDir(runID), "endpoint.json")); err == nil {
 		var record hostBrowserRecord
 		if json.Unmarshal(raw, &record) == nil && record.PID > 0 && syscall.Kill(record.PID, 0) == nil && hostDevToolsAlive(ctx, record.Port) {
-			return browserEndpoint{Kind: "local", WebSocket: record.WebSocket, Workspace: record.Workspace}, nil
+			return browserEndpoint{Kind: "local", WebSocket: record.WebSocket, Workspace: record.Workspace}
 		}
 	}
+	return browserEndpoint{}
+}
+
+func resolveDockerBrowserEndpoint(ctx context.Context, runID string) (browserEndpoint, error) {
 	if !dockerAvailable() {
 		return browserEndpoint{}, nil
 	}
@@ -622,7 +637,10 @@ func resolveBrowserEndpoint(ctx context.Context, runID string) (browserEndpoint,
 	const format = `{{.Names}}{{"\t"}}{{.Label "` + browserOwnerLabel + `"}}{{"\t"}}{{.Label "` + browserGenerationLabel + `"}}`
 	out, err := exec.CommandContext(ctx, "docker", "ps", "--filter", "label="+browserRunLabel+"="+runID, "--format", format).Output()
 	if err != nil {
-		return browserEndpoint{}, fmt.Errorf("cannot list Docker browser sidecars: %w", err)
+		if ctx.Err() != nil {
+			err = ctx.Err()
+		}
+		return browserEndpoint{}, dockerStageError("list browser sidecars", runID, dockerCommandStderr(err), err)
 	}
 	var statusErr error
 	for _, line := range strings.Split(strings.TrimRight(string(out), "\n"), "\n") {

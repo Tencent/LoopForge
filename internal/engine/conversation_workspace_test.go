@@ -620,6 +620,7 @@ func TestAcquireConversationEnvironmentRefusesUnrestoredReclaimedWorkspace(t *te
 }
 
 func TestEnsureRunBrowserRestoresReclaimedWorkspaceWithStaleRun(t *testing.T) {
+	t.Setenv("AGENTFLOW_BROWSER", "always")
 	bin := t.TempDir()
 	chromium := filepath.Join(bin, "chromium")
 	script := `#!/bin/sh
@@ -641,6 +642,16 @@ exec sleep 30
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	e, id := checkpointFixture(t)
+	run, ok := e.repo.RunState(id)
+	if !ok {
+		t.Fatal("missing checkpoint run")
+	}
+	run.WorkflowSnapshot.SandboxSnapshot = &domain.RunnerSandboxSpec{
+		Profile: domain.SandboxProfile{ID: repo.TestNativeSandboxID, Driver: domain.SandboxDriverNative},
+	}
+	if err := e.repo.PutRun(run); err != nil {
+		t.Fatal(err)
+	}
 	t.Cleanup(func() {
 		_, _ = runtime.HandleBrowser(context.Background(), id, domain.BrowserRequest{Operation: "stop"})
 		_ = e.releaseRunEnvironment(id, true)

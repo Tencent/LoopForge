@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -58,46 +59,193 @@ esac`})
 	}
 }
 
-func TestDockerBrowserDoesNotReplaceOnUnknownSidecar(t *testing.T) {
+func TestDockerWorkspaceStartupParentCancellation(t *testing.T) {
 	useFakeCommands(t, map[string]string{"docker": `#!/bin/sh
-case "$*" in
-  "inspect --type container --format "*'.State.Status'*) echo '` + fakeDockerRunningWorkspace + `' ;;
-  "inspect --type container --format "*) echo 'private daemon response' >&2; exit 1;;
-  "run "*|"rm "*) touch "$UNEXPECTED_MUTATION";;
-esac`})
-	t.Setenv("AGENTFLOW_BROWSER_IMAGE", "test-browser")
-	marker := t.TempDir() + "/mutation"
-	t.Setenv("UNEXPECTED_MUTATION", marker)
-	sandbox := &dockerSandbox{name: "workspace", workspace: t.TempDir(), started: true}
-	if _, err := sandbox.ensureBrowser(t.Context(), "run", nil); err == nil || !strings.Contains(err.Error(), "inspect browser sidecar") || strings.Contains(err.Error(), "private daemon response") {
-		t.Fatalf("unexpected sidecar error: %v", err)
+if [ "$1" = exec ]; then touch "$PROBE_ENTERED"; exec sleep 60; fi`})
+	entered := t.TempDir() + "/probe"
+	t.Setenv("PROBE_ENTERED", entered)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- startDockerWorkspace(ctx, "workspace", "test-image") }()
+	for deadline := time.Now().Add(3 * time.Second); ; time.Sleep(5 * time.Millisecond) {
+		if _, err := os.Stat(entered); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("login probe did not start")
+		}
 	}
-	if _, err := os.Stat(marker); !os.IsNotExist(err) {
-		t.Fatalf("sidecar was modified despite unknown status: %v", err)
+	cancel()
+	if err := <-done; err != context.Canceled || !IsSandboxInterrupt(err) {
+		t.Fatalf("parent cancellation must remain a sandbox interrupt: %v", err)
 	}
 }
 
-func TestDockerBrowserKeepsCachedViewOnUnknownWorkspace(t *testing.T) {
-	useFakeCommands(t, map[string]string{"docker": `#!/bin/sh
+func TestDockerWorkspaceAndBrowserSafeFailureDiagnostics(t *testing.T) {
+	for _, test := range []struct {
+		stage, commands, private string
+		want                     []string
+	}{
+		{"probe", `echo "sh: can't cd to /workspace: private-cd" >&2; exit 1`, "private-cd", []string{"workspace shell probe", "cannot enter /workspace", "exit status 1"}},
+		{"probe", `echo private-probe >&2; exit 126`, "private-probe", []string{"workspace shell probe", "login shell could not be executed", "exit status 126"}},
+		{"keepalive", `echo private-exec >&2; exit 1`, "private-exec", []string{"exit=127", "sleep infinity", "was not found"}},
+		{"retire", `echo 'permission denied: private-retire' >&2; exit 23`, "private-retire", []string{"retire previous workspace", "permission denied", "exit status 23"}},
+		{"browser", `echo private-sidecar >&2; exit 1`, "private-sidecar", []string{"browser sidecar readiness", dockerBrowserContainerName("workspace"), "exit=137", "OOMKilled=true"}},
+	} {
+		t.Run(test.stage+"-"+test.private, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+			defer cancel()
+			t.Setenv("AGENTFLOW_BROWSER", "always")
+			t.Setenv("AGENTFLOW_BROWSER_IMAGE", "test-browser")
+			t.Setenv("CASE_STAGE", test.stage)
+			workspace := t.TempDir()
+			t.Setenv("WORKSPACE", workspace)
+			useFakeCommands(t, map[string]string{"docker": `#!/bin/sh
 case "$1" in
-  inspect) echo '{"Status":"running","Running":true}' ;;
-  ps) exit 1;;
+  inspect)
+    if [ "$6" != workspace ]; then
+      [ -f "$WORKSPACE/sidecar-created" ] || { echo "Error response from daemon: No such container: $6" >&2; exit 1; }
+      echo '` + strings.TrimSuffix(fakeDockerExited, "}") + `,"Image":"test-browser"}'; exit 0
+    fi
+    case "$5" in
+      *'.State.Status'*)
+        if [ "$CASE_STAGE" = keepalive ]; then
+          echo '` + strings.NewReplacer(`"ExitCode":137`, `"ExitCode":127`, `"OOMKilled":true`, `"OOMKilled":false`).Replace(fakeDockerExited) + `'; exit 0
+        fi
+        echo '` + fakeDockerRunningWorkspace + `' ;;
+      *)
+        extra_mount=
+        if [ "$CASE_STAGE" = retire ]; then extra_mount=',{"Destination":"/workspace/.agentflow/isolation/empty-dir"}'; fi
+        printf '{"image":"test-image","mounts":[{"Destination":"/workspace","Source":"%s"}%s],"entrypoint":["sh"],"command":["-c","cd /workspace && exec sleep infinity"]}\n' "$WORKSPACE" "$extra_mount" ;;
+    esac;;
+  exec|rm) ` + test.commands + ` ;;
+  run) touch "$WORKSPACE/sidecar-created";;
 esac`})
-	const runID = "unknown-workspace-view"
-	client := &cdpClient{done: make(chan struct{})}
-	browserViews.Lock()
-	browserViews.items[runID] = &browserView{client: client, endpoint: browserEndpoint{Kind: "docker", DockerOwner: "workspace", DockerGeneration: fakeWorkspaceGeneration}}
-	browserViews.Unlock()
-	t.Cleanup(func() {
-		browserViews.Lock()
-		delete(browserViews.items, runID)
-		browserViews.Unlock()
-	})
-	if _, err := openBrowserView(t.Context(), runID); err == nil || client.closed() || errors.Is(err, errDockerWorkspaceUnavailable) {
-		t.Fatalf("unknown workspace must not close shared CDP: %v", err)
+			sandbox := &dockerSandbox{name: "workspace", workspace: workspace,
+				started:    test.stage == "browser",
+				dockerfile: domain.DockerfileDefinition{Content: "FROM test-image"}}
+			var events []domain.TelemetryEvent
+			_, err := PrepareSandboxBrowser(ctx, sandbox, workspace, "run", func(event domain.TelemetryEvent) { events = append(events, event) })
+			if err == nil || strings.Contains(err.Error(), test.private) {
+				t.Fatalf("missing or unsafe diagnostic: %v", err)
+			}
+			for _, want := range test.want {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("missing %q in %v", want, err)
+				}
+			}
+			if len(events) == 0 || events[len(events)-1].Name != "browser.unavailable" || !strings.Contains(events[len(events)-1].Message, err.Error()) {
+				t.Errorf("no warning with the sanitized diagnostic: %+v", events)
+			}
+			for _, event := range events {
+				raw, _ := json.Marshal(event)
+				if strings.Contains(string(raw), test.private) {
+					t.Errorf("visible event leaked the private diagnostic: %s", raw)
+				}
+			}
+		})
 	}
-	if BrowserNeedsStart(t.Context(), runID) {
-		t.Fatal("unknown endpoint lookup must not trigger browser start")
+}
+
+func TestDockerBrowserPanelPreservesSafeListDiagnostic(t *testing.T) {
+	t.Setenv("TMPDIR", t.TempDir())
+	useFakeCommands(t, map[string]string{"docker": "#!/bin/sh\necho 'Cannot connect to the Docker daemon: private-socket-marker' >&2\nexit 1\n"})
+	state, err := HandleBrowser(t.Context(), "unavailable-browser-daemon", domain.BrowserRequest{Operation: "status"})
+	if err != nil || state.Available || strings.Contains(state.Reason, "private-socket-marker") {
+		t.Fatalf("unexpected browser panel response: %+v, %v", state, err)
+	}
+	for _, want := range []string{"list browser sidecars", "daemon unreachable", "exit status 1"} {
+		if !strings.Contains(state.Reason, want) {
+			t.Errorf("missing %q in browser panel diagnostic %q", want, state.Reason)
+		}
+	}
+}
+
+func TestDockerWorkspaceCreatedStateIsConfirmedUnavailable(t *testing.T) {
+	created := strings.NewReplacer(`"Status":"running"`, `"Status":"created"`, `"Running":true`, `"Running":false`, fakeStartedAt, "0001-01-01T00:00:00Z").Replace(fakeDockerRunningWorkspace)
+	useFakeCommands(t, map[string]string{"docker": "#!/bin/sh\necho '" + created + "'"})
+	if _, err := dockerWorkspaceGeneration(t.Context(), "workspace"); !errors.Is(err, errDockerWorkspaceUnavailable) || !strings.Contains(err.Error(), "state=created") {
+		t.Fatalf("a never-started workspace is confirmed unavailable, not unknown: %v", err)
+	}
+}
+
+func TestDockerBrowserUnknownInspection(t *testing.T) {
+	for _, test := range []struct{ name, response string }{
+		{"timeout", `exec sleep 60`},
+		{"incomplete exited state", `if [ "$6" = workspace ]; then echo '{"Status":"exited"}'; else echo '{"Status":"exited","Running":false,"ID":"` + fakeWorkspaceID + `","Image":"test-browser"}'; fi`},
+		{"invalid running generation", `echo '{"Status":"running","Running":true}'`},
+		{"not-found text in ordinary error", `printf '\n'; echo 'private-inspect-marker: checking no such container for unrelated request' >&2; exit 1`},
+		{"not-found for different object", `printf '\n'; echo 'Error response from daemon: No such container: unrelated' >&2; exit 1`},
+		{"not-found accompanied by data", `echo '{}'; echo "Error response from daemon: No such container: $6" >&2; exit 1`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			useFakeCommands(t, map[string]string{"docker": `#!/bin/sh
+case "$1" in
+  inspect)
+    if [ "$6" = workspace ] && [ "$FAIL_INSPECT" = sidecar ]; then echo '` + fakeDockerRunningWorkspace + `'; exit 0; fi
+    ` + test.response + ` ;;
+  ps) printf 'browser\tworkspace\t%s\n' '` + fakeWorkspaceGeneration + `';;
+  run|rm) touch "$UNEXPECTED_MUTATION";;
+esac`})
+			t.Setenv("AGENTFLOW_BROWSER_IMAGE", "test-browser")
+			marker := t.TempDir() + "/mutation"
+			t.Setenv("UNEXPECTED_MUTATION", marker)
+			const runID = "unknown-workspace-view"
+			client := newCDPClient(newFakeCDPTransport(), nil)
+			defer client.close()
+			browserViews.Lock()
+			browserViews.items[runID] = &browserView{client: client, endpoint: browserEndpoint{Kind: "docker", DockerOwner: "workspace", DockerGeneration: fakeWorkspaceGeneration}}
+			browserViews.Unlock()
+			t.Cleanup(func() {
+				browserViews.Lock()
+				delete(browserViews.items, runID)
+				browserViews.Unlock()
+			})
+			t.Setenv("FAIL_INSPECT", "workspace")
+			if _, err := openBrowserView(t.Context(), runID); err == nil || client.closed() || errors.Is(err, errDockerWorkspaceUnavailable) || strings.Contains(err.Error(), "private-inspect-marker") {
+				t.Errorf("unknown workspace must not close shared CDP: %v (closed=%v)", err, client.closed())
+			}
+			if BrowserNeedsStart(t.Context(), runID, true) {
+				t.Error("successful ps with unknown owner must not trigger browser start")
+			}
+			t.Setenv("FAIL_INSPECT", "sidecar")
+			sandbox := &dockerSandbox{name: "workspace", workspace: t.TempDir(), started: true}
+			if _, err := sandbox.ensureBrowser(t.Context(), runID, nil); err == nil || strings.Contains(err.Error(), "private-inspect-marker") {
+				t.Errorf("unexpected sidecar error: %v", err)
+			}
+			if _, err := os.Stat(marker); !os.IsNotExist(err) {
+				t.Errorf("sidecar was modified despite unknown status: %v", err)
+			}
+		})
+	}
+}
+
+func TestDockerWorkspaceLifecycleRequiresExactNotFound(t *testing.T) {
+	for _, test := range []struct{ name, response string }{
+		{"ordinary error", `printf '\n'; echo 'private-marker: checking no such container' >&2`},
+		{"another object", `printf '\n'; echo 'Error response from daemon: No such container: unrelated' >&2`},
+		{"unexpected stdout", `echo '{}'; echo "Error response from daemon: No such container: $target" >&2`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			useFakeCommands(t, map[string]string{"docker": `#!/bin/sh
+case "$1" in
+  inspect) target="$6";;
+  rm) target="$3";;
+  *) exit 99;;
+esac
+` + test.response + `
+exit 1`})
+			_, inspectErr := inspectDockerWorkspace(t.Context(), "workspace")
+			for stage, err := range map[string]error{
+				"inspect workspace": inspectErr,
+				"remove container":  removeDockerContainer(t.Context(), "workspace"),
+			} {
+				if err == nil || !strings.Contains(err.Error(), stage) || strings.Contains(err.Error(), "private-marker") {
+					t.Errorf("%s must preserve a safe failure, got %v", stage, err)
+				}
+			}
+		})
 	}
 }
 
@@ -152,4 +300,28 @@ func TestDockerWorkspaceStartupContractWithDocker(t *testing.T) {
 	if got := docker("inspect", "--format", "{{.Id}} {{.State.Status}}", legacyName); got != legacyID+" created" {
 		t.Fatalf("legacy container was started or replaced: %s", got)
 	}
+	t.Run("first sidecar", func(t *testing.T) {
+		image := "loopforge-test-browser:" + strings.ToLower(rand.Text())
+		buildDir := t.TempDir()
+		dockerfile := "FROM " + base + "\nENTRYPOINT [\"node\",\"-e\",\"require('http').createServer((req,res)=>res.end('ok')).listen(8931, '127.0.0.1')\"]\n"
+		if err := os.WriteFile(filepath.Join(buildDir, "Dockerfile"), []byte(dockerfile), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		name := dockerBrowserContainerName(sandbox.name)
+		t.Cleanup(func() {
+			cleanup, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cancel()
+			_ = removeDockerContainer(cleanup, name)
+			_ = exec.CommandContext(cleanup, "docker", "image", "rm", image).Run()
+		})
+		docker("build", "-t", image, buildDir)
+		t.Setenv("AGENTFLOW_BROWSER_IMAGE", image)
+		if _, err := sandbox.ensureBrowser(ctx, sandbox.name, nil); err != nil {
+			t.Fatal(err)
+		}
+		ownerID := docker("inspect", "--format", "{{.Id}}", sandbox.name)
+		if got := docker("inspect", "--format", "{{.State.Running}} {{.HostConfig.NetworkMode}}", name); got != "true container:"+ownerID {
+			t.Fatalf("expected a running sidecar in the workspace network, got %s", got)
+		}
+	})
 }

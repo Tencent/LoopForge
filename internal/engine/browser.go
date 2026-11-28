@@ -31,8 +31,12 @@ func (e *Engine) HandleBrowserRequest(ctx context.Context, run domain.Run, req *
 		}
 		return response
 	}
-	if req.Ensure && runtime.BrowserNeedsStart(ctx, run.ID) {
-		if err := e.ensureRunBrowser(ctx, run); err != nil {
+	if req.Ensure {
+		profile, _, err := e.workspaceSandboxProfile(run)
+		if err == nil && runtime.BrowserNeedsStart(ctx, run.ID, profile.Driver == domain.SandboxDriverDocker) {
+			err = e.ensureRunBrowser(ctx, run)
+		}
+		if err != nil {
 			payload, _ := json.Marshal(domain.BrowserState{Reason: err.Error()})
 			return domain.RunnerWorkspaceResponse{Payload: payload}
 		}
