@@ -1365,12 +1365,14 @@ func (h *runnersHandlers) runnerTaskComplete(c *gin.Context) {
 		return
 	}
 	var input struct {
-		Status    string                    `json:"status"`
-		ExitCode  *int                      `json:"exitCode"`
-		Result    string                    `json:"result"`
-		Error     string                    `json:"error"`
-		Artifacts map[string]string         `json:"artifacts"`
-		Outputs   *domain.RunnerTaskOutputs `json:"outputs"`
+		Status                 string                    `json:"status"`
+		ExitCode               *int                      `json:"exitCode"`
+		Result                 string                    `json:"result"`
+		Error                  string                    `json:"error"`
+		ModelErrorClass        string                    `json:"modelErrorClass"`
+		ModelRetryAfterSeconds int64                     `json:"modelRetryAfterSeconds"`
+		Artifacts              map[string]string         `json:"artifacts"`
+		Outputs                *domain.RunnerTaskOutputs `json:"outputs"`
 	}
 	// Legacy runners still post several inline files in one completion.
 	if !decodeLimit(c, &input, 16<<20) {
@@ -1393,10 +1395,14 @@ func (h *runnersHandlers) runnerTaskComplete(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, map[string]string{"error": message})
 		return
 	}
+	if len(input.ModelErrorClass) > 64 || input.ModelRetryAfterSeconds < 0 || input.ModelRetryAfterSeconds > 86400 {
+		c.JSON(http.StatusBadRequest, map[string]string{"error": "model error class is too long"})
+		return
+	}
 	if input.Outputs != nil && (len(input.Outputs.FileBlobs) != 0 || len(input.Outputs.FileErrors) != 0) && !h.validateRunnerOutputTransfer(c, runner.ID, input.Outputs) {
 		return
 	}
-	if err := h.repo.CompleteRunnerTask(c.Param("id"), runner.ID, input.Status, input.ExitCode, input.Result, input.Error, input.Artifacts, input.Outputs, time.Now().UTC()); err != nil {
+	if err := h.repo.CompleteRunnerTask(c.Param("id"), runner.ID, input.Status, input.ExitCode, input.Result, input.Error, input.Artifacts, input.Outputs, time.Now().UTC(), domain.RunnerTask{ModelErrorClass: input.ModelErrorClass, ModelRetryAfterSeconds: input.ModelRetryAfterSeconds}); err != nil {
 		if err == repo.ErrRunnerTaskLeaseLost {
 			c.JSON(http.StatusConflict, map[string]string{"error": "task lease lost"})
 			return

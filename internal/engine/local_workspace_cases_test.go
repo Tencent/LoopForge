@@ -205,7 +205,7 @@ func TestPreviewSkipAndArchiveNilPaths(t *testing.T) {
 	e.archivePreviewAfterBuild("missing")
 	e.archivePreviewAfterBuild(run.ID)
 	node := domain.WorkflowNode{ID: domain.PreviewBuildNodeID, Name: "Preview"}
-	e.completeSkippedPreviewBuild(run.ID, node, 0, 1, run, "no package.json")
+	e.completeSkippedPreviewBuild(run.ID, node, 0, 1, run, "no package.json", 0)
 	got, _ := st.RunState(run.ID)
 	if got.Nodes[node.ID].Status != "succeeded" || !strings.Contains(got.Nodes[node.ID].Output, "no package.json") {
 		t.Fatalf("skipped preview = %+v", got.Nodes[node.ID])

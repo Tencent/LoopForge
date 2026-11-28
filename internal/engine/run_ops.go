@@ -169,6 +169,9 @@ func (e *Engine) Approve(runID, nodeID, humanContext string, expected ...NodeExp
 	if n == nil || n.Status != "waiting_approval" {
 		return fmt.Errorf("node is not waiting for approval")
 	}
+	if n.WaitReason == "model_credentials" {
+		return fmt.Errorf("模型凭据或额度问题需要重新执行节点，不能直接批准")
+	}
 	n.Status = "succeeded"
 	n.FinishedAt = time.Now().UTC()
 	note := recordHumanContext(&r, nodeID, "人工批准继续", humanContext)
@@ -296,6 +299,9 @@ func (e *Engine) Reject(runID string, req domain.RejectRequest, expected ...Node
 	if err := forbidClosedGongfengIssue(e.repo, r); err != nil {
 		return err
 	}
+	if n := r.Nodes[req.NodeID]; n != nil && n.WaitReason == "model_credentials" {
+		return fmt.Errorf("模型凭据或额度问题需要重新执行节点，不能打回")
+	}
 	wf := workflowForRun(e.repo, r)
 	target := req.TargetID
 	if target == "" {
@@ -332,6 +338,7 @@ func (e *Engine) Reject(runID string, req domain.RejectRequest, expected ...Node
 				nr.Activity = ""
 			}
 			nr.Status = "pending"
+			resetModelRecovery(nr, false)
 			nr.Error = ""
 			nr.Output = ""
 			nr.ChildRunID = ""
@@ -492,6 +499,7 @@ func (e *Engine) retryContext(ctx context.Context, runID, nodeID, reason, humanC
 		}
 	}
 	nodeStatus := r.Nodes[nodeID].Status
+	modelCredentialRetry := r.Nodes[nodeID].WaitReason == "model_credentials"
 	waitingRetry := r.Status == "waiting" && nodeStatus == "waiting_approval"
 	replaySucceeded := r.Status == "succeeded"
 	if r.Status == "running" || r.HasActiveNode() {
@@ -544,7 +552,7 @@ func (e *Engine) retryContext(ctx context.Context, runID, nodeID, reason, humanC
 	}
 	reset := descendants(r.WorkflowSnapshot, nodeID)
 	reset[nodeID] = true
-	if e.executes() && !deferRestore && len(reset) >= len(r.WorkflowSnapshot.Nodes) {
+	if e.executes() && !deferRestore && !modelCredentialRetry && len(reset) >= len(r.WorkflowSnapshot.Nodes) {
 		// Replaying the whole LOOP against the previous attempt's container
 		// inherits whatever that attempt broke or filled up, and the container
 		// would otherwise survive until the run finally succeeds. Dropping the
@@ -587,6 +595,9 @@ func (e *Engine) retryContext(ctx context.Context, runID, nodeID, reason, humanC
 				stale = append(stale, nr.ChildRunID)
 			}
 			nr.Status = "pending"
+			keepPolicy := modelCredentialRetry && id == nodeID
+			resetModelRecovery(nr, keepPolicy)
+			nr.RetrySameAttempt = keepPolicy
 			nr.Error = ""
 			nr.Output = ""
 			nr.ChildRunID = ""
@@ -918,7 +929,7 @@ func resumeUnpausedGraph(r *domain.Run) (bool, error) {
 		r.Status = "waiting"
 		return true, nil
 	}
-	if len(ready) > 0 || allSucceeded(wf, *r) || hasFailed(wf, *r) {
+	if len(ready) > 0 || hasModelRetry(*r) || allSucceeded(wf, *r) || hasFailed(wf, *r) {
 		r.Status = "running"
 		return true, nil
 	}

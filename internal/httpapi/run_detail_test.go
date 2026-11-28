@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"net/http"
+	"reflect"
 	"slices"
 	"strconv"
 	"testing"
@@ -69,23 +70,27 @@ func TestRunDetailAndPublicLiveIncludeAutoAssignFailure(t *testing.T) {
 			}
 
 			detail := requestEmptyJSON[domain.Run](t, h, http.MethodGet, "/api/runs/"+run.ID, http.StatusOK)
-			if !slices.Equal(detail.Events, want) {
+			if !slices.EqualFunc(detail.Events, want, equalRunDetailEvent) {
 				t.Fatalf("GET events = %+v, want %+v", detail.Events, want)
 			}
 			stream, ok := s.RunStreamView(run.ID)
 			if !ok {
 				t.Fatal("run stream view is unavailable")
 			}
-			if live := publicLiveRun(stream); !slices.Equal(live.Events, want) {
+			if live := publicLiveRun(stream); !slices.EqualFunc(live.Events, want, equalRunDetailEvent) {
 				t.Fatalf("initial SSE events = %+v, want %+v", live.Events, want)
 			}
 			full, ok := s.RunState(run.ID)
 			if !ok {
 				t.Fatal("full run state is unavailable")
 			}
-			if live := publicLiveRun(full); !slices.Equal(live.Events, want) {
+			if live := publicLiveRun(full); !slices.EqualFunc(live.Events, want, equalRunDetailEvent) {
 				t.Fatalf("published SSE events = %+v, want %+v", live.Events, want)
 			}
 		})
 	}
+}
+
+func equalRunDetailEvent(a, b domain.RunEvent) bool {
+	return reflect.DeepEqual(a, b)
 }

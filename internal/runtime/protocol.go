@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 	"sync"
+	"time"
 
 	"agentflow/internal/domain"
 )
@@ -73,6 +74,21 @@ func (o *ProtocolObserver) VisibleOutput() string {
 		return ""
 	}
 	return o.adapter.VisibleOutput()
+}
+
+// ModelFailureClass reports only an explicit terminal protocol failure.
+func (o *ProtocolObserver) ModelFailureClass() ModelErrorClass {
+	if o == nil || o.adapter == nil || !o.adapter.Failed() {
+		return ""
+	}
+	return classifyModelFailure(o.adapter.Result())
+}
+
+func (o *ProtocolObserver) ModelRetryAfter() time.Duration {
+	if o == nil || o.adapter == nil || !o.adapter.Failed() {
+		return 0
+	}
+	return parseModelRetryAfter(o.adapter.Result())
 }
 
 func (o *ProtocolObserver) Finalize(success bool) {
@@ -369,6 +385,15 @@ func (a *protocolAdapter) handleClaudeStream(raw map[string]any) {
 		}
 		result := stringValue(raw["result"])
 		failed, _ := raw["is_error"].(bool)
+		if failed && result == "" {
+			var details []string
+			for _, value := range sliceValue(raw["errors"]) {
+				if message := strings.TrimSpace(stringValue(value)); message != "" {
+					details = append(details, message)
+				}
+			}
+			result = strings.Join(details, "\n")
+		}
 		a.recordResult(result, failed)
 		usage := tokenUsage(raw["usage"])
 		usage.CostUSD = float64Value(raw["total_cost_usd"])
@@ -452,8 +477,19 @@ func (a *protocolAdapter) handleCodexJSON(raw map[string]any) {
 		a.emit(domain.TelemetryEvent{Category: "model", Name: "model.request", Phase: "finish", Message: "model generation finished", SessionID: session})
 	case "turn.failed":
 		message := stringValue(raw["message"])
+		if detail, ok := raw["error"].(map[string]any); ok {
+			message = firstNonEmpty(stringValue(detail["message"]), message)
+		}
 		if message == "" {
 			message = "codex turn failed"
+		}
+		// Keep unknown failures on the existing path. A recognized model
+		// failure is terminal even when the CLI exits successfully.
+		if classifyModelFailure(message) != "" {
+			a.mu.Lock()
+			a.result, a.failed = message, true
+			a.mu.Unlock()
+			a.once.Do(func() { close(a.done) })
 		}
 		a.emit(domain.TelemetryEvent{Category: "error", Name: "model.error", Phase: "finish", Level: "error", Message: message, SessionID: session, Error: &domain.ErrorObservation{Type: "provider", Message: message}})
 	case "item.started", "item.completed", "item.updated":
@@ -472,11 +508,19 @@ func (a *protocolAdapter) handleCodexJSON(raw map[string]any) {
 			if name == "" {
 				name = stringValue(item["name"])
 			}
-			if isSubmitGateToolName(name) {
+			var isGate bool
+			if name == "" && itemType == "mcp_tool_call" {
+				name = stringValue(item["tool"])
+				isGate = isSubmitGateToolName(name)
+				if server := stringValue(item["server"]); server != "" && name != "" {
+					name = server + "/" + name
+				}
+			}
+			if isGate || isSubmitGateToolName(name) {
 				a.snapshotPreGateCitedOutput()
 			}
 			msg := summarizeToolCall(name, item)
-			success := int64Value(item["exit_code"]) == 0 && stringValue(item["status"]) != "failed"
+			success := int64Value(item["exit_code"]) == 0 && stringValue(item["status"]) != "failed" && item["error"] == nil
 			if phase == "finish" {
 				out := firstNonEmpty(stringValue(item["aggregated_output"]), stringValue(item["output"]), stringValue(item["text"]))
 				msg = summarizeToolResult(name, !success, out)

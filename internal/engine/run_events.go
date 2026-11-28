@@ -16,7 +16,11 @@ func (e *Engine) AppendRunEvent(runID, typ, msg string) {
 }
 
 func (e *Engine) event(r *domain.Run, nodeID, t, msg string) {
-	r.Events = append(r.Events, domain.RunEvent{ID: fmt.Sprintf("evt-%d", time.Now().UnixNano()), RunID: r.ID, NodeID: nodeID, Type: t, Message: msg, Timestamp: time.Now().UTC()})
+	e.eventWithAttributes(r, nodeID, t, msg, nil)
+}
+
+func (e *Engine) eventWithAttributes(r *domain.Run, nodeID, t, msg string, attributes map[string]any) {
+	r.Events = append(r.Events, domain.RunEvent{ID: fmt.Sprintf("evt-%d", time.Now().UnixNano()), RunID: r.ID, NodeID: nodeID, Type: t, Message: msg, Timestamp: time.Now().UTC(), Attributes: attributes})
 }
 
 func (e *Engine) observe(runID, nodeID string, observation domain.TelemetryEvent) {

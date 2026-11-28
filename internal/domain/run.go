@@ -178,6 +178,19 @@ type NodeRun struct {
 	StartedAt       time.Time       `json:"startedAt,omitzero"`
 	FinishedAt      time.Time       `json:"finishedAt,omitzero"`
 
+	TransientRetries       int               `json:"transientRetries,omitempty"`
+	ModelTransientErrors   int               `json:"modelTransientErrors,omitempty"`
+	NextRetryAt            time.Time         `json:"nextRetryAt,omitzero"`
+	ModelErrorClass        string            `json:"modelErrorClass,omitempty"`
+	WaitReason             string            `json:"waitReason,omitempty"`
+	RetrySameAttempt       bool              `json:"retrySameAttempt,omitempty"`
+	ExecutionSequence      int               `json:"executionSequence,omitempty"`
+	FallbackModelIndex     int               `json:"fallbackModelIndex,omitempty"`
+	ActiveModel            string            `json:"activeModel,omitempty"`
+	ModelPolicyInitialized bool              `json:"modelPolicyInitialized,omitempty"`
+	FallbackModels         []string          `json:"fallbackModels,omitempty"`
+	ModelRetry             *ModelRetryPolicy `json:"modelRetry,omitempty"`
+
 	// Stream cursors are message-scoped; pending usage is already included in
 	// Usage until a session result replaces it with authoritative totals.
 	UsageStreamCursors map[string]TokenUsage `json:"usageStreamCursors,omitempty"`
@@ -261,12 +274,13 @@ const (
 )
 
 type RunEvent struct {
-	ID        string    `json:"id"`
-	RunID     string    `json:"runId"`
-	NodeID    string    `json:"nodeId,omitempty"`
-	Type      string    `json:"type"`
-	Message   string    `json:"message"`
-	Timestamp time.Time `json:"timestamp"`
+	ID         string         `json:"id"`
+	RunID      string         `json:"runId"`
+	NodeID     string         `json:"nodeId,omitempty"`
+	Type       string         `json:"type"`
+	Message    string         `json:"message"`
+	Attributes map[string]any `json:"attributes,omitempty"`
+	Timestamp  time.Time      `json:"timestamp"`
 }
 
 // Artifact is an immutable, attempt-scoped snapshot. Keeping old attempts makes

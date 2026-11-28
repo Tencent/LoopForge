@@ -10,6 +10,7 @@ import (
 type NodeExpectation struct {
 	NodeID, Status       string
 	Attempt, ReworkCount int
+	executionSequence    *int
 }
 
 func checkNodeExpectation(run domain.Run, expected []NodeExpectation) error {
@@ -18,7 +19,8 @@ func checkNodeExpectation(run domain.Run, expected []NodeExpectation) error {
 	}
 	want := expected[0]
 	node := run.Nodes[want.NodeID]
-	if node == nil || node.Status != want.Status || node.Attempt != want.Attempt || node.ReworkCount != want.ReworkCount {
+	if node == nil || node.Status != want.Status || node.Attempt != want.Attempt || node.ReworkCount != want.ReworkCount ||
+		(want.executionSequence != nil && node.ExecutionSequence != *want.executionSequence) {
 		return fmt.Errorf("通知对应的节点状态已变化，请查看最新消息")
 	}
 	return nil

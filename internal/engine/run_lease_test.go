@@ -95,7 +95,7 @@ func TestStaleOwnerCannotFailAfterGenerationTakeover(t *testing.T) {
 	if _, err := b.acquireLease(owned); err != nil {
 		t.Fatal(err)
 	}
-	a.nodeFailed(r.ID, domain.WorkflowNode{ID: "node", MaxAttempts: 1}, context.Canceled, false)
+	a.nodeFailedAt(r.ID, domain.WorkflowNode{ID: "node", MaxAttempts: 1}, owned.Nodes["node"].Attempt, owned.Generation, context.Canceled, false, owned.Nodes["node"].ExecutionSequence)
 	a.finish(r.ID, "failed", "stale")
 	got, _ := s.RunState(r.ID)
 	if got.OwnerInstanceID != "b" || got.Generation != 2 || got.Nodes["node"].Status != "running" || got.Status != "running" {
@@ -149,7 +149,7 @@ func TestStaleAttemptFailureIsIgnored(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	e.nodeFailedAt(r.ID, domain.WorkflowNode{ID: "node", MaxAttempts: 2}, 1, owned.Generation, context.Canceled, false)
+	e.nodeFailedAt(r.ID, domain.WorkflowNode{ID: "node", MaxAttempts: 2}, 1, owned.Generation, context.Canceled, false, 0)
 	got, _ := s.RunState(r.ID)
 	if got.Nodes["node"].Status != "running" || got.Nodes["node"].Error != "" {
 		t.Fatalf("stale attempt mutated node: %+v", got.Nodes["node"])
@@ -666,23 +666,34 @@ func TestShouldCommitNodeOutcome(t *testing.T) {
 	t.Parallel()
 	r := domain.Run{Generation: 1}
 	running := &domain.NodeRun{Status: "running", Attempt: 8}
-	if !shouldCommitNodeOutcome(r, running, 1, 1, true) {
+	if !shouldCommitNodeOutcome(r, running, 1, 1, true, 0) {
 		t.Fatal("success should commit after attempt bump")
 	}
-	if shouldCommitNodeOutcome(r, running, 2, 1, true) {
+	if shouldCommitNodeOutcome(r, running, 2, 1, true, 0) {
 		t.Fatal("success must not commit after generation takeover")
 	}
-	if !shouldCommitNodeOutcome(r, running, 1, 8, false) {
+	if !shouldCommitNodeOutcome(r, running, 1, 8, false, 0) {
 		t.Fatal("matching attempt may fail")
 	}
-	if shouldCommitNodeOutcome(r, running, 1, 1, false) {
+	if shouldCommitNodeOutcome(r, running, 1, 1, false, 0) {
 		t.Fatal("stale attempt must not fail")
 	}
+	running.ExecutionSequence = 2
+	if !shouldCommitNodeOutcome(r, running, 1, 1, true, 1) || !nodeExecutionLive(running, 8, 1) {
+		t.Fatal("unconfigured node should retain the original attempt behavior")
+	}
+	running.ModelRetry = &domain.ModelRetryPolicy{}
+	if shouldCommitNodeOutcome(r, running, 1, 1, true, 1) || shouldCommitNodeOutcome(r, running, 1, 8, false, 1) || nodeExecutionLive(running, 8, 1) {
+		t.Fatal("model retry must reject an older execution sequence")
+	}
+	if !shouldCommitNodeOutcome(r, running, 1, 8, true, 2) || !nodeExecutionLive(running, 8, 2) {
+		t.Fatal("matching model recovery execution should remain live")
+	}
 	succeeded := &domain.NodeRun{Status: "succeeded", Attempt: 1}
-	if shouldCommitNodeOutcome(r, succeeded, 1, 8, false) {
+	if shouldCommitNodeOutcome(r, succeeded, 1, 8, false, 0) {
 		t.Fatal("failed must not overwrite succeeded")
 	}
-	if shouldCommitNodeOutcome(r, succeeded, 1, 1, true) {
+	if shouldCommitNodeOutcome(r, succeeded, 1, 1, true, 0) {
 		t.Fatal("success must not rewrite succeeded")
 	}
 }
@@ -701,7 +712,7 @@ func TestNodeFailedDoesNotOverwriteSucceeded(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	e.nodeFailedAt(r.ID, domain.WorkflowNode{ID: "node", MaxAttempts: 10}, 1, owned.Generation, errors.New("exit status 126"), false)
+	e.nodeFailedAt(r.ID, domain.WorkflowNode{ID: "node", MaxAttempts: 10}, 1, owned.Generation, errors.New("exit status 126"), false, 0)
 	got, _ := s.RunState(r.ID)
 	if got.Nodes["node"].Status != "succeeded" {
 		t.Fatalf("126 retry overwrote success: %+v", got.Nodes["node"])
@@ -770,7 +781,7 @@ func TestSandboxInterruptRequeuesNodeWithoutFailing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	e.requeueInterruptedNode(r.ID, "node", r.Nodes["node"].Attempt, owned.Generation)
+	e.requeueInterruptedNode(r.ID, "node", r.Nodes["node"].Attempt, owned.Generation, r.Nodes["node"].ExecutionSequence)
 	got, _ := s.RunState(r.ID)
 	if got.Status != "running" || got.Nodes["node"].Status != "pending" || got.Nodes["node"].Error != "" {
 		t.Fatalf("interrupt should requeue: %+v", got.Nodes["node"])

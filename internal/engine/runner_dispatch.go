@@ -363,7 +363,11 @@ func (e *Engine) dispatchRunnerTask(ctx context.Context, runnerID string, run do
 		if final.ExitCode != nil {
 			msg = fmt.Sprintf("%s (exit %d)", msg, *final.ExitCode)
 		}
-		return "", explainGitAuthFailure(errors.New(msg), strings.TrimSpace(sb.credentialSnapshot().GitHTTPCredentials["github.com"].Token) != "")
+		failure := explainGitAuthFailure(errors.New(msg), strings.TrimSpace(sb.credentialSnapshot().GitHTTPCredentials["github.com"].Token) != "")
+		if class := runtime.ModelErrorClass(final.ModelErrorClass); runtime.ValidModelErrorClass(class) {
+			failure = &runtime.ModelError{Class: class, Err: failure, RetryAfter: time.Duration(final.ModelRetryAfterSeconds) * time.Second}
+		}
+		return "", failure
 	case domain.RunnerTaskCanceled:
 		return "", errors.New("runner task canceled")
 	default:

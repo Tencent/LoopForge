@@ -96,7 +96,7 @@ printf '{"type":"result","result":"{\\"sandboxProfileId\\":\\"%s\\"}"}\n' "$id"
 			t.Fatal("run stream view missing")
 		}
 		events := publicLiveRun(stream).Events
-		if len(events) != 1 || events[0] != run.Events[0] {
+		if len(events) != 1 || !equalRunDetailEvent(events[0], run.Events[0]) {
 			t.Fatalf("run stream lost the sandbox selection: %+v", events)
 		}
 	}
