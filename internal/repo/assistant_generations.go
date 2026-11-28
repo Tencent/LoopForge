@@ -80,6 +80,25 @@ func (r *AssistantRepo) PeekAssistantGeneration(userID int64, sessionID string) 
 	return decodeGeneration(row), true
 }
 
+// CompletedAssistantGeneration returns the small status response for a reply
+// the client already has. A new or running turn must use the normal recovery path.
+func (r *AssistantRepo) CompletedAssistantGeneration(userID int64, sessionID, generationID string) (domain.AssistantGeneration, time.Time, bool) {
+	var row struct {
+		Generation       assistantGenerationRow `gorm:"embedded"`
+		SessionUpdatedAt time.Time
+	}
+	err := r.DB.Table("assistant_generations AS g").Joins("JOIN assistant_sessions AS s ON s.id = g.session_id AND s.user_id = g.user_id").
+		Select("g.user_id, g.status, g.cancel_requested, g.updated_at, JSON_REMOVE(g.payload, '$.events', '$.stream', '$.reply') AS payload, s.updated_at AS session_updated_at").
+		Where("g.session_id = ? AND g.user_id = ? AND g.generation_id = ? AND g.status = 'completed'", sessionID, userID, generationID).
+		Take(&row).Error
+	if err != nil {
+		return domain.AssistantGeneration{}, time.Time{}, false
+	}
+	g := decodeGeneration(row.Generation)
+	g.Events = []domain.AssistantGenerationEvent{}
+	return g, row.SessionUpdatedAt.UTC(), true
+}
+
 func (r *AssistantRepo) loadAssistantGeneration(userID int64, sessionID string) (assistantGenerationRow, bool) {
 	var row assistantGenerationRow
 	if err := r.DB.Where("session_id = ? AND user_id = ?", sessionID, userID).Take(&row).Error; err != nil {

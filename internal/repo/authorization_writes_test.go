@@ -41,6 +41,44 @@ func TestSaveMCPServersRejectsStaleCreateAndRollsBackBatch(t *testing.T) {
 	}
 }
 
+// TestSaveMCPServersRejectsDuplicateRowInBatch verifies the repo-level guard:
+// if two entries in one batch resolve to the same stored row (identical ID or,
+// on a collating DB, collation-equivalent IDs) the transaction must be rolled
+// back and ErrMCPImportDuplicateID returned — not a silent overwrite.
+// The SQLite test store uses binary comparison, so this exercises the path via
+// literally equal IDs that bypass the handler's ToLower precheck.
+func TestSaveMCPServersRejectsDuplicateRowInBatch(t *testing.T) {
+	store, err := OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(store.Close)
+	original := domain.MCPServerDefinition{
+		ID: "dup-row-mcp", Name: "Original", Scope: "personal", OwnerUserID: 2,
+		Transport: "http", URL: "https://example.test/original",
+	}
+	if _, err := store.SaveMCPServers(MCPServerChange{Definition: original}); err != nil {
+		t.Fatal(err)
+	}
+	firstUpdate := original
+	firstUpdate.Name = "First Update"
+	firstUpdate.URL = "https://example.test/first"
+	secondUpdate := original
+	secondUpdate.Name = "Second Update"
+	secondUpdate.URL = "https://example.test/second"
+	_, err = store.SaveMCPServers(
+		MCPServerChange{Definition: firstUpdate, Previous: original},
+		MCPServerChange{Definition: secondUpdate, Previous: original},
+	)
+	if !errors.Is(err, ErrMCPImportDuplicateID) {
+		t.Fatalf("two entries targeting same row: got %v, want ErrMCPImportDuplicateID", err)
+	}
+	// Transaction must have rolled back; stored row must still be the original.
+	if saved, ok := store.MCPServer(original.ID); !ok || saved.Name != "Original" || saved.URL != original.URL {
+		t.Fatalf("rolled-back batch changed the stored MCP: %+v", saved)
+	}
+}
+
 func TestRunnerRenewalRequiresExistingOwnerScope(t *testing.T) {
 	store, err := OpenTest()
 	if err != nil {

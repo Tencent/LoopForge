@@ -243,6 +243,13 @@ describe("a resumed role's deliverable", () => {
     return setSelected;
   };
 
+  test("names the reply that holds a dispatch by its stored index on a recent tail", () => {
+    const deliverable = (agents) => agents[0].published.find((item) => item.source === "交付物");
+    expect(deliverable(collectSubagents(saved)).messageIndex).toBe(1);
+    // The same two turns as the end of a transcript whose tail starts at 6.
+    expect(deliverable(collectSubagents(saved, [], "", 6)).messageIndex).toBe(7);
+  });
+
   test("waits for its own reply instead of opening the older file", async () => {
     const chat = {
       busy: true,
