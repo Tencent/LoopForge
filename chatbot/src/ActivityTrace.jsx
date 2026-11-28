@@ -353,7 +353,28 @@ function Narration({
     ),
   );
 }
+// The history response already contains the visible answer. Fetch the trace
+// when the reader opens it, or follows a dispatch into a subagent's process.
+export function DeferredActivity({ sessionId, index, activityRef, loadActivity }) {
+  const [error, setError] = useState("");
+  const [attempt, setAttempt] = useState(0);
+  useEffect(() => {
+    let current = true;
+    setError("");
+    loadActivity(sessionId, index, activityRef).catch((e) => {
+      if (current) setError(e.message || "执行过程加载失败");
+    });
+    return () => { current = false; };
+  }, [sessionId, index, activityRef, loadActivity, attempt]);
+  return error ? (
+    <p role="alert" className="execution-empty">
+      {error} <button type="button" onClick={() => setAttempt(n => n + 1)}>重试</button>
+    </p>
+  ) : <p role="status" className="execution-empty">正在读取执行过程…</p>;
+}
+
 export function ReplyTimeline({
+  deferredActivity = null,
   steps = [],
   startedAt,
   finishedAt,
@@ -375,6 +396,7 @@ export function ReplyTimeline({
         live={live}
         interrupted={interrupted}
         approvals={approvals}
+        deferredActivity={deferredActivity}
         narration={traceBlocks(steps, { live })}
         citationProps={{
           knowledgeReads,
@@ -393,6 +415,7 @@ export function ReplyTimeline({
 // the whole process into its elapsed-time line; opening it shows every note,
 // thought and step between the line and the answer.
 export default function ActivityTrace({
+  deferredActivity = null,
   steps = [],
   startedAt,
   finishedAt,
@@ -505,7 +528,7 @@ export default function ActivityTrace({
       </summary>
       {expanded ? (
         <div className="execution-body" aria-label="执行过程">
-          {blocks.length ? (
+          {deferredActivity ? <DeferredActivity {...deferredActivity} /> : blocks.length ? (
             <Narration
               blocks={blocks}
               live={false}

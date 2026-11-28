@@ -1,7 +1,7 @@
 import React from "react";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import ActivityTrace, { ReplyTimeline } from "../src/ActivityTrace.jsx";
 import { mergeActivity } from "../src/activity.js";
 
@@ -18,6 +18,19 @@ const tool = (id, detail, extra = {}) => ({
 });
 
 describe("Codex-style activity trace", () => {
+  test("loads deferred steps only when opened and lets a failed read retry", async () => {
+    const user = userEvent.setup();
+    const loadActivity = vi.fn().mockRejectedValueOnce(Error("读取失败")).mockResolvedValueOnce([]);
+    const view = render(<ReplyTimeline steps={[]} startedAt={start} finishedAt={finish}
+      deferredActivity={{ sessionId: "s1", index: 42, activityRef: "saved", loadActivity }} />);
+    expect(loadActivity).not.toHaveBeenCalled();
+    await user.click(view.container.querySelector("summary"));
+    expect(await screen.findByRole("alert")).toHaveTextContent("读取失败");
+    await user.click(screen.getByRole("button", { name: "重试" }));
+    expect(loadActivity).toHaveBeenCalledTimes(2);
+    expect(loadActivity).toHaveBeenLastCalledWith("s1", 42, "saved");
+  });
+
   test("Docker build progress updates one visible row and settles on completion", () => {
     const build = { kind: "tool", tool: "workspace_docker_build", id: "build", at: start };
     let detail = "读取基础镜像信息";

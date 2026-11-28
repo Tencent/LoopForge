@@ -963,6 +963,17 @@ async function boot(){
   if(isGuest&&state.authRequired){location.replace('/login.html');return}
   renderUserBadge();
 
+  // Home opens the chatbot while the rest of the shell catalog is still loading.
+  if(restoredView()==='collaboration'){
+    const earlyProject=urlParams.get('projectId')||localStorage.getItem('agentflow.activeProject')||'';
+    if(earlyProject)state.projectFilter=earlyProject;
+    document.body.classList.add('chat-next-active');
+    $$('.view').forEach(view=>view.classList.remove('active'));
+    $('#collaborationView')?.classList.add('active');
+    state.currentView='collaboration';
+    mountNativeChat();
+  }
+
   const shell = await api('/api/bootstrap', {silent: restoredView()==='runs'});
   state.data = Object.assign(state.data, shell);
   const savedProject=urlParams.get('projectId')||localStorage.getItem('agentflow.activeProject');
@@ -1028,6 +1039,7 @@ function finishBootLoader(){
   setTimeout(remove,250);
 }
 function settleBootLoader(){
+  if(!document.body.classList.contains('booting'))return;
   if(!document.body.classList.contains('chat-next-active')||nativeChatReady){finishBootLoader();return}
   clearTimeout(bootLoaderTimer);
   bootLoaderTimer=setTimeout(finishBootLoader,BOOT_LOADER_CHAT_TIMEOUT_MS);
@@ -1551,7 +1563,7 @@ function nativeChatProjectId(){
   return chosen?($('#projectSwitcher')?.value||state.projectFilter||''):'';
 }
 function postNativeChatProject(frame){
-  frame.contentWindow?.postMessage({type:'agentflow-project-context',projectId:nativeChatProjectId()},location.origin);
+  frame.contentWindow?.postMessage({type:'agentflow-project-context',projectId:nativeChatProjectId(),initial:true},location.origin);
   frame.contentWindow?.postMessage({type:'agentflow-environments-changed'},location.origin);
 }
 // A requirement handed to the chat opens a new conversation with the
@@ -1631,6 +1643,7 @@ function mountNativeChat(){
     window.addEventListener('message',event=>{
       if(event.origin!==location.origin||event.source!==frame.contentWindow)return;
       const message=event.data||{};
+      if(message.type==='agentflow-chat-visible'&&document.body.classList.contains('chat-next-active'))finishBootLoader();
       if(message.type==='agentflow-chat-ready'){
         nativeChatReady=true;
         postPendingChatIssueMention(frame);
@@ -1720,8 +1733,8 @@ function mountNativeChat(){
     nativeChatReady=false;
     const topParams=new URL(location.href).searchParams;
     const projectId=nativeChatProjectId();
-    const sessionId=topParams.get('chatSession')||'';
     const issueId=topParams.get('chatIssue')||'';
+    const sessionId=topParams.get('chatSession')||(issueId?'':collaborationRouteId());
     const quickAccess=topParams.get('quickAccess')==='1';
     if(quickAccess||topParams.get('gongfeng')==='ok'){
       // renderPersonalSettings still owes the OAuth return toast after the URL is cleaned.
@@ -1958,6 +1971,7 @@ function routePart(index){
 function runRouteId(){
   return routePart(0)==='runs'?routePart(1):'';
 }
+function collaborationRouteId(){return routePart(0)==='collaboration'?routePart(1):''}
 function flowRouteId(){
   return routePart(0)==='flow'?routePart(1):'';
 }
@@ -2050,10 +2064,7 @@ function persistView(name,push=false){
   if(isProjectSharedAsset(name)&&routePart(0)===name&&assetRouteId())next=`#/${name}/${encodeURIComponent(assetRouteId())}`;
   if(name==='projects')next=projectAdminHash(state.projectAdminDetailId||'',state.projectAdminTab);
   if(name==='collaboration'){
-    const current=(location.hash||'').replace(/^#\/?/,'').split('?')[0].split('/').filter(Boolean);
-    let fromHash=current[0]==='collaboration'?current[1]||'':'';
-    try{fromHash=decodeURIComponent(fromHash)}catch{}
-    const id=new URL(location.href).searchParams.get('chatSession')||fromHash;
+    const id=new URL(location.href).searchParams.get('chatSession')||collaborationRouteId();
     if(id)next='#/collaboration/'+encodeURIComponent(id);
   }
   if(location.hash===next)return;
