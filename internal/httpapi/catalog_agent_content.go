@@ -35,7 +35,11 @@ func (h *catalogHandlers) editAgentContent(c *gin.Context, id, projectID string,
 	if !h.requireAgentWriter(c, current) {
 		return
 	}
-	if updatedAt == nil || !current.UpdatedAt.Equal(*updatedAt) {
+	if updatedAt == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请提供审阅时读取的角色 updatedAt"})
+		return
+	}
+	if !current.UpdatedAt.Equal(*updatedAt) {
 		c.JSON(http.StatusConflict, gin.H{"error": "角色已更新，请重新审阅修改"})
 		return
 	}

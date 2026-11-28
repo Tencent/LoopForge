@@ -508,3 +508,121 @@ func TestSOPDesignerNodePromptReachesRun(t *testing.T) {
 		t.Fatalf("mock Agent received %q", output)
 	}
 }
+
+func TestSOPDesignerOperationClearsNodePromptExplicitly(t *testing.T) {
+	for _, value := range []string{`null`, `""`} {
+		raw := json.RawMessage(`{"message":"清空","drafts":[{"tool":"workflows_save","body":{"operations":[{"op":"update_node","id":"plan","set":{"prompt":` + value + `}}]}}]}`)
+		out, err := expandSOPDesignerReply(raw, json.RawMessage(designerOpsCanvas))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var reply struct {
+			Drafts []struct {
+				Body struct {
+					Nodes []map[string]any `json:"nodes"`
+				} `json:"body"`
+			} `json:"drafts"`
+		}
+		if err := json.Unmarshal(out, &reply); err != nil || len(reply.Drafts) != 1 {
+			t.Fatalf("expanded = %s, err = %v", out, err)
+		}
+		// The canvas keeps fields a draft leaves out, so a clear must stay
+		// in the draft as an empty prompt rather than a missing key.
+		prompt, ok := reply.Drafts[0].Body.Nodes[0]["prompt"]
+		if !ok || prompt != "" {
+			t.Fatalf("set prompt %s: node = %v", value, reply.Drafts[0].Body.Nodes[0])
+		}
+	}
+}
+
+func TestSOPDesignerRoleEditUsesTheRevisionTheModelRead(t *testing.T) {
+	resetAgentToolSessionsForTest()
+	f := cvBNewHTTPFixture(t)
+	role := domain.AgentDefinition{ID: "designer-edit-reviewer", ProjectID: "platform", Name: "Reviewer", ExecutorID: "mock", Prompt: "Original prompt"}
+	foreign := domain.AgentDefinition{ID: "designer-edit-foreign", ProjectID: "other", Name: "Foreign", ExecutorID: "mock", Prompt: "Foreign prompt"}
+	for _, v := range []domain.AgentDefinition{role, foreign} {
+		if err := f.s.PutAgent(v); err != nil {
+			t.Fatal(err)
+		}
+	}
+	gw := &agentToolGateway{deps: &deps{repo: f.s}}
+	newSession := func() *AgentToolSession {
+		return &AgentToolSession{Mode: AgentToolAssistant, Surface: assistantSurfaceSOPDesigner, ProjectID: role.ProjectID, ExpiresAt: time.Now().Add(time.Minute), Final: make(chan AgentTerminalResult, 1)}
+	}
+	read := func(session *AgentToolSession, id string) {
+		t.Helper()
+		res := cvBRequest(t, f, http.MethodGet, "/api/agents/"+id, nil, true)
+		if res.Code != http.StatusOK {
+			t.Fatalf("read role = %d: %s", res.Code, res.Body.String())
+		}
+		session.noteDesignerRoleRead(res.Body.String())
+	}
+	submit := func(session *AgentToolSession, id string) (map[string]any, string) {
+		t.Helper()
+		raw := json.RawMessage(`{"message":"已起草角色修改","drafts":[{"tool":"agents_save","body":{"id":"` + id + `","name":"Reviewer","changes":{"prompt":"Check the evidence"}}}]}`)
+		result, err := gw.callTerminal(session, submitAssistantReplyTool, raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		encoded, _ := json.Marshal(result)
+		return result, string(encoded)
+	}
+
+	session := newSession()
+	if result, text := submit(session, role.ID); result["isError"] != true || session.finished() || !strings.Contains(text, "agents_get") {
+		t.Fatalf("edit without a read was accepted: %s", text)
+	}
+	read(session, foreign.ID)
+	if result, text := submit(session, foreign.ID); result["isError"] != true || !strings.Contains(text, "不属于当前项目") {
+		t.Fatalf("edit of another project's role was accepted: %s", text)
+	}
+
+	read(session, role.ID)
+	other := role
+	other.Prompt = "Someone else's prompt"
+	if err := f.s.PutAgent(other); err != nil {
+		t.Fatal(err)
+	}
+	if result, text := submit(session, role.ID); result["isError"] != true || session.finished() || !strings.Contains(text, "已被修改") {
+		t.Fatalf("edit based on a stale read was accepted: %s", text)
+	}
+
+	read(session, role.ID)
+	read(session, foreign.ID) // reading another role keeps this role's revision
+	stored, _ := f.s.Agent(role.ID)
+	// The model only sees Beijing-time stamps, so a revision it copies into
+	// the draft is never trusted; the name comes from the stored role.
+	raw := json.RawMessage(`{"message":"已起草角色修改","drafts":[{"tool":"agents_save","body":{"id":"` + role.ID + `","projectId":"platform","updatedAt":"2020-01-01T08:00:00+08:00","changes":{"prompt":"Check the evidence"}}}]}`)
+	if result, err := gw.callTerminal(session, submitAssistantReplyTool, raw); err != nil || result["isError"] == true || !session.finished() {
+		t.Fatalf("edit based on the latest read was rejected: %v %v", result, err)
+	}
+	final, _ := session.takeFinal()
+	var body struct {
+		ID        string          `json:"id"`
+		ProjectID string          `json:"projectId"`
+		Name      string          `json:"name"`
+		UpdatedAt time.Time       `json:"updatedAt"`
+		Changes   json.RawMessage `json:"changes"`
+	}
+	if err := json.Unmarshal(final.Assistant.Drafts[0].Body, &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.ID != role.ID || body.ProjectID != role.ProjectID || body.Name != role.Name ||
+		!body.UpdatedAt.Equal(stored.UpdatedAt) || string(body.Changes) != `{"prompt":"Check the evidence"}` {
+		t.Fatalf("stamped draft = %s", final.Assistant.Drafts[0].Body)
+	}
+
+	// The canvas saves the draft body as it is. A change saved while the
+	// user reviews it makes that save fail instead of being overwritten.
+	reviewing := other
+	reviewing.Prompt = "Saved during review"
+	if err := f.s.PutAgent(reviewing); err != nil {
+		t.Fatal(err)
+	}
+	if res := cvBRequest(t, f, http.MethodPut, "/api/agents", final.Assistant.Drafts[0].Body, true); res.Code != http.StatusConflict {
+		t.Fatalf("stale draft save = %d: %s", res.Code, res.Body.String())
+	}
+	if current, _ := f.s.Agent(role.ID); current.Prompt != "Saved during review" {
+		t.Fatalf("concurrent edit lost: %q", current.Prompt)
+	}
+}

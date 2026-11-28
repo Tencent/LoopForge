@@ -2600,6 +2600,20 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: The role named by a partial edit does not exist
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: A partial edit targets another project's role, or the role changed after the read its updatedAt comes from
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /api/agents/{agentId}:
     parameters:
       - $ref: "#/components/parameters/AgentId"

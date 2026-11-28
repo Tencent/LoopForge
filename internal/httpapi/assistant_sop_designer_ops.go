@@ -179,9 +179,14 @@ func applySOPDesignerOperations(canvas json.RawMessage, body map[string]json.Raw
 				case "position":
 					continue
 				}
-				if v == nil {
+				switch {
+				case v == nil && k == "prompt":
+					// Keep a cleared node prompt in the draft: the canvas
+					// keeps a value the draft leaves out.
+					nodes[at][k] = ""
+				case v == nil:
 					delete(nodes[at], k)
-				} else {
+				default:
 					nodes[at][k] = v
 				}
 			}

@@ -597,8 +597,10 @@ async function validateAIBuildRoles(build) {
 }
 
 function configureAIRoleDraft(role) {
-  if (!role?.name || catalogGeneric(state.workflow)) return;
-  if (Object.hasOwn(role, 'changes')) return reviewAIRoleChanges(role);
+  if (!role || catalogGeneric(state.workflow)) return;
+  // An edit names its role by id; the review reads the stored name.
+  if (role.changes != null) return reviewAIRoleChanges(role);
+  if (!role.name) return;
   const {id, name, description, prompt, executorId, model} = role;
   if (id && agentIdTaken(id)) return toast('这个角色标识已存在，请使用已保存的角色继续编排');
   openAgentWizard({id: '', name, description, prompt, executorId, model, projectId: state.projectFilter});
@@ -610,12 +612,18 @@ function configureAIRoleDraft(role) {
   setAgentCreateStep(2);
 }
 
-async function reviewAIRoleChanges({id, changes}) {
+// The draft carries the role revision the assistant read (updatedAt, added by
+// the server). Saving against it makes an edit someone saved since then fail
+// instead of being silently overwritten.
+async function reviewAIRoleChanges({id, changes, updatedAt}) {
   if (aiRoleReviewPending) return;
   const fields = Object.entries(changes || {});
   if (!id || !fields.length || fields.some(([field, value]) =>
     !['name', 'description', 'prompt'].includes(field) || typeof value !== 'string')) {
     return toast('角色修改草稿无效', 'err');
+  }
+  if (typeof updatedAt !== 'string' || !updatedAt) {
+    return toast('这份角色修改草稿缺少读取时的角色版本，请让 AI 重新起草', 'err');
   }
   const context = aiOrchestratorContext();
   const userID = state.currentUser?.id;
@@ -629,6 +637,9 @@ async function reviewAIRoleChanges({id, changes}) {
     if (current.id !== id || current.projectId !== context.projectId) {
       return toast('请在角色所属的项目修改该角色', 'err');
     }
+    if (current.updatedAt !== updatedAt && Date.parse(current.updatedAt) !== Date.parse(updatedAt)) {
+      return toast('「' + current.name + '」在 AI 起草后已被修改，请让 AI 重新读取后再起草', 'err');
+    }
     const confirmed = await afConfirm({
       title: '保存角色修改',
       message: '将更新「' + current.name + '」。引用该角色的流程会在后续运行中使用更新后的角色内容。',
@@ -639,7 +650,7 @@ async function reviewAIRoleChanges({id, changes}) {
 
     const saved = await api('/api/agents', {
       method: 'PUT',
-      body: JSON.stringify({id, projectId: context.projectId, updatedAt: current.updatedAt, changes}),
+      body: JSON.stringify({id, projectId: context.projectId, updatedAt, changes}),
     });
     if (state.currentUser?.id !== userID) return;
     const index = state.data.agents.findIndex(agent => agent.id === id);
@@ -670,9 +681,9 @@ function mergeAIEdit(base, incoming) {
     const normalized = normalizeAINode(raw, index);
     const prev = prevNodes.find(node => node.id === normalized.id);
     if (!prev) return normalized;
+    // A field the draft leaves out keeps its canvas value; a cleared node
+    // prompt arrives as an empty string.
     const merged = {...prev, ...normalized};
-    // The expanded workflow omits prompt when an edit explicitly clears it.
-    if (!Object.hasOwn(raw, 'prompt')) delete merged.prompt;
     if (!raw.script && prev.script) merged.script = prev.script;
     if (!raw.position || !Number.isFinite(raw.position.x)) merged.position = prev.position;
     return merged;

@@ -350,7 +350,7 @@ func (h *catalogHandlers) agents(c *gin.Context) {
 		if decode(c, &req) && req.ID != "" {
 			v := req.AgentDefinition
 			v.ID, v.ProjectID = strings.TrimSpace(v.ID), strings.TrimSpace(v.ProjectID)
-			if len(req.Changes) != 0 {
+			if agentChangesPresent(req.Changes) {
 				h.editAgentContent(c, v.ID, v.ProjectID, req.UpdatedAt, req.Changes)
 				return
 			}

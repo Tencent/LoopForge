@@ -44,7 +44,7 @@ func TestAgentContentEditPreservesConfiguration(t *testing.T) {
 	changes := map[string]any{"prompt": "Updated prompt", "description": ""}
 	update("missing", role.ProjectID, before.UpdatedAt, changes, http.StatusNotFound)
 	update(role.ID, "other", before.UpdatedAt, changes, http.StatusConflict)
-	update(role.ID, role.ProjectID, nil, changes, http.StatusConflict)
+	update(role.ID, role.ProjectID, nil, changes, http.StatusBadRequest)
 	update(role.ID, role.ProjectID, before.UpdatedAt, map[string]any{"projectId": "other"}, http.StatusBadRequest)
 
 	saved := update(role.ID, role.ProjectID, before.UpdatedAt, changes, http.StatusOK)
@@ -66,5 +66,21 @@ func TestAgentContentEditPreservesConfiguration(t *testing.T) {
 	var snapshot domain.AgentDefinition
 	if err := json.Unmarshal(revisions[0].Payload, &snapshot); err != nil || !reflect.DeepEqual(snapshot, before) {
 		t.Fatalf("prior role revision = %+v, err = %v", snapshot, err)
+	}
+}
+
+func TestAgentSaveWithNullChangesIsAFullSave(t *testing.T) {
+	f := cvBNewHTTPFixture(t)
+	role := domain.AgentDefinition{ID: "designer-null-changes", ProjectID: "platform", Name: "Reviewer", ExecutorID: "codebuddy", Prompt: "Original prompt"}
+	if err := f.s.PutAgent(role); err != nil {
+		t.Fatal(err)
+	}
+	body := map[string]any{"id": role.ID, "projectId": role.ProjectID, "name": "Renamed", "executorId": "codebuddy", "prompt": "Full save", "changes": nil}
+	res := cvBRequest(t, f, http.MethodPut, "/api/agents", body, true)
+	if res.Code != http.StatusOK {
+		t.Fatalf("full save with changes:null = %d: %s", res.Code, res.Body.String())
+	}
+	if stored, _ := f.s.Agent(role.ID); stored.Name != "Renamed" || stored.Prompt != "Full save" {
+		t.Fatalf("stored role = %+v", stored)
 	}
 }
