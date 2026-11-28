@@ -421,7 +421,7 @@ func (r *RunsRepo) RunView(id string) (domain.Run, bool) {
 	}
 	timing := domain.ComputeRunTiming(run, events[run.ID], time.Now().UTC())
 	run.Timing = &timing
-	if run.WorkflowSnapshot.CollaborationMode == "group" {
+	if run.WorkflowSnapshot.CollaborationMode == "group" || run.WorkflowSnapshot.Squad != nil {
 		var rows []runEventRow
 		if err := r.DB.Where("run_id = ?", id).Order("seq DESC").Limit(80).Find(&rows).Error; err != nil {
 			return domain.Run{}, false
@@ -1206,6 +1206,11 @@ func (r *RunsRepo) persistRun(tx *gorm.DB, run domain.Run, current runRow) error
 	// Nodes: upsert every node of the run.
 	for id, node := range run.Nodes {
 		if node == nil {
+			if run.WorkflowSnapshot.Squad != nil {
+				if err := tx.Table("run_nodes").Where("run_id = ? AND node_id = ?", run.ID, id).Delete(nil).Error; err != nil {
+					return err
+				}
+			}
 			continue
 		}
 		if err := upsert(tx, "run_nodes", map[string]any{

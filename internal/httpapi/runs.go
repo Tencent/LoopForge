@@ -102,15 +102,22 @@ func (h *runsHandlers) runs(c *gin.Context) {
 	}
 	if r.Method == http.MethodPost {
 		var req struct {
-			WorkflowID    string                 `json:"workflowId"`
-			Input         string                 `json:"input"`
-			ProjectID     string                 `json:"projectId"`
-			KnowledgeRefs *[]domain.KnowledgeRef `json:"knowledgeRefs,omitempty"`
+			Squad         *domain.StartSquadRequest `json:"squad,omitempty"`
+			WorkflowID    string                    `json:"workflowId"`
+			Input         string                    `json:"input"`
+			ProjectID     string                    `json:"projectId"`
+			KnowledgeRefs *[]domain.KnowledgeRef    `json:"knowledgeRefs,omitempty"`
 		}
 		if !decode(c, &req) {
 			return
 		}
 		req.ProjectID = strings.TrimSpace(req.ProjectID)
+		req.WorkflowID = strings.TrimSpace(req.WorkflowID)
+		scope := scheduledAssetsFrom(r.Context())
+		if req.Squad != nil && (req.ProjectID == "" || req.WorkflowID != "" || scope.Version.ID != "") {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "小队须在指定项目中独立发起"})
+			return
+		}
 		var project domain.Project
 		if req.ProjectID != "" {
 			var ok bool
@@ -121,11 +128,14 @@ func (h *runsHandlers) runs(c *gin.Context) {
 			}
 		}
 		workflowProject := ""
-		if workflow, ok := h.repo.Workflow(strings.TrimSpace(req.WorkflowID)); ok && !workflow.Shared && !workflow.Generic {
-			workflowProject = workflow.ProjectID
+		var wf domain.WorkflowDefinition
+		if req.WorkflowID != "" {
+			wf, _ = h.repo.Workflow(req.WorkflowID)
+			if !wf.Shared && !wf.Generic {
+				workflowProject = wf.ProjectID
+			}
 		}
-		scope := scheduledAssetsFrom(r.Context())
-		scopedWorkflow := scope.Version.ID != "" && scope.ProjectID == req.ProjectID && scope.Version.HasAsset("sop", strings.TrimSpace(req.WorkflowID))
+		scopedWorkflow := scope.Version.ID != "" && scope.ProjectID == req.ProjectID && scope.Version.HasAsset("sop", req.WorkflowID)
 		if scopedWorkflow {
 			if err := h.repo.ValidateSharedScheduleAssets(scope.Version); err != nil {
 				respond(c, err)
@@ -156,7 +166,7 @@ func (h *runsHandlers) runs(c *gin.Context) {
 			runKnowledgeRefs = &copied
 		}
 		var repositories []domain.RepositoryContext
-		if wf, ok := h.repo.Workflow(req.WorkflowID); ok && wf.Generic && strings.TrimSpace(project.DefaultRepositoryID) != "" {
+		if (req.Squad != nil || wf.Generic) && strings.TrimSpace(project.DefaultRepositoryID) != "" {
 			repositoryID := strings.TrimSpace(project.DefaultRepositoryID)
 			repoDef, found := h.repo.Repository(repositoryID)
 			if !found || repoDef.ProjectID != req.ProjectID {
@@ -169,7 +179,13 @@ func (h *runsHandlers) runs(c *gin.Context) {
 		if scopedWorkflow {
 			executionContext.SharedScheduleID, executionContext.SharedScheduleVersion = scope.Version.ID, scope.Version.Version
 		}
-		v, err := h.engine.StartWithRepositories(r.Context(), req.WorkflowID, req.Input, repositories, executionContext)
+		var v domain.Run
+		var err error
+		if req.Squad != nil {
+			v, err = h.engine.StartSquad(r.Context(), *req.Squad, req.Input, repositories, executionContext)
+		} else {
+			v, err = h.engine.StartWithRepositories(r.Context(), req.WorkflowID, req.Input, repositories, executionContext)
+		}
 		if err != nil {
 			if errors.Is(err, repo.ErrWorkspaceInUse) {
 				respond(c, HTTPError{http.StatusConflict, err.Error()})
@@ -410,7 +426,13 @@ func publicRun(run domain.Run, summary bool) domain.Run {
 			continue
 		}
 		cp := *n
+		if cp.SquadDecision != nil {
+			d := *cp.SquadDecision
+			d.Summary = gitwork.Redact(d.Summary)
+			cp.SquadDecision = &d
+		}
 		if summary {
+			cp.SquadDecision = nil
 			cp.Output = ""
 			cp.Error = clipRunText(cp.Error, 160)
 			cp.Feedback = ""
@@ -448,7 +470,7 @@ func publicLiveRun(run domain.Run) domain.Run {
 	// events from it before the detail view's history cap is applied.
 	events := run.Events
 	run = publicRun(run, false)
-	if run.WorkflowSnapshot.CollaborationMode != "group" {
+	if run.WorkflowSnapshot.CollaborationMode != "group" && run.WorkflowSnapshot.Squad == nil {
 		run.Events = nil
 		for _, event := range events {
 			if event.Type == domain.RunEventSandboxSelected {

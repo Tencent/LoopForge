@@ -814,6 +814,21 @@ Object.assign(window.LF_I18N_EN,{
 });
 Object.assign(window.LF_I18N_EN,{"查看其他项目共享的技能；共享技能只读，会自动装入平台上所有对话和定时任务，也可绑定到本项目角色。": "Skills shared by other projects. Shared Skills are read-only, are installed automatically into every conversation and scheduled task on the platform, and can be bound to Roles in this project.", "共享后，这个技能会自动装入平台上所有用户的对话和定时任务（包括其他项目和无项目的对话），模型可以直接调用。继续？": "Once shared, this Skill is installed automatically into every user's conversations and scheduled tasks on the platform (including other projects and conversations without a project), and the model can call it directly. Continue?", "共享这个角色会同时共享它绑定的技能：": "Sharing this Role also shares the Skills bound to it: ", "已共享，所有对话和定时任务会自动装入": "Shared. Every conversation and scheduled task will install it automatically", "其他项目可在「共享角色」里选用；绑定的本项目技能会一起共享，并自动装入所有对话": "Other projects can pick it under Shared roles; the project Skills bound to it are shared too and installed into every conversation automatically", "共享技能": "Share Skill"});
 Object.assign(window.LF_I18N_EN, {
+  "发起协作小队": "Start agent squad",
+  "小队成员": "Squad members",
+  "首位成员": "Opening member",
+  "最多轮次": "Turn limit",
+  "开始协作": "Start collaboration",
+  "描述要交付的结果和验收条件": "Describe the deliverable and how to verify it",
+  "请选择 2 至 12 位成员。": "Select 2 to 12 members.",
+  "请先在角色定义中创建或共享至少两个项目角色。": "Create or share at least two project roles in Role definitions.",
+  "每轮由当前成员选择下一位成员，目标达成即可结束。": "Each member can hand off to a teammate or finish when the goal is met.",
+  "请填写小队目标。": "Enter a goal for the squad.",
+  "任务目标": "Goal",
+  "自动选择": "Auto select"
+});
+
+Object.assign(window.LF_I18N_EN, {
   "执行超时（分钟）": "Execution timeout (minutes)",
   "默认 30 分钟。达到时限会停止本次 AI 执行，已启动的 LOOP 继续运行。": "Defaults to 30 minutes. The deadline stops the AI task. Any LOOPs it started continue running.",
   "执行超时必须为 1–240 分钟": "Execution timeout must be between 1 and 240 minutes",

@@ -21,7 +21,7 @@
 </p>
 
 <p align="center">
-  <a href="#两种工作方式">两种工作方式</a> ·
+  <a href="#三种工作方式">三种工作方式</a> ·
   <a href="#快速开始">快速开始</a> ·
   <a href="#loop-如何运行">LOOP</a> ·
   <a href="#功能一览">功能</a> ·
@@ -38,16 +38,18 @@ https://github.com/user-attachments/assets/10b8ae2e-d7e7-4b78-8876-c45818d4a08f
 
 干活的是编程 Agent CLI：CodeBuddy、Codex、Claude Code、OpenCode、Cursor CLI、Antigravity、Kimi Code、Pi、DeepSeek Harness 和 ZCode；LoopForge 负责它们外面的角色、沙箱、检查点和留痕，全部运行在你自己的环境里，MIT 开源。
 
-## 两种工作方式
+<a id="两种工作方式"></a>
 
-| | **与 Main Bot 对话** | **运行 LOOP** |
-| --- | --- | --- |
-| 适合 | 探索、快速修复、与 Agent 反复迭代 | 阶段固定、需要签字确认的可重复交付 |
-| 如何运行 | Main Bot 按需打开[对话工作区](docs/conversation-workspaces.md)（带项目仓库的 Docker 沙箱），并把项目角色作为子 Agent 调用 | 引擎按顺序执行 Agent、脚本、人工关口和子 LOOP 节点，每次运行有独立沙箱 |
-| 你如何把控 | 回复中途排队或「引导」消息；在对话里暂停、恢复或接管正在运行的 LOOP | 在人工关口审批；打回到指定环节返工；从任意节点重试或重跑 |
-| 交付物 | PR/MR，或直推合入共享分支（`mode=direct`） | 文档、代码或 PR，以及每个节点的产物和日志 |
+## 三种工作方式
 
-两种方式都挂在同一套**需求**上：无论改动来自对话还是 LOOP，都能追溯到原始需求，并计入交付与成本统计。
+| | **与 Main Bot 对话** | **运行 LOOP** | **发起协作小队** |
+| --- | --- | --- | --- |
+| 适合 | 探索、快速修复、与 Agent 反复迭代 | 阶段固定、需要签字确认的可重复交付 | 需要根据进展分工的开放任务 |
+| 如何运行 | Main Bot 按需打开[对话工作区](docs/conversation-workspaces.md)（带项目仓库的 Docker 沙箱），并把项目角色作为子 Agent 调用 | 引擎按顺序执行 Agent、脚本、人工关口和子 LOOP 节点，每次运行有独立沙箱 | 选定角色和首位成员，由当前成员决定下一步交给谁 |
+| 你如何把控 | 回复中途排队或「引导」消息；在对话里暂停、恢复或接管正在运行的 LOOP | 在人工关口审批；打回到指定环节返工；从任意节点重试或重跑 | 设置轮次上限，查看交接，补充反馈后重试 |
+| 交付物 | PR/MR，或直推合入共享分支（`mode=direct`） | 文档、代码或 PR，以及每个节点的产物和日志 | 每一轮的产物、交接说明和最终结果 |
+
+对话与 LOOP 都挂在同一套**需求**上：无论改动来自对话还是 LOOP，都能追溯到原始需求，并计入交付与成本统计。
 
 <p align="center">
   <picture>
@@ -57,6 +59,10 @@ https://github.com/user-attachments/assets/10b8ae2e-d7e7-4b78-8876-c45818d4a08f
 </p>
 
 <p align="center"><sub>对话首页：描述需求，用 <code>@</code> 引用角色、技能、需求、LOOP 或仓库；每个会话可单独选择执行器、模型和确认模式。</sub></p>
+
+### 发起 Agent 协作小队
+
+在**运行记录 → 发起协作小队**填写目标、选择项目角色并指定首位成员。每轮由当前成员按实际进展交接或完成交付，可以跳过成员，也可以请之前的成员返工。运行详情展示每一轮的交接说明和角色产物。[小队运行 API](docs/api/orchestration.md#发起-agent-协作小队)
 
 ## 为什么需要 LoopForge
 

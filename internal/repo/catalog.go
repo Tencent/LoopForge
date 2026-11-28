@@ -676,8 +676,14 @@ func (r *CatalogRepo) publishStoredWorkflow(id string) (domain.WorkflowDefinitio
 }
 
 func (r *CatalogRepo) putWorkflow(v domain.WorkflowDefinition, publishing bool) error {
+	if v.Squad != nil {
+		return errors.New("小队配置仅用于发起协作运行")
+	}
 	if strings.TrimSpace(v.ID) == "" || strings.TrimSpace(v.Name) == "" {
 		return errors.New("workflow id and name are required")
+	}
+	if strings.EqualFold(strings.TrimSpace(v.ID), domain.AgentSquadWorkflowID) {
+		return fmt.Errorf("LOOP ID %q 已保留给 Agent 协作小队，请换一个 ID", domain.AgentSquadWorkflowID)
 	}
 	if err := domain.ValidateWorkflowPreparation(v); err != nil {
 		return err

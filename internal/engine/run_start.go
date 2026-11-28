@@ -64,6 +64,9 @@ func (e *Engine) StartWithRepositories(ctx context.Context, workflowID, input st
 	if !ok {
 		return domain.Run{}, fmt.Errorf("workflow not found")
 	}
+	if wf.Squad != nil {
+		return domain.Run{}, fmt.Errorf("请通过小队入口指定本次运行的成员")
+	}
 	if executionContext.SharedScheduleID != "" {
 		version, err := e.repo.SharedScheduleVersion(executionContext.SharedScheduleID, executionContext.SharedScheduleVersion)
 		if err != nil {

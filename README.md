@@ -21,7 +21,7 @@
 </p>
 
 <p align="center">
-  <a href="#two-ways-to-work">Two ways to work</a> ·
+  <a href="#three-ways-to-work">Three ways to work</a> ·
   <a href="#quick-start">Quick start</a> ·
   <a href="#how-loops-work">LOOPs</a> ·
   <a href="#features">Features</a> ·
@@ -38,16 +38,18 @@ https://github.com/user-attachments/assets/8af401d9-1aae-427c-b4bc-455c12d17beb
 
 Coding-agent CLIs do the work: CodeBuddy, Codex, Claude Code, OpenCode, Cursor CLI, Antigravity, Kimi Code, Pi, DeepSeek Harness and ZCode. LoopForge adds the roles, sandboxes, checkpoints and history around them, all on your own infrastructure under the MIT license.
 
-## Two ways to work
+<a id="two-ways-to-work"></a>
 
-| | **Chat with Main Bot** | **Run a LOOP** |
-| --- | --- | --- |
-| Best for | Exploring, quick fixes, iterating with the agent | Repeatable delivery with fixed stages and sign-off |
-| How it runs | Main Bot opens a [conversation workspace](docs/conversation-workspaces.md) (a Docker sandbox with your repos) on demand and calls project roles as subagents | The engine runs Agent, Script, Human-gate and sub-LOOP nodes in order, in their own sandbox |
-| You stay in control by | Queuing or steering messages mid-reply, and pausing, resuming or taking over a running LOOP from chat | Approving at human gates, sending work back to a chosen step, retrying or rerunning from any node |
-| Delivers | A PR/MR, or a direct merge into a shared branch (`mode=direct`) | Documents, code or a PR, plus per-node artifacts and logs |
+## Three ways to work
 
-Both paths track the same **requirements**, so every change, whether made in chat or by a LOOP, links back to what was asked for and counts toward delivery and cost reports.
+| | **Chat with Main Bot** | **Run a LOOP** | **Run an agent squad** |
+| --- | --- | --- | --- |
+| Best for | Exploring, quick fixes, iterating with the agent | Repeatable delivery with fixed stages and sign-off | Goals that need different specialists as work unfolds |
+| How it runs | Main Bot opens a [conversation workspace](docs/conversation-workspaces.md) (a Docker sandbox with your repos) on demand and calls project roles as subagents | The engine runs Agent, Script, Human-gate and sub-LOOP nodes in order, in their own sandbox | Choose a roster and opening role. Each member decides who takes over next. |
+| You stay in control by | Queuing or steering messages mid-reply, and pausing, resuming or taking over a running LOOP from chat | Approving at human gates, sending work back to a chosen step, retrying or rerunning from any node | Set a turn limit, inspect handoffs and retry with feedback |
+| Delivers | A PR/MR, or a direct merge into a shared branch (`mode=direct`) | Documents, code or a PR, plus per-node artifacts and logs | Per-turn artifacts and a shared record of the decisions |
+
+Chats and LOOPs track the same **requirements**, so every change, whether made in chat or by a LOOP, links back to what was asked for and counts toward delivery and cost reports.
 
 <p align="center">
   <picture>
@@ -57,6 +59,10 @@ Both paths track the same **requirements**, so every change, whether made in cha
 </p>
 
 <p align="center"><sub>The chat home. Type a request, <code>@</code> a role, skill, requirement, LOOP or repository, and pick the executor, model and permission mode per conversation.</sub></p>
+
+### Run an agent squad
+
+Open **Run history → Start agent squad** to give a project team a goal and choose its opening role. After each turn the active member can hand the work to another selected role, revisit an earlier contributor, or finish. Run history shows who took each turn, the handoff notes and the delivered artifacts. [Squad run API](docs/api/orchestration.md#发起-agent-协作小队)
 
 ## Why LoopForge
 
