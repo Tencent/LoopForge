@@ -1650,7 +1650,8 @@ func runAssistantCLI(ctx context.Context, req assistantCLIRequest, user domain.U
 			req.RunnerLogin = runnerLogin
 		}
 	}
-	if engineModel == "default" && (engine == assistantEngineCodex || engine == assistantEngineClaude) {
+	// The catalog's default placeholder is not a model override for these CLIs.
+	if engineModel == assistantDefaultModel && engine != assistantEngineCodeBuddy {
 		engineModel = ""
 	}
 	attempt := assistantDiagnosticsFrom(ctx).begin(engine, engineModel, req.Resume, user)

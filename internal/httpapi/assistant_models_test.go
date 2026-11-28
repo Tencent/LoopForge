@@ -5,12 +5,62 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"os"
+	"path/filepath"
 	"slices"
 	"testing"
 	"time"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/runtime"
 )
+
+func TestAssistantDeepSeekCLIDefaultOmitsModelOverride(t *testing.T) {
+	const engine = runtime.AgentCLIDeepSeek
+	user := domain.User{AgentCLICredentials: map[string]domain.AgentCLICredential{engine: {APIKey: "test-only"}}}
+	for _, tc := range []struct{ model, want string }{
+		{assistantDefaultModel, ""},
+		{"deepseek-flash", "deepseek-flash"},
+	} {
+		t.Run(tc.model, func(t *testing.T) {
+			root := t.TempDir()
+			home := filepath.Join(root, "home")
+			got, _, err := runAssistantCLI(t.Context(), assistantCLIRequest{
+				Executor: engine, Model: tc.model, Prompt: "test", SessionRoot: root,
+				Native: true, RemoteBinary: true,
+				Execute: func(_ context.Context, _ string, cmd runtime.CommandSpec, creds runtime.RunCredentials, sink runtime.EventSink) (string, error) {
+					if _, _, err := runtime.ApplyAgentCLICredential(engine, creds.AgentCLI[engine], cmd.AgentCLI, runtime.HostAgentCLIHome(home), home, cmd.Argv); err != nil {
+						return "", err
+					}
+					sink(domain.TelemetryEvent{Name: "process.stdout", Message: `{"type":"final","reason":{"kind":"completed"},"text":"ok"}`})
+					return "", nil
+				},
+			}, user, nil)
+			if err != nil || got != "ok" {
+				t.Fatalf("reply = %q, err = %v", got, err)
+			}
+			data, err := os.ReadFile(filepath.Join(home, ".dsh", "agentflow-model.json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			type modelPatch struct {
+				ID     string            `json:"id"`
+				Config map[string]string `json:"config"`
+			}
+			var patch []modelPatch
+			if err := json.Unmarshal(data, &patch); err != nil {
+				t.Fatal(err)
+			}
+			i := slices.IndexFunc(patch, func(p modelPatch) bool { return p.ID == "agent-default-model" })
+			if i < 0 {
+				t.Fatalf("no default configuration in %s", data)
+			}
+			if model, present := patch[i].Config["model"]; model != tc.want || present != (tc.want != "") {
+				t.Fatalf("model patch = %s, want model %q (empty means omitted)", data, tc.want)
+			}
+		})
+	}
+}
 
 func TestAssistantModelPickerOmitsCodeBuddyCLIDefault(t *testing.T) {
 	t.Setenv("AGENTFLOW_ASSISTANT_MODEL", "")
