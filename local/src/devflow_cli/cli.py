@@ -5,7 +5,16 @@ import sys
 from pathlib import Path
 
 from . import __version__
-from .core import DevFlowError, apply_install, build_plan, doctor, status_rows, uninstall, validate_choice
+from .core import (
+    DevFlowError,
+    apply_install,
+    build_plan,
+    doctor,
+    plan_install,
+    status_rows,
+    uninstall,
+    validate_choice,
+)
 from .editions import DEFAULT_EDITION, EDITIONS, HOSTS, entrypoint_for, host_label, source_for, spec
 from .targets import load
 
@@ -35,6 +44,14 @@ def parser() -> argparse.ArgumentParser:
             "--force", action="store_true",
             help="覆盖冲突文件或软链接；install 时可替换同宿主的另一 edition",
         )
+        item.add_argument(
+            "--dry-run", action="store_true",
+            help="只预览将要写入、保留、删除或覆盖的文件，不修改项目",
+        )
+        item.add_argument(
+            "--json", action="store_true",
+            help="仅与 --dry-run 一起使用，以 JSON 输出预览",
+        )
     skills = sub.add_parser("skills", help="安装和维护 Portable Agent Skills")
     skills_sub = skills.add_subparsers(dest="skills_command", required=True)
     for command in ("install", "update"):
@@ -48,6 +65,14 @@ def parser() -> argparse.ArgumentParser:
         item.add_argument(
             "--force", action="store_true",
             help="覆盖冲突文件或软链接；install 时可替换同宿主的另一 edition",
+        )
+        item.add_argument(
+            "--dry-run", action="store_true",
+            help="只预览将要写入、保留、删除或覆盖的文件，不修改项目",
+        )
+        item.add_argument(
+            "--json", action="store_true",
+            help="仅与 --dry-run 一起使用，以 JSON 输出预览",
         )
     item = skills_sub.add_parser("status", help="查看 Portable Agent Skills 状态")
     item.add_argument("host", choices=HOSTS, nargs="?")
@@ -79,6 +104,94 @@ def parser() -> argparse.ArgumentParser:
     item = sub.add_parser("doctor")
     item.add_argument("--project-root", type=Path, default=Path.cwd())
     return result
+
+
+def emit_dry_run(command, host, edition, preview, force, as_json) -> int:
+    counts = preview.counts()
+    display = {
+        "add": "add",
+        "update": "update",
+        "unchanged": "unchanged",
+        "remove": "remove",
+        "conflict": "overwrite" if force else "conflict",
+    }
+    files = []
+    for path, action in preview.files:
+        if action == "unchanged":
+            continue
+        files.append({"path": path, "action": display.get(action, action)})
+    payload = {
+        "command": command,
+        "edition": edition,
+        "host": host,
+        "add": counts["add"],
+        "update": counts["update"],
+        "unchanged": counts["unchanged"],
+        "remove": counts["remove"],
+        "conflict": counts["conflict"],
+        "force": bool(force),
+        "switch": preview.switch_from,
+        "files": files,
+    }
+    if as_json:
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+    else:
+        print(
+            f"DRY RUN: {command} edition={edition} host={host} "
+            f"add={counts['add']} update={counts['update']} "
+            f"unchanged={counts['unchanged']} remove={counts['remove']} "
+            f"conflict={counts['conflict']}"
+        )
+        if preview.switch_from:
+            print(f"  switch {preview.switch_from} -> {edition}")
+        for item in files:
+            print(f"  {item['action']} {item['path']}")
+    if preview.conflicts and not force:
+        return 1
+    return 0
+
+
+def run_write_command(command, host, edition, project_root, force, dry_run, as_json, update_only):
+    if as_json and not dry_run:
+        print("ERROR: --json 只能与 --dry-run 一起使用", file=sys.stderr)
+        return 1
+    target = load(host)
+    project_root = project_root.resolve()
+    if dry_run:
+        preview = plan_install(
+            project_root,
+            target.HOST,
+            edition,
+            update_only=update_only,
+            force=force,
+        )
+        return emit_dry_run(command, host, edition, preview, force, as_json)
+    installed, unchanged = apply_install(
+        project_root,
+        target.HOST,
+        edition,
+        update_only=update_only,
+        force=force,
+    )
+    if command.startswith("skills "):
+        print(
+            f"OK: {command} host={host} "
+            f"project={project_root} written={installed} unchanged={unchanged}"
+        )
+    else:
+        print(
+            f"OK: {command} edition={edition} host={host} "
+            f"project={project_root} written={installed} unchanged={unchanged}"
+        )
+    print(
+        f"Next: reopen {host_label(host)} and run "
+        f"{entrypoint_for(edition, host)} <你的需求>"
+    )
+    if host == "pi" and edition == "portable":
+        print("Note: Pi isolated mode also needs the public extension: pi install npm:pi-subagents")
+    if host == "hermes" and edition == "portable":
+        print("Note: Hermes must trust this project before loading .hermes/skills: hermes skills trust .")
+    return 0
 
 
 def main(argv=None) -> int:
@@ -127,52 +240,28 @@ def main(argv=None) -> int:
                     print(f"  {path}")
             return 0
         if args.command in {"install", "update"}:
-            target = load(args.host)
-            project_root = args.project_root.resolve()
-            installed, unchanged = apply_install(
-                project_root,
-                target.HOST,
+            return run_write_command(
+                args.command,
+                args.host,
                 args.edition,
+                args.project_root,
+                args.force,
+                args.dry_run,
+                args.json,
                 update_only=args.command == "update",
-                force=args.force,
             )
-            print(
-                f"OK: {args.command} edition={args.edition} host={args.host} "
-                f"project={project_root} written={installed} unchanged={unchanged}"
-            )
-            print(
-                f"Next: reopen {host_label(args.host)} and run "
-                f"{entrypoint_for(args.edition, args.host)} <你的需求>"
-            )
-            if args.host == "pi" and args.edition == "portable":
-                print("Note: Pi isolated mode also needs the public extension: pi install npm:pi-subagents")
-            if args.host == "hermes" and args.edition == "portable":
-                print("Note: Hermes must trust this project before loading .hermes/skills: hermes skills trust .")
-            return 0
         if args.command == "skills":
             if args.skills_command in {"install", "update"}:
-                target = load(args.host)
-                project_root = args.project_root.resolve()
-                installed, unchanged = apply_install(
-                    project_root,
-                    target.HOST,
+                return run_write_command(
+                    f"skills {args.skills_command}",
+                    args.host,
                     "portable",
+                    args.project_root,
+                    args.force,
+                    args.dry_run,
+                    args.json,
                     update_only=args.skills_command == "update",
-                    force=args.force,
                 )
-                print(
-                    f"OK: skills {args.skills_command} host={args.host} "
-                    f"project={project_root} written={installed} unchanged={unchanged}"
-                )
-                print(
-                    f"Next: reopen {host_label(args.host)} and run "
-                    f"{entrypoint_for('portable', args.host)} <你的需求>"
-                )
-                if args.host == "pi":
-                    print("Note: Pi isolated mode also needs the public extension: pi install npm:pi-subagents")
-                if args.host == "hermes":
-                    print("Note: Hermes must trust this project before loading .hermes/skills: hermes skills trust .")
-                return 0
             if args.skills_command == "status":
                 rows = [
                     row for row in status_rows(args.project_root, args.host)
