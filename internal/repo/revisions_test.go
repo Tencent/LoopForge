@@ -37,6 +37,51 @@ func TestWorkflowRevisionDiffAndRestore(t *testing.T) {
 	if got.Description != "first" {
 		t.Fatalf("stored description = %q", got.Description)
 	}
+	// The designer adopts the returned definition and saves the next edit with
+	// its revision, so it must be the stored one, not the snapshot's.
+	if restored.Revision != got.Revision || !restored.UpdatedAt.Equal(got.UpdatedAt) {
+		t.Fatalf("restore returned revision %d (%s), stored %d (%s)", restored.Revision, restored.UpdatedAt, got.Revision, got.UpdatedAt)
+	}
+	restored.Description = "third"
+	if err := s.PutWorkflow(restored); err != nil {
+		t.Fatalf("saving an edit right after restore: %v", err)
+	}
+}
+
+func TestWorkflowRevisionRestoreReturnsPublishedMarker(t *testing.T) {
+	s, err := OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	wf := domain.WorkflowDefinition{ID: "rev-pub", Name: "Rev Published", Status: "draft", Description: "draft"}
+	if err := s.PutWorkflow(wf); err != nil {
+		t.Fatal(err)
+	}
+	published, err := s.PublishWorkflow(wf.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var draft domain.DefinitionRevision
+	for _, rev := range s.Revisions("workflow", wf.ID) {
+		var snap domain.WorkflowDefinition
+		if json.Unmarshal(rev.Payload, &snap) == nil && snap.PublishedRevision == 0 {
+			draft = rev
+		}
+	}
+	if draft.ID == "" {
+		t.Fatal("no revision holds the unpublished draft")
+	}
+	// Restoring a snapshot taken before the first release keeps the release
+	// marker of the stored LOOP rather than the snapshot's empty one.
+	restored, err := s.RestoreWorkflowRevision(draft.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _ := s.Workflow(wf.ID)
+	if restored.Revision != got.Revision || restored.PublishedRevision != published.PublishedRevision || got.PublishedRevision != published.PublishedRevision {
+		t.Fatalf("restored %d/%d, stored %d/%d, published %d", restored.Revision, restored.PublishedRevision, got.Revision, got.PublishedRevision, published.PublishedRevision)
+	}
 }
 
 func TestWorkflowRevisionRestoreKeepsVersionNumbersUnique(t *testing.T) {
@@ -110,5 +155,46 @@ func TestAgentRevisionRestore(t *testing.T) {
 	}
 	if restored.Prompt != "v1" {
 		t.Fatalf("restore instructions = %q", restored.Prompt)
+	}
+	got, _ := s.Agent(agent.ID)
+	if restored.Version != got.Version || !restored.UpdatedAt.Equal(got.UpdatedAt) {
+		t.Fatalf("restore returned v%d (%s), stored v%d (%s)", restored.Version, restored.UpdatedAt, got.Version, got.UpdatedAt)
+	}
+}
+
+func TestGenericWorkflowRevisionRestoreRewritesTemplate(t *testing.T) {
+	s := testStoreWithGenericTemplates(t)
+	before, ok := s.GenericWorkflowByID(GenericBackendDeliveryWorkflowID)
+	if !ok {
+		t.Fatal("backend template missing")
+	}
+	edited := before
+	edited.Description = "admin edit"
+	if _, err := s.UpdateGenericWorkflow(edited); err != nil {
+		t.Fatal(err)
+	}
+	revs := s.Revisions("workflow", GenericBackendDeliveryWorkflowID)
+	if len(revs) == 0 {
+		t.Fatal("expected a snapshot of the template before the edit")
+	}
+	restored, err := s.RestoreWorkflowRevision(revs[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _ := s.GenericWorkflowByID(GenericBackendDeliveryWorkflowID)
+	if restored.Description != before.Description || got.Description != before.Description {
+		t.Fatalf("restore returned %q, template is %q, want %q", restored.Description, got.Description, before.Description)
+	}
+	if !got.Generic || restored.Revision != got.Revision || !restored.UpdatedAt.Equal(got.UpdatedAt) {
+		t.Fatalf("restore returned revision %d (%s), template %d (%s)", restored.Revision, restored.UpdatedAt, got.Revision, got.UpdatedAt)
+	}
+	// The template id stays out of the workflows table.
+	if _, shadow := s.storedWorkflow(GenericBackendDeliveryWorkflowID); shadow {
+		t.Fatal("restoring a generic template wrote a workflows row")
+	}
+	// The designer saves its next edit with the returned revision.
+	restored.Description = "after restore"
+	if _, err := s.UpdateGenericWorkflow(restored); err != nil {
+		t.Fatalf("saving an edit right after restore: %v", err)
 	}
 }

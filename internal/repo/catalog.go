@@ -1032,7 +1032,15 @@ func (r *CatalogRepo) RestoreWorkflowRevision(id string) (domain.WorkflowDefinit
 	if err := json.Unmarshal(rev.Payload, &wf); err != nil {
 		return domain.WorkflowDefinition{}, err
 	}
-	current, found := r.Workflow(wf.ID)
+	// A generic template lives in generic_templates, and UpdateGenericWorkflow
+	// snapshots it under the same id. Restoring it must rewrite the template,
+	// not add a workflows row that the template id would shadow.
+	if template, generic := r.GenericTemplateByWorkflow(wf.ID); generic {
+		wf.Revision = template.Workflow.Revision
+		wf.Version = max(wf.Version, template.Workflow.Version)
+		return r.UpdateGenericWorkflow(wf)
+	}
+	current, found := r.storedWorkflow(wf.ID)
 	if !found {
 		return domain.WorkflowDefinition{}, fmt.Errorf("workflow %s not found", wf.ID)
 	}
@@ -1041,7 +1049,17 @@ func (r *CatalogRepo) RestoreWorkflowRevision(id string) (domain.WorkflowDefinit
 	// draft on top of the latest release, so publishing it must not reuse a
 	// version number that already names different content.
 	wf.Version = max(wf.Version, current.Version)
-	return wf, r.PutWorkflow(wf)
+	if err := r.PutWorkflow(wf); err != nil {
+		return domain.WorkflowDefinition{}, err
+	}
+	// Return the stored row: PutWorkflow assigns the new revision, published
+	// marker and timestamps, and an editor that adopts this definition sends
+	// that revision back on its next save.
+	stored, ok := r.storedWorkflow(wf.ID)
+	if !ok {
+		return domain.WorkflowDefinition{}, fmt.Errorf("workflow %s not found", wf.ID)
+	}
+	return stored, nil
 }
 
 func (r *CatalogRepo) RestoreAgentRevision(id string) (domain.AgentDefinition, error) {
@@ -1056,7 +1074,15 @@ func (r *CatalogRepo) RestoreAgentRevision(id string) (domain.AgentDefinition, e
 	if current, found := r.Agent(agent.ID); found {
 		agent.Version = current.Version + 1
 	}
-	return agent, r.PutAgent(agent)
+	if err := r.PutAgent(agent); err != nil {
+		return domain.AgentDefinition{}, err
+	}
+	// Like workflows, report what PutAgent stored (timestamps, normalized refs).
+	stored, ok := r.Agent(agent.ID)
+	if !ok {
+		return domain.AgentDefinition{}, fmt.Errorf("agent %s not found", agent.ID)
+	}
+	return stored, nil
 }
 
 // ---------- Production LOOP ids ----------

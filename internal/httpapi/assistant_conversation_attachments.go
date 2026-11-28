@@ -13,16 +13,20 @@ import (
 	"agentflow/internal/runtime"
 )
 
+// conversationAttachmentsDir holds the materialized attachments under a
+// conversation's session root.
+const conversationAttachmentsDir = "attachments"
+
 func conversationAttachmentPath(id, name string) string {
 	name = filepath.Base(strings.ReplaceAll(name, "\\", "/"))
 	if name == "." || name == "" {
 		name = "attachment.bin"
 	}
-	return filepath.Join("attachments", id, name)
+	return filepath.Join(conversationAttachmentsDir, id, name)
 }
 
 func writeConversationAttachments(root string, req assistantRequest) error {
-	dir := filepath.Join(root, "attachments")
+	dir := filepath.Join(root, conversationAttachmentsDir)
 	if err := os.RemoveAll(dir); err != nil {
 		return err
 	}
