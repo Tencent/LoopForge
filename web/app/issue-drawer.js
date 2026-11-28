@@ -49,7 +49,7 @@ async function openIssueDetail(id,tab){
       try{deletionTask=await api(`/api/tasks/${encodeURIComponent(issue.deletionBlock.taskId)}`,{silent:true})}catch(e){}
       if(deletionTask?.issueId!==issueId)deletionTask=null;
     }
-    state.issueDetailData={issue,comments,run,task,requirement,deletionTask,images:detail.images||[]};
+    state.issueDetailData={issue,comments,run,task,requirement,deletionTask,images:detail.images||[],attachments:detail.attachments||[]};
     const health=issueRunHealth(issue),stage=issueCurrentStage(issue),needsConfirm=clarificationNeedsConfirm(issue);
     state.issueDetailTab=tab||(issueClarifying(issueId)||needsConfirm?'clarify':((health==='attention'||health==='active'||stage.key==='waiting')?'sop':'overview'));
     $$('#issueDetailTabs .drawer-tab').forEach(b=>b.classList.toggle('active',b.dataset.dtab===state.issueDetailTab));
@@ -561,7 +561,12 @@ function overviewPane(issue,data){
     return `<li><a href="${url}" target="_blank" rel="noopener noreferrer"><img src="${url}" alt="${name}" loading="lazy"></a></li>`;
   }).join('');
   const gallery=images?`<ul class="issue-description-images" aria-label="需求图片">${images}</ul>`:'';
-  const content=description||gallery?`<div class="detail-desc issue-description">${description}${gallery}</div>`:'';
+  const documents=(data.attachments||[]).filter(file=>!file.mediaType?.startsWith('image/')).map(file=>{
+    const url=`/api/issues/${encodeURIComponent(issue.id)}/attachments/${encodeURIComponent(file.id)}`;
+    return `<li><a class="button ghost small" href="${url}" download>${escapeHTML(file.name||'附件')}</a></li>`;
+  }).join('');
+  const downloads=documents?`<ul class="issue-description-files" aria-label="需求附件">${documents}</ul>`:'';
+  const content=description||gallery||downloads?`<div class="detail-desc issue-description">${description}${gallery}${downloads}</div>`:'';
   return `<div class="detail-section">${banner}${facts}${content}${clarificationOverviewCard(issue)}</div>`;
 }
 function clarifyHistoryHTML(c){

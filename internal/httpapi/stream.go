@@ -442,10 +442,21 @@ func (h *streamHandlers) executeClarify(ctx context.Context, issue domain.Issue,
 	}
 	cli, model := assistantModelEngine(modelID)
 	useCodeBuddy := cli == assistantEngineCodeBuddy
+	var attachmentReq assistantRequest
+	if issue.ID != "" {
+		attachmentReq.issueAttachments, err = readConversationIssueAttachments(h.repo.IssuesRepo, []domain.Issue{issue})
+		if err != nil {
+			return nil, "", nil, err
+		}
+	}
 	var bin, invocationRoot string
 	if useCodeBuddy {
 		bin, err = resolveCodeBuddyBin()
-	} else {
+		if err != nil {
+			return nil, "", nil, err
+		}
+	}
+	if !useCodeBuddy || len(attachmentReq.issueAttachments) > 0 {
 		invocationRoot, err = os.MkdirTemp("", "agentflow-clarify-")
 	}
 	if err != nil {
@@ -454,6 +465,11 @@ func (h *streamHandlers) executeClarify(ctx context.Context, issue domain.Issue,
 	if invocationRoot != "" {
 		defer os.RemoveAll(invocationRoot)
 	}
+	if err := writeConversationIssueAttachments(invocationRoot, h.repo.IssuesRepo, attachmentReq.issueAttachments); err != nil {
+		return nil, "", nil, err
+	}
+	attachmentNote := conversationAttachmentNote(invocationRoot, attachmentReq, cli)
+	imagePaths := conversationTurnImagePaths(invocationRoot, attachmentReq)
 	extras := clarifyRequestTexts(request)
 	hydrateClarifyIssueFromText(&issue, extras...)
 	workItemType := "需求"
@@ -699,7 +715,7 @@ func (h *streamHandlers) executeClarify(ctx context.Context, issue domain.Issue,
 	if mcpHint := h.clarifyMCPInstructionsFor(issue, responsible, len(request.History) > 0, extras...); mcpHint != "" {
 		prompt.WriteString(mcpHint)
 	}
-	userMsg := prompt.String()
+	userMsg := prompt.String() + attachmentNote
 	clarifyID := fmt.Sprintf("clarify-%d", time.Now().UnixNano())
 	var credentials runtime.RunCredentials
 	if useCodeBuddy {
@@ -718,6 +734,7 @@ func (h *streamHandlers) executeClarify(ctx context.Context, issue domain.Issue,
 			reason, _ := repoInfo["reason"].(string)
 			turnPrompt += "\n\n本轮未能读取代码仓库（原因：" + reason + "）。不要使用 Read/Grep/Glob 或声称已分析当前代码；请仅基于需求与已有回答继续，并在 summary 开头注明「未基于代码分析」。"
 		}
+		turnPrompt += attachmentNote
 	}
 	sessionContext := userMsg
 	h.rememberClarifySession(issue.ID, sessionID, responsible.ID)
@@ -727,7 +744,7 @@ func (h *streamHandlers) executeClarify(ctx context.Context, issue domain.Issue,
 	repoInfo["sessionId"] = sessionID
 	emit("open", map[string]any{"repository": repoInfo, "model": modelID, "sessionId": sessionID})
 	emit("thought", map[string]string{"kind": "status", "text": "正在分析需求…"})
-	turnOpts := clarifyTurnOpts{Native: true, MCPConfig: toolFiles.MCPConfig, Settings: toolFiles.Settings}
+	turnOpts := clarifyTurnOpts{Native: true, MCPConfig: toolFiles.MCPConfig, Settings: toolFiles.Settings, ImagePaths: imagePaths}
 	runTurn := func(prompt string, resume bool) (string, string, error) {
 		if useCodeBuddy {
 			_, raw, captured, err := h.runClarifyTurn(modelCtx, workDir, bin, model, prompt, clarifyID, sessionID, homeDir, resume, credentials, emit, turnOpts)
@@ -736,6 +753,7 @@ func (h *streamHandlers) executeClarify(ctx context.Context, issue domain.Issue,
 		return runAssistantCLI(modelCtx, assistantCLIRequest{
 			Prompt: prompt, SystemPrompt: systemPrompt, Model: modelID, UserID: responsible.ID,
 			SessionRoot: invocationRoot, SessionID: sessionID, Resume: resume, Native: true, MCPConfig: toolFiles.MCPConfig,
+			ImageInput: len(imagePaths) > 0, ImagePaths: turnOpts.ImagePaths,
 		}, responsible, func(event assistantStreamEvent) {
 			if event.Kind == "tool" && event.Tool != "" {
 				emit("thought", map[string]string{"kind": "tool", "tool": event.Tool, "text": "正在调用 " + event.Tool})
@@ -781,6 +799,7 @@ func (h *streamHandlers) executeClarify(ctx context.Context, issue domain.Issue,
 				toolSession.SetTerminalOnly()
 			}
 			turnOpts.SubmitOnly = true
+			turnOpts.ImagePaths = nil
 			emit("thought", map[string]string{"kind": "status", "text": "正在提交澄清结论…"})
 			turnPrompt = clarifyNativeRetryPrompt()
 			resume = true
@@ -818,6 +837,7 @@ func (h *streamHandlers) runClarifyTurn(ctx context.Context, workDir, cbPath, mo
 	command, err := prepareClarifyCommandWith(clarifyCommandOpts{
 		Bin: cbPath, Model: model, Prompt: prompt, RunID: runID, SessionID: sessionID, Resume: resume,
 		Native: opts.Native, MCPConfig: opts.MCPConfig, Settings: opts.Settings, SubmitOnly: opts.SubmitOnly,
+		ImagePaths: opts.ImagePaths,
 	})
 	if err != nil {
 		return nil, "", sessionID, err
@@ -875,6 +895,7 @@ type clarifyTurnOpts struct {
 	Native              bool
 	MCPConfig, Settings string
 	SubmitOnly          bool
+	ImagePaths          []string
 }
 
 // clarifyStreamEvents decodes a single stream-json line into zero or more

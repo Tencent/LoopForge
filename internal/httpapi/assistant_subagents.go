@@ -196,6 +196,9 @@ func (h *assistantHandlers) writeConversationAssets(root string, req assistantRe
 	if err := writeConversationAttachments(root, req); err != nil {
 		return err
 	}
+	if err := writeConversationIssueAttachments(root, h.repo.IssuesRepo, req.issueAttachments); err != nil {
+		return err
+	}
 	var skills []domain.SkillDefinition
 	files := map[string]map[string][]byte{}
 	seen := map[string]bool{}

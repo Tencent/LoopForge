@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -225,6 +226,43 @@ func TestEffortFlagInjectedPerProvider(t *testing.T) {
 			}
 			if command.Argv[len(command.Argv)-1] != "probe" {
 				t.Fatalf("prompt is not the final argument: %v", command.Argv)
+			}
+		})
+	}
+}
+
+func TestCodexImagesKeepThePromptPositional(t *testing.T) {
+	images := []string{".agentflow/inputs/requirement-attachments/a1/checkout.png", ".agentflow/inputs/requirement-attachments/a2/b.png"}
+	for _, test := range []struct {
+		name    string
+		resume  string
+		wantEnd []string
+	}{
+		{name: "fresh", wantEnd: []string{"--image=" + images[0], "--image=" + images[1], "TASKBOOK"}},
+		{name: "resume", resume: "session-123", wantEnd: []string{"resume", "session-123", "--image=" + images[0], "--image=" + images[1], "TASKBOOK"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			command, err := providerForKind("codex").Prepare(providerInvocation{
+				Executor: domain.ExecutorDefinition{Kind: "codex", Binary: "codex", Args: []string{"exec", "--json"}},
+				Compiled: compiledConfig{AgentRoot: ".agentflow/probe"},
+				Prompt:   "TASKBOOK",
+				Options:  InvocationOptions{ResumeSessionID: test.resume, ImagePaths: images},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			argv := command.Argv
+			if !slices.Equal(argv[len(argv)-len(test.wantEnd):], test.wantEnd) {
+				t.Fatalf("argv tail = %v, want %v", argv, test.wantEnd)
+			}
+			if slices.Contains(argv, "--image") {
+				t.Fatalf("variadic --image would swallow the prompt: %v", argv)
+			}
+			// Isolation overrides are inserted before the prompt and must not
+			// land after a terminator or inside an image list.
+			isolated := withCodexIsolationEnv(argv, map[string]string{"ZDOTDIR": "/tmp/z"})
+			if isolated[len(isolated)-1] != "TASKBOOK" || !strings.HasPrefix(isolated[len(isolated)-2], "shell_environment_policy.set.ZDOTDIR=") {
+				t.Fatalf("isolated argv = %v", isolated)
 			}
 		})
 	}

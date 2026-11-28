@@ -2194,7 +2194,29 @@ paths:
       tags: [Issues]
       operationId: createIssue
       requestBody:
-        $ref: "#/components/requestBodies/Issue"
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Issue"
+          multipart/form-data:
+            schema:
+              type: object
+              required: [issue]
+              properties:
+                issue:
+                  type: string
+                  description: JSON-encoded new platform requirement. A title and project are required.
+                attachments:
+                  type: array
+                  maxItems: 8
+                  description: Files up to 10 MiB each and 20 MiB in total.
+                  items: {type: string, format: binary}
+                images:
+                  type: array
+                  maxItems: 8
+                  description: Legacy image upload field. The combined attachment limits apply.
+                  items: {type: string, format: binary}
       responses:
         "200":
           $ref: "#/components/responses/Issue"
@@ -2286,6 +2308,16 @@ paths:
                     type: array
                     items:
                       $ref: "#/components/schemas/IssueComment"
+                  attachments:
+                    type: array
+                    nullable: true
+                    items:
+                      type: object
+                      required: [id, name, mediaType]
+                      properties:
+                        id: {type: string}
+                        name: {type: string}
+                        mediaType: {type: string}
         "401":
           $ref: "#/components/responses/Unauthorized"
         "404":
@@ -2304,6 +2336,30 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           description: Issue has successful execution history or is clarifying or executing a LOOP
+  /api/issues/{issueId}/attachments/{attachmentId}:
+    parameters:
+      - $ref: "#/components/parameters/IssueId"
+      - name: attachmentId
+        in: path
+        required: true
+        schema: {type: string}
+    get:
+      tags: [Issues]
+      operationId: downloadIssueAttachment
+      responses:
+        "200":
+          description: Original attachment bytes and a download filename.
+          content:
+            application/octet-stream:
+              schema: {type: string, format: binary}
+            image/*:
+              schema: {type: string, format: binary}
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: Project access is required.
+        "404":
+          $ref: "#/components/responses/NotFound"
   /api/issues/{issueId}/comments:
     parameters:
       - $ref: "#/components/parameters/IssueId"

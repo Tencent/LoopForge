@@ -67,7 +67,7 @@ type IssueStoreAdapter interface {
 	Projects() []domain.Project
 	Project(id string) (domain.Project, bool)
 	PutIssue(v domain.Issue) error
-	PutIssueWithCopiedImages(v domain.Issue, previousID string) error
+	PutIssueWithCopiedAttachments(v domain.Issue, previousID string) error
 	PutSyncedIssue(v domain.Issue) error
 	DeleteIssue(id string) error
 	PutSyncConfig(cfg domain.SyncConfig) error
@@ -623,7 +623,7 @@ func saveCreatedTrackerIssue(store IssueStoreAdapter, issue domain.Issue, previo
 	if previousID == "" || previousID == issue.ID || strings.HasPrefix(previousID, trackerPrefix) {
 		return store.PutIssue(issue)
 	}
-	if err := store.PutIssueWithCopiedImages(issue, previousID); err != nil {
+	if err := store.PutIssueWithCopiedAttachments(issue, previousID); err != nil {
 		return err
 	}
 	_ = store.DeleteIssue(previousID)

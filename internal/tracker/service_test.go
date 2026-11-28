@@ -230,7 +230,7 @@ func (m *memIssueStore) PutIssue(v domain.Issue) error {
 	return nil
 }
 
-func (m *memIssueStore) PutIssueWithCopiedImages(v domain.Issue, _ string) error {
+func (m *memIssueStore) PutIssueWithCopiedAttachments(v domain.Issue, _ string) error {
 	return m.PutIssue(v)
 }
 func (m *memIssueStore) PutSyncedIssue(v domain.Issue) error {

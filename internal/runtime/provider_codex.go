@@ -41,6 +41,14 @@ func (codexProvider) Prepare(in providerInvocation) (CommandSpec, error) {
 		// `resume` is a subcommand of `codex exec`; all exec options must precede it.
 		argv = append(argv, "resume", sessionID)
 	}
+	// `--image <FILE>...` takes any number of values, so a separate value
+	// would also swallow the prompt (and a following `resume`). The attached
+	// `--image=<FILE>` form takes exactly one value and keeps the prompt as the
+	// final argument, which withCodexIsolationEnv and the approval hooks rely
+	// on. On resume the images belong to the `resume` subcommand.
+	for _, path := range in.Options.ImagePaths {
+		argv = append(argv, "--image="+path)
+	}
 	return CommandSpec{Argv: append(argv, positionalPrompt(in)), Provider: "codex", CredentialBindings: []CredentialBinding{BindCodex, BindGit, BindMCP}, PrivateHome: true}, nil
 }
 

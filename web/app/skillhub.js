@@ -125,10 +125,11 @@ function skillhubFileWarnings(files){
   return out;
 }
 // Client-side hint only; the server re-checks ids across every project.
-function skillhubIdProblem(id,{skills=state.data?.skills}={}){
+function skillhubIdProblem(id,{skills=state.data?.skills,defaultId=''}={}){
   const v=String(id||'').trim();
   if(!v)return '请填写技能标识';
   if(!SKILLHUB_ID_PATTERN.test(v))return '标识只能包含字母、数字、点、下划线和短横线，且以字母或数字开头';
+  if(v===defaultId)return '';
   const hit=(skills||[]).find(s=>s.id===v);
   if(hit)return `技能标识「${v}」已被${catalogOwned(hit.projectId)?'本项目':`项目「${skillhubProjectName(hit.projectId)}」`}使用，请换一个`;
   return '';
@@ -462,7 +463,7 @@ function validateSkillhubModal(){
   let problem='';
   if(m.mode==='install'){
     const input=$('#skillhubModalId');m.id=input?.value??m.id;
-    problem=skillhubIdProblem(m.id);
+    problem=skillhubIdProblem(m.id,{defaultId:m.slug});
     const touched=String(m.id||'').trim()!=='';
     input?.classList.toggle('is-bad',!!problem&&touched);
     const err=host.querySelector('[data-skillhub-id-err]'),help=host.querySelector('[data-skillhub-id-help]');
@@ -503,7 +504,10 @@ async function submitSkillhubModal(){
     const src=skillhubSourceOf(saved);
     if(src&&m.latest)skillhubState().latest[skillhubKey(src.namespace,src.slug)]=m.latest;
     m.busy=false;closeSkillhubModal();
-    if(m.mode==='install')toast(`已安装「${saved.name||saved.id}」，可在「本项目」中查看并绑定到角色`,'ok',4200);
+    if(m.mode==='install'){
+      const assignedID=saved.id!==String(m.id).trim()?`（标识：${saved.id}）`:'';
+      toast(`已安装「${saved.name||saved.id}」${assignedID}，可在「本项目」中查看并绑定到角色`,'ok',4200);
+    }
     else toast(`已更新到 v${src?.version||m.version}，角色绑定与共享状态不变`,'ok',4200);
     renderAssets();
     renderSkillhubDrawer();

@@ -8,7 +8,7 @@ function describe(app, text) {
   input.dispatchEvent(new app.window.Event('input', { bubbles: true }));
 }
 
-test('new requirements preview Markdown and retain pasted images until saved', async (t) => {
+test('new requirements keep selected files and pasted images until saved', async (t) => {
   const app = await loadApp();
   t.after(app.close);
   const $ = (s) => app.document.querySelector(s);
@@ -31,9 +31,17 @@ test('new requirements preview Markdown and retain pasted images until saved', a
     new File(['discard'], 'discard.png', { type: 'image/png' }),
     new File(['screenshot'], 'checkout.png', { type: 'image/png' }),
   ]), true);
-  assert.equal(app.document.querySelectorAll('#reqImages img').length, 2);
-  $('#reqImages button').click();
+  assert.equal(app.document.querySelectorAll('#reqAttachments img').length, 2);
+  $('#reqAttachments button').click();
   assert.deepEqual(released, ['blob:discard.png']);
+  const picker = $('#reqFiles');
+  let opened = false;
+  picker.click = () => { opened = true; };
+  $('#reqAttach').click();
+  assert.equal(opened, true);
+  Object.defineProperty(picker, 'files', { value: [new File(['criteria'], 'criteria.md', { type: 'text/plain' })] });
+  picker.dispatchEvent(new Event('change', { bubbles: true }));
+  assert.equal($('.req-attachment-name').textContent, 'criteria.md');
   $('#reqPreviewToggle').click();
   assert.equal($('#chatInput').hidden, true);
   assert.equal($('#reqMarkdownPreview h1').textContent, 'Checkout');
@@ -41,12 +49,13 @@ test('new requirements preview Markdown and retain pasted images until saved', a
   assert.match($('#reqMarkdownPreview img').src, /\/some_image_v2\.png$/);
   assert.equal(app.document.querySelectorAll('#reqMarkdownPreview img').length, 1);
   assert.equal($('#reqMarkdownPreview script'), null);
-  assert.equal($('#reqImages img').alt, 'checkout.png');
+  assert.equal($('#reqAttachments img').alt, 'checkout.png');
 
   app.router.post('/api/issues', { error: 'Try again' }, 503);
   $('#reqCreate').click();
   await settle(4);
-  assert.equal($('#reqImages img').alt, 'checkout.png');
+  assert.equal($('#reqAttachments img').alt, 'checkout.png');
+  assert.equal($('.req-attachment-name').textContent, 'criteria.md');
   assert.equal($('#chatInput').value, markdown);
   assert.match($('#toastContainer').textContent, /Try again/);
 
@@ -55,10 +64,14 @@ test('new requirements preview Markdown and retain pasted images until saved', a
     const issue = JSON.parse(call.body.get('issue'));
     assert.equal(issue.title, 'Checkout');
     assert.equal(issue.description, markdown);
-    assert.deepEqual(call.body.getAll('images').map((file) => file.name), ['checkout.png']);
+    assert.deepEqual(call.body.getAll('attachments').map((file) => file.name), ['checkout.png', 'criteria.md']);
     const saved = { ...issue, id: 'issue-with-images' };
     app.router.get('/api/issues/issue-with-images', {
       issue: saved, comments: [], images: [{ id: 'image-1', name: 'checkout.png' }],
+      attachments: [
+        { id: 'image-1', name: 'checkout.png', mediaType: 'image/png' },
+        { id: 'file-1', name: 'criteria.md', mediaType: 'application/octet-stream' },
+      ],
     });
     return { status: 200, body: saved };
   });
@@ -68,6 +81,7 @@ test('new requirements preview Markdown and retain pasted images until saved', a
   assert.deepEqual(released, ['blob:discard.png', 'blob:checkout.png']);
   assert.equal($('.issue-description h1').textContent, 'Checkout');
   assert.equal($('.issue-description-images img').getAttribute('src'), '/api/issues/issue-with-images/images/image-1');
+  assert.equal($('.issue-description-files a').getAttribute('href'), '/api/issues/issue-with-images/attachments/file-1');
 });
 
 test('the composer gates on the description and creates an undispatched issue without clarifying', async (t) => {
@@ -79,7 +93,7 @@ test('the composer gates on the description and creates an undispatched issue wi
   assert.equal($('#reqSteps'), null, 'there is no step bar any more');
   assert.equal($('#reqCreate').disabled, true);
   assert.equal($('#reqCreateChat').disabled, true);
-  assert.equal($('#reqCreate').title, '先写一句需求');
+  assert.equal($('#reqCreate').title, '填写需求描述或添加附件');
   assert.match($('#reqRepoChipLabel').textContent, /仓库 atlas-web/);
   assert.ok(!$('#reqRepository').textContent.includes('已全部选择'));
   assert.equal($('#reqTargetTAPDHint').textContent, '未配置');

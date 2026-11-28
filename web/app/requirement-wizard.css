@@ -144,7 +144,7 @@
   overflow: auto;
 }
 #requirementModal .req-preview-empty { color: var(--hui-muted); }
-#requirementModal .req-images {
+#requirementModal .req-attachments {
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
@@ -152,8 +152,19 @@
   padding: 8px 16px;
   list-style: none;
 }
-#requirementModal .req-images li { position: relative; }
-#requirementModal .req-images img {
+#requirementModal .req-attachments li { position: relative; }
+#requirementModal .req-attachment-name {
+  display: block;
+  max-width: min(220px, 65vw);
+  overflow: hidden;
+  padding: 9px 18px 9px 10px;
+  border: 1px solid var(--hui-border);
+  border-radius: 8px;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+#requirementModal .req-attachments img {
   display: block;
   width: 74px;
   height: 54px;
@@ -162,7 +173,7 @@
   border-radius: 8px;
   background: var(--hui-canvas);
 }
-#requirementModal .req-images button {
+#requirementModal .req-attachments button {
   position: absolute;
   top: -5px;
   right: -5px;
@@ -177,8 +188,8 @@
   color: var(--hui-text);
   cursor: pointer;
 }
-#requirementModal .req-images button:focus-visible { outline: 2px solid var(--hui-accent); }
-#requirementModal .req-images button:disabled { opacity: .5; cursor: default; }
+#requirementModal .req-attachments button:focus-visible { outline: 2px solid var(--hui-accent); }
+#requirementModal .req-attachments button:disabled { opacity: .5; cursor: default; }
 #requirementModal .req-composer-toolbar {
   display: flex;
   align-items: center;

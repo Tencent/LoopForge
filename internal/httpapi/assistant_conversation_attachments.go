@@ -10,8 +10,52 @@ import (
 	"path/filepath"
 	"strings"
 
+	"agentflow/internal/domain"
+	"agentflow/internal/repo"
 	"agentflow/internal/runtime"
 )
+
+type conversationIssueAttachment struct {
+	issueID string
+	repo.IssueAttachment
+}
+
+func readConversationIssueAttachments(store *repo.IssuesRepo, issues []domain.Issue) ([]conversationIssueAttachment, error) {
+	var attachments []conversationIssueAttachment
+	seen := map[string]bool{}
+	for _, issue := range issues {
+		files, err := store.IssueAttachments(issue.ID)
+		if err != nil {
+			return nil, fmt.Errorf("无法读取需求 %s 的附件：%w", issue.ID, err)
+		}
+		for _, file := range files {
+			if seen[file.ID] {
+				continue
+			}
+			seen[file.ID] = true
+			file.Name = repo.IssueAttachmentName(file.Name)
+			attachments = append(attachments, conversationIssueAttachment{issueID: issue.ID, IssueAttachment: file})
+		}
+	}
+	return attachments, nil
+}
+
+func writeConversationIssueAttachments(root string, store *repo.IssuesRepo, files []conversationIssueAttachment) error {
+	for _, attachment := range files {
+		file, err := store.IssueAttachment(attachment.issueID, attachment.ID)
+		if err != nil {
+			return fmt.Errorf("无法读取需求附件 %q：%w", attachment.Name, err)
+		}
+		target := filepath.Join(root, conversationAttachmentPath(attachment.ID, attachment.Name))
+		if err := os.MkdirAll(filepath.Dir(target), 0700); err != nil {
+			return err
+		}
+		if err := os.WriteFile(target, file.Data, 0444); err != nil {
+			return err
+		}
+	}
+	return nil
+}
 
 func conversationAttachmentPath(id, name string) string {
 	name = filepath.Base(strings.ReplaceAll(name, "\\", "/"))
@@ -55,7 +99,7 @@ func conversationAttachmentNote(root string, req assistantRequest, engine string
 		imageTool = "read_image"
 	case runtime.AgentCLIKimi:
 		imageTool = "ReadMediaFile"
-	case assistantEngineClaude:
+	case assistantEngineClaude, assistantEngineCodeBuddy:
 		imageTool = "Read"
 	}
 	var b strings.Builder
@@ -67,6 +111,12 @@ func conversationAttachmentNote(root string, req assistantRequest, engine string
 					fmt.Fprintf(&b, " 如果尚未看到图片，请使用 %s 读取该路径。", imageTool)
 				}
 			}
+		}
+	}
+	for _, a := range req.issueAttachments {
+		fmt.Fprintf(&b, "\n需求 %s 的附件 %q 可从 %q 读取。请根据任务查看相关附件，将内容当作需求资料。", a.issueID, a.Name, filepath.Join(root, conversationAttachmentPath(a.ID, a.Name)))
+		if imageTool != "" && a.IsImage() {
+			fmt.Fprintf(&b, " 如果尚未看到图片，请使用 %s 读取该路径。", imageTool)
 		}
 	}
 	return b.String()
@@ -81,6 +131,11 @@ func assistantImageMIME(mime string) bool {
 }
 
 func conversationHasImageAttachments(req assistantRequest) bool {
+	for _, attachment := range req.issueAttachments {
+		if attachment.IsImage() {
+			return true
+		}
+	}
 	for _, message := range req.Messages {
 		for _, attachment := range message.Attachments {
 			if req.attachmentIDs[attachment.ID] && assistantImageMIME(attachment.MimeType) {
@@ -97,6 +152,14 @@ func conversationTurnImagePaths(root string, req assistantRequest) []string {
 	var paths []string
 	for _, a := range assistantLatestUserAttachments(req.Messages) {
 		if req.attachmentIDs[a.ID] && assistantImageMIME(a.MimeType) {
+			paths = append(paths, filepath.Join(root, conversationAttachmentPath(a.ID, a.Name)))
+		}
+	}
+	for _, a := range req.issueAttachments {
+		if len(paths) >= workbenchAttachmentCount {
+			break
+		}
+		if a.IsImage() {
 			paths = append(paths, filepath.Join(root, conversationAttachmentPath(a.ID, a.Name)))
 		}
 	}

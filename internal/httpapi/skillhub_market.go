@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -425,16 +426,16 @@ func (h *skillhubHandlers) install(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, map[string]string{"error": "请先选择项目"})
 		return
 	}
-	if _, exists := h.repo.Project(projectID); !exists {
+	if project, exists := h.repo.Project(projectID); !exists || project.ArchivedAt != nil {
 		c.JSON(http.StatusNotFound, map[string]string{"error": "项目不存在"})
 		return
 	}
-	id := strings.TrimSpace(firstNonEmpty(input.ID, slug))
-	if !skillhubSkillIDPattern.MatchString(id) {
+	requestedID := firstNonEmpty(strings.TrimSpace(input.ID), slug)
+	if !skillhubSkillIDPattern.MatchString(requestedID) {
 		c.JSON(http.StatusBadRequest, map[string]string{"error": "技能标识只能包含字母、数字、点、下划线和连字符，且以字母或数字开头（最长 64 位）"})
 		return
 	}
-	if err := h.installConflict(projectID, namespace, slug, id); err != nil {
+	if _, err := h.installSkillID(projectID, namespace, slug, requestedID); err != nil {
 		respond(c, err)
 		return
 	}
@@ -467,7 +468,7 @@ func (h *skillhubHandlers) install(c *gin.Context) {
 	}
 	now := time.Now().UTC()
 	skill := domain.SkillDefinition{
-		ID: id, Name: name, ProjectID: projectID,
+		Name: name, ProjectID: projectID,
 		Description: truncateSkillhubText(firstNonEmpty(detail.Skill.SummaryZh, detail.Skill.Summary)),
 		Source: &domain.SkillSource{
 			Provider: domain.SkillSourceSkillHub, Namespace: namespace, Slug: slug, Version: version,
@@ -477,10 +478,16 @@ func (h *skillhubHandlers) install(c *gin.Context) {
 
 	h.writeMu.Lock()
 	defer h.writeMu.Unlock()
-	if err := h.installConflict(projectID, namespace, slug, id); err != nil {
+	if project, exists := h.repo.Project(projectID); !exists || project.ArchivedAt != nil {
+		c.JSON(http.StatusNotFound, map[string]string{"error": "项目不存在"})
+		return
+	}
+	id, err := h.installSkillID(projectID, namespace, slug, requestedID)
+	if err != nil {
 		respond(c, err)
 		return
 	}
+	skill.ID = id
 	if err := h.repo.PutSkillSnapshot(skill, files, true); err != nil {
 		if errors.Is(err, repo.ErrSkillExists) {
 			c.JSON(http.StatusConflict, map[string]string{"error": fmt.Sprintf("技能标识「%s」已被占用，请换一个", id)})
@@ -493,20 +500,43 @@ func (h *skillhubHandlers) install(c *gin.Context) {
 	c.JSON(http.StatusCreated, saved)
 }
 
-func (h *skillhubHandlers) installConflict(projectID, namespace, slug, id string) error {
+func (h *skillhubHandlers) installSkillID(projectID, namespace, slug, id string) (string, error) {
 	if existing, found := skillhubInstalled(h.repo.Skills(), projectID, namespace, slug); found {
-		return HTTPError{Status: http.StatusConflict, Message: fmt.Sprintf("本项目已安装该技能（标识 %s），如需新版本请使用更新", existing.ID)}
+		return "", HTTPError{Status: http.StatusConflict, Message: fmt.Sprintf("本项目已安装该技能（标识 %s），如需新版本请使用更新", existing.ID)}
 	}
 	if existing, found := h.repo.Skill(id); found {
 		owner := "其他项目"
 		if existing.ProjectID == projectID {
 			owner = "本项目"
-		} else if p, ok := h.repo.Project(existing.ProjectID); ok && strings.TrimSpace(p.Name) != "" {
-			owner = "项目「" + p.Name + "」"
+		} else if p, ok := h.repo.Project(existing.ProjectID); ok {
+			if p.ArchivedAt != nil {
+				if id == slug {
+					return h.skillIDForProject(id, projectID), nil
+				}
+				owner = "已删除项目"
+			} else if strings.TrimSpace(p.Name) != "" {
+				owner = "项目「" + p.Name + "」"
+			}
 		}
-		return HTTPError{Status: http.StatusConflict, Message: fmt.Sprintf("技能标识「%s」已被%s使用，请换一个", id, owner)}
+		return "", HTTPError{Status: http.StatusConflict, Message: fmt.Sprintf("技能标识「%s」已被%s使用，请换一个", id, owner)}
 	}
-	return nil
+	return id, nil
+}
+
+// Keep the archived snapshot and its role bindings available for restore.
+func (h *skillhubHandlers) skillIDForProject(id, projectID string) string {
+	digest := sha256.Sum256([]byte(projectID))
+	suffix := fmt.Sprintf("-%x", digest[:5])
+	for index := 1; ; index++ {
+		tail := suffix
+		if index > 1 {
+			tail += "-" + strconv.Itoa(index)
+		}
+		candidate := id[:min(len(id), 64-len(tail))] + tail
+		if _, found := h.repo.Skill(candidate); !found {
+			return candidate
+		}
+	}
 }
 
 func (h *skillhubHandlers) update(c *gin.Context) {

@@ -118,6 +118,7 @@ ctx.state.data.skills = [{ id: 'mine', projectId: 'p1' }, { id: 'theirs', projec
 assert.strictEqual(ctx.skillhubIdProblem('fresh-id'), '');
 assert.ok(ctx.skillhubIdProblem('mine').includes('本项目'));
 assert.ok(ctx.skillhubIdProblem('theirs').includes('项目「数据中台」'));
+assert.strictEqual(ctx.skillhubIdProblem('theirs',{defaultId:'theirs'}), '', 'the server resolves the default ID');
 assert.ok(ctx.skillhubIdProblem('../x').includes('只能包含'));
 assert.ok(ctx.skillhubIdProblem('  ').includes('请填写'));
 

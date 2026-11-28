@@ -87,7 +87,7 @@ func (r *IssuesRepo) DeleteIssueAfterRunCleanup(id string, mode IssueDeletionMod
 		if err := tx.Where("issue_id = ?", id).Delete(&issueCommentRow{}).Error; err != nil {
 			return err
 		}
-		if err := tx.Where("issue_id = ?", id).Delete(&issueImageRow{}).Error; err != nil {
+		if err := tx.Where("issue_id = ?", id).Delete(&issueAttachmentRow{}).Error; err != nil {
 			return err
 		}
 		return tx.Where("id = ?", id).Delete(&issueRow{}).Error

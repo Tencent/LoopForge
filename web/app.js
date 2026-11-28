@@ -1325,6 +1325,11 @@ function bind(){
   $('#reqBaseBranch')?.addEventListener('input',onReqBaseBranchInput);
   $('#chatInput').addEventListener('input',onReqDescriptionInput);
   $('#chatInput').addEventListener('paste',onReqDescriptionPaste);
+  $('#reqAttach').onclick=()=>$('#reqFiles').click();
+  $('#reqFiles').onchange=event=>{
+    addReqAttachments(event.target.files);
+    event.target.value='';
+  };
   $('#reqPreviewToggle').onclick=()=>setReqPreview($('#reqMarkdownPreview').hidden);
   window.addEventListener('beforeunload',()=>persistRequirementComposer());
   if($('#sopCreateForm')){$('#sopCreateForm').onsubmit=createSOPFromWizard;$('#sopPrev').onclick=()=>setSOPWizardStep(state.sopWizardStep-1);$('#sopNext').onclick=()=>setSOPWizardStep(state.sopWizardStep+1);$$('[data-wizard-steps="sop"] [data-step-target]').forEach(b=>b.onclick=()=>setSOPWizardStep(Number(b.dataset.stepTarget)));$$('.sop-create-close').forEach(b=>b.onclick=()=>$('#sopCreateModal').classList.remove('open'))}

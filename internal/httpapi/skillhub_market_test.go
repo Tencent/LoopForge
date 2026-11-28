@@ -556,6 +556,41 @@ func TestSkillhubInstallConflicts(t *testing.T) {
 	}
 }
 
+func TestSkillhubInstallAfterProjectArchive(t *testing.T) {
+	f, store, h := newSkillhubTestServer(t, "")
+	const slug = "dev-god"
+	f.publish("team", slug, "1.0.0", map[string]string{"SKILL.md": "# original"})
+	body := map[string]any{"slug": slug, "namespace": "team", "projectId": "other", "version": "1.0.0"}
+	if rec := installSkillhub(t, h, body); rec.Code != http.StatusCreated {
+		t.Fatalf("original install: %d %s", rec.Code, rec.Body)
+	}
+	if rec := skillhubRequest(t, h, http.MethodDelete, "/api/projects/other", nil); rec.Code != http.StatusOK {
+		t.Fatalf("archive original project: %d %s", rec.Code, rec.Body)
+	}
+	f.publish("team", slug, "1.2.4", map[string]string{"SKILL.md": "# new snapshot"})
+	body["projectId"], body["id"], body["version"] = "platform", slug, "1.2.4"
+	rec := installSkillhub(t, h, body)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("install after archive: %d %s", rec.Code, rec.Body)
+	}
+	installed := decodeSkillResponse(t, rec)
+	if installed.ProjectID != "platform" || installed.ID == slug || !skillhubSkillIDPattern.MatchString(installed.ID) ||
+		installed.Source == nil || installed.Source.Slug != slug {
+		t.Fatalf("unexpected snapshot: %+v", installed)
+	}
+	if rec := installSkillhub(t, h, body); rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "已安装") {
+		t.Fatalf("duplicate after archive: %d %s", rec.Code, rec.Body)
+	}
+	if rec := skillhubRequest(t, h, http.MethodPost, "/api/projects/other/restore", nil); rec.Code != http.StatusOK {
+		t.Fatalf("restore original project: %d %s", rec.Code, rec.Body)
+	}
+	for id, want := range map[string]string{slug: "# original", installed.ID: "# new snapshot"} {
+		if content, ok := store.SkillFileContent(id, "SKILL.md"); !ok || string(content) != want {
+			t.Fatalf("skill %s after restore: %q", id, content)
+		}
+	}
+}
+
 func TestSkillhubInstallFailuresLeaveNoSkill(t *testing.T) {
 	f, s, h := newSkillhubTestServer(t, "")
 	big := strings.Repeat("x", int(domain.SkillFileMaxBytes)+1)

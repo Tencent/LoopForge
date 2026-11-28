@@ -19,12 +19,19 @@ func (h issuesHandlers) issueDetail(c *gin.Context, issue domain.Issue) {
 		respond(c, err)
 		return
 	}
-	images, err := h.repo.IssueImages(issue.ID)
+	// Attachments are part of the requirement: whoever can read it can read them.
+	attachments, err := h.repo.IssueAttachments(issue.ID)
 	if err != nil {
 		respond(c, err)
 		return
 	}
-	c.JSON(200, map[string]any{"issue": views[0], "comments": h.repo.Comments(issue.ID), "images": images})
+	var images []gin.H
+	for _, attachment := range attachments {
+		if attachment.IsImage() {
+			images = append(images, gin.H{"id": attachment.ID, "name": attachment.Name})
+		}
+	}
+	c.JSON(200, gin.H{"issue": views[0], "comments": h.repo.Comments(issue.ID), "images": images, "attachments": attachments})
 }
 
 func (h issuesHandlers) addIssueComment(c *gin.Context, issue domain.Issue) {

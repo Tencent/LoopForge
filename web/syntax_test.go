@@ -1063,7 +1063,7 @@ func TestRequirementDirectCreateUI(t *testing.T) {
 		`id="reqStepDescribe"`, `id="reqFooter"`,
 		`id="chatInput"`, `placeholder="要做什么？例如：`, `id="reqRepoChip"`, `id="reqRepoPopover"`, `id="reqRepository"`, `id="reqBaseBranch"`,
 		`id="reqWorkflow"`, `LOOP 流程`, `id="reqTarget"`, `data-req-target="local"`, `data-req-target="tapd"`,
-		`id="reqCreate"`, `创建需求`, `id="reqCreateChat"`, `创建并去对话澄清`, `先写一句需求`,
+		`id="reqCreate"`, `创建需求`, `id="reqCreateChat"`, `创建并去对话澄清`, `填写需求描述或添加附件`,
 	} {
 		if !strings.Contains(composer, want) {
 			t.Fatalf("requirement composer UI is missing %q", want)
