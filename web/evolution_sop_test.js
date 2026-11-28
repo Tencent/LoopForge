@@ -154,6 +154,12 @@ const { createDOM } = require('./hui_fake_dom');
   assert.match(grayHTML, /run-gray-1/);
   assert.match(grayHTML, /候选版/);
 
+  // A rolled-back round must say 已回滚 in the table, not a raw status token.
+  const rolledDetail = { ...detailPayload, grayRounds: [{ ...detailPayload.grayRounds[0], status: 'rolled_back' }] };
+  const rolledHTML = api.evoSOPDetailHTML({ workflowId: 'wf-bug', tab: 'trend', scope: 'gray', metric: 'score', detail: rolledDetail });
+  assert.match(rolledHTML, /已回滚/, 'rolled-back gray round must render 已回滚');
+  assert.doesNotMatch(rolledHTML, />rolled_back</, 'rolled-back round must not leak the raw status token');
+
   const changeHTML = api.evoSOPDetailHTML({ workflowId: 'wf-bug', tab: 'change', scope: 'versions', metric: 'score', fileIndex: 0, diffMode: 'split', detail: detailPayload });
   assert.match(changeHTML, /工具反复调用 grep/);
   assert.match(changeHTML, /roles\/coder\.md/);

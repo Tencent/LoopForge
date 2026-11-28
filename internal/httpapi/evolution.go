@@ -246,6 +246,13 @@ func (h *evolutionHandlers) dismissFinding(c *gin.Context) {
 	if !h.requireProjectWriter(c, finding.ProjectID) {
 		return
 	}
+	// PutEvoFinding keeps the status of a finding that an open or released
+	// proposal or a queued improvement depends on. Dismissing it anyway would
+	// answer 200 while the stored finding stayed proposed, so refuse instead.
+	if reason := h.dismissBlockedReason(finding); reason != "" {
+		c.JSON(http.StatusConflict, gin.H{"error": reason})
+		return
+	}
 	finding.Status = domain.EvoFindingDismissed
 	finding.CloseNote = domain.TrimEvoText(req.Reason, 500)
 	if err := h.repo.PutEvoFinding(finding); err != nil {
@@ -253,6 +260,27 @@ func (h *evolutionHandlers) dismissFinding(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, finding)
+}
+
+// dismissBlockedReason reports why a finding cannot be dismissed yet, or ""
+// when it can. A finding linked to a proposal or to a queued improvement is
+// kept by PutEvoFinding so the work in flight still points at it.
+func (h *evolutionHandlers) dismissBlockedReason(finding domain.EvoFinding) string {
+	if finding.Status == domain.EvoFindingDismissed {
+		return ""
+	}
+	if p, ok := h.repo.EvoProposal(finding.ProposalID); ok && p.FindingID == finding.ID {
+		switch {
+		case p.Open():
+			return "该问题已进入改进流程，请先驳回或关闭对应的改进提案"
+		case p.Status == domain.EvoProposalReleased:
+			return "该问题的改进已发布，已按已解决归档，无法忽略"
+		}
+	}
+	if evoFindingQueued(h.repo.EvoQueue(finding.ProjectID), finding.ID) {
+		return "该问题已排入后续改进，请先在改进任务里取消排队"
+	}
+	return ""
 }
 
 // snoozeFinding keeps an open finding out of the active queue for a few

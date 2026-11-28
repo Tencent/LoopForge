@@ -1139,6 +1139,10 @@ func (h *evolutionHandlers) buildSOPGrayRounds(
 		published := p.Status == domain.EvoProposalReleased
 		if published {
 			status = "published"
+		} else if p.Status == domain.EvoProposalRolledBack {
+			// The canary itself stays promoted after a rollback; the round is
+			// rolled back, which is what the table must show.
+			status = domain.EvoProposalRolledBack
 		}
 
 		rounds = append(rounds, domain.EvoSOPGrayRound{
