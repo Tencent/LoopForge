@@ -15,8 +15,17 @@
 # without a libpq environment variable is reported as an error rather than
 # dropped silently.
 
-# The parser lives next to this file. The path is resolved once, while the
-# caller's working directory is still the one it sourced this file from.
+# This helper is bash-only: it finds the parser through ${BASH_SOURCE[0]} and
+# defines a function with 'local'. Sourcing it from another shell would fail
+# with a confusing "python3: can't open file", so it says what is wrong.
+if [ -z "${BASH_SOURCE[0]:-}" ]; then
+  printf 'pg-connection-env.sh: source this helper from bash (it uses BASH_SOURCE and local); it is not a standalone script.\n' >&2
+  exit 1
+fi
+
+# The parser lives next to this file. The path is resolved once, from
+# ${BASH_SOURCE[0]}, so it does not depend on the working directory of the
+# caller.
 PG_CONNECTION_ENV_PARSER="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/pg-connection-env.py"
 
 pg_connection_env() {

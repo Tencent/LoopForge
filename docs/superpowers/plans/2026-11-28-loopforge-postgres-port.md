@@ -1965,6 +1965,16 @@ run_telemetry|adapter|character varying|ALWAYS
 上一直是坏的，只是没被测试覆盖。修法是 Postgres 分支只绑文本形式
 （提交 `23296b1`，带一条 Postgres 回归用例和一条 sqlite 守卫用例）。
 
+### 补充：schema 扩展脚本的连接方式（与计划正文的差异）
+
+计划正文里写的 `psql "$dsn" …` 是当时的设想，最终落地的是 **libpq 的 `PG*`
+环境变量形式**：`scripts/install-schema-extensions-pg.sh` 把 DSN 拆成
+`PGHOST`/`PGPORT`/`PGUSER`/`PGPASSWORD`/`PGDATABASE`/`PGSSLMODE`，密码走
+`PGPASSWORD`，不出现在进程的命令行上——`ps` 能看到任何本机用户的命令行，
+而进程的环境只有属主和 root 读得到（上游 MySQL 路径的 `MYSQL_PWD` 是同一个
+做法）。`scripts/install.sh` 里查 `select count(*) from users` 的那条 `psql`
+同样如此。运维口径见 `docs/deployment.md` 的「Postgres deployment」一节。
+
 ## 已知缺口
 
 - `migrations/0xx_*.sql` 中的 63 个历史升级迁移保持 MySQL-only，未移植。它们只服务老库升级；新建库走 gorm AutoMigrate。若日后要把已有 MySQL 库的数据搬到 Postgres，需要另做数据迁移器。

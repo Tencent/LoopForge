@@ -51,6 +51,8 @@ PGPASSWORD="$POSTGRES_PASSWORD" psql -h 127.0.0.1 -p 5432 -U postgres.cesar -d p
 
 `ps` shows the command line of every process on the machine, so a connection string with a password never travels on one — not in the scripts either, which pass the password in `PGPASSWORD` the way the MySQL path passes it in `MYSQL_PWD`.
 
+The host, the role and the maintenance database in those two lines belong to this deployment: the role behind `postgres.cesar` may create databases here (`rolcreatedb` is set) and may connect to the `postgres` database. On another Supabase project or another Supavisor tenant, adjust the host, the user and the maintenance database to your own.
+
 `loopforge_test` is the scratch database the Postgres integration tests use. It is created separately, and it is emptied before each run.
 
 ### The connection string
@@ -73,6 +75,14 @@ bash scripts/configure.sh
 The password never leaves `.env`. It is written single-quoted, so `set -a; . ./.env` keeps a password containing `&` or `#` literal.
 
 The password is percent-encoded in the userinfo of the DSN, so a password that contains a URL reserved character (`#` `?` `/` `:` `@`) stays inside the password instead of ending the userinfo early. RFC 3986 keeps `.` in the unreserved set, so the tenant segment is written byte for byte: `postgres.cesar` is never altered.
+
+Only `scripts/configure.sh` does that encoding, and only while it **writes** the DSN. A DSN that is already in `.env` — one an earlier version wrote, or one you wrote by hand — is kept as it is, so a password with a reserved character in it stays broken: pgx cuts the password at the first `@`, and the rest of it lands in the host or the fragment of the URL, where the log redaction does not reach it. To repair such a `.env`:
+
+- make the password available again — export `LOOPFORGE_PG_PASSWORD` or `POSTGRES_PASSWORD`, or leave one of them in `.env` (`scripts/configure.sh` reads the first, then the second);
+- delete the `AGENTFLOW_DATABASE_URL=` line from `.env`, and
+- run `scripts/configure.sh` again, which writes the encoded DSN.
+
+If you write the DSN by hand, percent-encode the password in the userinfo yourself. `.` needs no encoding, so the tenant segment `postgres.cesar` stays byte for byte.
 
 `scripts/configure.sh` assembles the DSN from `LOOPFORGE_PG_HOST` (`127.0.0.1`), `LOOPFORGE_PG_PORT` (`5432`), `LOOPFORGE_PG_USER` (`postgres.cesar`) and `LOOPFORGE_PG_DATABASE` (`loopforge`) when those are set in the environment.
 

@@ -652,6 +652,39 @@ esac
         compose = self.env_value(env, 'LOOPFORGE_COMPOSE_DATABASE_URL')
         self.assertEqual(compose, 'postgres://postgres.cesar:p%40ss%26w%23d%2Fr%3Ax@host.docker.internal:5432/loopforge?sslmode=disable')
 
+    def test_pg_connection_env_maps_the_libpq_parameters_and_rejects_the_rest(self):
+        # A URI parameter libpq knows has an environment variable of its own.
+        # One libpq does not know is reported, not dropped silently.
+        parser = ROOT / 'scripts' / 'pg-connection-env.py'
+        dsn = 'postgres://u:p@127.0.0.1:5432/d?sslcrldir=%2Fetc%2Fssl&sslmode=require'
+        result = subprocess.run([sys.executable, str(parser)], input=dsn, text=True,
+                                capture_output=True, timeout=15)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('export PGSSLCRLDIR=/etc/ssl', result.stdout)
+        self.assertIn('export PGSSLMODE=require', result.stdout)
+        # 'search_path' is not a libpq URI parameter, and PGOPTIONS carries the
+        # options syntax ('-c search_path=public'), so mapping it there would
+        # be wrong. It has to be reported instead.
+        rejected = subprocess.run([sys.executable, str(parser)],
+                                  input='postgres://u:p@127.0.0.1:5432/d?search_path=public',
+                                  text=True, capture_output=True, timeout=15)
+        self.assertNotEqual(rejected.returncode, 0)
+        self.assertIn("'search_path'", rejected.stderr)
+        self.assertNotIn('PGOPTIONS', rejected.stdout)
+
+    def test_pg_connection_env_helper_refuses_a_non_bash_shell(self):
+        # The helper finds the parser through BASH_SOURCE and uses 'local', so
+        # it is bash-only. Sourcing it from another shell has to say so, not
+        # fail with a confusing "python3: can't open file".
+        zsh = shutil.which('zsh')
+        if not zsh:
+            self.skipTest('zsh is not available')
+        result = subprocess.run([zsh, '-c', 'source scripts/pg-connection-env.sh'],
+                                cwd=ROOT, text=True, capture_output=True, timeout=15)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('source this helper from bash', result.stderr)
+        self.assertNotIn("can't open file", result.stderr)
+
     def test_env_with_an_undefined_variable_reference_does_not_abort(self):
         # docs/deployment.md asks the operator to write the .env by hand, and
         # a hand-written .env may reference a variable that is not set. The

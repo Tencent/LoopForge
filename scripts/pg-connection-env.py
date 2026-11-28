@@ -14,6 +14,12 @@ import sys
 from urllib.parse import parse_qsl, unquote
 
 # The libpq environment variable every connection parameter maps to.
+#
+# Only the parameters libpq itself accepts in a connection URI are listed.
+# 'search_path' is deliberately absent: it is not a libpq URI parameter, and
+# PGOPTIONS carries the options syntax ('-c search_path=public'), so a bare
+# 'search_path=public' would be sent to the backend as a command line
+# argument instead of a search path.
 QUERY_VARIABLES = {
     'host': 'PGHOST',
     'hostaddr': 'PGHOSTADDR',
@@ -27,18 +33,24 @@ QUERY_VARIABLES = {
     'fallback_application_name': 'PGFALLBACKAPPLICATIONNAME',
     'client_encoding': 'PGCLIENTENCODING',
     'options': 'PGOPTIONS',
-    'search_path': 'PGOPTIONS',
     'target_session_attrs': 'PGTARGETSESSIONATTRS',
     'sslmode': 'PGSSLMODE',
     'sslkey': 'PGSSLKEY',
     'sslcert': 'PGSSLCERT',
     'sslrootcert': 'PGSSLROOTCERT',
     'sslcrl': 'PGSSLCRL',
+    'sslcrldir': 'PGSSLCRLDIR',
     'sslpassword': 'PGSSLASSWORD',
+    'sslcompression': 'PGSSLCOMPRESSION',
+    'sslminprotocolversion': 'PGSSLMINPROTOCOLVERSION',
+    'sslmaxprotocolversion': 'PGSSLMAXPROTOCOLVERSION',
+    'sslnegotiation': 'PGSSLNEGOTIATION',
+    'requiressl': 'PGREQUIRESSL',
     'gssencmode': 'PGGSSENCMODE',
     'channel_binding': 'PGCHANNELBINDING',
     'sslsni': 'PGSSLSNI',
     'service': 'PGSERVICE',
+    'servicefile': 'PGSERVICEFILE',
 }
 
 
