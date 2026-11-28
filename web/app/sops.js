@@ -438,7 +438,7 @@ async function openGenericTemplateModal(id){
   $('#genericTemplateTitle').textContent=`使用「${w.name}」`;
   $('#genericTemplateIntro').textContent=w.description||'平台提供的通用流程模板，复制后归本项目所有。';
   const nodes=w.nodes||[],agentCount=nodes.filter(n=>n.type==='agent').length,gates=nodes.filter(n=>n.type==='approval').length;
-  $('#genericTemplateStructure').innerHTML=`<span>${nodes.length} 个节点</span><span>${agentCount} 个角色节点</span><span>${gates} 个人工门禁</span>${nodes.some(n=>n.id==='mr')?'<span class="highlight">含「发起 PR」节点</span>':''}<span>复制=归本项目、可自由修改、不再跟随平台更新</span><span>直接运行=始终使用平台最新版</span>`;
+  $('#genericTemplateStructure').innerHTML=`<span>${nodes.length} 个节点</span><span>${agentCount} 个角色节点</span><span>${gates} 个人工门禁</span>${nodes.some(n=>n.id==='mr')?'<span class="highlight">含「发起 PR」节点</span>':''}<span>复制=归本项目、可自由修改、不再跟随平台更新</span><span>直接运行=始终使用平台最新版</span>${agentCount?'<span>角色未固定 CLI：直接运行跟随任务责任人的默认执行器，复制后可在角色编辑器里更换</span>':''}`;
   const request=++genericRequirementRequest,modal=$('#genericTemplateModal');
   const needsExecutor=agentCount>0||w.preview?.enabled;
   renderGenericRequirementRows(w,needsExecutor?null:[],true);
