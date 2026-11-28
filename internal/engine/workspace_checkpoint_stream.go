@@ -11,20 +11,30 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 )
 
-func (e *Engine) saveConversationWorkspace(ctx context.Context, run domain.Run, token string) error {
+func (e *Engine) saveConversationWorkspace(ctx context.Context, run domain.Run, token string, previous *repo.WorkspaceCheckpoint) error {
 	file, err := os.CreateTemp("", "agentflow-checkpoint-save-")
 	if err != nil {
 		return err
 	}
 	defer func() { file.Close(); os.Remove(file.Name()) }()
-	if e.defaultExecutionRunner(run) != "" || e.foreignWorkspaceBind(run) {
-		if err = e.downloadConversationCheckpoint(ctx, run, file); err != nil {
+	digest := sha256.New()
+	var destination io.Writer = file
+	if previous != nil {
+		destination = io.MultiWriter(file, digest)
+	}
+	runner := e.defaultExecutionRunner(run) != ""
+	if runner || e.foreignWorkspaceBind(run) {
+		if err = e.downloadConversationCheckpoint(ctx, run, destination); err != nil {
+			if previous != nil && !runner && errors.Is(err, os.ErrNotExist) && e.workerWorkspaceMissing(ctx, run, token) {
+				return e.reuseWorkspaceCheckpoint(ctx, run.ID, token, previous)
+			}
 			return err
 		}
 		if _, err = file.Seek(0, io.SeekStart); err != nil {
@@ -38,11 +48,17 @@ func (e *Engine) saveConversationWorkspace(ctx context.Context, run domain.Run, 
 		if reason != "" {
 			return fmt.Errorf("%s", reason)
 		}
-		err = runtime.CreateWorkspaceCheckpointToContext(ctx, root, workspaceCheckpointContextWriter{ctx, file})
-		if os.IsNotExist(err) && run.WorkspaceHost == "" {
+		err = runtime.CreateWorkspaceCheckpointToContext(ctx, root, workspaceCheckpointContextWriter{ctx, destination})
+		if os.IsNotExist(err) {
 			// A missing file inside an existing checkout does not make an
 			// empty archive safe to use in its place.
 			if _, statErr := os.Lstat(root); !os.IsNotExist(statErr) {
+				return err
+			}
+			if previous != nil {
+				return e.reuseWorkspaceCheckpoint(ctx, run.ID, token, previous)
+			}
+			if run.WorkspaceHost != "" {
 				return err
 			}
 			if meta, _ := e.repo.WorkspaceCheckpoint(run.ID); idleSOPStatus(run) && meta.SavedAt != nil {
@@ -54,16 +70,41 @@ func (e *Engine) saveConversationWorkspace(ctx context.Context, run domain.Run, 
 			if _, err = file.Seek(0, io.SeekStart); err != nil {
 				return err
 			}
-			_, err = file.Write(runtime.EmptyWorkspaceCheckpoint())
+			digest.Reset()
+			_, err = destination.Write(runtime.EmptyWorkspaceCheckpoint())
 		}
 		if err != nil {
 			return err
 		}
 	}
+	// A reclaim retry still captures late edits, but a byte-for-byte match
+	// does not need to write the already stored checkpoint again.
+	if previous != nil && hex.EncodeToString(digest.Sum(nil)) == previous.SHA256 && e.reuseWorkspaceCheckpoint(ctx, run.ID, token, previous) == nil {
+		return nil
+	}
 	if _, err = file.Seek(0, io.SeekStart); err != nil {
 		return err
 	}
 	return e.repo.SaveWorkspaceCheckpointStream(run.ID, token, time.Now().UTC(), workspaceCheckpointContextReader{ctx, file})
+}
+
+func (e *Engine) reuseWorkspaceCheckpoint(ctx context.Context, runID, token string, previous *repo.WorkspaceCheckpoint) error {
+	if err := e.verifyStoredCheckpoint(ctx, runID); err != nil {
+		return err
+	}
+	if previous.Error != "" || previous.SaveRetryAt != nil || previous.SaveFailures != 0 {
+		return e.repo.ClearVerifiedWorkspaceCheckpointError(runID, token, previous.SHA256, time.Now().UTC())
+	}
+	return nil
+}
+
+func (e *Engine) workerWorkspaceMissing(ctx context.Context, run domain.Run, token string) bool {
+	probeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	status, err := e.requestWorkspaceCheckpoint(probeCtx, run, domain.RunnerWorkspaceRequest{
+		RunID: run.ID, Operation: domain.RunnerWorkspaceOperationCheckpointStatus, CheckpointLease: token,
+	})
+	return err == nil && status.Status == http.StatusNotFound && status.Code == domain.WorkspaceErrorMissing
 }
 
 func (e *Engine) closeCheckpointTransfer(ctx context.Context, run domain.Run, id string) {

@@ -258,7 +258,8 @@ func (e *Engine) cleanupWorkspace(run domain.Run, now time.Time) {
 		if err == nil {
 			err = workspaceCheckpointResponseError(response)
 		}
-		if err != nil {
+		// The Worker may have removed the checkout before the reply failed.
+		if err != nil && !e.workerWorkspaceMissing(context.Background(), run, meta.LeaseToken) {
 			reset(err)
 			return
 		}

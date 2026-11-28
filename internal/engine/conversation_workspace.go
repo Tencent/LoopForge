@@ -500,7 +500,11 @@ func (e *Engine) claimIdleConversationWorkspace(run domain.Run, now time.Time) (
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer cancel()
 		ctx = WithConversationWorkspaceToken(ctx, token, run.ID)
-		captureErr := e.saveConversationWorkspace(ctx, run, token)
+		var previous *repo.WorkspaceCheckpoint
+		if readyToReclaim && meta.SavedAt != nil && meta.SHA256 != "" {
+			previous = &meta
+		}
+		captureErr := e.saveConversationWorkspace(ctx, run, token, previous)
 		if captureErr != nil {
 			saveError = captureErr.Error()
 			return true, false, nil, captureErr

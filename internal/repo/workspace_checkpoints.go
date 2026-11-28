@@ -269,6 +269,22 @@ func (r *RunsRepo) finishWorkspaceUse(runID, token string, now, attemptedAt time
 		return nil
 	})
 }
+
+// ClearVerifiedWorkspaceCheckpointError preserves the published archive and
+// its save time. A retry must still own the lease for the verified archive.
+func (r *RunsRepo) ClearVerifiedWorkspaceCheckpointError(runID, token, sha string, now time.Time) error {
+	result := r.DB.Model(&WorkspaceCheckpoint{}).
+		Where("run_id = ? AND lease_token = ? AND lease_until > ? AND sha256 = ?", runID, token, now, sha).
+		Updates(map[string]any{"error": "", "save_retry_at": nil, "save_failures": 0})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected != 1 {
+		return ErrWorkspaceInUse
+	}
+	return nil
+}
+
 func (r *RunsRepo) ClaimCheckpointWorkspaceCleanup(runID, token string, revision int, now time.Time) (bool, error) {
 	claimed := false
 	err := r.DB.Transaction(func(tx *gorm.DB) error {

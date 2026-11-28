@@ -273,7 +273,8 @@ func (m *Manager) removeMatching(match func(name string) bool) (int, error) {
 	var removed int
 	for _, entry := range entries {
 		name := entry.Name()
-		if name == sandboxLockDir || strings.HasPrefix(name, ".") {
+		detached := strings.HasPrefix(name, reclaimedWorkspacePrefix)
+		if name == sandboxLockDir || strings.HasPrefix(name, ".") && !detached {
 			continue
 		}
 		if !match(name) {
@@ -286,10 +287,14 @@ func (m *Manager) removeMatching(match func(name string) bool) (int, error) {
 		}
 		// A live Exec has this directory as cwd. Removing it makes Node throw
 		// "ENOENT: no such file or directory, uv_cwd" instead of a Git error.
-		if m.workspaceInUse(name) {
+		if !detached && m.workspaceInUse(name) {
 			continue
 		}
-		if err := RemoveWorkspaceTree(dir); err != nil {
+		remove := reclaimWorkspaceTree
+		if detached {
+			remove = RemoveWorkspaceTree
+		}
+		if err := remove(dir); err != nil {
 			if first == nil {
 				first = err
 			}
