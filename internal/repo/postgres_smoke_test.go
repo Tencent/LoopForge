@@ -57,24 +57,11 @@ func TestPostgresSmoke(t *testing.T) {
 	}
 
 	// Every column the models declare with type:json has to have come out of
-	// AutoMigrate as jsonb — and nothing else may have.
-	wantJSONB, modelTables := modelJSONColumns(t, store.DB)
-	var modelJSONB int64
-	if err := store.DB.Raw(`SELECT count(*) FROM information_schema.columns
-		WHERE table_schema = current_schema() AND data_type = 'jsonb' AND table_name IN ?`, modelTables).Scan(&modelJSONB).Error; err != nil {
-		t.Fatalf("count the jsonb columns of the model tables: %v", err)
-	}
-	if modelJSONB != int64(wantJSONB) {
-		t.Fatalf("the jsonb columns of the model tables = %d, want %d (the model's type:json columns)", modelJSONB, wantJSONB)
-	}
-	var jsonb int64
-	if err := store.DB.Raw(`SELECT count(*) FROM information_schema.columns
-		WHERE table_schema = current_schema() AND data_type = 'jsonb'`).Scan(&jsonb).Error; err != nil {
-		t.Fatalf("count the jsonb columns: %v", err)
-	}
-	if jsonb != int64(wantJSONB) {
-		t.Fatalf("the jsonb columns = %d, want %d (the model's type:json columns)", jsonb, wantJSONB)
-	}
+	// AutoMigrate as jsonb. The columns are compared one by one: a leftover
+	// table of an interrupted test run would otherwise turn a count into a
+	// false failure.
+	modelColumns, _ := modelJSONColumns(t, store.DB)
+	checkModelJSONColumns(t, store.DB, modelColumns)
 }
 
 // TestPostgresSmokeGeneratedColumns asserts the deployment end state: the two

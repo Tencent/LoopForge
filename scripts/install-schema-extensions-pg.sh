@@ -2,7 +2,7 @@
 # Install the Postgres equivalents of the Compose MySQL extension steps:
 # the observability generated columns and the starter catalog seed.
 # The DSN comes from AGENTFLOW_DATABASE_URL in .env, unless the caller
-# exported one already.
+# exported one already — the caller's DSN wins.
 #
 # This script is idempotent: run it as many times as you like.
 #
@@ -19,14 +19,18 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-# An exported AGENTFLOW_DATABASE_URL wins over the .env default. The .env
-# holds the runtime DSN, and the installer is also run against the scratch
-# test database (docs/testing/postgres.md), so the caller has to be able to
-# point it somewhere else without editing the .env.
-if [[ -f .env && -z "${AGENTFLOW_DATABASE_URL:-}" ]]; then
+# The .env holds the runtime DSN. The caller may point the installer at
+# another database — the scratch test database of docs/testing/postgres.md —
+# so the caller's DSN wins over the .env default. The .env is still read, so
+# the settings it carries keep working.
+caller_dsn="${AGENTFLOW_DATABASE_URL:-}"
+if [[ -f .env ]]; then
   set -a
   source .env
   set +a
+fi
+if [[ -n "$caller_dsn" ]]; then
+  export AGENTFLOW_DATABASE_URL="$caller_dsn"
 fi
 
 dsn="${AGENTFLOW_DATABASE_URL:-}"

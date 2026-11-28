@@ -38,10 +38,16 @@ export PGHOST="127.0.0.1" PGPORT="5432" PGUSER="postgres.REPLACE_TENANT" PGDATAB
 export PGPASSWORD="$POSTGRES_PASSWORD"
 
 psql -v ON_ERROR_STOP=1 <<'SQL'
-CREATE DATABASE loopforge_test;
+SELECT 'CREATE DATABASE loopforge_test'
+WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'loopforge_test')
+\gexec
 ALTER DATABASE loopforge_test OWNER TO postgres;
 SQL
 ```
+
+这段可以**重复执行**：库已存在时 `\gexec` 不执行 `CREATE DATABASE`，直接跳过，
+不会像裸 `CREATE DATABASE` 那样在 `ON_ERROR_STOP=1` 下报错退出。后面的
+`ALTER DATABASE ... OWNER TO postgres` 本身是幂等的，重复执行没有副作用。
 
 密码从 `.env` 读进环境变量，不出现在命令行里。`PGUSER` 里的租户段
 （`postgres.<租户>`）必须保留——Supavisor 按 `user.tenant` 路由，
@@ -77,11 +83,16 @@ chmod 600 .local/pg-test.env
 
 set -a; . ./.local/pg-test.env; set +a
 bash scripts/install-schema-extensions-pg.sh
+
+# 用完回收：scratch 文件里带着密码的 DSN
+rm -f .local/pg-test.env
 ```
 
-已经导出的 `AGENTFLOW_DATABASE_URL` 优先于 `.env`（installer 不会用 `.env`
-覆盖它），所以上面这条命令作用于 `loopforge_test`，不会碰运行库。
-`.local/` 在 `.gitignore` 里，scratch 文件不要往别处放。
+installer 先读 `.env`（`.env` 里的其它设置照样生效），再把调用方已经导出的
+`AGENTFLOW_DATABASE_URL` 盖回去，所以上面这条命令作用于 `loopforge_test`，
+不会碰运行库。
+`.local/` 在 `.gitignore` 里，scratch 文件不要往别处放；里面带着密码，
+用完按上面那行 `rm -f` 删掉。
 
 installer 是幂等的，跑多少次都行。
 
@@ -99,8 +110,9 @@ go test ./internal/repo/... ./internal/httpapi/...
   `go test ./internal/repo/...` 是错的——那个目录下没有 Go 包。
 - **`unset AGENTFLOW_AUTH_REQUIRED` 不能少。** `.env` 里它是 `true`（部署需要），
   而 `internal/httpapi` 的测试夹具是按「不强制鉴权」搭的。带着它跑，
-  本机实测 **225 个 httpapi 用例失败**，其中 179 个的失败原因是
-  `401 {"error":"authentication required"}`。那是假警报，与移植无关。
+  本机实测 **200 个顶层 httpapi 用例失败**（连子测试共 225 个 `--- FAIL`），
+  其中 179 个的失败原因是 `401 {"error":"authentication required"}`。
+  那是假警报，与移植无关。
 
 DSN 不要在命令行上拼——那会进 shell 历史。`.env` 里已经有
 `AGENTFLOW_TEST_POSTGRES_URL`（指向 `loopforge_test`），`set -a; . ./.env`
@@ -124,7 +136,7 @@ go test ./internal/repo/ -run TestPostgresSmoke -v
 
 | 环境变量 | 库 | 用例 |
 | --- | --- | --- |
-| `AGENTFLOW_TEST_POSTGRES_URL` | `loopforge_test` | `internal/repo` 里引用该变量的 5 个文件：`postgres_connect_test.go`、`postgres_case_test.go`、`postgres_json_test.go`、`postgres_mysqlisms_test.go`、`postgres_smoke_test.go`（同目录的 `postgres_dialector_test.go` 不连库） |
+| `AGENTFLOW_TEST_POSTGRES_URL` | `loopforge_test` | `internal/repo` 里引用该变量的 5 个测试文件：`postgres_connect_test.go`、`postgres_case_test.go`、`postgres_json_test.go`、`postgres_mysqlisms_test.go`、`postgres_smoke_test.go`，外加 `internal/repo/opentest.go`（`OpenPostgresTest` 在那里读这个变量），共 6 个文件（同目录的 `postgres_dialector_test.go` 不连库） |
 | `AGENTFLOW_TEST_MYSQL_DSN` | 独立的 MySQL 库 | 显式引用该变量的文件：`internal/repo` 里 37 个（`assistant_concurrency_mysql_test.go`、`bot_charset_mysql_test.go` 等），`internal/httpapi` 里 5 个，`internal/engine` 里 1 个 |
 
 两个变量都设时，两组用例都跑；只设一个时，另一组是 **skip**。
@@ -143,7 +155,7 @@ sqlite 是默认路径：所有包在没有上面两个变量时都用内存 sql
 | `Dialector.Name() == "postgres"` | `postgres` |
 | `current_schema()` 里的表数 ≥ 50 | 106 |
 | `data_type = 'json'` 的列数 == 0 | 0 |
-| `data_type = 'jsonb'` 的列数 == 模型声明的 `type:json` 列数 | 62 |
+| 模型声明的每个 `type:json` 列的 `data_type` == `jsonb`（逐列核对，不是比计数） | 62 列全部是 `jsonb` |
 | `data_type IN ('json','mediumblob','longblob','mediumtext')` 的列数 == 0 | 0 |
 | `is_generated = 'ALWAYS'` 的列 == `run_telemetry.adapter` 与 `run_logs.level` | 2 |
 
@@ -156,7 +168,8 @@ sqlite 是默认路径：所有包在没有上面两个变量时都用内存 sql
 
 ## 6. 与本次移植无关的已知失败
 
-下面这些用例在本机 macOS 上本来就失败，移植前后一样失败，不是回归：
+下面这些用例在本机 macOS 上失败，基线（`fd039e5`）上同样失败，不是回归。
+其中两条浏览器用例是**本机环境相关的 flaky 用例**（基线同样失败），不是稳定断言：
 
 | 包 | 用例 | 原因 |
 | --- | --- | --- |
@@ -164,7 +177,7 @@ sqlite 是默认路径：所有包在没有上面两个变量时都用内存 sql
 | `deploy` | `TestBindCLIUninstallStopsTheRunnerNamedInServicePID`、`TestBindCLIReinstallStopsTheRunnerNamedInServicePID`、`TestBindCLIUninstallStopsARunnerWhoseArgv0IsTheScript`、`TestBindCLIUninstallSignalsOnlyTheBackgroundRunner` | launchd 的 `service.pid` |
 | `internal/engine` | `TestEnsureRunBrowserRestoresReclaimedWorkspaceWithStaleRun` | 需要真的 Chromium |
 | `internal/gitwork` | `TestGitDiscoveryStopsBeforeParentRepository` | 本机 git 目录拓扑 |
-| `internal/httpapi` | `TestBrowserStreamPushesFramesAndRunsCommands`、`TestMainBotBrowserStartsAndDrivesRunBrowser` | 需要真的 Chromium（第二个在本机固定报「浏览器连接已断开」） |
+| `internal/httpapi` | `TestBrowserStreamPushesFramesAndRunsCommands`、`TestMainBotBrowserStartsAndDrivesRunBrowser` | 本机环境相关的 flaky 用例（基线同样失败）：需要真的 Chromium |
 | `internal/runtime` | `TestProcessSandboxPathsProfilesAndCommands`、`TestLocalWorkspaceGitDiscoveryCannotReachParent` | 本机沙箱路径与 git 拓扑 |
 
 另有 10 个文件上游就不是 gofmt 干净的（`internal/domain/observability.go`、

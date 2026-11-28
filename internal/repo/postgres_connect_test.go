@@ -53,27 +53,22 @@ func TestPostgresConnectOpens(t *testing.T) {
 		t.Fatalf("%d columns kept a MySQL type name; Postgres has no such types", mysqlTyped)
 	}
 
-	wantJSONB, modelTables := modelJSONColumns(t, store.DB)
-	var jsonb int64
-	if err := store.DB.Raw(`SELECT count(*) FROM information_schema.columns
-		WHERE table_schema = current_schema() AND data_type = 'jsonb' AND table_name IN ?`, modelTables).Scan(&jsonb).Error; err != nil {
-		t.Fatalf("count jsonb columns: %v", err)
-	}
-	if jsonb != int64(wantJSONB) {
-		t.Fatalf("jsonb columns = %d, want %d (the model's type:json columns)", jsonb, wantJSONB)
-	}
+	modelColumns, _ := modelJSONColumns(t, store.DB)
+	checkModelJSONColumns(t, store.DB, modelColumns)
 }
 
-// modelJSONColumns counts the columns the models declare with `type:json`
-// and returns the tables the models own. Every counted column has to come out
-// of AutoMigrate as jsonb.
-//
-// The table list keeps the count independent of whatever else lives in the
-// schema: a leftover table from an interrupted test run would otherwise show
-// up as a jsonb column and fail the comparison with a misleading number.
-func modelJSONColumns(t *testing.T, db *gorm.DB) (int, []string) {
+// modelJSONColumn is a column the models declare with `type:json`.
+type modelJSONColumn struct {
+	Table  string
+	Column string
+}
+
+// modelJSONColumns returns the columns the models declare with `type:json`
+// and the tables the models own. Every returned column has to come out of
+// AutoMigrate as jsonb.
+func modelJSONColumns(t *testing.T, db *gorm.DB) ([]modelJSONColumn, []string) {
 	t.Helper()
-	count := 0
+	columns := make([]modelJSONColumn, 0, len(allModels()))
 	tables := make([]string, 0, len(allModels()))
 	for _, model := range allModels() {
 		stmt := &gorm.Statement{DB: db}
@@ -86,11 +81,65 @@ func modelJSONColumns(t *testing.T, db *gorm.DB) (int, []string) {
 				continue
 			}
 			if field.TagSettings["TYPE"] == "json" {
-				count++
+				columns = append(columns, modelJSONColumn{Table: stmt.Schema.Table, Column: field.DBName})
 			}
 		}
 	}
-	return count, tables
+	return columns, tables
+}
+
+// checkModelJSONColumns asserts that every column the models declare with
+// `type:json` came out of AutoMigrate as jsonb.
+//
+// The check compares the columns one by one. Counting the jsonb columns of
+// the schema and comparing that count with the number of json columns the
+// models declare compares two independently derived numbers: a leftover table
+// — the probe table of TestPostgresColumnTypesSurvivesSchemaChange survives
+// a killed test run — or a column the models do not own would make the
+// comparison fail even though the port is correct.
+//
+// The query reads the column types of the model's tables in one round trip
+// and the comparison happens in Go, so a column that is missing is reported
+// next to a column of the wrong type.
+func checkModelJSONColumns(t *testing.T, db *gorm.DB, columns []modelJSONColumn) {
+	t.Helper()
+	tables := make([]string, 0, len(columns))
+	seen := map[string]bool{}
+	for _, column := range columns {
+		if seen[column.Table] {
+			continue
+		}
+		seen[column.Table] = true
+		tables = append(tables, column.Table)
+	}
+	var rows []struct {
+		TableName  string
+		ColumnName string
+		DataType   string
+	}
+	if err := db.Raw(`SELECT table_name, column_name, data_type
+		FROM information_schema.columns
+		WHERE table_schema = current_schema() AND table_name IN ?`, tables).Scan(&rows).Error; err != nil {
+		t.Fatalf("read the column types: %v", err)
+	}
+	types := make(map[string]string, len(rows))
+	for _, row := range rows {
+		types[row.TableName+"."+row.ColumnName] = row.DataType
+	}
+	var wrong []string
+	for _, column := range columns {
+		name := column.Table + "." + column.Column
+		dataType, ok := types[name]
+		switch {
+		case !ok:
+			wrong = append(wrong, name+" (missing)")
+		case dataType != "jsonb":
+			wrong = append(wrong, name+" ("+dataType+")")
+		}
+	}
+	if len(wrong) > 0 {
+		t.Fatalf("the json columns that are not jsonb = %v", wrong)
+	}
 }
 
 // TestPostgresColumnTypesSurvivesSchemaChange is the behavioural guard for
