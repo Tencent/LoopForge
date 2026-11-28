@@ -113,6 +113,7 @@
     [/(\d{4})年(\d{1,2})月/g, (_, y, m) => `${MONTHS[m - 1] || m} ${y}`],
     [/(^|[^\d])(\d{1,2})月(?![\u3400-\u9fff])/g, (_, pre, m) => pre + (MONTHS[m - 1] || m)],
     [/共\s*(\d+)\s*(?=[A-Za-z])/g, '$1 '],
+    [/共\s*(\d+)\s*(条|个|项)/g, (_, n) => `${n} ${Number(n) === 1 ? 'item' : 'items'}`],
     [/(\d{4}-\d{2}-\d{2})\s*至\s*(\d{4}-\d{2}-\d{2})/g, '$1 – $2'],
     [/(\d+(?:\.\d+)?)\s*(次|步|个|台|条|篇)(?![\u3400-\u9fff])/g, (_, n, u) => {
       const word = UNITS[u][Number(n) === 1 ? 0 : 1];
@@ -210,7 +211,10 @@
   function translateText(node) {
     const parent = node.parentElement;
     if (skipped(parent)) return;
-    const next = parent.closest(DATA_SEL) ? translateExact(node.nodeValue) : translate(node.nodeValue);
+    const text = node.nodeValue;
+    const inline = window.LF_I18N_INLINE_EN;
+    const next = parent.closest(DATA_SEL) ? translateExact(text)
+      : inline && Object.hasOwn(inline, text) ? inline[text] : translate(text);
     if (next !== node.nodeValue) node.nodeValue = next;
   }
   function translateAttrs(el) {
@@ -229,18 +233,7 @@
     if (node.nodeType !== 1) return;
     if (skipped(node)) { if (node.tagName === 'TEXTAREA') translateAttrs(node); return; }
     translateAttrs(node);
-    const tw = document.createTreeWalker(node, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT, {
-      acceptNode: n => {
-      if (n.nodeType !== 1 || !skipped(n)) return NodeFilter.FILTER_ACCEPT;
-      if (n.tagName === 'TEXTAREA') translateAttrs(n);
-      return NodeFilter.FILTER_REJECT;
-    },
-    });
-    let n;
-    while ((n = tw.nextNode())) {
-      if (n.nodeType === 3) translateText(n);
-      else translateAttrs(n);
-    }
+    for (const child of [...node.childNodes]) walk(child);
   }
   function translateTitle() {
     const next = translate(document.title);
