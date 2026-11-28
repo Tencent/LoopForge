@@ -3,6 +3,7 @@ package httpapi
 import (
 	"bytes"
 	"image"
+	"image/color"
 	"image/jpeg"
 	"image/png"
 	"io"
@@ -50,13 +51,12 @@ func (h *assistantHandlers) attachmentThumbnail(owner int64, id string, file *os
 
 func makeAttachmentThumbnail(file io.ReaderAt, size int64) []byte {
 	// Use section readers so falling back to ServeContent always leaves the original intact.
-	const maxPixels = 24_000_000
 	if size <= 16<<10 || size > workbenchAttachmentLimit {
 		return nil
 	}
 	source := io.NewSectionReader(file, 0, size)
 	config, format, err := image.DecodeConfig(source)
-	if err != nil || config.Height <= 0 || config.Width <= 0 || config.Width > maxPixels/config.Height {
+	if err != nil || !thumbnailSizeAllowed(config) {
 		return nil
 	}
 	if format != "png" && format != "jpeg" && format != "webp" {
@@ -79,6 +79,16 @@ func makeAttachmentThumbnail(file io.ReaderAt, size int64) []byte {
 		return nil
 	}
 	return buf.Bytes()
+}
+
+func thumbnailSizeAllowed(config image.Config) bool {
+	maxPixels := 24_000_000
+	switch config.ColorModel {
+	case color.Gray16Model, color.RGBA64Model, color.NRGBA64Model:
+		// A 16-bit PNG can need eight bytes per pixel, even grayscale with transparency.
+		maxPixels /= 2
+	}
+	return config.Width > 0 && config.Height > 0 && config.Width <= maxPixels/config.Height
 }
 
 // attachmentETagMatches applies If-None-Match's weak comparison to one entity tag.

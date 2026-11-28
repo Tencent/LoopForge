@@ -1485,8 +1485,11 @@ func (h *assistantHandlers) downloadAttachment(c *gin.Context) {
 			// changes, so a matching validator can be answered without decoding the image again.
 			if attachmentETagMatches(c.Request.Header.Values("If-None-Match"), thumbTag) {
 				c.Header("ETag", thumbTag)
-				c.Status(http.StatusNotModified)
-				c.Writer.WriteHeaderNow()
+				// ServeContent reads only the first If-None-Match line. Pass the matched tag
+				// so it checks higher-priority preconditions without reading the image.
+				req := c.Request.Clone(c.Request.Context())
+				req.Header.Set("If-None-Match", thumbTag)
+				http.ServeContent(c.Writer, req, "", info.ModTime(), bytes.NewReader(nil))
 				return
 			}
 			thumb := h.attachmentThumbnail(ownerID, id, file, info.Size())
