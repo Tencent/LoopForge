@@ -25,6 +25,7 @@ func TestToolContractsCoverManifest(t *testing.T) {
 		}
 	}
 }
+
 func TestDraftContractRejectsMissingImportURLAndAcceptsRepositoryPaste(t *testing.T) {
 	ops := map[string]application.Operation{}
 	for _, op := range application.PublicOperations() {
@@ -88,5 +89,18 @@ func TestIssueSaveContractOffersSOPMode(t *testing.T) {
 	}
 	if err := ValidateToolInput(save, map[string]any{"body": map[string]any{"projectId": "p", "title": "t", "sopMode": "off"}}); err == nil {
 		t.Fatal("undocumented sopMode accepted")
+	}
+}
+
+func TestValidateImportRepositoryBranchMap(t *testing.T) {
+	op := application.Operation{Method: "POST", Path: "/api/issues/import-tapd"}
+	branches := map[string]any{"repo": 12.0}
+	input := map[string]any{"body": map[string]any{"projectId": "p", "url": "https://example.org/issue", "repositoryBranches": branches}}
+	if err := ValidateToolInput(op, input); err == nil || !strings.Contains(err.Error(), "repositoryBranches.repo") {
+		t.Fatalf("invalid branch map was not diagnosed: %v", err)
+	}
+	branches["repo"] = "main"
+	if err := ValidateToolInput(op, input); err != nil {
+		t.Fatal(err)
 	}
 }
