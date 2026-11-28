@@ -66,10 +66,43 @@ test('flow node metadata, properties, artifact editors, menus, and edge deletion
     listEditorHTML(['one','two'],'item');
     ensureNodeDefaults(state.workflow.nodes[0]);
     renderAgentSummary();renderAgentPreview(state.data.agents[0]);
-    deleteEdgeById('edge-1');deleteRejectEdgeByNodeId('agent-node');
+    deleteEdgeById('edge-1','agent-node');deleteRejectEdgeByNodeId('agent-node');
   `);
   await settle(4);
   assert.equal(app.evaluate(`state.workflow.edges.length`), 0);
   assert.equal(app.evaluate(`state.workflow.nodes[0].rejectTo`), '');
   assert.match(app.document.querySelector('#properties').textContent, /Agent|角色|节点/);
+});
+
+test('approval nodes expose join rules for a real merge without conditional edge configuration', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  app.evaluate(`
+    switchView('flow');
+    state.workflow={...clone(state.data.workflows[0]),id:'approval-routing-flow',projectId:state.projectFilter,
+      nodes:[
+        {id:'gate',name:'人工确认',type:'approval',position:{x:80,y:80}},
+        {id:'a',name:'分支 A',type:'script',position:{x:420,y:40}},
+        {id:'b',name:'分支 B',type:'script',position:{x:420,y:160}}
+      ],
+      edges:[{id:'a-gate',source:'a',target:'gate'},{id:'b-gate',source:'b',target:'gate'}],
+      sandboxProfileId:state.data.sandboxes[0]?.id||'local'};
+    state.selectedNode='gate';renderCanvas();renderProperties();
+  `);
+  assert.equal(app.document.querySelector('#properties').textContent.includes('分支与汇合'), true);
+  assert.ok(app.document.querySelector('#properties [data-p="joinRule"]'));
+  assert.equal(app.document.querySelector('[data-route-edge]'), null);
+});
+
+test('linear default branches are included in join warnings', async (t) => {
+  const app = await loadApp(); t.after(app.close);
+  app.evaluate(`switchView('flow');state.workflow={id:'default-join',projectId:'project-1',name:'Default join',nodes:[
+    {id:'route',name:'Route',type:'script',defaultTarget:'large',position:{x:20,y:30}},
+    {id:'small',name:'Small',type:'script',position:{x:300,y:30}},
+    {id:'large',name:'Large',type:'script',position:{x:300,y:160}},
+    {id:'archive',name:'Archive',type:'script',position:{x:600,y:160}},
+    {id:'delivery',name:'Delivery',type:'script',position:{x:900,y:90}}
+  ],edges:[{id:'small-edge',source:'route',target:'small',condition:{type:'route',values:['small']}},{id:'large-edge',source:'route',target:'large'},{id:'small-delivery',source:'small',target:'delivery'},{id:'large-archive',source:'large',target:'archive'},{id:'archive-delivery',source:'archive',target:'delivery'}]};
+    renderCanvas();renderProperties()`);
+  assert.equal(app.evaluate(`flowDiagnostics().some(x=>x.title==='Delivery'&&x.level==='warn')`),true);
 });

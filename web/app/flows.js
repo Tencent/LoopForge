@@ -101,6 +101,7 @@ function syncPreviewBuildGraph(){
     agentId:PREVIEW_BUILD_AGENT_ID,
     executorId:workflowPreviewExecutor(wf),
     executionScope:'run',
+    joinRule:'none_failed_min_one_success',
     onFailure:'fail',
     retryStrategy:'targeted_fix',
     maxAttempts:2,
@@ -221,7 +222,8 @@ function addNode(type,opts={}){
     if(existing){openNodeDrawer(existing.id);return toast('预览节点已存在，可拖拽连线调整它的位置')}
     flowHistory.record();
     ensurePreviewContract();
-    state.workflow.nodes.push({id:PREVIEW_BUILD_NODE_ID,name:'构建静态站点',type:'agent',agentId:PREVIEW_BUILD_AGENT_ID,executorId:workflowPreviewExecutor(state.workflow),executionScope:'run',onFailure:'fail',retryStrategy:'targeted_fix',maxAttempts:2,maxReworks:1,position:at,artifactOutputs:[{name:'frontend-preview',path:'dist/index.html',required:true}]});
+    state.workflow.nodes.push({id:PREVIEW_BUILD_NODE_ID,name:'构建静态站点',type:'agent',agentId:PREVIEW_BUILD_AGENT_ID,executorId:workflowPreviewExecutor(state.workflow),executionScope:'run',joinRule:'none_failed_min_one_success',onFailure:'fail',retryStrategy:'targeted_fix',maxAttempts:2,maxReworks:1,position:at,artifactOutputs:[{name:'frontend-preview',path:'dist/index.html',required:true}]});
+    state.selectedNode=PREVIEW_BUILD_NODE_ID;
     dirty();openNodeDrawer(PREVIEW_BUILD_NODE_ID);
     return;
   }
@@ -234,6 +236,15 @@ function addNode(type,opts={}){
   state.workflow.nodes.push(node);
   dirty();openNodeDrawer(node.id);
 }
+// A default branch needs both an unconditional target edge and a conditional sibling.
+function clearInvalidDefaultTargets(wf){
+  for(const node of wf.nodes){
+    if(!node.defaultTarget)continue;
+    const outgoing=wf.edges.filter(edge=>edge.source===node.id);
+    const fallback=outgoing.find(edge=>edge.target===node.defaultTarget);
+    if(!fallback||fallback.condition||!outgoing.some(edge=>edge.condition))node.defaultTarget='';
+  }
+}
 // Removes a node with its edges and any reject routes pointing at it.
 function removeNode(id){
   const wf=state.workflow,n=wf?.nodes.find(x=>x.id===id);
@@ -242,7 +253,10 @@ function removeNode(id){
   flowHistory.record();
   wf.nodes=wf.nodes.filter(x=>x.id!==id);
   wf.edges=wf.edges.filter(e=>e.source!==id&&e.target!==id);
-  wf.nodes.forEach(x=>{if(x.rejectTo===id){x.rejectTo='';x.onFailure='fail'}});
+  wf.nodes.forEach(x=>{
+    if(x.rejectTo===id){x.rejectTo='';x.onFailure='fail'}
+  });
+  clearInvalidDefaultTargets(wf);
   if(isPreviewBuildNode(id)&&wf.preview)delete wf.preview;
   if(state.selectedNode===id)state.selectedNode=null;
   if(state.renamingNode===id)state.renamingNode=null;
@@ -419,6 +433,7 @@ function flowDiagnostics(){
   const autoSandbox=state.workflow.autoSelectSandbox,sandboxID=state.workflow.sandboxProfileId;
   items.push({level:autoSandbox||state.data.sandboxes?.some(s=>s.id===sandboxID)?'ok':'error',title:'运行沙箱',detail:autoSandbox?'运行时按项目和任务选择沙箱':sandboxID?`整条流程使用 ${sandboxID}`:'尚未选择运行沙箱'});
   nodes.forEach(n=>{if(isPreviewBuildNode(n.id)){const inDeg=edges.filter(e=>e.target===n.id).length;items.push({level:inDeg?'ok':'warn',title:n.name,detail:inDeg?`插在流程中间：${workflowPreviewModel(state.workflow)} 构建静态站点，运行成功后归档预览`:'还没有前序依赖，会作为流程入口直接运行；请从上游节点连线到此'});return}if(n.type==='agent'){const missing=[];const agent=workflowAgent(n.agentId);const generic=catalogGeneric(state.workflow);if(!n.agentId)missing.push('角色');else if(!agent)missing.push(generic?'通用模板角色未加载':'角色不属于当前项目或未共享');else if(!generic&&!(agent.executorId||n.executorId))missing.push('角色未选模型');if(!(n.artifactOutputs||[]).length&&!(agent?.artifactOutputs||[]).length)missing.push('角色产物契约');items.push({level:missing.length?'warn':'ok',title:n.name,detail:missing.length?`尚未配置：${missing.join('、')}`:generic?'已绑定通用模板角色；任务书与门禁在角色定义中':'已绑定角色；任务书与门禁在角色定义中'})}if(n.type==='sop'){const missing=[];const wf=sopWorkflowChoices(state.workflow.id).find(w=>w.id===n.sopWorkflowId)||(state.data.workflows||[]).find(w=>w.id===n.sopWorkflowId);if(!n.sopWorkflowId)missing.push('要跑的 LOOP');else if(!wf)missing.push('引用的 LOOP 不存在');if(n.sopWorkflowId===state.workflow.id)missing.push('不能引用自己');items.push({level:missing.length?'error':'ok',title:n.name,detail:missing.length?`尚未配置：${missing.join('、')}`:`引用「${wf.name}」，产物交给下一步`})}if(n.rejectTo&&!nodes.some(x=>x.id===n.rejectTo))items.push({level:'error',title:n.name,detail:'失败打回目标不存在'})});
+  nodes.forEach(n=>{if((incoming.get(n.id)||0)>1&&(!n.joinRule||n.joinRule==='all_success')&&flowHasConditionalAncestor(n.id,edges))items.push({level:'warn',title:n.name,detail:'此节点汇合条件分支；全部上游成功规则会在上游跳过时跳过本节点。'})});
   if(nodes.length>1&&edges.length===0)items.push({level:'warn',title:'成功路径',detail:'多个节点之间没有依赖关系，将同时启动'});if(!items.some(x=>x.level==='error'))items.push({level:'ok',title:'结构校验',detail:'未发现阻止保存或试运行的结构错误'});return items;
 }
 function setFlowView(mode){$$('.canvas-view-toggle button').forEach(b=>b.classList.toggle('active',b.dataset.flowView===mode));$('#canvas').hidden=mode!=='canvas';$('#flowCheckPanel').hidden=mode!=='check';$('#flowStageWrap')?.classList.toggle('check-mode',mode==='check');if(mode==='check')$('#flowCheckPanel').innerHTML=`<div class="page-heading" style="margin-bottom:14px"><div><h1 style="font-size:17px">配置检查</h1><p>运行前检查入口、CLI、产物契约和返工路径。</p></div></div><div class="flow-check-grid">${flowDiagnostics().map(x=>`<div class="flow-check-item ${x.level}"><b>${escapeHTML(x.title)}</b><p>${escapeHTML(x.detail)}</p></div>`).join('')}</div>`;else flowViewport.renderMinimap()}
@@ -427,7 +442,7 @@ function setThemePreference(preference){if(!['light','dark','system'].includes(p
 function renderThemeSegment({snap=false}={}){const preference=typeof activeThemePreference==='string'?activeThemePreference:readThemePreference();document.querySelectorAll('.upp-theme-seg').forEach(seg=>{seg.querySelectorAll('[data-theme-pref]').forEach(button=>{const on=button.dataset.themePref===preference;button.classList.toggle('active',on);if(button.getAttribute('aria-checked')!==String(on))button.setAttribute('aria-checked',String(on));button.tabIndex=on?0:-1});const tabs=window.AgentFlowSlidingTabs;if(!tabs)return;const indicator=seg.querySelector(':scope > [data-sliding-indicator]');if(snap&&indicator)indicator.style.transition='none';tabs.mount(seg,{activeSelector:'.active',auto:true,compact:true,cacheKey:'upp-theme-seg'}).refresh();if(snap&&indicator){indicator.getBoundingClientRect();requestAnimationFrame(()=>{indicator.style.transition=''})}})}
 function renderThemeToggle(){renderThemeSegment();const light=document.documentElement.dataset.theme==='light',button=$('#themeToggle');if(!button)return;window.AgentFlowHarnessIcons?.render(button.querySelector('span'),light?'moon':'sun');button.querySelector('b').textContent=light?'深色':'亮色';button.title=light?'切换到深色主题':'切换到亮色主题'}
 function toggleTheme(){const theme=document.documentElement.dataset.theme==='light'?'dark':'light';try{localStorage.setItem(THEME_KEY,theme)}catch{}applyTheme(theme)}
-function statusText(s){return ({pending:'待执行',running:'运行中',succeeded:'已完成',failed:'失败',waiting_approval:'待确认',cancelled:'已取消'}[s]||'')}
+function statusText(s){return ({pending:'待执行',running:'运行中',succeeded:'已完成',skipped:'已跳过',failed:'失败',waiting_approval:'待确认',cancelled:'已取消'}[s]||'')}
 function canvasPoint(e){return flowViewport.toWorld(e.clientX,e.clientY)}
 function flowReaches(from,to){
   const seen=new Set([from]),queue=[from];
@@ -543,12 +558,13 @@ function flowRejectPath(src,tgt){
   const y=Math.max(nodeBox(src).bottom,nodeBox(tgt).bottom)+46;
   return {d:`M ${a.x} ${a.y} C ${a.x+44} ${a.y}, ${a.x+44} ${y}, ${a.x} ${y} L ${b.x} ${y} C ${b.x-44} ${y}, ${b.x-44} ${b.y}, ${b.x} ${b.y}`,mx:(a.x+b.x)/2,my:y};
 }
-async function deleteEdgeById(id){
-  const edge=state.workflow?.edges.find(x=>x.id===id);
+async function deleteEdgeById(id,source){
+  const edge=state.workflow?.edges.find(x=>x.source===source&&x.id===id);
   if(!edge)return;
   if(flowReadOnly())return toast(flowReadOnlyReason());
   flowHistory.record();
-  state.workflow.edges=state.workflow.edges.filter(x=>x.id!==id);
+  state.workflow.edges=state.workflow.edges.filter(x=>x!==edge);
+  clearInvalidDefaultTargets(state.workflow);
   dirty();renderCanvas();renderProperties();flowToast('已删除连线',{undo:true});
 }
 async function deleteRejectEdgeByNodeId(nodeId){
@@ -566,7 +582,9 @@ function renderEdges(){
     wf.edges.forEach(e=>{
       const a=byId.get(e.source),b=byId.get(e.target);if(!a||!b)return;
       const p=flowPortPoint(a,'success'),q=flowPortPoint(b,'in'),d=flowCurve(p,q);
-      html+=`<g class="fd-e" data-edge="${escapeHTML(e.id)}"><path class="fd-e-hit" d="${d}"/><path class="edge fd-e-path" d="${d}"/>${del((p.x+q.x)/2,(p.y+q.y)/2)}<title>${escapeHTML(a.name)} → ${escapeHTML(b.name)} · 点击删除</title></g>`;
+      const label=a.defaultTarget===e.target?'默认':e.condition?.type==='route'?`route: ${(e.condition.values||[]).join(', ')}`:e.condition?.type==='artifact'?`${e.condition.artifact}${e.condition.pointer||''} = ${JSON.stringify(e.condition.equals)}`:'';
+      const mx=(p.x+q.x)/2,my=(p.y+q.y)/2;
+      html+=`<g class="fd-e" data-edge="${escapeHTML(e.id)}" data-edge-source="${escapeHTML(e.source)}"><path class="fd-e-hit" d="${d}"/><path class="edge fd-e-path" d="${d}"/>${label?`<g class="fd-e-label" transform="translate(${mx} ${my})"><rect x="-65" y="-10" width="130" height="20" rx="10"/><text text-anchor="middle" y="3.5">${escapeHTML(label.length>24?label.slice(0,24)+'…':label)}</text></g>`:''}${del(mx+75,my)}<title>${escapeHTML(a.name)} → ${escapeHTML(b.name)} · 点击配置条件</title></g>`;
     });
     wf.nodes.forEach(n=>{
       const t=n.rejectTo&&byId.get(n.rejectTo);if(!t)return;
@@ -588,7 +606,7 @@ function renderEdges(){
     const g=edgeAt(e);if(!g)return;
     e.stopPropagation();
     if(state.connectFrom)return;
-    if(g.dataset.edge)deleteEdgeById(g.dataset.edge);else deleteRejectEdgeByNodeId(g.dataset.rejectFrom);
+    if(g.dataset.edgeSource){if(e.target.closest('.fd-e-del'))deleteEdgeById(g.dataset.edge,g.dataset.edgeSource);else openNodeDrawer(g.dataset.edgeSource)}else deleteRejectEdgeByNodeId(g.dataset.rejectFrom);
   });
 }
 
@@ -696,7 +714,10 @@ function artifactRowsHTML(n){
 function bindArtifactRows(host,n){
   const box=host.querySelector('#artifactContractRows');if(!box)return;
   box.querySelectorAll('[data-artifact-row]').forEach(row=>row.querySelectorAll('[data-ak]').forEach(el=>el.oninput=()=>{const value=el.dataset.ak==='required'?el.checked:el.value;n.artifactOutputs[Number(row.dataset.artifactRow)][el.dataset.ak]=value;dirty()}));
-  box.querySelectorAll('[data-remove-artifact]').forEach(el=>el.onclick=()=>{n.artifactOutputs.splice(Number(el.dataset.removeArtifact),1);box.innerHTML=artifactRowsHTML(n);bindArtifactRows(host,n);dirty()});
+  box.querySelectorAll('[data-remove-artifact]').forEach(el=>el.onclick=()=>{
+    n.artifactOutputs.splice(Number(el.dataset.removeArtifact),1);
+    box.innerHTML=artifactRowsHTML(n);bindArtifactRows(host,n);dirty();
+  });
 }
 function listEditorHTML(items, placeholder){
   const rows=(items&&items.length?items:['']).map((v,i)=>`<div class="list-edit-row" data-i="${i}"><textarea rows="2" placeholder="${escapeHTML(placeholder)}">${escapeHTML(v||'')}</textarea><button type="button" data-list-del="${i}" title="删除">×</button></div>`).join('');
@@ -1084,6 +1105,52 @@ function renderPreviewBuildProperties(host,n){
   const spaBox=$('#previewNodeSpa');
   if(spaBox)spaBox.onchange=()=>{flowHistory.record();updatePreviewContract({spaFallback:spaBox.checked});dirty();};
 }
+function flowHasConditionalAncestor(id,edges,seen=new Set()){
+  if(seen.has(id))return false;
+  seen.add(id);
+  const byId=new Map((state.workflow?.nodes||[]).map(n=>[n.id,n]));
+  return edges.some(e=>{
+    if(e.target!==id)return false;
+    const source=byId.get(e.source);
+    return !!e.condition||source?.defaultTarget===e.target||flowHasConditionalAncestor(e.source,edges,seen);
+  });
+}
+function flowRouteOptionAllowed(n,type){
+  if(type==='route')return n.type==='agent'||((n.type==='script'||n.type==='command')&&n.executionScope!=='repositories');
+  if(type==='artifact')return (n.type==='agent'||n.type==='script'||n.type==='command')&&n.executionScope!=='repositories';
+  return true;
+}
+function clearedRoutingSummary(n,conditioned){
+  const parts=[];
+  if(conditioned.length)parts.push(`${conditioned.length} 条分支条件`);
+  if(n.defaultTarget)parts.push('默认分支');
+  return parts.join('和');
+}
+function confirmRepositoryScopeSwitch(n,conditioned){
+  return afConfirm({title:'切换到每个代码仓库？',message:`仓库级脚本不能按路由标签或 JSON 产物选路，切换后会清除该节点的${clearedRoutingSummary(n,conditioned)}。`,danger:true,confirmText:'清除并切换',cancelText:'保持当前范围'});
+}
+function clearRoutingForRepositoryScope(n,conditioned){
+  conditioned.forEach(edge=>{delete edge.condition});
+  n.defaultTarget='';
+  clearInvalidDefaultTargets(state.workflow);
+}
+function flowRoutingPane(n){
+  const approval=n.type==='approval';
+  const outgoing=approval?[]:(state.workflow.edges||[]).filter(e=>e.source===n.id);
+  const incoming=(state.workflow.edges||[]).filter(e=>e.target===n.id);
+  const hasRouting=outgoing.length>1||incoming.length>1||outgoing.some(e=>e.condition)||!!n.defaultTarget||
+    (!!n.joinRule&&n.joinRule!=='all_success');
+  if(!hasRouting)return '';
+  const warning=incoming.length>1&&(!n.joinRule||n.joinRule==='all_success')&&flowHasConditionalAncestor(n.id,state.workflow.edges||[])?'<p class="prop-hint">此节点汇合条件分支；默认规则会在任一上游跳过时跳过本节点。</p>':'';
+  const byId=new Map(state.workflow.nodes.map(x=>[x.id,x]));
+  const options=outgoing.map(e=>`<option value="${escapeHTML(e.target)}" ${n.defaultTarget===e.target?'selected':''}>${escapeHTML(byId.get(e.target)?.name||e.target)}</option>`).join('');
+  const rows=outgoing.map(e=>{
+    const c=e.condition||{},isDefault=n.defaultTarget===e.target;
+    const routeAllowed=flowRouteOptionAllowed(n,'route'),artifactAllowed=flowRouteOptionAllowed(n,'artifact');
+    return `<div class="fd-field" data-route-edge="${escapeHTML(e.id)}"><label>→ ${escapeHTML(byId.get(e.target)?.name||e.target)}</label><select class="select" data-route-field="type" ${isDefault?'disabled':''}><option value="" ${!c.type?'selected':''}>无条件</option><option value="route" ${c.type==='route'?'selected':''} ${routeAllowed?'':'disabled'}>路由标签${routeAllowed?'':'（仅支持 Run 级 Agent/脚本节点）'}</option><option value="artifact" ${c.type==='artifact'?'selected':''} ${artifactAllowed?'':'disabled'}>JSON 产物字段${artifactAllowed?'':'（仅支持 Run 级 Agent/脚本节点）'}</option></select>${c.type==='route'?`<input class="input" data-route-field="values" value="${escapeHTML((c.values||[]).join(', '))}" placeholder="标签，多个用逗号分隔">`:''}${c.type==='artifact'?`<input class="input" data-route-field="artifact" value="${escapeHTML(c.artifact||'')}" placeholder="已声明的产物名称"><input class="input" data-route-field="pointer" value="${escapeHTML(c.pointer||'')}" placeholder="JSON Pointer，例如 /size"><input class="input" data-route-field="equals" value="${escapeHTML(JSON.stringify(c.equals===undefined?'':c.equals))}" placeholder='JSON 值，例如 "small"'>`:''}${isDefault?'<p class="prop-hint">所有条件均未命中时走此分支。</p>':''}</div>`;
+  }).join('');
+  return `<section class="fd-sec"><div class="fd-sec-h"><span class="fd-sec-t">分支与汇合</span></div><div class="fd-sec-b"><div class="fd-field"><label>汇合规则</label><select class="select" data-p="joinRule"><option value="" ${!n.joinRule||n.joinRule==='all_success'?'selected':''}>全部上游成功</option><option value="none_failed_min_one_success" ${n.joinRule==='none_failed_min_one_success'?'selected':''}>至少一个成功，允许其他分支跳过</option></select>${warning}</div>${rows}${outgoing.length?`<div class="fd-field"><label>默认分支</label><select class="select" data-p="defaultTarget"><option value="">不设置</option>${options}</select><p class="prop-hint">默认分支应选择无条件连线；没有命中且未设置默认分支时节点失败。</p></div>`:''}${n.type==='script'?'<p class="prop-hint">脚本通过环境变量 LOOPFORGE_ROUTE_FILE 指定的文件提交 JSON，例如 {"route":"small"}。</p>':''}</div></section>`;
+}
 function renderProperties(){
   const host=$('#properties');if(!host)return;
   const n=state.workflow?.nodes.find(node=>node.id===state.selectedNode);
@@ -1102,15 +1169,17 @@ function renderProperties(){
     const scriptPreview=scriptLines?`<div class="script-snippet-preview" id="previewScriptNodeEditor" title="点击在代码编辑器中修改"><code>${escapeHTML(n.script.slice(0, 120))}${n.script.length>120?'…':''}</code></div>`:'';
     const scriptPane=n.type==='script'?`<div class="fd-row2"><div class="fd-field"><label>脚本语言</label><select class="select" data-p="scriptLanguage"><option value="shell" ${n.scriptLanguage!=='python'?'selected':''}>Shell</option><option value="python" ${n.scriptLanguage==='python'?'selected':''}>Python</option></select></div><div class="fd-field"><label>执行范围</label><select class="select" data-p="executionScope"><option value="run" ${n.executionScope!=='repositories'?'selected':''}>Run 工作区</option><option value="repositories" ${n.executionScope==='repositories'?'selected':''}>每个代码仓库</option></select></div></div><div class="fd-field"><label>脚本内容</label><button type="button" class="script-editor-launch-btn btn-open-code-editor" id="openScriptNodeEditor"><span>${flowPalette.icon('code',14)} 打开代码编辑器编写脚本</span><span class="script-btn-badge">${scriptCountText}</span></button>${scriptPreview}<p class="prop-hint">逐仓库执行时会自动进入每个仓库根目录，无需手写 cd。</p></div>`:'';
     const approvalPane=n.type==='approval'?`<div class="fd-field"><label>需要确认什么（可选）</label><textarea class="input" rows="4" data-p="taskPrompt" placeholder="例如：检查 MR 的改动范围和测试结果，确认可以上线">${escapeHTML(n.taskPrompt||'')}</textarea><p class="prop-hint">确认步骤会停在「待我确认」，批准后才继续；这段说明会和上下游一起展示给确认人。</p></div>`:'';
+    const nodePromptPane=n.type==='agent'?flowFold('nodePrompt','节点提示词','本节点额外要求',`<div class="fd-field"><label>本节点补充提示词（可选）</label><textarea class="input" rows="4" data-p="nodePrompt" placeholder="例如：只检查登录限流相关代码，并补充边界测试">${escapeHTML(n.nodePrompt||'')}</textarea><p class="prop-hint">执行时会追加到角色 Prompt 后面；同一个角色可以在不同节点使用不同要求。</p></div>`,false):'';
+    const scriptArtifacts=n.type==='script'?`<div class="fd-field"><label>本节点产物契约</label><div id="artifactContractRows">${artifactRowsHTML(n)}</div><button type="button" class="fd-btn ghost sm" id="addSOPHandoff">${flowPalette.icon('plus',13)}<span>增加产物</span></button></div>`:'';
     const knowledgeBtn=n.type==='agent'?`<div class="fd-field"><button type="button" id="nodeKnowledgeRefs" class="fd-btn ghost sm">${flowPalette.icon('layers',13)}<span>关联知识库 · ${(n.knowledgeRefs||[]).length}</span></button><p class="prop-hint">为当前节点指定要检索的个人知识库连接器（若角色开启了「接入我的知识库」则自动取并集，同一连接器以节点指定的子知识库范围为准），引用会标记在产物里。</p></div>`:'';
-    const main=`<section class="fd-sec"><div class="fd-sec-h"><span class="fd-sec-t">主配置</span></div><div class="fd-sec-b">${n.type==='agent'?agentBindCard(n)+knowledgeBtn:''}${sopSelect}${scriptPane}${approvalPane}</div></section>`;
+    const main=`<section class="fd-sec"><div class="fd-sec-h"><span class="fd-sec-t">主配置</span></div><div class="fd-sec-b">${n.type==='agent'?agentBindCard(n)+knowledgeBtn:''}${sopSelect}${scriptPane}${approvalPane}${nodePromptPane}${scriptArtifacts}</div></section>`;
     const gates=n.type==='agent'?flowFold('gates','校验顺序',`${effectiveNodeArtifacts(n,workflowAgent(n.agentId)).length} 产物 · ${roleGates(workflowAgent(n.agentId)).length} 门禁`,nodeGatePane(n),false):'';
     const wantReject=state.flowWantReject??(n.onFailure==='reject');
     const targets=state.workflow.nodes.filter(x=>x.id!==n.id).map(x=>`<option value="${escapeHTML(x.id)}" ${x.id===n.rejectTo?'selected':''}>${escapeHTML(x.name)}</option>`).join('');
     const fail=`<section class="fd-sec"><div class="fd-sec-h"><span class="fd-sec-t">失败后</span></div><div class="fd-sec-b"><div class="fd-seg fd-seg-full" role="radiogroup" aria-label="失败后"><button type="button" role="radio" data-fail="fail" class="${wantReject?'':'active'}" aria-checked="${!wantReject}">${flowPalette.icon('stop',13)}<span>停下来</span></button><button type="button" role="radio" data-fail="reject" class="${wantReject?'active':''}" aria-checked="${wantReject}">${flowPalette.icon('rotate',13)}<span>打回重做</span></button></div>${wantReject?`<div class="fd-field"><label>打回到</label><select id="rejectTarget" class="select"><option value="">请选择步骤</option>${targets}</select><p class="prop-hint">重置目标步骤及其下游后重跑。也可以从节点的「失败打回」出口直接拖线。</p></div>`:'<p class="prop-hint">重试用尽后标记失败；运行页可以人工通过该节点继续下游。</p>'}</div></section>`;
     const metric=n.type==='sop'?'<p class="prop-hint">子 LOOP 容器不重复计入阶段耗时；请在子流程的实际执行节点上标注统计阶段。</p>':`<div class="fd-field"><label>效能统计阶段</label><select class="select" data-p="metricStage"><option value="" ${!n.metricStage?'selected':''}>未标注（旧流程兼容推断）</option><option value="clarification" ${n.metricStage==='clarification'?'selected':''}>需求澄清</option><option value="development" ${n.metricStage==='development'?'selected':''}>研发</option><option value="testing" ${n.metricStage==='testing'?'selected':''}>测试</option><option value="none" ${n.metricStage==='none'?'selected':''}>不计入阶段耗时</option></select><p class="prop-hint">保存后的新 Run 会冻结此标记；历史 Run 不会被新配置改写。</p></div>`;
     const adv=flowFold('adv','高级','重试 · 返工 · 统计',`<div class="fd-row2"><div class="fd-field"><label>单轮最多试几次</label><input class="input" type="number" min="1" max="9" data-p="maxAttempts" value="${n.maxAttempts||1}"></div><div class="fd-field"><label>最多返工几轮</label><input class="input" type="number" min="1" max="20" data-p="maxReworks" value="${n.maxReworks||3}"></div></div><div class="fd-field"><label>返工策略</label><select class="select" data-p="retryStrategy"><option value="targeted_fix" ${n.retryStrategy!=='full_redo'?'selected':''}>只修失败项</option><option value="full_redo" ${n.retryStrategy==='full_redo'?'selected':''}>整步重做</option></select></div>${n.type==='script'?`<label class="fd-check"><input type="checkbox" data-p="runOnWorkspaceRebuild" ${n.runOnWorkspaceRebuild?'checked':''}><span>工作区重建时先执行（脚本需可重复执行）</span></label>`:''}${metric}`,false);
-    host.innerHTML=`${flowDrawerHead(n,kind,FLOW_NODE_TYPES[kind].label)}<div class="fd-db">${main}${gates}${fail}${adv}</div><div class="fd-df"><span class="fd-df-hint"><kbd>F2</kbd> 重命名 · <kbd>⌘D</kbd> 复制 · <kbd>Del</kbd> 删除 · <kbd>⌘Z</kbd> 撤销</span></div>`;
+    host.innerHTML=`${flowDrawerHead(n,kind,FLOW_NODE_TYPES[kind].label)}<div class="fd-db">${main}${gates}${fail}${flowRoutingPane(n)}${adv}</div><div class="fd-df"><span class="fd-df-hint"><kbd>F2</kbd> 重命名 · <kbd>⌘D</kbd> 复制 · <kbd>Del</kbd> 删除 · <kbd>⌘Z</kbd> 撤销</span></div>`;
     bindNodeProperties(host,n);
     host.querySelector('#nodeKnowledgeRefs')?.addEventListener('click',()=>window.editKnowledgeRefs(state.workflow.projectId||state.projectFilter,n.knowledgeRefs||[],refs=>{
       if(flowReadOnly() || !state.workflow?.nodes.includes(n))throw new Error('流程版本已切换，请重新选择知识库');
@@ -1128,12 +1197,45 @@ function renderProperties(){
   setFlowDrawer(true,n.id);
 }
 function bindNodeProperties(host,n){
-  host.querySelectorAll('[data-p]').forEach(el=>el.oninput=()=>{
+  host.querySelectorAll('[data-route-edge]').forEach(row=>{
+    const edge=state.workflow.edges.find(e=>e.source===n.id&&e.id===row.dataset.routeEdge);if(!edge)return;
+    row.querySelectorAll('[data-route-field]').forEach(el=>el.onchange=()=>{
+      const key=el.dataset.routeField;flowHistory.record();
+      if(key==='type'){
+        if(el.value==='route'&&!flowRouteOptionAllowed(n,'route')){toast('子 SOP 或仓库级脚本不能配置路由标签');renderProperties();return}
+        if(el.value==='artifact'&&!flowRouteOptionAllowed(n,'artifact')){toast('子 SOP 或仓库级脚本不能配置 JSON 产物选路');renderProperties();return}
+        edge.condition=el.value?{type:el.value,...(el.value==='route'?{values:[]}:{artifact:'',pointer:'',equals:''})}:undefined;clearInvalidDefaultTargets(state.workflow);renderProperties()
+      }
+      else if(key==='values')edge.condition.values=el.value.split(',').map(x=>x.trim()).filter(Boolean);
+      else if(key==='equals'){try{edge.condition.equals=JSON.parse(el.value)}catch{toast('比较值需要是有效 JSON，例如 "small"');return}}
+      else edge.condition[key]=el.value;
+      dirty();renderCanvas();
+    });
+  });
+  host.querySelectorAll('[data-p]').forEach(el=>el.oninput=async()=>{
     const key=el.dataset.p;
+    // A repository-scoped script cannot select a branch, so keeping the old
+    // conditions would only fail at save time. Offer to clear them instead of
+    // leaving a greyed-out option next to a condition nothing can evaluate.
+    if(key==='executionScope'&&el.value==='repositories'){
+      const conditioned=(state.workflow.edges||[]).filter(edge=>edge.source===n.id&&edge.condition);
+      if(conditioned.length||n.defaultTarget){
+        if(!await confirmRepositoryScopeSwitch(n,conditioned)){renderProperties();return}
+        flowHistory.record({merge:`p:${n.id}:${key}`});
+        clearRoutingForRepositoryScope(n,conditioned);
+        n[key]=el.value;
+        toast('已清除该节点的分支条件：仓库级脚本不能选路');
+        dirty();renderProperties();renderCanvas();return;
+      }
+    }
     if(key!=='sopWorkflowId')flowHistory.record({merge:`p:${n.id}:${key}`});
     n[key]=el.type==='checkbox'?el.checked:el.type==='number'?Number(el.value):el.value;
+    if(key==='defaultTarget'){
+      if(n.defaultTarget){const edge=state.workflow.edges.find(e=>e.source===n.id&&e.target===n.defaultTarget);if(edge)delete edge.condition}
+      clearInvalidDefaultTargets(state.workflow);
+    }
     dirty();
-    if(key==='agentId'){renderProperties();renderCanvas();return}
+    if(['agentId','executionScope','defaultTarget','joinRule'].includes(key))renderProperties();
     renderCanvas();
   });
   const sopSel=host.querySelector('[data-p="sopWorkflowId"]');
@@ -1150,12 +1252,10 @@ function bindNodeProperties(host,n){
     dirty();renderProperties();renderCanvas();
   };
   host.querySelector('#addSOPHandoff')?.addEventListener('click',()=>{flowHistory.record();n.artifactOutputs=n.artifactOutputs||[];n.artifactOutputs.push({name:'',path:'',mediaType:'text/markdown',required:true});renderProperties();dirty()});
-  if(n.type==='sop')bindArtifactRows(host,n);
-  if(catalogGeneric(state.workflow)){
-    const agent=workflowAgent(n.agentId);
-    host.querySelector('#openBoundAgent')?.addEventListener('click',()=>openAgentWizard(agent));
-    host.querySelector('#openBoundAgentValidation')?.addEventListener('click',()=>openAgentWizard(agent,3));
-  }
+  if(['sop','script'].includes(n.type))bindArtifactRows(host,n);
+  const openBound=$('#openBoundAgent');if(openBound)openBound.onclick=()=>{const agent=workflowAgent(n.agentId);if(!agent)return;if(!catalogGeneric(state.workflow))switchView('agents');openAgentWizard(agent,2)};
+  const openBoundValidation=$('#openBoundAgentValidation');if(openBoundValidation)openBoundValidation.onclick=()=>{const agent=workflowAgent(n.agentId);if(!agent)return;if(!catalogGeneric(state.workflow))switchView('agents');openAgentWizard(agent,3)};
+
   host.querySelectorAll('[data-fail]').forEach(b=>b.onclick=()=>{
     if(b.dataset.fail==='fail'){state.flowWantReject=false;if(!setRejectTo(n.id,'')&&n.onFailure==='reject'){n.onFailure='fail';dirty()}renderProperties();return}
     state.flowWantReject=true;renderProperties();host.querySelector('#rejectTarget')?.focus();
@@ -1182,7 +1282,10 @@ function bindNodeProperties(host,n){
   if(openScriptBtn) openScriptBtn.onclick=triggerScriptEditor;
   if(previewScriptBtn) previewScriptBtn.onclick=triggerScriptEditor;
 }
-function dirty(){state.workflowDirty=true;renderFlowHeader();flowViewport.renderMinimap()}
+function dirty(){
+  state.workflowDirty=true;renderFlowHeader();flowViewport.renderMinimap();
+  if($('#flowCheckPanel')?.hidden===false)setFlowView('check');
+}
 function markWorkflowClean(){state.workflowDirty=false;state.workflowSaved=clone(state.workflow);renderFlowHeader();rememberOpenWorkflow()}
 async function discardWorkflow(){
   if(!state.workflowDirty||!state.workflowSaved)return;

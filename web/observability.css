@@ -75,6 +75,7 @@
 .graph-node:hover,.graph-node.selected{border-color:var(--blue);box-shadow:0 0 0 3px var(--blue-soft)}
 .graph-node.running{border-color:var(--blue)}
 .graph-node.succeeded{border-color:rgba(52,211,153,.5)}
+.graph-node.skipped{background:var(--bg-soft);color:var(--muted-2)}
 .graph-node.failed{border-color:rgba(248,113,113,.6)}
 .graph-node.waiting_approval{border-color:rgba(251,191,36,.6)}
 .graph-node.cancelled{border-color:var(--line-strong);background:var(--bg-soft)}
@@ -120,6 +121,9 @@
   .node-inspector-title .node-activity-inline.is-running b{animation:none;background:none;color:var(--hui-text)}
 }
 .node-error,.node-output{margin-top:10px;border:1px solid var(--line);border-radius:9px;overflow:hidden}
+.node-skip-reason{margin-top:10px;border:1px solid var(--line);border-radius:9px;overflow:hidden;background:rgba(148,163,184,.08)}
+.node-skip-reason strong{display:block;padding:8px 10px;background:rgba(148,163,184,.12);color:var(--muted-2);font-size:10px}
+.node-skip-reason p{margin:0;padding:10px;color:var(--muted);font-size:10px;line-height:1.55}
 .node-output>div{height:35px;display:flex;align-items:center;justify-content:space-between;padding:0 10px;border-bottom:1px solid var(--line);background:var(--bg-soft)}
 .node-output b{font-size:10px}
 .node-output>div button{border:0;background:transparent;color:var(--blue);cursor:pointer;font-size:9px}
@@ -157,6 +161,7 @@
 .obs-table .run-row,.run-row{cursor:pointer}
 .node-artifact-list{display:grid;gap:8px}
 .node-artifact-card{display:flex;align-items:center;gap:9px;padding:9px 10px;border:1px solid var(--line);border-radius:9px;background:var(--panel);cursor:pointer;transition:border-color .14s}
+.node-artifact-card.stale{opacity:.65}
 .node-artifact-card:hover{border-color:var(--blue)}
 .node-artifact-info{display:flex;flex:1;flex-direction:column;gap:3px;min-width:0;text-align:left}
 .node-artifact-info>b{font-size:11px;overflow-wrap:anywhere}

@@ -215,6 +215,7 @@ html[data-theme="dark"] #flowView{
 #flowView .fd-status{flex:none;padding:2px 6px;border-radius:5px;font-size:10.5px;font-weight:600;background:var(--fd-soft);color:var(--fd-ink-3)}
 #flowView .fd-status.s-running{background:rgb(var(--fd-accent) / .12);color:rgb(var(--fd-accent))}
 #flowView .fd-status.s-succeeded{background:rgb(var(--fd-ok) / .12);color:rgb(var(--fd-ok))}
+#flowView .fd-status.s-skipped{background:var(--hui-canvas);color:var(--hui-text-muted)}
 #flowView .fd-status.s-failed{background:rgb(var(--fd-rj) / .12);color:rgb(var(--fd-rj))}
 #flowView .fd-status.s-waiting_approval{background:rgb(var(--fd-warn) / .14);color:rgb(var(--fd-warn))}
 #flowView .fd-node.s-running{border-color:rgb(var(--fd-accent) / .7)}

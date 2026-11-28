@@ -169,7 +169,31 @@ func (e *Engine) Approve(runID, nodeID, humanContext string, expected ...NodeExp
 	if n == nil || n.Status != "waiting_approval" {
 		return fmt.Errorf("node is not waiting for approval")
 	}
+	wf := workflowForRun(e.repo, r)
+	var routeDecision *domain.RouteDecision
+	if n.GateResult != nil {
+		if n.RouteDecision != nil {
+			routeDecision = n.RouteDecision
+		} else {
+			var definition *domain.WorkflowNode
+			for i := range wf.Nodes {
+				if wf.Nodes[i].ID == nodeID {
+					definition = &wf.Nodes[i]
+					break
+				}
+			}
+			if definition == nil {
+				return fmt.Errorf("approval node definition not found")
+			}
+			var err error
+			routeDecision, err = e.decideNodeRoute(context.Background(), r.ID, wf, *definition, n.GateResult.Route, routingArtifactsForNode(r, nodeID))
+			if err != nil {
+				return err
+			}
+		}
+	}
 	n.Status = "succeeded"
+	n.RouteDecision = routeDecision
 	n.FinishedAt = time.Now().UTC()
 	note := recordHumanContext(&r, nodeID, "人工批准继续", humanContext)
 	decision := "# Approval\n\nApproved by a human gate.\n"
@@ -179,6 +203,9 @@ func (e *Engine) Approve(runID, nodeID, humanContext string, expected ...NodeExp
 	appendArtifact(&r, nodeID, n.Attempt, "decision", "decision.md", "text/markdown", []byte(decision))
 	e.event(&r, nodeID, "gate.approved", "人工门禁已通过")
 	appendControlTelemetry(&r, nodeID, "gate.approved", "人工门禁已通过")
+	if routeDecision != nil {
+		e.event(&r, nodeID, "route.decided", fmt.Sprintf("人工批准路由：%v", routeDecision.Values))
+	}
 	r.Status = "running"
 	return e.persistControlDecision(runID, r, expected...)
 }
@@ -251,6 +278,11 @@ func (e *Engine) pass(runID, nodeID, humanContext string, expected ...NodeExpect
 	if !found || !isScriptNode(def) {
 		return fmt.Errorf("only a failed script node can be passed")
 	}
+	for _, edge := range wf.Edges {
+		if edge.Source == nodeID && edge.Condition != nil && n.RouteDecision == nil {
+			return fmt.Errorf("节点 %s 尚无有效路由决策，请重试节点而不是手动通过", nodeID)
+		}
+	}
 	n.Status = "succeeded"
 	n.FinishedAt = time.Now().UTC()
 	n.Activity = "人工通过，未重新执行"
@@ -316,8 +348,12 @@ func (e *Engine) Reject(runID string, req domain.RejectRequest, expected ...Node
 			return fmt.Errorf("rework limit reached")
 		}
 	}
+	if err := e.guardRoutingRoleDrift(r, target); err != nil {
+		return err
+	}
 	reset := descendants(wf, target)
 	reset[target] = true
+	markLegacyRoutingReplays(&r, reset)
 	overlayLatestNodeBindings(e.repo, &r, reset)
 	var stale []string
 	interrupted := map[string]bool{}
@@ -332,6 +368,7 @@ func (e *Engine) Reject(runID string, req domain.RejectRequest, expected ...Node
 				nr.Activity = ""
 			}
 			nr.Status = "pending"
+			nr.RouteDecision, nr.SkipReason = nil, ""
 			nr.Error = ""
 			nr.Output = ""
 			nr.ChildRunID = ""
@@ -476,6 +513,12 @@ func (e *Engine) retryContext(ctx context.Context, runID, nodeID, reason, humanC
 	if nodeID == "" {
 		nodeID = resumeNodeID(r)
 	}
+	if nodeID == "" {
+		if allSinksSkippedJoin(r) {
+			return fmt.Errorf("没有可重试的节点：最后一步因条件汇合规则被跳过，请检查汇合规则，或从产生路由决策的节点重新运行")
+		}
+		return fmt.Errorf("没有可重试的节点，请查看运行失败原因，或指定节点重跑")
+	}
 	if r.Nodes[nodeID] == nil {
 		return fmt.Errorf("retry node not found")
 	}
@@ -506,6 +549,24 @@ func (e *Engine) retryContext(ctx context.Context, runID, nodeID, reason, humanC
 	cleaned := !r.WorkspaceCleanedAt.IsZero()
 	if !explicitNode && !replaySucceeded && (r.Status == "cancelled" || cleaned && !e.hasSavedWorkspaceCheckpoint(runID)) {
 		return fmt.Errorf("run workspace has been cleaned or scheduled for cleanup; this run can no longer be retried")
+	}
+	reset := descendants(r.WorkflowSnapshot, nodeID)
+	reset[nodeID] = true
+	wholeWorkflow := len(reset) >= len(r.WorkflowSnapshot.Nodes)
+	// Revive parallel branches interrupted by cancellation, without treating
+	// them as part of the whole-workflow checkout reset.
+	var revived []string
+	for _, node := range r.WorkflowSnapshot.Nodes {
+		if !reset[node.ID] && r.Nodes[node.ID] != nil && r.Nodes[node.ID].Status == "cancelled" {
+			revived = append(revived, node.Name)
+			reset[node.ID] = true
+			for id := range descendants(r.WorkflowSnapshot, node.ID) {
+				reset[id] = true
+			}
+		}
+	}
+	if err := e.guardRoutingRoleDrift(r, nodeID); err != nil {
+		return err
 	}
 	if err := e.validateExecutionReconnect(r, nodeID); err != nil {
 		return err
@@ -542,9 +603,7 @@ func (e *Engine) retryContext(ctx context.Context, runID, nodeID, reason, humanC
 			reason = "从中断处继续"
 		}
 	}
-	reset := descendants(r.WorkflowSnapshot, nodeID)
-	reset[nodeID] = true
-	if e.executes() && !deferRestore && len(reset) >= len(r.WorkflowSnapshot.Nodes) {
+	if e.executes() && !deferRestore && wholeWorkflow {
 		// Replaying the whole LOOP against the previous attempt's container
 		// inherits whatever that attempt broke or filled up, and the container
 		// would otherwise survive until the run finally succeeds. Dropping the
@@ -555,23 +614,7 @@ func (e *Engine) retryContext(ctx context.Context, runID, nodeID, reason, humanC
 		}
 		e.sandboxes.DiscardRunContainer(context.Background(), runID)
 	}
-	// Parallel branches stopped together with this one by a cancel are not
-	// failures of their own: resume them as well, or nothing would schedule
-	// them again and the run would never settle. This happens after the
-	// whole-LOOP check above so reviving siblings never discards the checkout.
-	var revived []string
-	for _, node := range r.WorkflowSnapshot.Nodes {
-		if reset[node.ID] {
-			continue
-		}
-		if nr := r.Nodes[node.ID]; nr != nil && nr.Status == "cancelled" {
-			revived = append(revived, node.Name)
-			reset[node.ID] = true
-			for id := range descendants(r.WorkflowSnapshot, node.ID) {
-				reset[id] = true
-			}
-		}
-	}
+	markLegacyRoutingReplays(&r, reset)
 	overlayLatestNodeBindings(e.repo, &r, reset)
 	for _, node := range r.WorkflowSnapshot.Nodes {
 		if node.ID == nodeID && isScriptNode(node) {
@@ -587,6 +630,7 @@ func (e *Engine) retryContext(ctx context.Context, runID, nodeID, reason, humanC
 				stale = append(stale, nr.ChildRunID)
 			}
 			nr.Status = "pending"
+			nr.RouteDecision, nr.SkipReason = nil, ""
 			nr.Error = ""
 			nr.Output = ""
 			nr.ChildRunID = ""
@@ -629,6 +673,14 @@ func (e *Engine) retryContext(ctx context.Context, runID, nodeID, reason, humanC
 	}
 	e.cancelLiveChildRuns(stale)
 	return e.persistControlDecision(runID, r, expected...)
+}
+
+func allSinksSkippedJoin(r domain.Run) bool {
+	if r.Status != "failed" || len(r.WorkflowSnapshot.Nodes) == 0 {
+		return false
+	}
+	wf := workflowForRun(nil, r)
+	return allRoutingFinished(wf, r) && !allSucceeded(wf, r)
 }
 
 // ResumePaused continues every node interrupted by an operator pause. It is a
@@ -861,6 +913,66 @@ func (e *Engine) RefreshRunSOP(runID string) error {
 	if previousVersion == latest.Version && previousRevision == latest.Revision {
 		return nil
 	}
+	// A route decision refers to edges in the frozen snapshot. Replacing that
+	// graph while preserving completed nodes could activate the wrong branch.
+	for _, nr := range r.Nodes {
+		if nr != nil && nr.RouteDecision != nil {
+			return fmt.Errorf("cannot refresh SOP after a routing decision; start a new run")
+		}
+	}
+	// An Agent can be waiting for approval after it has submitted a route value
+	// but before the decision is materialised. Treat that pending value exactly
+	// like a committed decision: refreshing the graph would otherwise let the
+	// old value select a different target in the new SOP. An approval without a
+	// route value only has to stay refreshable while the new SOP asks it for no
+	// decision — that is the escape hatch for a wrong conditional edge found
+	// while the gate waits. If the new SOP does expect a decision there, the
+	// attempt never produced one and approving it could only fail, so the
+	// refresh must not hand the gate an unanswerable question. A waiting node
+	// reaches this state either through an Agent human decision or through a
+	// required manual role gate after pass, and both rebuild the decision the
+	// same way, so neither outcome is filtered out here.
+	//
+	// `waiting_approval` also records an operator pause, which is a different
+	// thing: resuming that node re-executes it from scratch, so it produces a
+	// fresh route against whatever graph is frozen by then and has no stale
+	// intent to protect. Skipping those nodes keeps a paused routing script
+	// refreshable after a SOP update instead of forcing a new run.
+	conditionalSources := map[string]bool{}
+	for _, edge := range r.WorkflowSnapshot.Edges {
+		if edge.Condition != nil {
+			conditionalSources[edge.Source] = true
+		}
+	}
+	latestConditionalSources := map[string]bool{}
+	for _, edge := range latest.Edges {
+		if edge.Condition != nil {
+			latestConditionalSources[edge.Source] = true
+		}
+	}
+	for _, node := range r.WorkflowSnapshot.Nodes {
+		nr := r.Nodes[node.ID]
+		if nr == nil || nr.Status != "waiting_approval" || nr.RouteDecision != nil || isUserPausedNode(nr) {
+			continue
+		}
+		var pending domain.RouteValues
+		if nr.GateResult != nil {
+			pending = nr.GateResult.Route
+		}
+		if len(pending) > 0 {
+			// A submitted value refers to the graph that was frozen when it was
+			// produced. Either graph carrying conditions means the swap could keep
+			// a stale intent or silently select a branch in the new one, so both
+			// sides are checked here.
+			if conditionalSources[node.ID] || latestConditionalSources[node.ID] {
+				return fmt.Errorf("节点 %s 存在待处理的路由决策，不能刷新 SOP；请先审批原 SOP 或重新开始运行", node.ID)
+			}
+			continue
+		}
+		if latestConditionalSources[node.ID] {
+			return fmt.Errorf("节点 %s 正在等待人工确认，但新版 SOP 为它新增了条件分支；请先按原版 SOP 审批，或重新开始运行", node.ID)
+		}
+	}
 	// A graph/role update must not silently replace the environment underneath
 	// an existing workspace. A new Run will pick up the latest sandbox asset.
 	latest.SandboxProfileID = r.WorkflowSnapshot.SandboxProfileID
@@ -874,11 +986,15 @@ func (e *Engine) RefreshRunSOP(runID string) error {
 	if err != nil {
 		return err
 	}
+	if nodeID := missingRouteDecision(latest, r); nodeID != "" {
+		return fmt.Errorf("无法刷新 SOP：已完成的节点「%s」在新版 SOP 中需要路由决策，请创建新 Run 或调整 SOP", nodeID)
+	}
 	for _, node := range latest.Nodes {
 		if r.Nodes[node.ID] == nil {
 			r.Nodes[node.ID] = &domain.NodeRun{NodeID: node.ID, Status: "pending"}
 		}
 	}
+	latest.RoutingRoleFingerprints = captureRoutingRoleFingerprints(e.repo, latest)
 	r.WorkflowSnapshot = latest
 	message := fmt.Sprintf("已更新为最新 LOOP：v%d #%d → v%d #%d（保留当前运行环境）", previousVersion, previousRevision, latest.Version, latest.Revision)
 	e.event(&r, "", "run.workflow_refreshed", message)
@@ -986,6 +1102,14 @@ func overlayLatestNodeBindings(st *repo.Store, r *domain.Run, nodeIDs map[string
 	if st == nil || r == nil || len(nodeIDs) == 0 {
 		return
 	}
+	// A frozen artifact condition resolves a contract by name, so pair this node
+	// with a newer role and the agent may write the renamed artifact while the
+	// edge still looks for the old one and quietly takes the default branch. The
+	// whole binding stays frozen for such a node: role, executor, prompt and
+	// contract have to move together to stay coherent. Other nodes in the same
+	// conditional workflow keep refreshing, and a workflow without artifact
+	// conditions keeps the historical overlay.
+	frozenNodes := frozenArtifactContractSources(r.WorkflowSnapshot)
 	latest, ok := latestWorkflowDefinition(st, r.WorkflowID)
 	if !ok {
 		return
@@ -996,7 +1120,7 @@ func overlayLatestNodeBindings(st *repo.Store, r *domain.Run, nodeIDs map[string
 	}
 	for i := range r.WorkflowSnapshot.Nodes {
 		n := &r.WorkflowSnapshot.Nodes[i]
-		if !nodeIDs[n.ID] {
+		if !nodeIDs[n.ID] || frozenNodes[n.ID] {
 			continue
 		}
 		src, ok := byID[n.ID]
@@ -1007,6 +1131,7 @@ func overlayLatestNodeBindings(st *repo.Store, r *domain.Run, nodeIDs map[string
 			delete(r.WorkflowSnapshot.ExecutorDefaults, n.ID)
 		}
 		n.AgentID, n.ExecutorID = src.AgentID, src.ExecutorID
+		n.NodePrompt = src.NodePrompt
 		n.ArtifactOutputs = src.ArtifactOutputs
 		n.OnFailure, n.RejectTo = src.OnFailure, src.RejectTo
 		n.RetryStrategy, n.CarryOver = src.RetryStrategy, src.CarryOver
@@ -1017,9 +1142,26 @@ func overlayLatestNodeBindings(st *repo.Store, r *domain.Run, nodeIDs map[string
 			n.MaxReworks = src.MaxReworks
 		}
 	}
-	if latest.Version > r.WorkflowSnapshot.Version {
+	// A frozen binding keeps part of the snapshot on its old revision, so the
+	// version stamp must not claim the graph is fully up to date: RefreshRunSOP
+	// treats an equal version as "nothing to do" and would leave the frozen
+	// binding behind for good.
+	if len(frozenNodes) == 0 && latest.Version > r.WorkflowSnapshot.Version {
 		r.WorkflowSnapshot.Version = latest.Version
 	}
+}
+
+// frozenArtifactContractSources lists the nodes whose artifact contracts an
+// edge condition resolves by name at run time. Their whole binding is frozen so
+// the contract cannot drift away from the role that produces it.
+func frozenArtifactContractSources(wf domain.WorkflowDefinition) map[string]bool {
+	frozen := map[string]bool{}
+	for _, edge := range wf.Edges {
+		if edge.Condition != nil && edge.Condition.Type == "artifact" {
+			frozen[edge.Source] = true
+		}
+	}
+	return frozen
 }
 
 func resumeNodeID(r domain.Run) string {
@@ -1042,10 +1184,11 @@ func resumeNodeID(r domain.Run) string {
 	if len(ready) > 0 {
 		return ready[0].ID
 	}
-	// 兜底：选第一个尚未成功的节点（例如取消/中断后仍停留在 running 的节点）。
-	// 这样即便历史遗留的 run 节点状态未收敛，也能定位到续跑目标，避免返回空。
+	// 兜底：选第一个尚未成功且不是 skipped 的节点（例如取消/中断后仍停留在
+	// running 的节点）。skipped 是条件路由或汇合规则的终态，重试它不会改变
+	// 上游路由决策，只会再次得到 skipped，因而不能作为重试起点。
 	for _, id := range order {
-		if nr := r.Nodes[id]; nr != nil && nr.Status != "succeeded" {
+		if nr := r.Nodes[id]; nr != nil && nr.Status != "succeeded" && nr.Status != "skipped" {
 			return id
 		}
 	}

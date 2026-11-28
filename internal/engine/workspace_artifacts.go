@@ -38,7 +38,7 @@ func archivedWorkspaceArtifacts(run domain.Run, executingNode string) map[string
 		}
 	}
 	latest := map[string]domain.Artifact{}
-	for _, a := range run.Artifacts {
+	for _, a := range activeRoutingArtifacts(run) {
 		if a.Name == "repository-patch" || excluded[a.NodeID] || syntheticResults[a.NodeID] && a.Name == "result" && a.Path == "result.md" {
 			continue
 		}

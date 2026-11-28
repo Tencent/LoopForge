@@ -103,7 +103,7 @@ func applyPromptPlaceholders(st *repo.Store, wf domain.WorkflowDefinition, node 
 	for id, nodeRun := range run.Nodes {
 		prompt = strings.ReplaceAll(prompt, "{{node."+id+".output}}", nodeRun.Output)
 	}
-	for _, artifact := range run.Artifacts {
+	for _, artifact := range activeRoutingArtifacts(run) {
 		placeholder := "{{artifact." + artifact.NodeID + "." + artifact.Name + "}}"
 		if !strings.Contains(prompt, placeholder) {
 			continue
@@ -234,6 +234,11 @@ func compileTaskPrompt(node domain.WorkflowNode, roleName, rolePrompt string, ga
 	b.WriteString("# 节点任务书\n\n")
 	writePromptSection(&b, "执行角色", roleName)
 	writePromptSection(&b, "任务说明", strings.TrimSpace(rolePrompt))
+	if node.Type == "agent" {
+		if extra := strings.TrimSpace(node.NodePrompt); extra != "" {
+			writePromptSection(&b, "本节点补充要求", extra)
+		}
+	}
 	var deliverables []string
 	for _, artifact := range node.ArtifactOutputs {
 		deliverables = append(deliverables, artifact.Name+"：在工作区创建 `"+artifact.Path+"`")

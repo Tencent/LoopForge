@@ -41,7 +41,10 @@ type WorkflowNode struct {
 	// TaskPrompt is what an approval node asks its approver to check
 	// (「需要确认什么」). Role nodes take their whole brief from the role's
 	// prompt; the field is not read for them.
-	TaskPrompt   string   `json:"taskPrompt,omitempty"`
+	TaskPrompt string `json:"taskPrompt,omitempty"`
+	// NodePrompt adds execution-specific instructions after the bound role
+	// prompt. Approval nodes keep using TaskPrompt for their human question.
+	NodePrompt   string   `json:"nodePrompt,omitempty"`
 	RequestedBy  string   `json:"requestedBy,omitempty"`
 	RequestID    string   `json:"requestId,omitempty"`
 	ClaimedFiles []string `json:"claimedFiles,omitempty"`
@@ -61,15 +64,13 @@ type WorkflowNode struct {
 	ScriptLanguage        string `json:"scriptLanguage,omitempty"` // shell, python
 	Script                string `json:"script,omitempty"`
 	// CredentialEnv requests platform-managed credentials as environment
-	// variables for script and verification commands: each entry maps an
-	// environment variable name to a credential kind (a RunCredentials.Extra
-	// key registered by the deployment). A declared credential the
-	// responsible user has not saved fails the node up front; the secret
-	// itself never appears in workflow definitions, node configs or logs.
+	// variables for script and verification commands.
 	CredentialEnv   map[string]string  `json:"credentialEnv,omitempty"`
 	ExecutionScope  string             `json:"executionScope,omitempty"` // run, repositories; empty = run
 	Command         string             `json:"command,omitempty"`        // legacy command-node payload
 	ArtifactOutputs []ArtifactContract `json:"artifactOutputs,omitempty"`
+	JoinRule        string             `json:"joinRule,omitempty"`
+	DefaultTarget   string             `json:"defaultTarget,omitempty"`
 	RejectTo        string             `json:"rejectTo,omitempty"`
 	OnFailure       string             `json:"onFailure,omitempty"`     // fail, reject
 	RetryStrategy   string             `json:"retryStrategy,omitempty"` // targeted_fix, full_redo
@@ -102,10 +103,20 @@ type ArtifactContract struct {
 }
 
 type WorkflowEdge struct {
-	ID     string `json:"id"`
-	Source string `json:"source"`
-	Target string `json:"target"`
-	When   string `json:"when"` // success
+	ID        string             `json:"id"`
+	Source    string             `json:"source"`
+	Target    string             `json:"target"`
+	When      string             `json:"when"` // success
+	Condition *WorkflowCondition `json:"condition,omitempty"`
+}
+
+// WorkflowCondition is intentionally declarative; it is not an expression language.
+type WorkflowCondition struct {
+	Type     string          `json:"type"` // route, artifact
+	Values   []string        `json:"values,omitempty"`
+	Artifact string          `json:"artifact,omitempty"` // declared artifact name
+	Pointer  string          `json:"pointer,omitempty"`  // JSON Pointer
+	Equals   json.RawMessage `json:"equals,omitempty"`
 }
 
 // DefinitionRevision is an immutable snapshot of a workflow or agent so
@@ -193,6 +204,9 @@ type WorkflowDefinition struct {
 	// that inherit the responsible user's executor. An empty entry defers
 	// selection until the role starts on the bound machine.
 	ExecutorDefaults map[string]AssistantDefaults `json:"executorDefaults,omitempty"`
+	// RoutingRoleFingerprints records the role definitions of artifact-routing
+	// nodes when a Run starts or explicitly refreshes its SOP.
+	RoutingRoleFingerprints map[string]string `json:"routingRoleFingerprints,omitempty"`
 }
 
 // UnmarshalJSON migrates the pre-workflow-sandbox shape while the legacy node

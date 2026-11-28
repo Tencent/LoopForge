@@ -15,6 +15,8 @@ func TestValidateNodeChecksOwnFields(t *testing.T) {
 		{ID: "d", Type: "script", Script: "echo ok"},
 		{ID: "e", Type: "command", Command: "echo ok", ScriptLanguage: "ruby"},
 		{ID: "f", Type: "agent", ExecutionScope: domain.ExecutionScopeRepositories, ArtifactOutputs: []domain.ArtifactContract{{Name: "r", Path: "out/r.md"}}},
+		{ID: "g", Type: "agent", JoinRule: "all_success"},
+		{ID: "h", Type: "agent", JoinRule: "none_failed_min_one_success"},
 	}
 	for _, n := range ok {
 		if err := validateNode("wf", n); err != nil {
@@ -33,6 +35,7 @@ func TestValidateNodeChecksOwnFields(t *testing.T) {
 		{domain.WorkflowNode{ID: "a", Type: "agent", OnFailure: "bad"}, `node a has invalid onFailure "bad"`},
 		{domain.WorkflowNode{ID: "a", Type: "agent", ExecutionScope: " bad "}, `node a has invalid executionScope "bad"`},
 		{domain.WorkflowNode{ID: "a", Type: "agent", RetryStrategy: "bad"}, `node a has invalid retryStrategy "bad"`},
+		{domain.WorkflowNode{ID: "a", Type: "agent", JoinRule: "bad"}, `node a has invalid joinRule "bad"`},
 		{domain.WorkflowNode{ID: "a", Type: "agent", ArtifactOutputs: []domain.ArtifactContract{{Name: "x", Path: "/abs"}}}, `node a has invalid artifact contract "x"`},
 		{domain.WorkflowNode{ID: "a", Type: "agent", ArtifactOutputs: []domain.ArtifactContract{{Name: "x", Path: "a"}, {Name: "x", Path: "b"}}}, "node a has duplicate artifact x"},
 	}

@@ -31,7 +31,7 @@ func materializeInputs(workspace string, wf domain.WorkflowDefinition, node doma
 		}
 	}
 	prior := ancestors(wf, node.ID)
-	selected := latestInputArtifacts(run.Artifacts, sources, prior)
+	selected := latestInputArtifacts(activeRoutingArtifacts(run), sources, prior)
 	var manifest strings.Builder
 	for _, artifact := range selected {
 		if artifact.Name == "repository-patch" {
@@ -377,8 +377,10 @@ func reportedArtifactBlob(outputs nodeOutputs, rel string) (domain.ArtifactBlob,
 	return domain.ArtifactBlob{}, false
 }
 
-func requiredNodeArtifacts(node domain.WorkflowNode, artifacts []domain.Artifact) []domain.Artifact {
-	required := make(map[string]bool)
+func requiredNodeArtifacts(wf domain.WorkflowDefinition, node domain.WorkflowNode, artifacts []domain.Artifact) []domain.Artifact {
+	// A collected routing artifact is evidence for the decision we commit.
+	// Even an optional contract must be retained once used for routing.
+	required := routingArtifactNames(wf, node.ID)
 	for _, contract := range node.ArtifactOutputs {
 		if contract.Required {
 			required[contract.Name] = true
@@ -423,6 +425,29 @@ func latestInputArtifacts(artifacts []domain.Artifact, direct, prior map[string]
 		return out[i].Name < out[j].Name
 	})
 	return out
+}
+
+// Old attempts remain auditable, but an inactive or rerun node's artifacts
+// must not be handed to the newly selected branch.
+func activeRoutingArtifacts(run domain.Run) []domain.Artifact {
+	conditional := false
+	for _, edge := range run.WorkflowSnapshot.Edges {
+		if edge.Condition != nil {
+			conditional = true
+			break
+		}
+	}
+	if !conditional {
+		return run.Artifacts
+	}
+	var active []domain.Artifact
+	for _, artifact := range run.Artifacts {
+		n := run.Nodes[artifact.NodeID]
+		if n != nil && n.Status == "succeeded" && n.Attempt == artifact.Attempt {
+			active = append(active, artifact)
+		}
+	}
+	return active
 }
 
 func includeArtifact(direct, prior map[string]bool, artifact domain.Artifact) bool {

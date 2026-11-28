@@ -49,6 +49,27 @@ test('approval helpers explain gates, failures, pauses, and contextual payloads'
   assert.equal(JSON.stringify(result.pausedNodes), JSON.stringify(['review']));
 });
 
+test('paused script guidance offers manual pass only when the button is available', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  const run = {
+    id: 'paused-script', status: 'waiting', pauseRequested: true,
+    workflowSnapshot: {
+      nodes: [{id:'route', name:'Route', type:'script'}, {id:'next', name:'Next', type:'script'}],
+      edges: [{source:'route', target:'next', condition:{type:'route', values:['next']}}],
+    },
+    nodes: {route:{status:'waiting_approval', activity:'用户暂停'}},
+  };
+  for (const [edges, canPass] of [[run.workflowSnapshot.edges, false], [[], true]]) {
+    const paused = {...run, workflowSnapshot:{...run.workflowSnapshot, edges}};
+    const panel = app.document.createElement('div');
+    panel.innerHTML = app.evaluate(`pausedRunPanelHTML(${JSON.stringify(paused)})`);
+    assert.ok(panel.querySelector('[data-resume-paused]'));
+    assert.equal(!!panel.querySelector('[data-pass-node]'), canPass);
+    assert.equal(panel.querySelector('.callout-text').textContent.includes('手动通过'), canPass);
+  }
+});
+
 test('approval list sends context and removes the approved run after refreshing', async (t) => {
   const app = await loadApp();
   t.after(app.close);
@@ -105,4 +126,60 @@ test('approval list sends context and removes the approved run after refreshing'
   app.document.querySelector('#confirmOkBtn').click();
   await app.evaluate(`window.__pauseRun`);
   assert.ok(app.router.calls.some(c => c.method === 'POST' && c.path === '/api/runs/approval-run/pause'));
+});
+
+test('skip reasons keep route labels verbatim while naming upstream nodes', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  const texts = app.evaluate(`
+    (() => {
+      const wf={nodes:[{id:'classify',name:'Classify'},{id:'small',name:'Small branch'},{id:'large',name:'Large branch'},
+        {id:'classification',name:'Another node'},{id:'size',name:'Size node'}]};
+      const numeric={nodes:[{id:'0',name:'零点节点'},{id:'small',name:'Small branch'}]};
+      const punctuation={nodes:[...numeric.nodes,{id:'build；check',name:'Build Check'}]};
+      const nestedGraph={nodes:[{id:'a',name:'First'},{id:'b',name:'Second'},{id:'a 已跳过（b',name:'Unrelated'}],
+        edges:[{source:'a',target:'join'},{source:'b',target:'a'}]};
+      const joinedReason='a 已跳过；b 已跳过';
+      const ambiguousRoute='a 路由 [small] 未选择此分支；b 路由 [large] 未选择此分支';
+      const joinedGraph={nodes:[...nestedGraph.nodes,{id:'a 已跳过；b',name:'Combined'}],
+        edges:[{source:'a',target:'join'},{source:'b',target:'join'},{source:'a 已跳过；b',target:'join'}]};
+      const quotedArtifact='a 的产物 p 字段 /x 未匹配条件 "x 未匹配条件 true；b 路由 [y"；c 路由 [z] 未选择此分支';
+      const quotedGraph={nodes:[...joinedGraph.nodes,{id:'c',name:'Third'}],
+        edges:['a','b','c'].map(source=>({source,target:'join'}))};
+      const join={id:'join',name:'Join'};
+      return {
+        route: skipReasonText({skipReason:'classify 路由 [small] 未选择此分支'},wf,{name:'Large branch'}),
+        artifact: skipReasonText({skipReason:'classify 的产物 classification 字段 /size 未匹配条件 "small"'},wf,{name:'Large branch'}),
+        plain: skipReasonText({skipReason:'classify 已跳过'},wf,{name:'Large branch'}),
+        nested: skipReasonText({skipReason:'small 已跳过（classify 的产物 classification 字段 /size 未匹配条件 "small；large"）；large 已命中其他条件，未选择默认分支'},wf,{name:'Join'}),
+        numeric: skipReasonText({skipReason:'0 路由 [small] 未选择此分支'},numeric,{name:'Small branch'}),
+        graphNested: skipReasonText({skipReason:'a 已跳过（b 路由 [small] 未选择此分支）'},nestedGraph,join),
+        ambiguousJoin: skipReasonText({skipReason:joinedReason},joinedGraph,join),
+        ambiguousRoute: skipReasonText({skipReason:ambiguousRoute},joinedGraph,join),
+        ambiguousQuotedArtifact: skipReasonText({skipReason:quotedArtifact},quotedGraph,join),
+        overlappingMarkers: skipReasonText({skipReason:quotedArtifact.replace('x 未匹配条件 true','x 未匹配条件 未匹配条件 true')},quotedGraph,join),
+        uniqueJoin: skipReasonText({skipReason:joinedReason},{...joinedGraph,edges:joinedGraph.edges.slice(0,2)},join),
+        uniqueNested: skipReasonText({skipReason:'a 已跳过（b 路由 [small] 未选择此分支）'},
+          {...nestedGraph,edges:[...nestedGraph.edges,{source:'a 已跳过（b',target:'join'}]},join),
+        punctuationId: skipReasonText({skipReason:'build；check 已跳过'},punctuation,{name:'Join'}),
+        punctuationPointer: skipReasonText({skipReason:'build；check 的产物 classification 字段 /field；0 已跳过 未匹配条件 true；0 已跳过'},punctuation,{name:'Join'}),
+      };
+    })()
+  `);
+  // The upstream node keeps its display name; the reported route label does not.
+  assert.equal(texts.route, '上游Classify 路由 [small] 未选择此分支，因此跳过 Large branch');
+  assert.equal(texts.artifact, '上游Classify 的产物 classification 字段 /size 未匹配条件 "small"，因此跳过 Large branch');
+  assert.equal(texts.plain, '上游Classify 已跳过，因此跳过 Large branch');
+  assert.equal(texts.nested, '上游Small branch 已跳过（Classify 的产物 classification 字段 /size 未匹配条件 "small；large"）；Large branch 已命中其他条件，未选择默认分支，因此跳过 Join');
+  // A numeric node id must not corrupt the protected route label.
+  assert.equal(texts.numeric, '上游零点节点 路由 [small] 未选择此分支，因此跳过 Small branch');
+  assert.equal(texts.graphNested, '上游First 已跳过（Second 路由 [small] 未选择此分支），因此跳过 Join');
+  assert.equal(texts.ambiguousJoin, 'a 已跳过；b 已跳过');
+  assert.equal(texts.ambiguousRoute, 'a 路由 [small] 未选择此分支；b 路由 [large] 未选择此分支');
+  assert.equal(texts.ambiguousQuotedArtifact, 'a 的产物 p 字段 /x 未匹配条件 "x 未匹配条件 true；b 路由 [y"；c 路由 [z] 未选择此分支');
+  assert.equal(texts.overlappingMarkers, 'a 的产物 p 字段 /x 未匹配条件 "x 未匹配条件 未匹配条件 true；b 路由 [y"；c 路由 [z] 未选择此分支');
+  assert.equal(texts.uniqueJoin, '上游First 已跳过；Second 已跳过，因此跳过 Join');
+  assert.equal(texts.uniqueNested, texts.graphNested);
+  assert.equal(texts.punctuationId, '上游Build Check 已跳过，因此跳过 Join');
+  assert.equal(texts.punctuationPointer, '上游Build Check 的产物 classification 字段 /field；0 已跳过 未匹配条件 true；零点节点 已跳过，因此跳过 Join');
 });

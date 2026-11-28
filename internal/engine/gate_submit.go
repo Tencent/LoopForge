@@ -68,6 +68,9 @@ func readGateResultFrom(outputs nodeOutputs, path string) (*domain.GateResult, e
 	if result.Decision == "human" && result.ActionRequired == "" {
 		return nil, fmt.Errorf("submit_gate_result actionRequired is required for human decisions")
 	}
+	if len(result.Route) > 0 && result.Decision != "pass" && result.Decision != "human" {
+		return nil, fmt.Errorf("submit_gate_result route is only valid with pass or human decisions")
+	}
 	if len(result.Reason) > 4000 || len(result.ActionRequired) > 4000 || len(result.Summary) > 4000 || len(result.Findings) > 50 {
 		return nil, fmt.Errorf("submit_gate_result exceeds size limits")
 	}
@@ -106,7 +109,7 @@ func applyGateResult(result *domain.GateResult, rejectTarget string) (error, str
 
 func appendSubmitGateInstruction(prompt, rejectTarget string, retry bool) string {
 	if retry {
-		return "刚才没有收到有效的节点终态。不要重复执行任务，也不要只输出文字；请立刻调用 submit_gate_result，提交 pass、rework、fail 或 human 之一以及具体 reason。选择 human 时还必须填写 actionRequired，明确需要人工确认什么。只有工具调用成功才算完成本节点。"
+		return "刚才没有收到有效的节点终态。不要重复执行任务，也不要只输出文字；请立刻调用 submit_gate_result，提交 pass、rework、fail 或 human 之一以及具体 reason。选择 pass 或 human 时可在 route 中提交路由标签；选择 human 时还必须填写 actionRequired，明确需要人工确认什么。只有工具调用成功才算完成本节点。"
 	}
 	reworkInstruction := "- rework：存在应由上游节点返工的问题；平台会自动打回该节点；"
 	if strings.TrimSpace(rejectTarget) == "" {
@@ -119,10 +122,10 @@ func appendSubmitGateInstruction(prompt, rejectTarget string, retry bool) string
 # 必须提交节点终态
 
 完成任务后必须调用 MCP 工具 submit_gate_result，提交唯一终态：
-- pass：任务正常完成；平台会自动流转到下游节点；
+- pass：任务正常完成；平台会按 route（如有）自动流转到下游节点；
 %s
 - fail：本节点无法完成或出现不可恢复错误；平台会直接标记失败，不打回上游；
-- human：无法可靠自动判断，或必须由人决策；平台会暂停并等待人工确认，此时 actionRequired 必填，必须明确说明需要人确认或决定什么。
+- human：无法可靠自动判断，或必须由人决策；平台会暂停并等待人工确认，此时 actionRequired 必填，必须明确说明需要人确认或决定什么。可以同时提交 route；人工批准后才会按该 route 流转，打回上游则丢弃该 route。
 
 必须根据当前真实情况选择，不要把 fail 当成 rework，也不要用 human 掩盖明确失败。reason 必须解释作出该终态的事实依据；rework 可用 actionRequired 写清返工要求；可附带 findings 和 evidence。不要用报告文本或最终回复代替工具调用。若节点未配置自定义交付物文件且结论引用了知识库，请将含 [[knowledge:<id>]] 标记的完整结论作为最终回复输出，不要在提交终态后仅回复简短确认语覆盖前文。只有该工具调用成功，本节点才算完成。`, reworkInstruction)
 }

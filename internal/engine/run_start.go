@@ -263,6 +263,7 @@ func (e *Engine) startWorkflowDefinitionSeeded(ctx context.Context, wf domain.Wo
 	}
 	executionContext.RunID, executionContext.TraceID, executionContext.WorkflowID, executionContext.WorkflowVersion = id, id, workflowID, wf.Version
 	wf.SandboxSnapshot = sandbox
+	wf.RoutingRoleFingerprints = captureRoutingRoleFingerprints(e.repo, wf)
 	var canaryNames []string
 	if !workspace {
 		executionContext.EvolutionCanaryIDs, canaryNames = e.assignEvolutionCanaries(id, wf, executionContext)

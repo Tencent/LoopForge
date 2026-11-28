@@ -79,3 +79,44 @@ test('issue clarification helpers handle thinking, protocol recovery, and action
   assert.ok(recovered.length === 4);
   app.evaluate(`finishIssueClarifyJob('issue-1',true);closeIssueDrawer()`);
 });
+
+for (const [pane, verify] of [
+  ['sop', body => {
+    const row = body.querySelector('.node-progress-row:has(.status.skipped)');
+    assert.equal(row.querySelector('.status').textContent, '已跳过');
+    assert.equal(row.querySelector('.node-progress-track i').style.width, '100%');
+  }],
+  ['acceptance', body => assert.equal(body.querySelector('.status.skipped').textContent, '已跳过')],
+  ['activity', body => assert.equal(body.querySelector('.activity-row b').textContent, '节点已跳过')],
+]) {
+  test(`issue drawer ${pane} treats a skipped stage as terminal`, async (t) => {
+    const app = await loadApp();
+    t.after(app.close);
+    app.evaluate(`{
+      const issue={...state.data.issues[0],workflowId:'flow-1'};
+      const run={...state.data.runs[0],status:'succeeded',workflowSnapshot:state.data.workflows[0],
+        nodes:{'node-1':{status:'skipped'}},events:[{type:'node.skipped',timestamp:'2026-10-21T10:00:00Z',message:'未选择此分支'}]};
+      const requirement={lanes:[{workflowId:'flow-1',latestRunId:run.id,started:true,stages:[{nodeId:'node-1',status:'skipped'}]}]};
+      state.issueDetailData={issue,run,requirement};state.issueDetailTab=${JSON.stringify(pane)};
+      state.drawerOpen=true;renderIssueDetailTab();
+    }`);
+    verify(app.document.querySelector('#issueDetailBody'));
+  });
+}
+
+test('issue activity falls back to the frozen skip when run events are omitted', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  const labels = app.evaluate(`(() => {
+    const issue=state.data.issues[0];
+    const run={workflowSnapshot:state.data.workflows[0],nodes:{'node-1':{status:'skipped',
+      finishedAt:'2026-10-21T10:00:00Z',skipReason:'未选择此分支'}}};
+    const fallback=activityPane(issue,{run});
+    run.events=[{type:'node.skipped',nodeId:'node-1',timestamp:'2026-10-21T10:00:00Z',message:'已有跳过事件'}];
+    return [fallback,activityPane(issue,{run})];
+  })()`);
+  assert.match(labels[0], /节点已跳过/);
+  assert.match(labels[0], /Implement · 未选择此分支/);
+  assert.equal(labels[1].match(/节点已跳过/g)?.length, 1);
+  assert.match(labels[1], /已有跳过事件/);
+});

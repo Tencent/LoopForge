@@ -201,7 +201,17 @@ function runRetryNeedsContext(run){
   if(nodes.length&&nodes.every(isScriptWorkflowNode))return false;
   return true;
 }
-function canManuallyPassFailedNode(run){return run?.status==='failed'&&isScriptWorkflowNode(failedNodeDef(run))}
+function nodeHasRoutingEdges(run,node){
+  const edges=run?.workflowSnapshot?.edges||[];
+  return edges.some(edge=>edge.source===node?.id&&edge.condition);
+}
+function nodeNeedsRoutingDecision(run,node){
+  return nodeHasRoutingEdges(run,node)&&!run?.nodes?.[node?.id]?.routeDecision;
+}
+function canManuallyPassFailedNode(run){
+  const node=failedNodeDef(run);
+  return run?.status==='failed'&&isScriptWorkflowNode(node)&&!nodeNeedsRoutingDecision(run,node);
+}
 function failedResumePanelHTML(run){
   const runId=run?.id||run;
   const node=run&&typeof run==='object'?failedNodeDef(run):null;
@@ -216,6 +226,7 @@ function failedNodeRetryCalloutHTML(runId,node,nr){
   return failedNodeRecoveryCalloutHTML(runId,node,nr);
 }
 function failedNodeRecoveryCalloutHTML(runId,node,nr){
+  const run=cachedRun(runId);
   const nodeTitle=escapeHTML(node?.name||node?.id||'当前节点');
   const gate=nr?.gateResult;
   let sections=[];
@@ -239,12 +250,12 @@ function failedNodeRecoveryCalloutHTML(runId,node,nr){
   }
   const isScript=isScriptWorkflowNode(node);
   const hint=isScript
-    ? '重试会重新执行本步骤。如果硬脚本会一直卡住，也可以手动通过并继续下游。'
+    ? (nodeNeedsRoutingDecision(run,node)?'该步骤负责选择下游分支，必须重试以生成有效路由。':'重试会重新执行本步骤。如果硬脚本会一直卡住，也可以手动通过并继续下游。')
     : '补充信息后只会重跑当前节点及其下游；已成功的上游步骤不会重跑。';
   sections.push(`<p class="callout-hint">${hint}</p>`);
   const field=isScript?'':humanContextFieldHTML();
   const buttons=isScript
-    ? `<button type="button" class="button primary" data-resume-run="${escapeHTML(runId)}">重试</button><button type="button" class="button ghost" data-pass-node="${escapeHTML(runId)}" data-node="${escapeHTML(node?.id||'')}">手动通过，继续下游</button>`
+    ? `<button type="button" class="button primary" data-resume-run="${escapeHTML(runId)}">重试</button>${nodeNeedsRoutingDecision(run,node)?'':`<button type="button" class="button ghost" data-pass-node="${escapeHTML(runId)}" data-node="${escapeHTML(node?.id||'')}">手动通过，继续下游</button>`}`
     : `<button type="button" class="button primary" data-resume-run="${escapeHTML(runId)}">补充信息，重跑当前节点</button>${canManuallyPassFailedNode(cachedRun(runId))?`<button type="button" class="button ghost" data-pass-node="${escapeHTML(runId)}" data-node="${escapeHTML(node?.id||'')}">手动通过，继续下游</button>`:''}`;
 
   return `<div class="approval-callout failed" data-human-context-root><div class="callout-head"><div class="callout-title-row"><span class="callout-badge failed">执行异常</span><b class="callout-title">节点已失败</b><span class="callout-node-name">步骤：<b>${nodeTitle}</b></span></div></div><div class="callout-content">${sections.join('')}</div>${field}<div class="ap-buttons">${buttons}</div></div>`;
@@ -262,6 +273,7 @@ async function passFailedNode(runId,nodeId,fromEl){
   const run=cachedRun(runId);
   const node=run?.workflowSnapshot?.nodes?.find(n=>n.id===nodeId);
   if(!isScriptWorkflowNode(node))return toast('只有失败的脚本节点可以手动通过，AI 节点请补充信息后重试','err');
+  if(nodeNeedsRoutingDecision(run,node))return toast('该脚本节点负责选路，必须重试以生成有效路由后才能继续','err');
   if(!await afConfirm({title:'手动通过确认',message:`确定将「${node?.name||nodeId}」视为通过并继续下游？该节点不会重新执行。`,confirmText:'确认通过'}))return;
   try{
     await api(`/api/runs/${encodeURIComponent(runId)}/pass`,{method:'POST',body:JSON.stringify(withHumanContext({nodeId,context:readHumanContext(fromEl)}))});
@@ -314,14 +326,15 @@ function pausedRunPanelHTML(run){
   const pausedScriptNode=paused.find(node=>isScriptWorkflowNode(node));
   const restored=restoredSOPResumeNode(run);
   const idlePause=!paused.length&&!restored;
+  const canPass=pausedScriptNode&&!restored&&!nodeNeedsRoutingDecision(run,pausedScriptNode);
   const detail=restored
     ? `将从「${escapeHTML(restored.name||restored.id)}」重新启动 LOOP，保留已完成的上游结果。已有文件和平台变更不会回退，后续节点将重新检查当前工作区。`
     : idlePause
     ? '当前没有被打断的步骤。继续后会接着执行尚未完成的节点；如果流程已经走完，运行会正常结束。'
     : agentPaused
     ? `Agent 将优先接续原有 CLI 对话；若暂停前尚未建立会话，则在原工作区重新启动${scriptPaused?'；脚本会保留工作区并从头重新执行':''}。补充信息只会提供给 Agent。`
-    : '脚本会保留当前工作区并从头重新执行；不会恢复已终止的进程，也不需要补充信息。如果脚本卡在重跑也解决不了的问题上，也可以手动通过并继续下游。';
-  const passButton=pausedScriptNode&&!restored?`<button class="button ghost" data-pass-node="${escapeHTML(run.id)}" data-node="${escapeHTML(pausedScriptNode.id)}" title="将该脚本节点视为通过并继续下游，不重新执行">手动通过，跳过该脚本</button>`:'';
+    : '脚本会保留当前工作区并从头重新执行；不会恢复已终止的进程，也不需要补充信息。'+(canPass?'如果脚本卡在重跑也解决不了的问题上，也可以手动通过并继续下游。':'');
+  const passButton=canPass?`<button class="button ghost" data-pass-node="${escapeHTML(run.id)}" data-node="${escapeHTML(pausedScriptNode.id)}" title="将该脚本节点视为通过并继续下游，不重新执行">手动通过，跳过该脚本</button>`:'';
   const resumeLabel='直接继续';
   return `<div class="approval-callout paused-run-callout" data-human-context-root><div class="callout-head"><div class="callout-title-row"><span class="callout-badge human">运行已暂停</span><b class="callout-title">流程已暂停执行</b></div></div><div class="callout-content"><p class="callout-text">${detail}</p></div>${agentPaused?humanContextFieldHTML():''}<div class="ap-buttons"><button class="button primary" data-resume-paused="${escapeHTML(run.id)}">${resumeLabel}</button>${passButton}${refreshRunSOPButtonHTML(run)}</div></div>`;
 }
