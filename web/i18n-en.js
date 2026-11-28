@@ -1159,11 +1159,6 @@ Object.assign(window.LF_I18N_EN, {
   "点击右上角「添加 MCP」，创建个人专属配置。": "Click \"Add MCP\" at the top right to create a personal configuration.",
   "仅自己可见": "Only you"
 });
-Object.assign(window.LF_I18N_EN, {
-  "对话处理": "Handled in chat",
-  "在对话里澄清和改代码": "Clarify and change code in chat",
-  "这条需求不使用 LOOP，在对话里澄清需求、直接改代码；定时任务不会自动认领它。": "This requirement uses no LOOP: clarify and change code in chat; scheduled jobs won't pick it up.",
-});
 // Personal knowledge connectors (我的知识库): copy added with the connector
 // gallery, usage statistics and node/chat knowledge references.
 Object.assign(window.LF_I18N_EN, {
@@ -1239,6 +1234,11 @@ Object.assign(window.LF_I18N_EN, {
   "逗号或换行分隔；留空按默认只读策略放行，配置后仅放行列表内的工具（推荐用于飞书远程端点与腾讯文档）": "Comma- or newline-separated. Leave blank to use the default read-only policy; once set, only the listed tools are allowed (recommended for Feishu remote endpoints and Tencent Docs)",
 });
 
+Object.assign(window.LF_I18N_EN, {
+  "对话处理": "Handled in chat",
+  "在对话里澄清和改代码": "Clarify and change code in chat",
+  "这条需求不使用 LOOP，在对话里澄清需求、直接改代码；定时任务不会自动认领它。": "This requirement uses no LOOP: clarify and change code in chat; scheduled jobs won't pick it up.",
+});
 // 执行机器 page: static copy in index.html. runners.js renders its dynamic copy with lfT.
 Object.assign(window.LF_I18N_EN, {
   "连接电脑或 CVM，可将机器共享给多个项目。": "Connect a computer or CVM and share it with multiple projects.",
