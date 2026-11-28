@@ -118,6 +118,28 @@ func (h *assistantHandlers) mergeIssueSaveBody(body any, path map[string]string)
 		}
 		base[key] = value
 	}
+	// When the model binds a LOOP (patch carries workflowId) without explicitly
+	// setting sopMode or automationState, the existing record may hold
+	// sopMode="none" / automationState="ignored" (set when the requirement was
+	// created in chat without a LOOP). The save handler (issues.go) always
+	// inherits a non-empty sopMode from the existing record, so the base's
+	// sopMode="none" and automationState="ignored" would survive and block the
+	// scheduler. Explicitly promote the pair to sop/eligible so the save
+	// handler writes the correct values and the scheduler can claim the
+	// requirement. When the model explicitly sets sopMode or automationState in
+	// the patch those values take precedence instead.
+	if _, patchHasWorkflow := patch["workflowId"]; patchHasWorkflow {
+		if _, patchHasSOPMode := patch["sopMode"]; !patchHasSOPMode {
+			if s, ok := base["sopMode"].(string); ok && strings.EqualFold(strings.TrimSpace(s), "none") {
+				base["sopMode"] = domain.IssueSOPUse
+			}
+		}
+		if _, patchHasAutomation := patch["automationState"]; !patchHasAutomation {
+			if s, ok := base["automationState"].(string); ok && s == "ignored" {
+				base["automationState"] = "eligible"
+			}
+		}
+	}
 	return base
 }
 

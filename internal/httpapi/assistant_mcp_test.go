@@ -218,6 +218,88 @@ func TestAssistantScheduledWritesApplyIssuePatches(t *testing.T) {
 	}
 }
 
+// TestMergeIssueSaveBodyResetsSopModeWhenBindingLoop verifies that
+// mergeIssueSaveBody drops sopMode=none and automationState=ignored from
+// the stored record when the patch binds a workflowId without explicitly
+// setting those fields. This allows issue_routes to reset them to
+// sop/eligible so the requirement is picked up by the scheduler.
+func TestMergeIssueSaveBodyResetsSopModeWhenBindingLoop(t *testing.T) {
+	st, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(st.Close)
+	if err := st.PutWorkflow(domain.WorkflowDefinition{ID: "wf-bind", Name: "LOOP Bind", Version: 1, SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{ID: "n1", Name: "Step", Type: "approval", MaxAttempts: 1}}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.PutProject(domain.Project{ID: "platform-bind", Name: "Bind Test", OwnerID: 1, WorkflowID: "wf-bind"}); err != nil {
+		t.Fatal(err)
+	}
+	// Issue created by chat without a LOOP: sopMode=none, automationState=ignored
+	if err := st.PutIssue(domain.Issue{
+		ID: "iss-chat-none", ProjectID: "platform-bind", Title: "chat req", Status: "backlog",
+		SOPMode: domain.IssueSOPNone, AutomationState: "ignored",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	user, ok := st.UserByLoginName("demo-owner")
+	if !ok {
+		t.Fatal("seed user")
+	}
+	user.CodeBuddyAPIKey = "bind-secret"
+	if err := st.PutUser(user); err != nil {
+		t.Fatal(err)
+	}
+	joinScheduledProject(t, st, "platform-bind", user.ID)
+	api := New(st, engine.New(st, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
+	h := &assistantHandlers{deps: &deps{repo: st}, api: api}
+	ctx := withAssistantExecMode(context.Background(), assistantExecMode{AutoWrite: true})
+
+	// Model binds a LOOP with only {id, workflowId} — no sopMode or automationState
+	if _, err := h.callAssistantPlatform(ctx, user, "platform-bind", assistantMCPCall{
+		Tool: "issues_save",
+		Arguments: map[string]any{"body": map[string]any{
+			"id": "iss-chat-none", "workflowId": "wf-bind",
+		}},
+	}); err != nil {
+		t.Fatalf("binding a LOOP via issues_save should succeed: %v", err)
+	}
+	got, ok := st.Issue("iss-chat-none")
+	if !ok {
+		t.Fatal("issue not found after save")
+	}
+	// After binding a LOOP the issue must be eligible for scheduler pick-up
+	if got.AutomationState == "ignored" {
+		t.Errorf("automationState must not remain 'ignored' after binding a LOOP; got %q", got.AutomationState)
+	}
+	if got.SOPMode == domain.IssueSOPNone {
+		t.Errorf("sopMode must not remain 'none' after binding a LOOP; got %q", got.SOPMode)
+	}
+	if got.WorkflowID != "wf-bind" {
+		t.Errorf("workflowId not set after binding: got %q", got.WorkflowID)
+	}
+
+	// Explicit automationState in patch must be preserved (model overwrites deliberately)
+	if err := st.PutIssue(domain.Issue{
+		ID: "iss-explicit", ProjectID: "platform-bind", Title: "explicit", Status: "backlog",
+		SOPMode: domain.IssueSOPNone, AutomationState: "ignored",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.callAssistantPlatform(ctx, user, "platform-bind", assistantMCPCall{
+		Tool: "issues_save",
+		Arguments: map[string]any{"body": map[string]any{
+			"id": "iss-explicit", "workflowId": "wf-bind", "automationState": "ignored",
+		}},
+	}); err != nil {
+		t.Fatalf("explicit automationState save should succeed: %v", err)
+	}
+	got2, _ := st.Issue("iss-explicit")
+	if got2.AutomationState != "ignored" {
+		t.Errorf("explicit automationState=ignored must be preserved; got %q", got2.AutomationState)
+	}
+}
+
 func TestScheduledTaskKeepsPlaintextAndDoesNotParseJSON(t *testing.T) {
 	st, err := repo.OpenTest()
 	if err != nil {
