@@ -23,11 +23,18 @@ cd "$(dirname "$0")/.."
 # another database — the scratch test database of docs/testing/postgres.md —
 # so the caller's DSN wins over the .env default. The .env is still read, so
 # the settings it carries keep working.
+#
+# The .env is sourced with 'set +u': a hand-written .env may reference a
+# variable that is not set, and an unbound reference would otherwise abort the
+# script even though the caller exported a usable DSN. 'set -e' stays on, so a
+# command in the .env that really fails still stops the script.
 caller_dsn="${AGENTFLOW_DATABASE_URL:-}"
 if [[ -f .env ]]; then
+  set +u
   set -a
   source .env
   set +a
+  set -u
 fi
 if [[ -n "$caller_dsn" ]]; then
   export AGENTFLOW_DATABASE_URL="$caller_dsn"

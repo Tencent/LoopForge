@@ -110,9 +110,13 @@ go test ./internal/repo/... ./internal/httpapi/...
   `go test ./internal/repo/...` 是错的——那个目录下没有 Go 包。
 - **`unset AGENTFLOW_AUTH_REQUIRED` 不能少。** `.env` 里它是 `true`（部署需要），
   而 `internal/httpapi` 的测试夹具是按「不强制鉴权」搭的。带着它跑，
-  本机实测 **200 个顶层 httpapi 用例失败**（连子测试共 225 个 `--- FAIL`），
-  其中 179 个的失败原因是 `401 {"error":"authentication required"}`。
+  本机实测 **约 200 个顶层 httpapi 用例失败**（连子测试约 225 个 `--- FAIL`），
+  其中 179 个是 `401 {"error":"authentication required"}`。
   那是假警报，与移植无关。
+
+  顶层用例的总数会随本机 Chromium 相关的 flaky 用例上下浮动（实测在
+  200–201 之间，含子测试 225–226）：179 这个 401 的数是稳定的，会浮动的
+  是浏览器用例。
 
 DSN 不要在命令行上拼——那会进 shell 历史。`.env` 里已经有
 `AGENTFLOW_TEST_POSTGRES_URL`（指向 `loopforge_test`），`set -a; . ./.env`
@@ -169,7 +173,7 @@ sqlite 是默认路径：所有包在没有上面两个变量时都用内存 sql
 ## 6. 与本次移植无关的已知失败
 
 下面这些用例在本机 macOS 上失败，基线（`fd039e5`）上同样失败，不是回归。
-其中两条浏览器用例是**本机环境相关的 flaky 用例**（基线同样失败），不是稳定断言：
+其中三条浏览器用例是**本机环境相关的 flaky 用例**（基线同样失败），不是稳定断言：
 
 | 包 | 用例 | 原因 |
 | --- | --- | --- |
@@ -177,7 +181,7 @@ sqlite 是默认路径：所有包在没有上面两个变量时都用内存 sql
 | `deploy` | `TestBindCLIUninstallStopsTheRunnerNamedInServicePID`、`TestBindCLIReinstallStopsTheRunnerNamedInServicePID`、`TestBindCLIUninstallStopsARunnerWhoseArgv0IsTheScript`、`TestBindCLIUninstallSignalsOnlyTheBackgroundRunner` | launchd 的 `service.pid` |
 | `internal/engine` | `TestEnsureRunBrowserRestoresReclaimedWorkspaceWithStaleRun` | 需要真的 Chromium |
 | `internal/gitwork` | `TestGitDiscoveryStopsBeforeParentRepository` | 本机 git 目录拓扑 |
-| `internal/httpapi` | `TestBrowserStreamPushesFramesAndRunsCommands`、`TestMainBotBrowserStartsAndDrivesRunBrowser` | 本机环境相关的 flaky 用例（基线同样失败）：需要真的 Chromium |
+| `internal/httpapi` | `TestBrowserStreamPushesFramesAndRunsCommands`、`TestMainBotBrowserStartsAndDrivesRunBrowser`、`TestInstallCLIContinuesAfterTheBrowserGoesAway` | 本机环境相关的 flaky 用例（基线同样失败）：需要真的 Chromium |
 | `internal/runtime` | `TestProcessSandboxPathsProfilesAndCommands`、`TestLocalWorkspaceGitDiscoveryCannotReachParent` | 本机沙箱路径与 git 拓扑 |
 
 另有 10 个文件上游就不是 gofmt 干净的（`internal/domain/observability.go`、

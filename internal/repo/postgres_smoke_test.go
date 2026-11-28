@@ -60,7 +60,7 @@ func TestPostgresSmoke(t *testing.T) {
 	// AutoMigrate as jsonb. The columns are compared one by one: a leftover
 	// table of an interrupted test run would otherwise turn a count into a
 	// false failure.
-	modelColumns, _ := modelJSONColumns(t, store.DB)
+	modelColumns := modelJSONColumns(t, store.DB)
 	checkModelJSONColumns(t, store.DB, modelColumns)
 }
 

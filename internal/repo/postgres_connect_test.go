@@ -53,7 +53,7 @@ func TestPostgresConnectOpens(t *testing.T) {
 		t.Fatalf("%d columns kept a MySQL type name; Postgres has no such types", mysqlTyped)
 	}
 
-	modelColumns, _ := modelJSONColumns(t, store.DB)
+	modelColumns := modelJSONColumns(t, store.DB)
 	checkModelJSONColumns(t, store.DB, modelColumns)
 }
 
@@ -63,19 +63,16 @@ type modelJSONColumn struct {
 	Column string
 }
 
-// modelJSONColumns returns the columns the models declare with `type:json`
-// and the tables the models own. Every returned column has to come out of
-// AutoMigrate as jsonb.
-func modelJSONColumns(t *testing.T, db *gorm.DB) ([]modelJSONColumn, []string) {
+// modelJSONColumns returns the columns the models declare with `type:json`.
+// Every returned column has to come out of AutoMigrate as jsonb.
+func modelJSONColumns(t *testing.T, db *gorm.DB) []modelJSONColumn {
 	t.Helper()
 	columns := make([]modelJSONColumn, 0, len(allModels()))
-	tables := make([]string, 0, len(allModels()))
 	for _, model := range allModels() {
 		stmt := &gorm.Statement{DB: db}
 		if err := stmt.Parse(model); err != nil {
 			t.Fatalf("parse schema %T: %v", model, err)
 		}
-		tables = append(tables, stmt.Schema.Table)
 		for _, field := range stmt.Schema.Fields {
 			if field.DBName == "" {
 				continue
@@ -85,7 +82,7 @@ func modelJSONColumns(t *testing.T, db *gorm.DB) ([]modelJSONColumn, []string) {
 			}
 		}
 	}
-	return columns, tables
+	return columns
 }
 
 // checkModelJSONColumns asserts that every column the models declare with
