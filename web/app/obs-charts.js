@@ -10,8 +10,10 @@ const OBS_THEME_PRESETS={
 const OBS_THEME_VARS={c1:'--c1',c2:'--c2',c3:'--c3',c4:'--c4',text:'--text',muted:'--muted',muted2:'--muted-2',line:'--line',lineStrong:'--line-strong',panel:'--panel',panel2:'--panel-2',panel3:'--panel-3',red:'--red',green:'--green',amber:'--amber'};
 const OBS_WEEKDAYS=['周一','周二','周三','周四','周五','周六','周日'];
 function obsWeekdayLabels(){
-  return typeof lfT==='function'?lfT(OBS_WEEKDAYS,['Mon','Tue','Wed','Thu','Fri','Sat','Sun']):OBS_WEEKDAYS;
+  return obsL(OBS_WEEKDAYS,['Mon','Tue','Wed','Thu','Fri','Sat','Sun']);
 }
+// 画布上的文字 i18n.js 改写不到，按语言直接取；单独加载本文件（node 测试）时没有 lfT，按中文。
+function obsL(zh,en){return typeof lfT==='function'?lfT(zh,en):zh}
 let obsEChartsPromise=null;
 // 加载失败只在下一次整页挂载（重渲染/再次进入统计页）时重试，同一次渲染内的多张图共用失败结果。
 let obsEChartsFailed=false;
@@ -84,8 +86,9 @@ function obsValueAxis(t,formatter,extra){
   return Object.assign({type:'value',splitNumber:4,axisLine:{show:false},axisTick:{show:false},axisLabel:{color:t.muted2,fontSize:10.5,formatter},splitLine:{lineStyle:{color:t.line,type:[3,4]}}},extra||{});
 }
 function obsBarDelay(o,step){return o.reduced?0:(idx=>idx*(step||35))}
-function obsTooltipRows(title,rows,note){
-  return `<div class="obs-tt"><b>${obsEsc(title)}</b>${rows.map(([k,v])=>`<div><span>${obsEsc(k)}</span><em>${obsEsc(v)}</em></div>`).join('')}${note?`<small>${obsEsc(note)}</small>`:''}</div>`;
+// rawTitle：标题是用户起的名字（如负责人），英文界面不做片段翻译。
+function obsTooltipRows(title,rows,note,rawTitle){
+  return `<div class="obs-tt"><b${rawTitle?' data-i18n-skip':''}>${obsEsc(title)}</b>${rows.map(([k,v])=>`<div><span>${obsEsc(k)}</span><em>${obsEsc(v)}</em></div>`).join('')}${note?`<small>${obsEsc(note)}</small>`:''}</div>`;
 }
 
 // ---------- 趋势 ----------
@@ -238,11 +241,11 @@ function obsFunnelOption(stages,opts){
   const max=Math.max(1,...list.map(s=>s.value));
   return obsChartBase(o,{
     grid:{left:6,right:118,top:4,bottom:4,containLabel:true},
-    tooltip:{...obsTooltipBase(t),trigger:'item',formatter:p=>{const s=list[p.dataIndex];return obsTooltipRows(s.name,[['数量',String(s.value)],['转化率',s.conv==null?'—':Math.round(s.conv)+'%']],s.worst?'最大流失':'点击筛选明细')}},
+    tooltip:{...obsTooltipBase(t),trigger:'item',formatter:p=>{const s=list[p.dataIndex];return obsTooltipRows(s.name,[[obsL('数量','Count'),String(s.value)],[obsL('转化率','Conversion'),s.conv==null?'—':Math.round(s.conv)+'%']],s.worst?obsL('最大流失','Biggest drop'):obsL('点击筛选明细','Click to filter the details'))}},
     xAxis:{type:'value',max,show:false},
     yAxis:{type:'category',inverse:true,data:list.map(s=>s.name),axisLine:{show:false},axisTick:{show:false},axisLabel:{color:t.muted,fontSize:12,formatter:(v,i)=>i===active?`{a|${v}}`:v,rich:{a:{color:t.text,fontWeight:600,fontSize:12}}}},
     series:[{type:'bar',barWidth:18,showBackground:true,backgroundStyle:{color:t.panel2,borderRadius:4},itemStyle:{borderRadius:4},
-      label:{show:true,position:'right',distance:8,formatter:p=>{const s=list[p.dataIndex];const conv=s.conv==null?'':`  {${s.worst?'w':'c'}|↓ ${Math.round(s.drop)}%${s.worst?' · 最大流失':''}}`;return `{v|${s.value}}${conv}`},rich:{v:{color:t.text,fontWeight:600,fontSize:14},c:{color:t.muted2,fontSize:10.5},w:{color:t.red,fontSize:10.5,fontWeight:500}}},
+      label:{show:true,position:'right',distance:8,formatter:p=>{const s=list[p.dataIndex];const conv=s.conv==null?'':`  {${s.worst?'w':'c'}|↓ ${Math.round(s.drop)}%${s.worst?` · ${obsL('最大流失','biggest drop')}`:''}}`;return `{v|${s.value}}${conv}`},rich:{v:{color:t.text,fontWeight:600,fontSize:14},c:{color:t.muted2,fontSize:10.5},w:{color:t.red,fontSize:10.5,fontWeight:500}}},
       data:list.map((s,i)=>({value:s.value,itemStyle:{color:i===list.length-1||i===active?t.c1:t.c2}})),
       animationDelay:obsBarDelay(o,90)}],
   });
@@ -251,10 +254,10 @@ function obsOwnersOption(rows,opts){
   const o=obsChartOpts(opts),t=o.theme;
   rows=Array.isArray(rows)?rows:[];
   const names=rows.map(r=>String(r.name||'—'));
-  const parts=[['已交付','delivered',t.c1],['进行中','active',t.c3],['未交付','undelivered',t.c4]];
+  const parts=[[obsL('已交付','Delivered'),'delivered',t.c1],[obsL('进行中','In progress'),'active',t.c3],[obsL('未交付','Not delivered'),'undelivered',t.c4]];
   return obsChartBase(o,{
     grid:{left:6,right:12,top:4,bottom:4,containLabel:true},
-    tooltip:{...obsTooltipBase(t),trigger:'axis',axisPointer:{type:'shadow',shadowStyle:{color:t.text,opacity:.04}},formatter:params=>{const r=rows[params[0]?.dataIndex];if(!r)return '';return obsTooltipRows(r.name,[['已交付',String(r.delivered||0)],['进行中',String(r.active||0)],['未交付',String(r.undelivered||0)],['端到端',String(r.durationLabel||'—')],['Tokens',o.fmtTokens(r.tokens)]])}},
+    tooltip:{...obsTooltipBase(t),trigger:'axis',axisPointer:{type:'shadow',shadowStyle:{color:t.text,opacity:.04}},formatter:params=>{const r=rows[params[0]?.dataIndex];if(!r)return '';return obsTooltipRows(r.name,[...parts.map(([label,field])=>[label,String(r[field]||0)]),[obsL('端到端','End to end'),String(r.durationLabel||'—')],['Tokens',o.fmtTokens(r.tokens)]],'',true)}},
     xAxis:{type:'value',show:false},
     yAxis:{type:'category',inverse:true,data:names,axisLine:{show:false},axisTick:{show:false},axisLabel:{color:t.muted,fontSize:12,width:72,overflow:'truncate'}},
     series:parts.map(([name,field,color])=>({name,type:'bar',stack:'owners',barWidth:10,itemStyle:{color},data:rows.map(r=>Number(r[field]||0)),animationDelay:obsBarDelay(o,60)})),
