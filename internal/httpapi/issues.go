@@ -602,7 +602,9 @@ func issueChangeDetail(before, after domain.Issue) string {
 	if before.AssigneeUserID != after.AssigneeUserID || before.AssigneeID != after.AssigneeID {
 		parts = append(parts, "责任人")
 	}
-	if before.WorkflowID != after.WorkflowID && after.WorkflowID != "" {
+	// A requirement that stays without a LOOP drops any workflowId on save,
+	// so only a write that actually binds a LOOP records one.
+	if before.WorkflowID != after.WorkflowID && after.WorkflowID != "" && !after.WithoutSOP() {
 		parts = append(parts, "关联 LOOP")
 	}
 	if before.TapdID != after.TapdID {
