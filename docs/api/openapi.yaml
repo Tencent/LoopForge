@@ -3278,6 +3278,17 @@ paths:
           in: query
           schema:
             type: string
+        - name: userId
+          in: query
+          description: Explicit responsible-user scope; takes precedence over personal=1.
+          schema:
+            type: string
+        - name: personal
+          in: query
+          description: When 1 and no userId is supplied, scope all aggregates to the signed-in user (401 if unauthenticated). Mirrors responsible=me on /api/runs.
+          schema:
+            type: integer
+            enum: [0, 1]
         - name: from
           in: query
           schema:
