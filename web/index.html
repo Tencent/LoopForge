@@ -5,31 +5,32 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>LoopForge · Agent 编排平台</title>
   <script src="/boot-theme.js?v=20261031boot1"></script>
+  <script src="/boot.js"></script>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg?v=2">
   <link rel="icon" type="image/png" sizes="32x32" href="/favicon.png?v=2">
   <link rel="icon" href="/favicon.ico?v=2" sizes="any">
   <link rel="apple-touch-icon" href="/apple-touch-icon.png?v=2">
   <link rel="stylesheet" href="/app/hui-controls.css">
   <link rel="stylesheet" href="/styles.css?v=20261031v1">
-  <link rel="stylesheet" href="/assets.css?v=20260823v1">
+  <link rel="stylesheet" href="/assets.css?v=20260823v1" data-studio-view>
   <link rel="stylesheet" href="/platform.css?v=20261127toasthome">
-  <link rel="stylesheet" href="/observability.css?v=20261031metrics2">
-  <link rel="stylesheet" href="/artifacts.css?v=20261122artifactfeedback">
-  <link rel="stylesheet" href="/sops.css?v=20261030cards1">
-  <link rel="stylesheet" href="/sync.css?v=20261021schedule1">
-  <link rel="stylesheet" href="/access.css?v=20261031v1">
+  <link rel="stylesheet" href="/observability.css?v=20261031metrics2" data-studio-view>
+  <link rel="stylesheet" href="/artifacts.css?v=20261122artifactfeedback" data-studio-view>
+  <link rel="stylesheet" href="/sops.css?v=20261030cards1" data-studio-view>
+  <link rel="stylesheet" href="/sync.css?v=20261021schedule1" data-studio-view>
+  <link rel="stylesheet" href="/access.css?v=20261031v1" data-studio-view>
   <link rel="stylesheet" href="/product-v3.css?v=20261030runs1">
   <link rel="stylesheet" href="/product-v4.css?v=20261123run-eval">
   <link rel="stylesheet" href="/app/harness-ui.css?v=20261031req1">
-  <link rel="stylesheet" href="/app/project-credentials.css">
-  <link rel="stylesheet" href="/assistant-models.css">
-  <link rel="stylesheet" href="/bots.css">
-  <link rel="stylesheet" href="/knowledge.css?v=20261113evo1">
-  <link rel="stylesheet" href="/evolution.css?v=20261125rsi9">
-  <link rel="stylesheet" href="/app/evolution-review.css?v=20261125rsi5">
-  <link rel="stylesheet" href="/app/evolution-story.css?v=20261125rsi7">
-  <link rel="stylesheet" href="/app/evolution-home.css?v=20261125rsi5">
-  <link rel="stylesheet" href="/app/evolution-sop.css?v=20261125rsi13">
+  <link rel="stylesheet" href="/app/project-credentials.css" data-studio-view>
+  <link rel="stylesheet" href="/assistant-models.css" data-studio-view>
+  <link rel="stylesheet" href="/bots.css" data-studio-view>
+  <link rel="stylesheet" href="/knowledge.css?v=20261113evo1" data-studio-view>
+  <link rel="stylesheet" href="/evolution.css?v=20261125rsi9" data-studio-view>
+  <link rel="stylesheet" href="/app/evolution-review.css?v=20261125rsi5" data-studio-view>
+  <link rel="stylesheet" href="/app/evolution-story.css?v=20261125rsi7" data-studio-view>
+  <link rel="stylesheet" href="/app/evolution-home.css?v=20261125rsi5" data-studio-view>
+  <link rel="stylesheet" href="/app/evolution-sop.css?v=20261125rsi13" data-studio-view>
   <link rel="stylesheet" href="/app/frame.css">
   <link rel="stylesheet" href="/chat-codex.css?v=20261031drawer">
   <link rel="stylesheet" href="/app/harness-icons.css">
@@ -37,21 +38,21 @@
   <link rel="stylesheet" href="/app/hover-ink.css">
   <link rel="stylesheet" href="/app/harness-motion.css">
   <link rel="stylesheet" href="/app/sliding-tabs.css">
-  <link rel="stylesheet" href="/app/mcp.css">
-  <link rel="stylesheet" href="/app/knowledge-refs.css">
-  <link rel="stylesheet" href="/app/knowledge.css">
-  <link rel="stylesheet" href="/app/flow-canvas.css?v=20261126arrange">
-  <link rel="stylesheet" href="/app/assistant-settings.css">
+  <link rel="stylesheet" href="/app/mcp.css" data-studio-view>
+  <link rel="stylesheet" href="/app/knowledge-refs.css" data-studio-view>
+  <link rel="stylesheet" href="/app/knowledge.css" data-studio-view>
+  <link rel="stylesheet" href="/app/flow-canvas.css?v=20261126arrange" data-studio-view>
+  <link rel="stylesheet" href="/app/assistant-settings.css" data-studio-view>
   <link rel="stylesheet" href="/preferences.css">
-  <link rel="stylesheet" href="/app/issues-list.css">
-  <link rel="stylesheet" href="/app/requirement-wizard.css?v=20261116nosop">
-  <link rel="stylesheet" href="/app/assets-harness.css">
-  <link rel="stylesheet" href="/app/sops-harness.css">
-  <link rel="stylesheet" href="/app/sop-catalog.css">
-  <link rel="stylesheet" href="/app/observability-harness.css?v=20261030obs1">
-  <link rel="stylesheet" href="/app/observability-dashboard.css">
+  <link rel="stylesheet" href="/app/issues-list.css" data-studio-view>
+  <link rel="stylesheet" href="/app/requirement-wizard.css?v=20261116nosop" data-studio-view>
+  <link rel="stylesheet" href="/app/assets-harness.css" data-studio-view>
+  <link rel="stylesheet" href="/app/sops-harness.css" data-studio-view>
+  <link rel="stylesheet" href="/app/sop-catalog.css" data-studio-view>
+  <link rel="stylesheet" href="/app/observability-harness.css?v=20261030obs1" data-studio-view>
+  <link rel="stylesheet" href="/app/observability-dashboard.css" data-studio-view>
   <link rel="stylesheet" href="/app/topbar-harness.css?v=20261030tb1">
-  <link rel="stylesheet" href="/app/approvals-harness.css?v=20261030ap1">
+  <link rel="stylesheet" href="/app/approvals-harness.css?v=20261030ap1" data-studio-view>
   <style>
     .boot-loader{position:fixed;inset:0;z-index:2147483000;display:flex;align-items:center;justify-content:center;background:#0a0e16;background:var(--bg,#0a0e16);color:#94a3bd;color:var(--muted,#94a3bd);transition:opacity .18s ease}
     [data-theme=light] .boot-loader{background:#f5f7fb;background:var(--bg,#f5f7fb);color:#475569;color:var(--muted,#475569)}
@@ -64,9 +65,7 @@
     @keyframes boot-loader-spin{to{transform:rotate(360deg)}}
     @media (prefers-reduced-motion:reduce){.boot-loader-spin{animation:none}.boot-loader{transition:none}}
   </style>
-  <script src="/boot.js"></script>
-  <script src="/i18n-en.js"></script>
-  <script src="/i18n.js"></script>
+  <script src="/i18n.js" data-dictionary-src="/i18n-en.js"></script>
 </head>
 <body class="booting">
   <div id="bootLoader" class="boot-loader" role="status" aria-live="polite" aria-busy="true">
@@ -1418,6 +1417,7 @@
   </div>
   <div id="revisionModal" class="modal"><div class="modal-card revision-card"><button type="button" class="modal-close" id="revisionClose">×</button><div class="wizard-head"><div><p class="eyebrow">版本历史</p><h2 id="revisionTitle">版本历史</h2><p>对比上一版并回退。回退会生成新版本，不会改已经跑完的记录。</p></div></div><div id="revisionList" class="revision-list"></div><pre id="revisionDiff" class="revision-diff">选择一个历史版本查看差异。</pre><div class="wizard-actions"><button type="button" class="button ghost" id="revisionClose2">关闭</button><button type="button" class="button primary" id="revisionRestore" disabled>回退到此版本</button></div></div></div>
   <script src="/app.js"></script>
+  <!-- studio modules -->
   <script src="/app/assistant-models.js"></script>
   <script src="/app/access.js"></script>
   <script src="/app/dashboards.js"></script>
@@ -1478,9 +1478,10 @@
   <script src="/app/evolution-story.js?v=20261125rsi7"></script>
   <script src="/app/evolution-home.js?v=20261125rsi8"></script>
   <script src="/app/evolution-sop.js?v=20261126rsi19"></script>
+  <script src="/orchestrate.js?v=20261121roles"></script>
+  <!-- end studio modules -->
   <script src="/app/start.js"></script>
   </div>
   </div>
-  <script src="/orchestrate.js?v=20261121roles"></script>
 </body>
 </html>

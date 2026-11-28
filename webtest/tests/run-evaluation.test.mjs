@@ -224,7 +224,7 @@ test('the gate preview translates its yes and no values without a dictionary ent
   assert.equal(required(), '否');
   app.evaluate('window.lfT = (_zh, en) => en');
   assert.equal(required(), 'No');
-  assert.equal(app.window.LF_I18N_EN['否'], undefined); // A typed 「否」 must not be rewritten.
+  assert.equal(app.window.LF_I18N_EN?.['否'], undefined); // A typed 「否」 must not be rewritten.
 });
 
 test('a LOOP trace detection record is titled with the LOOP wording', async (t) => {

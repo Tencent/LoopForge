@@ -95,6 +95,27 @@ test('refresh restores a hash-only chat and reveals its frame before the compose
   app.evaluate('settleBootLoader()');
   assert.equal(app.evaluate('bootLoaderTimer'), 0);
 
+  const catalogReads = () => app.router.calls.filter(call => call.path === '/api/bootstrap').length;
+  assert.equal(catalogReads(), 0);
+  const catalog = sampleBootstrap();
+  catalog.projects.push({ id: 'linked-project', name: 'Linked project' });
+  app.router.get('/api/bootstrap', catalog);
+  app.window.dispatchEvent(new app.window.MessageEvent('message', {
+    data: { type: 'agentflow-chat-project', projectId: 'linked-project' },
+    origin: app.window.location.origin, source: frame.contentWindow,
+  }));
+  const contentReady = { type: 'agentflow-chat-preview-settled' };
+  const signal = source => app.window.dispatchEvent(new app.window.MessageEvent('message', {
+    data: contentReady, origin: app.window.location.origin, source,
+  }));
+  signal(app.window);
+  await settle();
+  assert.equal(catalogReads(), 0);
+  signal(frame.contentWindow);
+  await settle();
+  assert.equal(catalogReads(), 1);
+  assert.equal(app.evaluate('state.projectFilter'), 'linked-project');
+
   app.window.history.replaceState({}, '', '/?chatIssue=issue-1#/collaboration/session-42');
   app.evaluate("$('#chatNextFrame').dataset.src='';mountNativeChat()");
   const issueLink = new URL(frame.src);

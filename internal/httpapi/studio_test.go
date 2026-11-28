@@ -70,6 +70,7 @@ func TestStudioStylesheetChangesInvalidateURLWithoutEditingIndex(t *testing.T) {
 	}
 	h := studioFileServer(static)
 	previousURL := ""
+	previousTag := ""
 	for _, css := range []string{
 		`.node-activity-inline{color:gray}`,
 		`.node-activity-inline.is-running{animation:shimmer 2.4s infinite}`,
@@ -79,7 +80,9 @@ func TestStudioStylesheetChangesInvalidateURLWithoutEditingIndex(t *testing.T) {
 		sum := sha256.Sum256([]byte(css))
 		url := "/observability.css?v=" + hex.EncodeToString(sum[:8])
 		rec := httptest.NewRecorder()
-		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		req.Header.Set("If-None-Match", previousTag)
+		h.ServeHTTP(rec, req)
 		if rec.Code != http.StatusOK || rec.Header().Get("Cache-Control") != "no-cache" {
 			t.Fatalf("index must be revalidated: status=%d cache=%q", rec.Code, rec.Header().Get("Cache-Control"))
 		}
@@ -89,12 +92,79 @@ func TestStudioStylesheetChangesInvalidateURLWithoutEditingIndex(t *testing.T) {
 		if url == previousURL {
 			t.Fatal("changed stylesheet reused its immutable URL")
 		}
+		tag := rec.Header().Get("ETag")
+		if tag == "" || tag == previousTag {
+			t.Fatalf("changed entry reused its validator %q", tag)
+		}
+		reload := httptest.NewRecorder()
+		req.Header.Set("If-None-Match", tag)
+		h.ServeHTTP(reload, req)
+		if reload.Code != http.StatusNotModified || reload.Body.Len() != 0 {
+			t.Fatalf("unchanged entry returned %d, %d bytes", reload.Code, reload.Body.Len())
+		}
+		previousTag = tag
 		asset := httptest.NewRecorder()
 		h.ServeHTTP(asset, httptest.NewRequest(http.MethodGet, url, nil))
 		if asset.Code != http.StatusOK || asset.Body.String() != css {
 			t.Fatalf("stamped URL must serve the matching stylesheet: status=%d body=%q", asset.Code, asset.Body.String())
 		}
 		previousURL = url
+	}
+}
+
+func TestStudioPreloadsOnlyTheLinkedChatPreview(t *testing.T) {
+	h := studioFileServer(fstest.MapFS{"native-chat/index.html": {Data: []byte("chat")}})
+	for _, tc := range []struct {
+		path, link string
+	}{
+		{"/chatbot/?projectId=p&session=chat-ab_123", "</api/assistant/sessions/chat-ab_123?view=recent>; rel=preload; as=fetch; crossorigin=anonymous; fetchpriority=high"},
+		{"/chatbot/", ""},
+		{"/chatbot/?issueId=an-issue", ""},
+		{"/chatbot/?session=a%2Fb", ""},
+		{"/chatbot/?session=a%0D%0Ab", ""},
+		{"/chatbot/preview.html?session=chat-ab_123", ""},
+	} {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, tc.path, nil))
+		if got := rec.Header().Get("Link"); got != tc.link {
+			t.Errorf("%s: Link=%q, want %q", tc.path, got, tc.link)
+		}
+	}
+}
+
+func TestStudioChatEntryDefersConsoleAssetsInTheirOriginalOrder(t *testing.T) {
+	h := studioFileServer(webassets.Files)
+	for _, tc := range []struct {
+		path     string
+		deferred bool
+	}{
+		{"/?chatSession=saved-chat", true},
+		{"/", false},
+		{"/?chatSession=", false},
+	} {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, tc.path, nil))
+		body := rec.Body.String()
+		before, rest, present := strings.Cut(body, `<template id="studioModules">`)
+		if present != tc.deferred {
+			t.Fatalf("%s: deferred=%v", tc.path, present)
+		}
+		if !tc.deferred {
+			if !strings.Contains(body, `rel="stylesheet" href="/observability.css?v=`) {
+				t.Fatal("ordinary console entries must load view styles during parsing")
+			}
+			continue
+		}
+		modules, after, closed := strings.Cut(rest, "</template>")
+		if !closed || !strings.Contains(before, `src="/app.js?v=`) || !strings.Contains(before, `<link href="/observability.css?v=`) ||
+			!strings.Contains(before, `rel="stylesheet" href="/chat-codex.css?v=`) || !strings.Contains(after, `src="/app/start.js?v=`) {
+			t.Fatal("chat entry must keep its shell, startup script and chat styles available")
+		}
+		first := strings.Index(modules, `src="/app/assistant-models.js?v=`)
+		last := strings.Index(modules, `src="/orchestrate.js?v=`)
+		if first < 0 || last < first {
+			t.Fatal("deferred scripts must retain their dependency order")
+		}
 	}
 }
 
