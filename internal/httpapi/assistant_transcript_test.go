@@ -559,15 +559,21 @@ func TestAssistantVisibleReplyPreservesIndentationWhenQuoteSpansLines(t *testing
 	// fenced block must not cause replyContentTokens to treat everything up to
 	// the next single-quote on a later line as one token, which would make the
 	// two sides look equal even when the CLI has flattened the indentation.
-	const block = "Earlier.\n\n```python\n# don't flatten this\ndef f():\n    return 'x'\n```"
-	// The CLI strips leading spaces from each line.
-	final := "Earlier.\n\n```python\n# don't flatten this\ndef f():\nreturn 'x'\n```"
-	got := assistantVisibleReply(final, []domain.AssistantActivityEvent{
+	const block = "```python\n# don't flatten this\ndef f():\n    return 'x'\n```"
+	const want = "Earlier.\n\n" + block
+	events := []domain.AssistantActivityEvent{
 		{Kind: "text", Text: "Earlier."},
 		{Kind: "tool", ID: "write"},
 		{Kind: "text", Text: block},
-	})
-	if got != block {
-		t.Fatalf("indentation inside fenced block was lost:\ngot  %q\nwant %q", got, block)
+	}
+	// The CLI strips leading spaces from each line, repeating either the
+	// whole reply or only the last phase.
+	for _, final := range []string{
+		"Earlier.\n\n```python\n# don't flatten this\ndef f():\nreturn 'x'\n```",
+		"```python\n# don't flatten this\ndef f():\nreturn 'x'\n```",
+	} {
+		if got := assistantVisibleReply(final, events); got != want {
+			t.Errorf("indentation inside fenced block was lost:\ngot  %q\nwant %q", got, want)
+		}
 	}
 }
