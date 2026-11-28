@@ -61,6 +61,17 @@ test("image placeholder keeps a stable themed footprint", () => {
   assert.match(rule, /background:\s*var\(--subtle\)/);
 });
 
+test("the lightbox fits tall images inside the viewport", () => {
+  const at = styles.indexOf(".image-lightbox {");
+  assert.notEqual(at, -1);
+  const rule = styles.slice(at, styles.indexOf("}", at));
+  assert.match(rule, /display:\s*grid/);
+  assert.match(
+    rule,
+    /grid-template:\s*minmax\(0,\s*1fr\)\s*\/\s*minmax\(0,\s*1fr\)/,
+  );
+});
+
 test("a failed first fetch is retried before the failure notice", () => {
   assert.equal(shouldAutoRetryImage("error", 0), true);
   assert.equal(shouldAutoRetryImage("error", 1), true);
