@@ -179,3 +179,98 @@ func TestVerifyGitHTTPCredential(t *testing.T) {
 		t.Fatalf("unknown credential verify: HTTP %d", resp.Code)
 	}
 }
+
+func TestVerifyGitHTTPCredentialExtractsCommitIdentity(t *testing.T) {
+	var (
+		gheUserBody    = `{"id":42,"login":"octocat","name":"The Octocat","email":""}`
+		gheEmailsBody  = ""
+		gitlabUserBody = `{"username":"tanuki","name":"Tanuki Bot","commit_email":"commit@gitlab.example.com","public_email":"pub@gitlab.example.com","email":"pri@gitlab.example.com"}`
+	)
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Host == "ghe.example.com" && r.URL.Path == "/api/v3/user":
+			_, _ = w.Write([]byte(gheUserBody))
+		case r.Host == "ghe.example.com" && r.URL.Path == "/api/v3/user/emails":
+			if gheEmailsBody == "" {
+				w.WriteHeader(http.StatusForbidden)
+				return
+			}
+			_, _ = w.Write([]byte(gheEmailsBody))
+		case r.Host == "gitlab.example.com" && r.URL.Path == "/api/v4/user":
+			_, _ = w.Write([]byte(gitlabUserBody))
+		default:
+			w.WriteHeader(http.StatusUnauthorized)
+		}
+	}))
+	defer srv.Close()
+	previous := gitHTTPVerifyClient
+	gitHTTPVerifyClient = func(gitegress.HTTPSHostLookup) *http.Client {
+		transport := srv.Client().Transport.(*http.Transport).Clone()
+		transport.TLSClientConfig = &tls.Config{RootCAs: transport.TLSClientConfig.RootCAs, ServerName: "example.com"}
+		transport.DialContext = func(ctx context.Context, network, _ string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, network, srv.Listener.Addr().String())
+		}
+		return &http.Client{Transport: transport}
+	}
+	defer func() { gitHTTPVerifyClient = previous }()
+
+	f := cvBNewHTTPFixture(t)
+	endpoint := fmt.Sprintf("/api/users/%d/git-http-credentials", f.user.ID)
+	save := func(host, platform, token string) string {
+		t.Helper()
+		resp := cvBRequest(t, f, http.MethodPut, endpoint, map[string]any{"host": host, "name": host, "platform": platform, "token": token}, true)
+		var creds []domain.GitHTTPCredential
+		if resp.Code != http.StatusOK || json.Unmarshal(resp.Body.Bytes(), &creds) != nil {
+			t.Fatalf("PUT %s: HTTP %d %s", host, resp.Code, resp.Body.String())
+		}
+		for _, c := range creds {
+			if c.Host == host {
+				return c.ID
+			}
+		}
+		t.Fatalf("missing saved credential for %s", host)
+		return ""
+	}
+	verify := func(id string) gitTokenVerifyResult {
+		t.Helper()
+		resp := cvBRequest(t, f, http.MethodPost, endpoint+"/"+id+"/verify", nil, true)
+		var verifyRes gitTokenVerifyResult
+		if resp.Code != http.StatusOK || json.Unmarshal(resp.Body.Bytes(), &verifyRes) != nil {
+			t.Fatalf("verify: HTTP %d %s", resp.Code, resp.Body.String())
+		}
+		return verifyRes
+	}
+
+	gheID := save("ghe.example.com", "github", "ghe-tok")
+	got := verify(gheID)
+	if !got.Valid || got.CommitName != "The Octocat" || got.CommitEmail != "42+octocat@users.noreply.ghe.example.com" {
+		t.Fatalf("GHE noreply identity = %+v", got)
+	}
+	gheEmailsBody = `[{"email":"alt@ghe.example.com","primary":false,"verified":true},{"email":"primary@ghe.example.com","primary":true,"verified":true}]`
+	got = verify(gheID)
+	if !got.Valid || got.CommitName != "The Octocat" || got.CommitEmail != "primary@ghe.example.com" {
+		t.Fatalf("GHE /user/emails verified primary = %+v", got)
+	}
+	gheEmailsBody = ""
+	gheUserBody = `{"id":99,"login":"new-octo","name":"","email":"new-octo@ghe.example.com"}`
+	got = verify(gheID)
+	if !got.Valid || got.CommitName != "new-octo" || got.CommitEmail != "new-octo@ghe.example.com" {
+		t.Fatalf("GHE live updated identity = %+v", got)
+	}
+
+	glID := save("gitlab.example.com", "gitlab", "gl-tok")
+	got = verify(glID)
+	if !got.Valid || got.CommitName != "Tanuki Bot" || got.CommitEmail != "commit@gitlab.example.com" {
+		t.Fatalf("GitLab commit_email preference = %+v", got)
+	}
+	gitlabUserBody = `{"username":"tanuki","name":"Tanuki Bot","commit_email":"","public_email":"pub@gitlab.example.com","email":"pri@gitlab.example.com"}`
+	got = verify(glID)
+	if !got.Valid || got.CommitEmail != "pub@gitlab.example.com" {
+		t.Fatalf("GitLab public_email fallback = %+v", got)
+	}
+	gitlabUserBody = `{"username":"tanuki","name":"","commit_email":"","public_email":"","email":"pri@gitlab.example.com"}`
+	got = verify(glID)
+	if !got.Valid || got.CommitName != "tanuki" || got.CommitEmail != "pri@gitlab.example.com" {
+		t.Fatalf("GitLab email fallback = %+v", got)
+	}
+}

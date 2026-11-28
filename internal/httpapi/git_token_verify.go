@@ -31,6 +31,8 @@ type gitTokenVerifyResult struct {
 	Valid              bool     `json:"valid"`
 	RepositoryReadable bool     `json:"repositoryReadable,omitempty"`
 	Login              string   `json:"login,omitempty"`
+	CommitName         string   `json:"commitName,omitempty"`
+	CommitEmail        string   `json:"commitEmail,omitempty"`
 	Scopes             []string `json:"scopes,omitempty"`
 	Missing            []string `json:"missing,omitempty"`
 	Error              string   `json:"error,omitempty"`
