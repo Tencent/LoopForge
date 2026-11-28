@@ -593,6 +593,10 @@ func (e *Engine) validateExecutionReconnect(run domain.Run, nodeID string) error
 		if node.ID != nodeID {
 			continue
 		}
+		if node.Type == "sop" {
+			// The child LOOP validates the providers for its own executable nodes.
+			return nil
+		}
 		provider := "terminal"
 		if node.Type != "script" && node.Type != "command" && node.Type != "approval" {
 			agent, found := workflowAgent(e.repo, run.WorkflowSnapshot, node.AgentID)

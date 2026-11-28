@@ -506,6 +506,56 @@ func TestSOPChildRetryResumesFailedParent(t *testing.T) {
 	}
 }
 
+func TestSOPChildRetryReattachesRunnerParent(t *testing.T) {
+	t.Parallel()
+	s, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	runner := domain.Runner{
+		ID: "runner-sop-retry", Name: "LOOP runner", Status: domain.RunnerStatusOnline,
+		Runtimes: []domain.RunnerRuntime{{Provider: "terminal", Status: domain.RuntimeStatusOnline}},
+	}
+	if err := s.PutRunner(runner); err != nil {
+		t.Fatal(err)
+	}
+	execution := domain.TelemetryContext{ExecutionMode: domain.ExecutionModeRunner, ExecutionRunnerID: runner.ID}
+	childWorkflow := domain.WorkflowDefinition{ID: "runner-child", Nodes: []domain.WorkflowNode{
+		{ID: "work", Type: "command", Command: "true", MaxAttempts: 1},
+	}}
+	parent := domain.Run{
+		ID: "run-runner-parent", WorkflowID: "runner-parent", Status: "failed", ExecutionContext: execution,
+		WorkflowSnapshot: domain.WorkflowDefinition{ID: "runner-parent", Nodes: []domain.WorkflowNode{
+			{ID: "sub", Type: "sop", SOPWorkflowID: childWorkflow.ID, MaxAttempts: 1},
+		}},
+		Nodes: map[string]*domain.NodeRun{
+			"sub": {NodeID: "sub", Status: "failed", Attempt: 1, ChildRunID: "run-runner-child"},
+		},
+	}
+	execution.ParentRunID, execution.ParentNodeID = parent.ID, "sub"
+	child := domain.Run{
+		ID: "run-runner-child", WorkflowID: childWorkflow.ID, WorkflowSnapshot: childWorkflow,
+		Status: "failed", ExecutionContext: execution,
+		Nodes: map[string]*domain.NodeRun{"work": {NodeID: "work", Status: "failed", Attempt: 1}},
+	}
+	for _, run := range []domain.Run{parent, child} {
+		if err := s.PutRun(run); err != nil {
+			t.Fatal(err)
+		}
+	}
+	e := New(s, runtime.NewManager(t.TempDir()))
+	e.ConfigureExecution("", "", 0, false)
+	if err := e.Retry(child.ID, "work", "retry", ""); err != nil {
+		t.Fatal(err)
+	}
+	reattached, ok := s.RunState(parent.ID)
+	node := reattached.Nodes["sub"]
+	if !ok || reattached.Status != "running" || node == nil || node.Status != "pending" || node.ChildRunID != child.ID {
+		t.Fatalf("parent did not resume with child %s: status=%q node=%+v", child.ID, reattached.Status, node)
+	}
+}
+
 // startPausedParentWithChild starts parent -> LOOP child (waits for marker), pauses
 // the parent and returns once both are paused.
 func startPausedParentWithChild(t *testing.T, s *repo.Store, e *Engine, prefix string, before bool) (parentID, childID, marker string) {
