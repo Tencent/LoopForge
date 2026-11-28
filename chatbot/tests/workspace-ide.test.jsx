@@ -1,5 +1,5 @@
 import React from "react";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import ArtifactPanel from "../src/ArtifactPanel.jsx";
 import WorkspaceIDE, { workspaceIDEURL } from "../src/WorkspaceIDE.jsx";
@@ -21,19 +21,51 @@ describe("side panel IDE tab", () => {
     expect(screen.getByRole("tab", { name: /IDE/ })).toBeDisabled();
   });
 
-  test("embeds the workspace in VS Code and follows workspace switches", () => {
+  test("offers both IDEs in the panel before loading the web editor", () => {
     const onViewChange = vi.fn();
     const { rerender } = render(panel({ view: "artifacts", workspaceRunId: "run-9", onViewChange }));
     fireEvent.click(screen.getByRole("tab", { name: /IDE/ }));
     expect(onViewChange).toHaveBeenCalledWith("ide");
-    rerender(panel({ view: "ide", workspaceRunId: "run-9", onViewChange }));
-    expect(screen.getByRole("complementary", { name: "工作区 IDE" })).toBeInTheDocument();
+    const props = { view: "ide", workspaceRunId: "run-9", onViewChange, workspaceChanges: { desktopIDE: { available: true } } };
+    rerender(panel(props));
+    const choices = within(screen.getByRole("tabpanel", { name: "IDE" }));
+    const desktop = choices.getByRole("link", { name: "本地 Visual Studio Code" });
+    const origin = Buffer.from(window.location.origin).toString("hex");
+    expect(desktop).toHaveAttribute("href", `vscode://vscode-remote/ssh-remote+loopforge-${origin}-72756e2d39/workspace`);
+    expect(desktop).toHaveAttribute("target", "_top");
+    expect(screen.queryByLabelText("VS Code")).not.toBeInTheDocument();
+
+    fireEvent.click(choices.getByRole("button", { name: "在线 IDE" }));
     const frame = screen.getByLabelText("VS Code");
-    expect(frame).toHaveAttribute("src", "/vscode.html?run=run-9&embed=1");
+    expect(frame).toHaveAttribute("src", "/vscode.html?run=run-9&embed=1&source=conversation");
     // A title would show a hover tip over the whole editor.
     expect(frame).not.toHaveAttribute("title");
-    rerender(panel({ view: "ide", workspaceRunId: "run-10", onViewChange }));
-    expect(screen.getByLabelText("VS Code")).toHaveAttribute("src", "/vscode.html?run=run-10&embed=1");
+    expect(choices.queryByRole("link", { name: "本地 Visual Studio Code" })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("tab", { name: "IDE" }));
+    expect(frame).not.toBeVisible();
+    fireEvent.click(choices.getByRole("button", { name: "在线 IDE" }));
+    expect(screen.getByLabelText("VS Code")).toBe(frame);
+    expect(frame).toBeVisible();
+
+    rerender(panel({ ...props, workspaceRunId: "run-10" }));
+    expect(frame).not.toBeInTheDocument();
+    fireEvent.click(choices.getByRole("button", { name: "在线 IDE" }));
+    expect(screen.getByLabelText("VS Code")).toHaveAttribute("src", "/vscode.html?run=run-10&embed=1&source=conversation");
+  });
+
+  test("explains why desktop connection is unavailable and keeps the online IDE accessible", () => {
+    render(panel({
+      view: "ide",
+      workspaceRunId: "run-9",
+      workspaceChanges: { desktopIDE: { available: false, reason: "桌面连接需要工作区编辑权限" } },
+    }));
+    const desktop = screen.getByRole("link", { name: "本地 Visual Studio Code" });
+    expect(desktop).toHaveAttribute("aria-disabled", "true");
+    expect(desktop).not.toHaveAttribute("href");
+    expect(desktop).not.toHaveAttribute("target");
+    expect(desktop).toHaveAccessibleDescription("桌面连接需要工作区编辑权限");
+    expect(screen.getByRole("button", { name: "在线 IDE" })).toBeEnabled();
   });
 });
 

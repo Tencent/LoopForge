@@ -14,6 +14,7 @@ import (
 
 	"agentflow/internal/runner"
 	"agentflow/internal/runtime"
+	"agentflow/internal/workspacessh"
 )
 
 // agentflow-runner is the CLI Runner daemon (cli-connect.md). It runs on a
@@ -21,6 +22,12 @@ import (
 // HTTPS only, and executes Agent CLI tasks on that machine. Agent CLI
 // credentials stay on this machine.
 func main() {
+	if handled, err := workspacessh.RunCLI(os.Args[1:]); handled {
+		if err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
 	if runtime.RunMCPCallCLI(os.Args[1:]) {
 		return
 	}

@@ -91,6 +91,7 @@ type runnersHandlers struct {
 	*deps
 	runnerWaiters   *runnerWaiterRegistry
 	runnerControls  *runnerControlHub
+	workspaceSSH    *workspaceSSHRelay
 	assistant       *assistantHandlers
 	runnerBindMu    stdsync.Mutex
 	runnerBindCodes map[string]runnerBindCode

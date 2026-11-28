@@ -1,20 +1,84 @@
 /* Workspace IDE in the conversation side panel ("IDE" tab). */
-.chat-shell .artifact-panel .workspace-ide-content {
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  padding: 0;
+.workspace-ide-picker {
+  display: grid;
+  gap: 12px;
+  width: min(100%, 520px);
+  margin-inline: auto;
+  padding: 24px clamp(12px, 5%, 24px);
+}
+.workspace-ide-option {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+  min-height: 84px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: 0 2px 4px rgb(var(--artifact-ink) / 0.035);
+  font: inherit;
+  text-align: start;
+  text-decoration: none;
+  cursor: pointer;
+  transition: background-color 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
+}
+.workspace-ide-option:not([aria-disabled="true"]):hover {
+  border-color: color-mix(in srgb, var(--line) 68%, var(--muted));
+  background: var(--subtle);
+  box-shadow: 0 3px 8px rgb(var(--artifact-ink) / 0.06);
+}
+.workspace-ide-option:focus-visible {
+  outline: 2px solid var(--focus, #5273dc);
+  outline-offset: 2px;
+}
+.workspace-ide-option[aria-disabled="true"] {
+  cursor: default;
+}
+.workspace-ide-option-icon {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 11px;
+  background: rgb(var(--artifact-ink) / 0.055);
+}
+.workspace-ide-option-arrow,
+.workspace-ide-option[aria-disabled="true"] .workspace-ide-option-copy > strong,
+.workspace-ide-option[aria-disabled="true"] .workspace-ide-option-icon {
+  color: var(--muted);
+}
+.workspace-ide-option-copy {
+  display: grid;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.workspace-ide-option-copy > strong {
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.4;
 }
 .workspace-ide {
   display: flex;
-  flex: 1;
-  min-width: 0;
-  min-height: 0;
+  height: 100%;
+}
+.workspace-ide[hidden] {
+  display: none;
 }
 .workspace-ide-frame {
   flex: 1;
   width: 100%;
-  min-height: 0;
+  height: 100%;
+  min-width: 0;
   border: 0;
-  background: var(--surface, #fff);
+  background: var(--surface);
+}
+@media (prefers-reduced-motion: reduce) {
+  .workspace-ide-option { transition: none; }
 }

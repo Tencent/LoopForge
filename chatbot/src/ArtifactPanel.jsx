@@ -6,7 +6,7 @@ import { DraftCard } from "./SidePanel";
 import SopRunPanel, { runStatus } from "./SopRunPanel";
 import ChangesPanel from "./ChangesPanel";
 import AgentBrowser from "./AgentBrowser";
-import WorkspaceIDE from "./WorkspaceIDE";
+import WorkspaceIDE, { WorkspaceIDEPicker } from "./WorkspaceIDE";
 import { SubagentSession, subagentName, subagentStatus } from "./SubagentSession";
 import { DeferredActivity } from "./ActivityTrace";
 import { collectSubagents, resumeMissed } from "./activity";
@@ -200,8 +200,11 @@ export default function ArtifactPanel({
   const searchInput = useRef(null);
   const [nodeId, setNodeId] = useState(selected?.nodeId || null);
   const [search, setSearch] = useState("");
+  const [openedIDE, setOpenedIDE] = useState(null);
   const browsing = view === "browser";
   const coding = view === "ide";
+  const onlineIDEOpened = openedIDE?.runId === workspaceRunId;
+  const onlineIDEVisible = coding && onlineIDEOpened && openedIDE.visible;
   const listView = view !== "changes" && !browsing && !coding;
   const live = !!chat?.busy;
   const subagents = collectSubagents(
@@ -256,7 +259,7 @@ export default function ArtifactPanel({
     nodeId ||
       (selectedAgent ? `subagent-${selectedAgent.key}` : null) ||
       (browsing && workspaceRunId ? "agent-browser" : null) ||
-      (coding && workspaceRunId ? "workspace-ide" : null),
+      (onlineIDEVisible ? "workspace-ide" : null),
     open,
   );
   useEffect(
@@ -264,6 +267,7 @@ export default function ArtifactPanel({
     [selected?.id, selected?.nodeId],
   );
   useEffect(() => setSearch(""), [chat.session?.id]);
+  useEffect(() => setOpenedIDE(null), [workspaceRunId]);
   const selectedRun =
     selected?.kind === "run"
       ? runs.find((run) => run.id === selected.runId)
@@ -490,15 +494,17 @@ export default function ArtifactPanel({
             <button
               type="button"
               role="tab"
+              id="workspace-ide-tab"
+              aria-controls={coding || onlineIDEOpened ? "workspace-ide-panel" : undefined}
               aria-selected={coding}
               className={coding ? "is-active" : ""}
-              onClick={() => onViewChange("ide")}
+              onClick={() => {
+                if (onlineIDEOpened) setOpenedIDE({ runId: workspaceRunId, visible: false });
+                onViewChange("ide");
+                workspaceChanges?.refresh?.();
+              }}
               disabled={!workspaceRunId}
-              title={
-                workspaceRunId
-                  ? "在 VS Code 里浏览、编辑本次会话的工作区"
-                  : "本次会话还没有工作区"
-              }
+              title={workspaceRunId ? "选择 IDE" : "本次会话还没有工作区"}
             >
               <HarnessIcon name="stage-ide" size={14} />
               <span>IDE</span>
@@ -595,19 +601,33 @@ export default function ArtifactPanel({
             <ChangesPanel changes={workspaceChanges} />
           </div>
         ) : null}
-        {coding ? (
-          <div className="artifact-panel-content workspace-ide-content">
-            {workspaceRunId && open ? (
-              <WorkspaceIDE
-                key={workspaceRunId}
+        {coding || onlineIDEOpened ? (
+          <div
+            id="workspace-ide-panel"
+            role="tabpanel"
+            aria-labelledby="workspace-ide-tab"
+            className="artifact-panel-content"
+            hidden={!coding}
+          >
+            {coding && !onlineIDEVisible && (workspaceRunId ? (
+              <WorkspaceIDEPicker
                 runId={workspaceRunId}
-                onMaximize={layout.compact ? undefined : layout.toggleCovered}
+                desktopIDE={workspaceChanges?.desktopIDE}
+                onOpenOnline={() => setOpenedIDE({ runId: workspaceRunId, visible: true })}
               />
             ) : (
               <div className="agent-browser-empty" role="status">
                 <HarnessIcon name="stage-ide" size={28} />
-                <p>本次会话还没有工作区。让助手打开工作区后，可以在这里用 VS Code 浏览和编辑它的代码。</p>
+                <p>本次会话还没有工作区。让助手打开工作区后，可以在这里选择 IDE。</p>
               </div>
+            ))}
+            {onlineIDEOpened && (
+              <WorkspaceIDE
+                key={workspaceRunId}
+                runId={workspaceRunId}
+                active={onlineIDEVisible}
+                onMaximize={layout.compact ? undefined : layout.toggleCovered}
+              />
             )}
           </div>
         ) : null}

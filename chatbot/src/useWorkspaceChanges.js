@@ -26,6 +26,7 @@ export const workspacePath = (runId) => `/api/runs/${encodeURIComponent(runId)}/
 // so edits streaming in from a running generation show up.
 export function useWorkspaceChanges(runId, { active = false, interval = 6000 } = {}) {
   const [state, setState] = useState(IDLE);
+  const [desktopIDE, setDesktopIDE] = useState(null);
   const [nonce, setNonce] = useState(0);
   const runIdRef = useRef(runId);
   runIdRef.current = runId;
@@ -34,16 +35,32 @@ export function useWorkspaceChanges(runId, { active = false, interval = 6000 } =
   useEffect(() => {
     if (!runId) {
       setState(IDLE);
+      setDesktopIDE(null);
       return undefined;
     }
     let current = true;
     setState((previous) =>
       previous.status === "ready" ? previous : { ...IDLE, status: "loading" },
     );
-    Promise.all([
-      api(workspacePath(runId)),
-      api(`${workspacePath(runId)}/diff`).catch(() => null),
-    ])
+    const path = workspacePath(runId);
+    const infoRequest = api(path);
+    // The IDE chooser only needs metadata and can render while the diff loads.
+    infoRequest.then(
+      (info) => {
+        if (!current) return;
+        let reason = "";
+        if (info?.available === false) {
+          reason = info.restorable ? "请先打开在线 IDE 恢复工作区" : info.reason || "工作区不可用";
+        } else if (info?.readOnly === true) {
+          reason = "桌面连接需要工作区编辑权限";
+        }
+        setDesktopIDE({ runId, available: info?.desktopSSH === true, reason });
+      },
+      () => {
+        if (current) setDesktopIDE({ runId, available: false, reason: "无法读取工作区连接状态" });
+      },
+    );
+    Promise.all([infoRequest, api(`${path}/diff`).catch(() => null)])
       .then(([info, patch]) => {
         if (!current) return;
         if (info?.available === false) {
@@ -108,5 +125,5 @@ export function useWorkspaceChanges(runId, { active = false, interval = 6000 } =
     return null;
   }, []);
 
-  return { ...state, refresh, loadFile };
+  return { ...state, desktopIDE: desktopIDE?.runId === runId ? desktopIDE : null, refresh, loadFile };
 }

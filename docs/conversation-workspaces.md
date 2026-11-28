@@ -27,6 +27,8 @@
 
 ## 工作区的切换与生命周期
 
+Docker 工作区可以从网页 IDE 工具栏打开桌面 VS Code。平台和桌面端配置见[桌面 IDE 连接](desktop-ide.md)。
+
 一个对话同一时间只绑定一个工作区（会话 `workspaceRunId`）。工作区按运行环境区分：不传 `sandboxProfileId` 或传的与当前工作区相同时继续用当前工作区；传了别的环境就切换过去——本对话之前在那个环境开过、仍可用的工作区（会话 `ownWorkspaceRunIds`）直接接着用，文件和已克隆的仓库都在，没有就新开一个空工作区。每轮上下文列出当前绑定的工作区、之前在其他环境开过的工作区，以及本条消息 @ 的需求和关联主需求各自有没有跑过 LOOP、LOOP 的工作分支；要接着 LOOP 的改动，Agent 进入工作区后自己 clone 并 checkout 那个分支。
 
 工作区只由 Main Bot 打开或切换：角色子 Agent 的 agent 文件用 `disallowedTools` 禁掉 `workbench_workspace_open`，网关在本轮还有 Agent 派发在跑时也会拒绝它。子 Agent 与 Main Bot 共用同一个已绑定的工作区；需要另一个环境时在汇报里说明，由 Main Bot 在派发结束后处理。
