@@ -1086,6 +1086,79 @@ Object.assign(window.LF_I18N_EN, {
   "容器可访问宿主机设备，需执行机器开启特权许可。": "Allows container access to host devices; the execution machine must permit privileged mode.",
   "默认不限": "Unlimited",
 });
+// Page descriptions, empty states and hints that were still falling back to
+// Chinese on the Runs, Projects, Sandboxes, Knowledge, AI schedules, Assistant,
+// Access keys, Approvals and Requirements pages.
+Object.assign(window.LF_I18N_EN, {
+  "并发规则": "Concurrency rules",
+  "平台所有项目共用执行名额，默认 10 条顶层 LOOP，平台管理员可在「执行机器」调整。个人和共享机器按各自上限计数。": "Execution slots are shared by all projects: 10 top-level LOOPs by default; platform admins can adjust this in Runners. Personal and shared runners count against their own limits.",
+  "超出名额后按排队顺序启动。开启自动分配的 LOOP 等待兼容的执行机器，子 LOOP 共用父流程名额。": "Runs beyond the limit start in queue order. LOOPs with auto-assignment wait for a compatible runner, and sub-LOOPs share the parent run's slot.",
+  "失败、暂停、待确认的 LOOP 空闲 1 小时后自动归档工作区并释放名额，继续或重试时自动恢复。已开始的 LOOP 取消后，工作区清理完成即释放名额。": "A failed, paused or pending-confirmation LOOP archives its workspace and frees its slot after 1 hour idle, and restores it on resume or retry. A cancelled LOOP frees its slot once workspace cleanup finishes.",
+  "平台执行机器默认同时运行 10 条顶层 LOOP，所有项目共用，平台管理员可调整。": "Platform runners run 10 top-level LOOPs at a time by default, shared by all projects and adjustable by platform admins.",
+  "暂无进行中的运行": "No LOOPs in progress",
+  "换个关键词，或到需求列表查看对应需求的执行结果。": "Try another keyword, or open Requirements to see the result of each requirement.",
+  "项目是需求、仓库、团队和默认 LOOP 的统一边界。点击项目进入详情配置。": "A project is the shared boundary for requirements, repositories, the team and the default LOOP. Open a project to configure it.",
+  "项目是需求、仓库与团队的统一边界，先创建第一个项目。": "A project is the shared boundary for requirements, repositories and the team. Create the first one.",
+  "我参与的": "I'm in",
+  "待完善": "Needs setup",
+  "未绑定代码仓库": "No repository bound",
+  "维护当前项目的运行沙箱：隔离方式、Dockerfile 和环境变量。": "Maintain this project's run sandboxes: isolation, Dockerfile and environment variables.",
+  "维护当前项目的运行沙箱。": "Maintain this project's run sandboxes.",
+  "本项目沙箱": "Project sandboxes",
+  "接入并管理仅你本人可见的外部只读知识库连接器，供 AI 对话与 SOP 运行按需引用。": "Connect and manage external read-only knowledge connectors only you can see, for AI chat and LOOP runs to cite on demand.",
+  "个人隔离": "Personal isolation",
+  "：连接器与凭据仅归属当前账号，其他成员无法查看或调用。": ": connectors and credentials belong to this account only; other members cannot see or call them.",
+  "只读安全代理": "Read-only secure proxy",
+  "：密钥 AES-GCM 加密托管，沙箱通过无状态代理检索并标注出处，支持按工具白名单精准放行只读工具。": ": keys are hosted with AES-GCM encryption; sandboxes search through a stateless proxy that cites sources and allows only read-only tools on an explicit allowlist.",
+  "还没有接入个人知识库连接器": "No personal knowledge connector yet",
+  "可从上方常用知识库模板快速配置，或选择一个连接器类型接入你的自有知识库；配置仅对你本人可见，可在 AI 对话、SOP 节点与手动运行中引用。": "Start from a common knowledge template above, or pick a connector type to connect your own knowledge base. The configuration is visible only to you and can be cited in AI chat, LOOP nodes and manual runs.",
+  "共享任务市场": "Shared task marketplace",
+  "执行记录": "Executions",
+  "任务以最后保存人的身份和完全权限执行。关闭页面后，任务会继续运行。": "The task runs as the last saver with full permissions. It keeps running after you close the page.",
+  "当前项目还没有 AI 定时任务，点击右上角「新建 AI 定时任务」。": "This project has no AI scheduled task yet. Click New AI scheduled task in the top right.",
+  "AI 工作台里和你对话、帮你动手的助手。设置消息发送方式、角色与 LOOP 的主动派发，以及每次对话都要遵守的规则；只对你自己生效。": "The assistant that talks with you and gets things done in the AI workspace. Configure message delivery, role and LOOP dispatch, and the rules every conversation follows. Only applies to you.",
+  "消息发送": "Message delivery",
+  "生成中发送消息": "Send while generating",
+  "排队会等当前回复结束；立即发送会打断当前回复，保留已输出内容并继续处理新消息。": "Queue waits for the current reply to finish; Send now interrupts it, keeps the output so far and handles the new message.",
+  "还没有访问密钥，创建后即可接入 REST API 和 MCP。": "No access key yet. Create one to use the REST API and MCP.",
+  "没有需要你拍板的需求": "Nothing needs your decision",
+  "流程停在人工确认节点时会出现在这里。": "LOOPs waiting at a human approval step appear here.",
+  "批量操作": "Bulk actions"
+});
+
+// Page copy that spans inline markup and the remaining per-page hints.
+Object.assign(window.LF_I18N_EN, {
+  "常用知识库 · 快速接入": "Common knowledge bases · Quick setup",
+  "常用知识库模板": "Common knowledge base templates",
+  "快速配置": "Quick setup",
+  "接入此类型": "Connect this type",
+  "通过只读 REST API 接入个人或团队 WeKnora 实例（支持列子库、混合检索与分块原文读取）": "Connect a personal or team WeKnora instance over its read-only REST API (sub-library listing, hybrid search and chunk text reading).",
+  "接入遵循 Streamable HTTP MCP 协议的任意只读知识库服务 (含 LightCloud 等), 仅放行 readOnlyHint Tool": "Connect any read-only knowledge base that speaks Streamable HTTP MCP (including LightCloud); only tools marked readOnlyHint are allowed.",
+  "接入遵循 Streamable HTTP MCP 协议的任意只读知识库服务（含 LightCloud 等），仅放行 readOnlyHint Tool": "Connect any read-only knowledge base that speaks Streamable HTTP MCP (including LightCloud); only tools marked readOnlyHint are allowed.",
+  "帮我批准审查模型": "Review model for approvals",
+  "打开后 AI 助手会更主动地把事情交给角色或 LOOP。派角色不需要确认；走 LOOP 在「请求批准」下先征求同意，「帮我批准」下由 AI 审查直接裁决，「完全权限」下直接启动。": "When on, the AI assistant hands work to roles or LOOPs more eagerly. Assigning a role needs no confirmation; for LOOPs it asks first under \"Ask for approval\", decides directly under \"Approve for me\", and starts at once under \"Full access\".",
+  "「帮我批准」模式由 AI 独立审查平台及外部操作并直接放行或拒绝，无需人工审批。默认沿用当前对话的 CLI 与模型（最低思考强度）；也可指定已配置的 CLI 模型或独立轻量 API 节省 Token。": "In \"Approve for me\" mode the AI reviews platform and external operations on its own and either allows or denies them without human approval. By default it reuses the CLI and model of the current conversation (lowest thinking effort); you can also pick a configured CLI model or a separate lightweight API to save tokens.",
+  "快捷选择": "Quick pick",
+  "帮我批准审查方式": "Approval review method",
+  "跟随当前对话 CLI 和模型": "Follow the current conversation CLI and model",
+  "更多": "More",
+  "共 0 个项目": "0 projects",
+});
+
+Object.assign(window.LF_I18N_EN, {
+  "派角色不需要确认": "Assigning a role needs no confirmation",
+  "个任务": " tasks",
+});
+
+Object.assign(window.LF_I18N_EN, {
+  "排队": "Queue",
+  "立即发送": "Send now",
+});
+
+Object.assign(window.LF_I18N_EN, {
+  "暂无项目说明": "No project description",
+});
+
 // Capability assets (rules, skills, MCP) and sandboxes. Names, descriptions and
 // project names on these pages are user data and keep the language they were typed in.
 Object.assign(window.LF_I18N_EN, {
@@ -1097,7 +1170,7 @@ Object.assign(window.LF_I18N_EN, {
   "维护当前项目的运行沙箱：隔离方式、Dockerfile 和环境变量。": "Maintain this project's run sandboxes: isolation, Dockerfile and environment variables.",
   "查看其他项目共享的沙箱；共享沙箱只读，可直接用于本项目。": "Sandboxes shared by other projects. They are read-only and can be used in this project directly.",
   "请在沙箱所属项目中共享。": "Share it from the project that owns the sandbox.",
-  "沙箱决定 LOOP 节点和对话工作区在什么隔离环境里执行：docker 沙箱自带 Dockerfile，native 沙箱使用执行机器上已安装的工具。建好后在流程设置里选用；也可以直接用「共享」里的现成配置。": "A sandbox decides the isolated environment LOOP nodes and chat workspaces run in: a docker sandbox brings its own Dockerfile, a native sandbox uses the tools installed on the execution machine. Pick it in the LOOP settings once created, or use a ready-made one under \"Shared\".",
+  "沙箱决定 LOOP 节点和对话工作区在什么隔离环境里执行：docker 沙箱自带 Dockerfile，native 沙箱使用执行机器上已安装的工具。建好后在流程设置里选用；也可以直接用「共享」里的现成配置。": "A sandbox decides where LOOP nodes and conversation workspaces run: a Docker sandbox carries its own Dockerfile, while a native sandbox uses the tools installed on the runner. Pick it in the LOOP settings once created, or use a ready-made Shared profile.",
   "面包屑": "Breadcrumb",
   "返回能力资产": "Back to capability assets",
   "返回沙箱管理": "Back to sandboxes",
@@ -1164,6 +1237,95 @@ Object.assign(window.LF_I18N_EN, {
   "在对话里澄清和改代码": "Clarify and change code in chat",
   "这条需求不使用 LOOP，在对话里澄清需求、直接改代码；定时任务不会自动认领它。": "This requirement uses no LOOP: clarify and change code in chat; scheduled jobs won't pick it up.",
 });
+Object.assign(window.LF_I18N_EN, {
+  "共享任务市场": "Shared task market",
+  "发布共享": "Publish as shared",
+  "执行记录": "Run history",
+  "全部任务": "All tasks",
+  "任务以最后保存人的身份和完全权限执行。关闭页面后，任务会继续运行。": "Tasks run as the last person who saved them, with full permissions. They keep running after you close the page.",
+  "点击停用：不再按计划执行，正在运行的这次不受影响": "Click to disable: stops running on schedule; a run in progress is not affected",
+  "点击启用：按计划执行": "Click to enable: runs on schedule",
+  "同一会话": "Same conversation",
+  "AI 定时任务": "AI scheduled task",
+  "新建 AI 定时任务": "New AI scheduled task",
+  "编辑 AI 定时任务": "Edit AI scheduled task",
+  "AI 定时任务已保存": "AI scheduled task saved",
+  "按计划以保存人的身份和完全权限执行提示词，可调用 LOOP、平台工具、工作区及浏览器。": "Runs the prompt on schedule as the person who saved it, with full permissions; it can use LOOPs, platform tools, workspaces and the browser.",
+  "最近一次执行": "Latest run",
+  "立即执行一次": "Run once now",
+  "查看实时执行 ↗": "View live run ↗",
+  "查看最近执行 ↗": "View latest run ↗",
+  "查看失败会话 ↗": "View failed conversation ↗",
+  "查看执行记录": "View run history",
+  "执行记录（会话已清理）": "Run history (session cleaned up)",
+  "正在服务端执行，会话就绪后可直接点击跳转实时观看。": "Running on the server. Once the conversation is ready, click to watch it live.",
+  "创建后可点击底部「保存并立即执行」马上试跑一次": "After creating it, click “Save and run now” below to try it right away",
+  "执行器与模型": "CLI and model",
+  "每次新开会话": "New conversation each run",
+  "始终在同一个会话里继续": "Always continue in the same conversation",
+  "每次执行各开一个会话，可在执行记录里打开。": "Each run opens its own conversation; open it from the run history.",
+  "每次执行都接着同一个会话，带上之前的上下文。": "Every run continues the same conversation with the earlier context.",
+  "每次执行都接着同一个会话，带上之前的上下文。首次执行时创建这个会话；会话被删除后会重新创建。": "Every run continues the same conversation with the earlier context. The first run creates it; it is recreated if deleted.",
+  "打开当前会话 ↗": "Open current conversation ↗",
+  "保留会话数": "Conversations to keep",
+  "最近 10 个": "Latest 10",
+  "最近 50 个": "Latest 50",
+  "最近 100 个": "Latest 100",
+  "不限": "Unlimited",
+  "超过后每次执行结束时自动删除最早的会话，执行记录仍保留，但打不开已删除的会话。": "Beyond this, the oldest conversation is deleted after each run. Run history is kept, but deleted conversations can't be opened.",
+  "到点以与主页 AI 对话相同的完全权限执行提示词，可按需读写平台、启动 LOOP、操作工作区及浏览器。": "When due, the prompt runs with the same full permissions as the home AI chat: it can read and write the platform, start LOOPs, and use workspaces and the browser.",
+  "Bot 通知": "Bot notifications",
+  "可把执行结果、AI 摘要或自定义消息发送到项目 Bot。": "Send the run result, an AI summary or a custom message to a project Bot.",
+  "执行成功或失败后，通知 Bot 已绑定的聊天": "After a run succeeds or fails, notify the chats bound to the Bot",
+  "＋ 添加 Bot 通知": "＋ Add Bot notification",
+  "立即执行后直接打开会话": "Open the conversation after running",
+  "仅保存": "Save only",
+  "保存并立即执行": "Save and run now",
+  "保存并启动中…": "Saving and starting…",
+  "已启动执行，可点击上方「查看实时执行 ↗」跳转": "Run started. Click “View live run ↗” above to follow it",
+  "已启动执行，会话就绪后将自动打开…": "Run started. The conversation will open when it's ready…",
+  "打开会话": "Open conversation",
+  "会话已清理": "Session cleaned up",
+  "这次执行的会话已被清理（超出任务的保留会话数或保留期限，或被手动删除），无法再打开；AI 回复仍可在详情里查看": "This run's conversation was cleaned up (beyond the task's kept conversations or retention period, or deleted by hand) and can't be opened; the AI reply is still in the details",
+  "在新标签页打开本次执行的对话": "Open this run's conversation in a new tab",
+  "准备中": "Preparing",
+  "无会话": "No conversation",
+  "会话创建后即可打开": "Can be opened once the conversation is created",
+  "这次执行在创建会话之前就结束了（例如缺少 Key），没有对话可打开": "This run ended before a conversation was created (for example, a missing key), so there is nothing to open",
+  "开始时间": "Start time",
+  "结束时间": "End time",
+  "Token 总量": "Total tokens",
+  "输入 Token": "Input tokens",
+  "输出 Token": "Output tokens",
+  "缓存读 Token": "Cache read tokens",
+  "缓存写 Token": "Cache write tokens",
+  "AI 回复": "AI reply",
+  "候选 / 启动": "Candidates / started",
+  "派发运行": "Dispatched runs",
+  "全部时间": "All time",
+  "待对齐基线": "Waiting for baseline alignment",
+  // "AI 定时任务" and "共享任务市场" are 6+ characters, so i18n.js also replaces
+  // them inside longer Chinese sentences. Every sentence that contains them gets
+  // a whole-sentence entry so English never shows "AI scheduled task最多引用…".
+  "AI 定时任务已执行": "AI scheduled task ran",
+  "AI 定时任务引用功能未就绪": "AI scheduled task references are not available yet",
+  "AI 定时任务引用的项目资产无效，请重新选择后保存": "The AI scheduled task references an invalid project asset. Select it again, then save",
+  "AI 定时任务必须填写提示词": "An AI scheduled task needs a prompt",
+  "AI 定时任务最多引用 12 个项目资产": "An AI scheduled task can reference up to 12 project assets",
+  "请填写 AI 定时任务的提示词": "Enter a prompt for the AI scheduled task",
+  "仅独立 AI 定时任务可以发布共享版本": "Only standalone AI scheduled tasks can publish a shared version",
+  "只能从当前项目的独立 AI 定时任务发布共享版本": "Shared versions can only be published from a standalone AI scheduled task in this project",
+  "订阅需要明确的共享任务和版本，且必须是 AI 定时任务": "A subscription needs a specific shared task and version, and it must be an AI scheduled task",
+  "读取 AI 定时任务失败": "Failed to load AI scheduled tasks",
+  "当前项目还没有 AI 定时任务，点击右上角「新建 AI 定时任务」。": "This project has no AI scheduled tasks yet. Click “New AI scheduled task” at the top right.",
+  "请先在顶栏选择项目，再管理 AI 定时任务。": "Select a project in the top bar first, then manage AI scheduled tasks.",
+  "请先在顶栏选择项目，再查看执行记录。": "Select a project in the top bar first, then view the run history.",
+  "还没有共享任务。在本项目的独立 AI 定时任务旁点击「发布共享」，即可供其他项目订阅。": "No shared tasks yet. Click “Publish as shared” next to a standalone AI scheduled task in this project so other projects can subscribe.",
+  "还没有机器人。三步完成配置，随后在 LOOP 设置或 AI 定时任务中选择这个 Bot。": "No bots yet. Set one up in three steps, then choose it in LOOP settings or in an AI scheduled task.",
+  "端到端 = 该需求最近一次执行的开始到结束，含等待。": "End-to-end = from the start to the end of this requirement's latest run, including waits.",
+  "这是本地模拟执行结果，用于验证消息结构、人工确认和 Bot 通知联动。实际任务状态以平台显示为准。": "This is a simulated local result for checking the message layout, human review and Bot notifications. The platform shows the actual task status.",
+});
+
 // 执行机器 page: static copy in index.html. runners.js renders its dynamic copy with lfT.
 Object.assign(window.LF_I18N_EN, {
   "连接电脑或 CVM，可将机器共享给多个项目。": "Connect a computer or CVM and share it with multiple projects.",
@@ -1185,3 +1347,13 @@ Object.assign(window.LF_I18N_EN, {
   "自动分配 · 平台云端": "Auto-assign · platform cloud",
   "自动分配失败": "Auto-assign failed",
 });
+
+// These sentences cross markup boundaries. Keep separators and spaces in
+// the translated text nodes so emphasis, listeners and other markup survive.
+window.LF_I18N_INLINE_EN = {
+  "平台所有项目共用执行名额": "Execution slots are shared by all projects",
+  "，默认 10 条顶层 LOOP，平台管理员可在「执行机器」调整。个人和共享机器按各自上限计数。": ": 10 top-level LOOPs by default. Platform admins can adjust this in Runners. Personal and shared runners count against their own limits.",
+  "打开后 AI 助手会更主动地把事情交给角色或 LOOP。": "When on, the AI assistant hands work to roles or LOOPs more eagerly. ",
+  "；": "; ",
+  "走 LOOP 在「请求批准」下先征求同意，「帮我批准」下由 AI 审查直接裁决，「完全权限」下直接启动。": 'for LOOPs it asks first under "Ask for approval", decides directly under "Approve for me", and starts at once under "Full access".',
+};

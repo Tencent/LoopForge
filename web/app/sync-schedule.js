@@ -129,7 +129,7 @@ function renderScheduleLatestExecBar(job){
     ?`<button type="button" class="button ghost small schedule-latest-btn" data-tone="${escapeHTML(action.tone)}" data-modal-jump-latest="${escapeHTML(job.id)}">${escapeHTML(action.label)}</button>`
     :'';
   const runBtn=`<button type="button" class="button ghost small" data-modal-run-schedule="${escapeHTML(job.id)}" ${running||!canRun?'disabled':''}>${running?'运行中…':'立即执行一次'}</button>`;
-  host.innerHTML=`<div class="schedule-latest-exec-head"><div class="schedule-latest-exec-meta"><b>最近一次执行</b>${badge}<span>${escapeHTML(when)}</span></div><div class="schedule-latest-exec-actions">${runBtn}${jumpBtn}</div></div>${summary?`<p class="schedule-latest-exec-summary${job.lastStatus==='failed'?' is-error':''}">${escapeHTML(String(summary).slice(0,220))}</p>`:''}`;
+  host.innerHTML=`<div class="schedule-latest-exec-head"><div class="schedule-latest-exec-meta"><b>最近一次执行</b>${badge}<span>${escapeHTML(when)}</span></div><div class="schedule-latest-exec-actions">${runBtn}${jumpBtn}</div></div>${summary?`<p class="schedule-latest-exec-summary${job.lastStatus==='failed'?' is-error':''}"${running?'':(job.lastError?' data-i18n-data':' data-i18n-skip')}>${escapeHTML(String(summary).slice(0,220))}</p>`:''}`;
   window.AgentFlowHarnessIcons?.hydrate(host);
   const runEl=host.querySelector('[data-modal-run-schedule]');
   if(runEl)runEl.onclick=()=>{
@@ -147,6 +147,18 @@ function scheduleJobStatusText(job){
   if(scheduleJobRunning(job))return '正在运行… 关闭页面不会中断';
   if(job?.lastStatus==='waiting')return `待对齐基线：${job.lastError||''}`;
   if(job?.lastStatus==='failed')return `失败：${job.lastError||''}`;
+  return '';
+}
+// A task name is pure user data: data-i18n-skip never translates it, so a name
+// that happens to equal product copy ("执行记录") keeps showing as typed.
+function scheduleUserTextHTML(text){return `<span data-i18n-skip>${escapeHTML(text)}</span>`}
+// Errors come from the server and are product copy: data-i18n-data lets i18n.js
+// swap a whole-string dictionary hit but never rewrites fragments of it.
+function scheduleErrorTextHTML(text){return `<span data-i18n-data>${escapeHTML(text)}</span>`}
+function scheduleJobStatusHTML(job){
+  if(scheduleJobRunning(job))return escapeHTML(scheduleJobStatusText(job));
+  if(job?.lastStatus==='waiting')return `${lfT('待对齐基线：','Waiting for baseline alignment: ')}${scheduleErrorTextHTML(job.lastError||'')}`;
+  if(job?.lastStatus==='failed')return `${lfT('失败：','Failed: ')}${scheduleErrorTextHTML(job.lastError||'')}`;
   return '';
 }
 function scheduleJobsInView(jobs, projectId){
@@ -606,7 +618,7 @@ function renderScheduleJobs(){
   const triggerHint=$('#aiScheduleTriggerHint');if(triggerHint)triggerHint.textContent=canRun?'按计划扫描本项目选定状态、尚未跑过 LOOP 的需求，通过基线门禁后派发 LOOP。每个项目使用一份触发配置。':disabled;
   $('#aiScheduleRuntimeHint').textContent=!state.projectFilter?'请先在顶栏选择项目，再管理 AI 定时任务。':canRun?'任务以最后保存人的身份和完全权限执行。关闭页面后，任务会继续运行。':disabled;
   $('#aiScheduleProjectName').textContent=currentProject()?.name||'当前项目';
-  $('#aiScheduleCount').textContent=`${assistant.length} 个任务`;
+  $('#aiScheduleCount').textContent=lfT(`${assistant.length} 个任务`,`${assistant.length} ${assistant.length===1?'task':'tasks'}`);
   $('#newAISchedule').disabled=!state.projectFilter;
   const editTrigger=$('#editScheduleTrigger');if(editTrigger){editTrigger.disabled=!state.projectFilter;editTrigger.lastChild.textContent=dispatch.length?'编辑触发配置':'配置触发'}
   const triggerList=$('#aiScheduleTriggerList');
@@ -626,7 +638,7 @@ function renderScheduleJobs(){
 // The schedule is started and stopped on the row, not in the editor.
 function scheduleEnabledSwitchHTML(j){
   const on=!!j.enabled,label=on?'已启用':'已停用';
-  return `<label class="schedule-enabled" title="${on?'点击停用：不再按计划执行，正在运行的这次不受影响':'点击启用：按计划执行'}"><input type="checkbox" class="hui-switch" role="switch" data-toggle-schedule="${escapeHTML(j.id)}" aria-label="启用 ${escapeHTML(j.name)}" ${on?'checked':''}><span data-schedule-enabled-label>${label}</span></label>`;
+  return `<label class="schedule-enabled" title="${on?'点击停用：不再按计划执行，正在运行的这次不受影响':'点击启用：按计划执行'}"><input type="checkbox" class="hui-switch" role="switch" data-toggle-schedule="${escapeHTML(j.id)}" aria-label="${escapeHTML(lfT(`启用 ${j.name}`,`Enable ${j.name}`))}" data-i18n-data ${on?'checked':''}><span data-schedule-enabled-label>${label}</span></label>`;
 }
 async function toggleScheduleJobEnabled(input){
   const id=input.dataset.toggleSchedule,enabled=input.checked;
@@ -651,7 +663,7 @@ async function toggleScheduleJobEnabled(input){
 function scheduleRowMenuHTML(j){
   const id=escapeHTML(j.id);
   const item=(attr,label,icon,cls='')=>`<button type="button" role="menuitem" tabindex="-1" class="schedule-row-menu-item${cls}" ${attr}="${id}"><svg class="agent-icon harness-icon" data-icon="${icon}" width="16" height="16" aria-hidden="true" focusable="false"></svg><span>${label}</span></button>`;
-  return `<span class="schedule-row-more"><button type="button" class="button ghost small schedule-row-more-btn" data-schedule-menu="${id}" aria-label="更多操作：${escapeHTML(j.name)}" aria-haspopup="menu" aria-expanded="false"><svg class="agent-icon harness-icon" data-icon="more-horizontal" width="16" height="16" aria-hidden="true" focusable="false"></svg></button><span class="schedule-row-menu" role="menu" data-menu-for="${id}" hidden>${item('data-edit-schedule','编辑','edit')}${item('data-schedule-history','执行记录','history')}${sharedScheduleRowMenuItem(j,item)}<span class="schedule-row-menu-sep" role="separator"></span>${item('data-delete-schedule','删除','trash',' is-danger')}</span></span>`;
+  return `<span class="schedule-row-more"><button type="button" class="button ghost small schedule-row-more-btn" data-schedule-menu="${id}" aria-label="${escapeHTML(lfT(`更多操作：${j.name}`,`More actions: ${j.name}`))}" data-i18n-data aria-haspopup="menu" aria-expanded="false"><svg class="agent-icon harness-icon" data-icon="more-horizontal" width="16" height="16" aria-hidden="true" focusable="false"></svg></button><span class="schedule-row-menu" role="menu" data-menu-for="${id}" hidden>${item('data-edit-schedule','编辑','edit')}${item('data-schedule-history','执行记录','history')}${sharedScheduleRowMenuItem(j,item)}<span class="schedule-row-menu-sep" role="separator"></span>${item('data-delete-schedule','删除','trash',' is-danger')}</span></span>`;
 }
 function closeScheduleRowMenus({restore=false}={}){
   document.querySelectorAll('.schedule-row-menu:not([hidden])').forEach(menu=>{
@@ -715,7 +727,7 @@ function scheduleJobGroupHTML(g,rowHTML){
   const last=g.jobs.map(j=>knownTime(j.lastRunAt)).filter(Boolean).sort((a,b)=>b-a)[0];
   const summary=[timings.slice(0,3).join('、')+(timings.length>3?` 等 ${timings.length} 种`:''),`已启用 ${enabled}/${g.jobs.length}`,running?`${running} 个运行中`:'',failed?`${failed} 个失败`:'',updates?`${updates} 个待升级`:''].filter(Boolean).join(' · ');
   const key=escapeHTML(g.key),id=`schedule-group-${g.jobs[0].id}`;
-  return `<div class="schedule-job-group${open?' is-open':''}${running?' is-running':''}${enabled?'':' is-paused'}" data-group-for="${key}"><button type="button" class="schedule-job-group-head" data-schedule-group="${key}" aria-expanded="${open}" aria-controls="${escapeHTML(id)}"><svg class="agent-icon harness-icon schedule-job-group-chevron" data-icon="chevron-right" width="16" height="16" aria-hidden="true" focusable="false"></svg><span class="schedule-job-group-text"><b><span class="schedule-kind-tag is-assistant">AI</span><span class="schedule-job-group-name">${escapeHTML(g.name)}</span><span class="hui-badge" data-tone="neutral" data-size="sm">${g.jobs.length} 个</span></b><span class="${running?'schedule-run-live':''}">${escapeHTML(summary)}</span><small>${last?`最近：${last.toLocaleString()}`:'尚未运行'}</small></span></button><div class="schedule-job-group-body" id="${escapeHTML(id)}" ${open?'':'hidden'}>${g.jobs.map(rowHTML).join('')}</div></div>`;
+  return `<div class="schedule-job-group${open?' is-open':''}${running?' is-running':''}${enabled?'':' is-paused'}" data-group-for="${key}"><button type="button" class="schedule-job-group-head" data-schedule-group="${key}" aria-expanded="${open}" aria-controls="${escapeHTML(id)}"><svg class="agent-icon harness-icon schedule-job-group-chevron" data-icon="chevron-right" width="16" height="16" aria-hidden="true" focusable="false"></svg><span class="schedule-job-group-text"><b><span class="schedule-kind-tag is-assistant">AI</span><span class="schedule-job-group-name" data-i18n-skip>${escapeHTML(g.name)}</span><span class="hui-badge" data-tone="neutral" data-size="sm">${g.jobs.length} 个</span></b><span class="${running?'schedule-run-live':''}">${escapeHTML(summary)}</span><small>${last?`最近：${last.toLocaleString()}`:'尚未运行'}</small></span></button><div class="schedule-job-group-body" id="${escapeHTML(id)}" ${open?'':'hidden'}>${g.jobs.map(rowHTML).join('')}</div></div>`;
 }
 function renderScheduleJobList(list,jobs,kind,canRun){
   if(!list)return;
@@ -727,21 +739,20 @@ function renderScheduleJobList(list,jobs,kind,canRun){
   const reopenId=openMenu?.dataset.menuFor||'',reopenFocus=!!openMenu?.contains(focused);
   if(kind==='dispatch'){
     const job=jobs[0];
-    list.innerHTML=job?`<div class="schedule-config-runtime"><div><b>${job.enabled?'已启用':'未启用'} · ${escapeHTML(scheduleJobTimingLabel(job))}</b><span>${escapeHTML(scheduleSourceLabel(job))} · ${scheduleIssueStatusValues(job).map(issueStatusLabel).join('、')}</span><small>${knownTime(job.lastRunAt)?`最近：${knownTime(job.lastRunAt).toLocaleString()} · 候选 ${job.lastPulled||0}，启动 ${job.lastDispatched||0}`:'尚未运行'}${scheduleJobStatusText(job)?` · ${escapeHTML(scheduleJobStatusText(job))}`:''}</small></div>${scheduleJobTraceActionsHTML(job)}<button type="button" class="button ghost small" data-run-schedule="${escapeHTML(job.id)}" ${scheduleJobRunning(job)||!canRun?'disabled':''}>${scheduleJobRunning(job)?'运行中…':'立即运行'}</button></div>${scheduleBlockerHTML(job)}`:'';
+    list.innerHTML=job?`<div class="schedule-config-runtime"><div><b>${job.enabled?'已启用':'未启用'} · ${escapeHTML(scheduleJobTimingLabel(job))}</b><span>${escapeHTML(scheduleSourceLabel(job))} · ${scheduleIssueStatusValues(job).map(issueStatusLabel).join('、')}</span><small>${knownTime(job.lastRunAt)?`最近：${knownTime(job.lastRunAt).toLocaleString()} · 候选 ${job.lastPulled||0}，启动 ${job.lastDispatched||0}`:'尚未运行'}${scheduleJobStatusText(job)?` · ${scheduleJobStatusHTML(job)}`:''}</small></div>${scheduleJobTraceActionsHTML(job)}<button type="button" class="button ghost small" data-run-schedule="${escapeHTML(job.id)}" ${scheduleJobRunning(job)||!canRun?'disabled':''}>${scheduleJobRunning(job)?'运行中…':'立即运行'}</button></div>${scheduleBlockerHTML(job)}`:'';
   }else{
   const rowHTML=j=>{
     const assistant=!!j.skipDispatch;
     const kind=assistant?'AI':'触发';
     const running=scheduleJobRunning(j);
-    const extra=running?'':assistant?(j.lastAssistantMessage?`，${escapeHTML(String(j.lastAssistantMessage).slice(0,80))}`:''):`，${scheduleSourceLabel(j)}，${scheduleIssueStatusValues(j).map(issueStatusLabel).join('、')}，候选 ${j.lastPulled||0}，启动 ${j.lastDispatched||0}`;
-    const statusText=scheduleJobStatusText(j);
-    const status=statusText?`，${escapeHTML(statusText)}`:'';
+    const extra=running?'':assistant?(j.lastAssistantMessage?`${lfT('，',', ')}${scheduleUserTextHTML(String(j.lastAssistantMessage).slice(0,80))}`:''):`，${scheduleSourceLabel(j)}，${scheduleIssueStatusValues(j).map(issueStatusLabel).join('、')}，候选 ${j.lastPulled||0}，启动 ${j.lastDispatched||0}`;
+    const status=scheduleJobStatusText(j)?`，${scheduleJobStatusHTML(j)}`:'';
     const runDisabled=running||!canRun;
     const runTitle=running?'任务正在服务端运行，关闭页面不会中断':(canRun?'':'本实例未启用 scheduler');
     const session=assistant&&j.sessionMode==='fixed'?' · 同一会话':'';
     const latestAction=assistant?scheduleLatestExecutionAction(j):null;
     const latestBtn=latestAction?`<button type="button" class="button ghost small schedule-latest-btn" data-tone="${escapeHTML(latestAction.tone)}" data-open-latest-schedule="${escapeHTML(j.id)}">${escapeHTML(latestAction.label)}</button>`:'';
-    return `<div class="schedule-job-item${running?' is-running':''}${assistant&&!j.enabled?' is-paused':''}"><div class="schedule-job-row"><button type="button" class="schedule-job-main" data-edit-schedule="${escapeHTML(j.id)}" title="${assistant?'编辑 AI 定时任务':'编辑触发配置'}"><b><span class="schedule-kind-tag ${assistant?'is-assistant':'is-dispatch'}">${kind}</span>${escapeHTML(j.name)}</b>${sharedScheduleRowInfo(j)}<span>${escapeHTML(scheduleJobTimingLabel(j))}${assistant?'':` · ${j.enabled?'已启用':'已停用'}`}${assistant?session:` · 单次最多 ${escapeHTML(j.maxDispatch||10)} 个需求`}${running?' · 正在运行':''}</span><small class="${running?'schedule-run-live':''}">${(j.lastRunAt&&!String(j.lastRunAt).startsWith('0001-'))||running?`最近：${new Date(j.lastRunAt||Date.now()).toLocaleString()}${extra}${status}`:'尚未运行'}</small></button>${sharedScheduleRowAction(j)}${latestBtn}${assistant?scheduleEnabledSwitchHTML(j):''}<button type="button" class="button ghost small" data-run-schedule="${escapeHTML(j.id)}" ${runDisabled?'disabled':''} ${runTitle?`title="${escapeHTML(runTitle)}"`:''}>${running?'运行中…':'立即运行'}</button>${scheduleRowMenuHTML(j)}</div>${assistant?'':scheduleBlockerHTML(j)}</div>`;
+    return `<div class="schedule-job-item${running?' is-running':''}${assistant&&!j.enabled?' is-paused':''}"><div class="schedule-job-row"><button type="button" class="schedule-job-main" data-edit-schedule="${escapeHTML(j.id)}" title="${assistant?'编辑 AI 定时任务':'编辑触发配置'}"><b><span class="schedule-kind-tag ${assistant?'is-assistant':'is-dispatch'}">${kind}</span>${scheduleUserTextHTML(j.name)}</b>${sharedScheduleRowInfo(j)}<span>${escapeHTML(scheduleJobTimingLabel(j))}${assistant?'':` · ${j.enabled?'已启用':'已停用'}`}${assistant?session:` · 单次最多 ${escapeHTML(j.maxDispatch||10)} 个需求`}${running?' · 正在运行':''}</span><small class="${running?'schedule-run-live':''}">${(j.lastRunAt&&!String(j.lastRunAt).startsWith('0001-'))||running?`最近：${new Date(j.lastRunAt||Date.now()).toLocaleString()}${extra}${status}`:'尚未运行'}</small></button>${sharedScheduleRowAction(j)}${latestBtn}${assistant?scheduleEnabledSwitchHTML(j):''}<button type="button" class="button ghost small" data-run-schedule="${escapeHTML(j.id)}" ${runDisabled?'disabled':''} ${runTitle?`title="${escapeHTML(runTitle)}"`:''}>${running?'运行中…':'立即运行'}</button>${scheduleRowMenuHTML(j)}</div>${assistant?'':scheduleBlockerHTML(j)}</div>`;
   };
   list.innerHTML=scheduleJobGroups(jobs).map(g=>g.jobs.length>1?scheduleJobGroupHTML(g,rowHTML):rowHTML(g.jobs[0])).join('')||'<div class="sync-empty">当前项目还没有 AI 定时任务，点击右上角「新建 AI 定时任务」。</div>';
   list.querySelectorAll('[data-schedule-group]').forEach(b=>b.onclick=()=>{

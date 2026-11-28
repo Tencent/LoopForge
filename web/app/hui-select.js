@@ -100,6 +100,16 @@
   function optionSearch(option) {
     return option.getAttribute?.('data-search') || option.dataset?.search || '';
   }
+  // i18n.js decides per element whether text is product copy: user data on an
+  // <option> (data-i18n-skip / data-i18n-data) must keep that mark wherever
+  // the panel or trigger re-renders the option text.
+  const I18N_MARKS = ['data-i18n-skip', 'data-i18n-data'];
+  function copyI18nMarks(option, node) {
+    for (const name of I18N_MARKS) {
+      if (option?.hasAttribute?.(name)) node.setAttribute(name, option.getAttribute(name));
+      else node.removeAttribute?.(name);
+    }
+  }
   function optionGroup(option) {
     const parent = option.parentNode;
     return parent && parent.tagName === 'OPTGROUP' ? parent : null;
@@ -202,10 +212,9 @@
         button.disabled = !!(option.disabled || group?.disabled);
         button.huiIndex = i;
         button.searchText = optionSearch(option);
-        const label = el('span', 'hui-select-option-label', option.text);
-        // An option that shows user data (a project name) keeps i18n.js from
-        // rewriting fragments of it in the custom list as well.
-        if (option.getAttribute?.('data-i18n-data') != null) label.setAttribute('data-i18n-data', '');
+        const label = el('span', 'hui-select-option-label');
+        copyI18nMarks(option, label);
+        label.textContent = option.text;
         const brand = option.getAttribute('data-brand');
         if (brand && /^[-a-z0-9]+\.(svg|png)$/.test(brand)) {
           const logo = el('img', 'hui-select-option-brand');
@@ -386,8 +395,7 @@
 
     function sync() {
       const current = select.options[Math.max(0, select.selectedIndex)];
-      if (current?.getAttribute?.('data-i18n-data') != null) value.setAttribute('data-i18n-data', '');
-      else value.removeAttribute?.('data-i18n-data');
+      copyI18nMarks(current, value);
       value.textContent = current ? current.text : '';
       trigger.classList.toggle('is-filtered', select.selectedIndex > 0);
       trigger.disabled = !!select.disabled;
