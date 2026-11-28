@@ -189,5 +189,11 @@ test("a requirement saved without a LOOP says so instead of naming the LOOP it d
     ).fields.find(([label]) => label === "LOOP")?.[1];
   assert.equal(sopOf({ sopMode: "none", workflowId: "wf" }), "不使用 LOOP");
   assert.equal(sopOf({ workflowId: "wf" }), "后端交付 LOOP");
-  assert.equal(sopOf({}), undefined);
+  assert.equal(sopOf({}), "不使用 LOOP");
+  assert.equal(sopOf({ workflowId: " " }), "不使用 LOOP");
+  for (const body of [
+    { id: "existing" }, { kind: "issue" }, { source: "gongfeng" },
+    { sopMode: "sop" }, { playbookId: "chosen" },
+    { sopBindings: [{ workflowId: "wf" }] },
+  ]) assert.equal(sopOf(body), undefined);
 });

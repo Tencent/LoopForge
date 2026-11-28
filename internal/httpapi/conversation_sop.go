@@ -26,6 +26,21 @@ func withConversationSession(ctx context.Context, sessionID string) context.Cont
 	return context.WithValue(ctx, conversationSessionKey{}, strings.TrimSpace(sessionID))
 }
 
+// Only bind a newly created chat requirement when its delivery was selected.
+func setChatRequirementDelivery(issue *domain.Issue) {
+	if !domain.IsRequirementWorkItem(*issue) || issue.WithoutSOP() ||
+		strings.TrimSpace(issue.WorkflowID) != "" || strings.TrimSpace(issue.PlaybookID) != "" {
+		return
+	}
+	if bindings := domain.NormalizeSOPBindings(issue.SOPBindings); len(bindings) > 0 {
+		issue.WorkflowID = bindings[0].WorkflowID
+		return
+	}
+	if strings.TrimSpace(issue.SOPMode) == "" {
+		issue.SOPMode = domain.IssueSOPNone
+	}
+}
+
 // requestConversation returns the ordinary conversation of
 // projectID a request was made from.
 func requestConversation(d *deps, r *http.Request, userID int64, projectID string) (domain.AssistantSession, bool) {

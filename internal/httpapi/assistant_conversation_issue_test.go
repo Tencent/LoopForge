@@ -66,6 +66,9 @@ func TestConversationRequirementCreatedAndLinked(t *testing.T) {
 	if issue.ProjectID != "p" || issue.Kind != "requirement" || issue.Source != "local" || issue.Status != "in_progress" || issue.AutomationState != "ignored" || issue.AssigneeUserID != s.UserID || issue.ConversationSessionID != "chat-1" || issue.RepositoryID != "repo-web" || issue.Number == 0 {
 		t.Fatalf("created requirement = %+v", issue)
 	}
+	if !issue.WithoutSOP() || issue.WorkflowID != "" || len(issue.EffectiveSOPBindings()) != 0 {
+		t.Fatalf("conversation workspace created a bound requirement: mode=%q workflow=%q", issue.SOPMode, issue.WorkflowID)
+	}
 	if len(issue.Operations) != 1 || !strings.Contains(issue.Operations[0].Detail, "修登录页") || issue.Operations[0].Actor != "爱丽丝" {
 		t.Fatalf("operations = %+v", issue.Operations)
 	}

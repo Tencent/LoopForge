@@ -102,6 +102,12 @@ func dispatchIssue(d *deps, req dispatchRequest) (domain.Task, error) {
 	if workflowID == "" {
 		return domain.Task{}, HTTPError{http.StatusBadRequest, "issue requires a workflow (bind to LOOP first)"}
 	}
+	// Resolve the LOOP before touching the issue or reserving a task: a stale
+	// picker or a requirement bound to a deleted LOOP must leave no failed task
+	// and no blocked status behind.
+	if _, ok := d.repo.Workflow(workflowID); !ok {
+		return domain.Task{}, HTTPError{http.StatusBadRequest, fmt.Sprintf("LOOP %s 不存在或已被删除，请重新选择", workflowID)}
+	}
 	if issue.SOPBindings != nil {
 		if binding, ok := domain.ResolveSOPBinding(issue, project, workflowID); ok && binding.AssigneeUserID > 0 {
 			if user, found := d.repo.User(binding.AssigneeUserID); found && user.ID > 0 {
@@ -221,12 +227,12 @@ func dispatchIssue(d *deps, req dispatchRequest) (domain.Task, error) {
 		}
 		return domain.Task{}, HTTPError{http.StatusConflict, "该需求的这条 LOOP 正在创建或已经完成首次执行，请选择重新运行"}
 	}
+	previousStatus, previousTaskID := issue.Status, issue.LatestTaskID
 	issue.LatestTaskID = stored.ID
 	issue.Status = "in_progress"
 	if req.WorkspaceRunID == "" {
 		if err := d.repo.PutIssue(issue); err != nil {
-			task.Status = "failed"
-			_ = d.repo.PutTask(task)
+			_ = d.repo.ReleaseTaskReservation(stored.ID)
 			return domain.Task{}, err
 		}
 	}
@@ -255,10 +261,16 @@ func dispatchIssue(d *deps, req dispatchRequest) (domain.Task, error) {
 			}
 			return domain.Task{}, err
 		}
-		task.Status = "failed"
-		_ = d.repo.PutTask(task)
-		issue.Status = "blocked"
-		_ = d.repo.PutIssue(issue)
+		// No run exists, so the queued reservation and the status prepared for it
+		// must not survive a failed start. Keeping them left a failed task whose
+		// LOOP never ran, blocked the requirement, and made every later scheduled
+		// dispatch answer "该需求已经跑过 LOOP".
+		if releaseErr := d.repo.ReleaseTaskReservation(stored.ID); releaseErr != nil {
+			return domain.Task{}, errors.Join(err, releaseErr)
+		}
+		if restoreErr := restoreIssueAfterFailedDispatch(d, issue.ID, stored.ID, previousStatus, previousTaskID); restoreErr != nil {
+			return domain.Task{}, errors.Join(err, restoreErr)
+		}
 		return domain.Task{}, err
 	}
 	if exec.BotOriginID != "" {
@@ -343,4 +355,25 @@ func appendSOPHandoff(issue domain.Issue, project domain.Project, workflowID, in
 	}
 	input += "\nContinue from those deliverables; do not redo the previous LOOP."
 	return input
+}
+
+// restoreIssueAfterFailedDispatch undoes the status and latest-task write made
+// for a reservation whose run never started. PatchIssue re-reads the row under
+// the same lock as edits, and the task-id guard keeps a concurrent successful
+// dispatch (which already moved latestTaskId on) intact.
+func restoreIssueAfterFailedDispatch(d *deps, issueID, taskID, status, latestTaskID string) error {
+	_, err := d.repo.PatchIssue(issueID, func(current *domain.Issue) error {
+		if current.LatestTaskID != taskID {
+			return nil
+		}
+		current.LatestTaskID = latestTaskID
+		if current.Status == "in_progress" {
+			current.Status = status
+		}
+		return nil
+	})
+	if errors.Is(err, repo.ErrIssueNotFound) {
+		return nil
+	}
+	return err
 }

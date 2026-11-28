@@ -286,6 +286,9 @@ func (h issuesHandlers) issues(c *gin.Context) {
 			c.JSON(400, map[string]string{"error": "project not found"})
 			return
 		}
+		if !found && r.Context().Value(conversationSessionKey{}) != nil {
+			setChatRequirementDelivery(&v)
+		}
 		h.bindRequirementPlaybook(&v)
 		if v.AssigneeUserID > 0 {
 			if _, ok := h.repo.User(v.AssigneeUserID); !ok {

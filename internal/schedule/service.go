@@ -11,6 +11,7 @@ import (
 
 	"agentflow/internal/cronexpr"
 	"agentflow/internal/domain"
+	"agentflow/internal/engine"
 	"agentflow/internal/repo"
 	"agentflow/internal/tracker"
 )
@@ -394,6 +395,13 @@ func (s *Service) executeJob(job domain.ScheduleJob, triggerOrigin string, exec 
 	}
 	dispatched := 0
 	limit := job.DispatchLimit()
+	// A single requirement that cannot start (its LOOP was deleted, its
+	// sandbox or repository is gone, the provider rejected the start) must not
+	// stop the rest of the queue. Since a failed start no longer leaves a task
+	// behind, that requirement stays eligible and is retried every round; if it
+	// aborted the round here it would be a permanent head-of-line block that
+	// keeps every requirement behind it from ever starting.
+	var failed []string
 	for _, issue := range eligible {
 		if dispatched >= limit {
 			break
@@ -406,11 +414,21 @@ func (s *Service) executeJob(job domain.ScheduleJob, triggerOrigin string, exec 
 			if strings.Contains(err.Error(), "已经跑过") || strings.Contains(err.Error(), "澄清未达标") {
 				continue
 			}
-			job.LastStatus = "failed"
-			job.LastError = err.Error()
-			job.LastDispatched = dispatched
-			job.Blockers = nil
-			return finish(job, err)
+			if errors.Is(err, engine.ErrExecutionDisabled) {
+				// Nothing at all can start on this instance, so the remaining
+				// requirements would fail the same way.
+				job.LastStatus = "failed"
+				job.LastError = err.Error()
+				job.LastDispatched = dispatched
+				job.Blockers = nil
+				return finish(job, err)
+			}
+			label := issue.ID
+			if title := strings.TrimSpace(issue.Title); title != "" {
+				label += "（" + title + "）"
+			}
+			failed = append(failed, label+"："+err.Error())
+			continue
 		}
 		if exec != nil {
 			exec.Runs = append(exec.Runs, domain.ScheduleJobExecutionRun{IssueID: issue.ID, IssueTitle: issue.Title, RunID: runID})
@@ -418,6 +436,12 @@ func (s *Service) executeJob(job domain.ScheduleJob, triggerOrigin string, exec 
 		dispatched++
 	}
 	job.LastDispatched = dispatched
+	if len(failed) > 0 {
+		job.LastStatus = "failed"
+		job.LastError = strings.Join(failed, "；")
+		job.Blockers = mergeBlockers(job.Blockers, blocked, time.Now().UTC())
+		return finish(job, nil)
+	}
 	if len(blocked) > 0 {
 		job.LastStatus = "waiting"
 		job.LastError = joinBlockReasons(blocked)
