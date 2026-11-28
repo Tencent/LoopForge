@@ -326,14 +326,15 @@ function pausedRunPanelHTML(run){
   const pausedScriptNode=paused.find(node=>isScriptWorkflowNode(node));
   const restored=restoredSOPResumeNode(run);
   const idlePause=!paused.length&&!restored;
+  const canPass=pausedScriptNode&&!restored&&!nodeNeedsRoutingDecision(run,pausedScriptNode);
   const detail=restored
     ? `将从「${escapeHTML(restored.name||restored.id)}」重新启动 LOOP，保留已完成的上游结果。已有文件和平台变更不会回退，后续节点将重新检查当前工作区。`
     : idlePause
     ? '当前没有被打断的步骤。继续后会接着执行尚未完成的节点；如果流程已经走完，运行会正常结束。'
     : agentPaused
     ? `Agent 将优先接续原有 CLI 对话；若暂停前尚未建立会话，则在原工作区重新启动${scriptPaused?'；脚本会保留工作区并从头重新执行':''}。补充信息只会提供给 Agent。`
-    : '脚本会保留当前工作区并从头重新执行；不会恢复已终止的进程，也不需要补充信息。如果脚本卡在重跑也解决不了的问题上，也可以手动通过并继续下游。';
-  const passButton=pausedScriptNode&&!restored&&!nodeNeedsRoutingDecision(run,pausedScriptNode)?`<button class="button ghost" data-pass-node="${escapeHTML(run.id)}" data-node="${escapeHTML(pausedScriptNode.id)}" title="将该脚本节点视为通过并继续下游，不重新执行">手动通过，跳过该脚本</button>`:'';
+    : '脚本会保留当前工作区并从头重新执行；不会恢复已终止的进程，也不需要补充信息。'+(canPass?'如果脚本卡在重跑也解决不了的问题上，也可以手动通过并继续下游。':'');
+  const passButton=canPass?`<button class="button ghost" data-pass-node="${escapeHTML(run.id)}" data-node="${escapeHTML(pausedScriptNode.id)}" title="将该脚本节点视为通过并继续下游，不重新执行">手动通过，跳过该脚本</button>`:'';
   const resumeLabel='直接继续';
   return `<div class="approval-callout paused-run-callout" data-human-context-root><div class="callout-head"><div class="callout-title-row"><span class="callout-badge human">运行已暂停</span><b class="callout-title">流程已暂停执行</b></div></div><div class="callout-content"><p class="callout-text">${detail}</p></div>${agentPaused?humanContextFieldHTML():''}<div class="ap-buttons"><button class="button primary" data-resume-paused="${escapeHTML(run.id)}">${resumeLabel}</button>${passButton}${refreshRunSOPButtonHTML(run)}</div></div>`;
 }

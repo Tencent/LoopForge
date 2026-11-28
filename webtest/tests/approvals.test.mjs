@@ -49,6 +49,27 @@ test('approval helpers explain gates, failures, pauses, and contextual payloads'
   assert.equal(JSON.stringify(result.pausedNodes), JSON.stringify(['review']));
 });
 
+test('paused script guidance offers manual pass only when the button is available', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  const run = {
+    id: 'paused-script', status: 'waiting', pauseRequested: true,
+    workflowSnapshot: {
+      nodes: [{id:'route', name:'Route', type:'script'}, {id:'next', name:'Next', type:'script'}],
+      edges: [{source:'route', target:'next', condition:{type:'route', values:['next']}}],
+    },
+    nodes: {route:{status:'waiting_approval', activity:'用户暂停'}},
+  };
+  for (const [edges, canPass] of [[run.workflowSnapshot.edges, false], [[], true]]) {
+    const paused = {...run, workflowSnapshot:{...run.workflowSnapshot, edges}};
+    const panel = app.document.createElement('div');
+    panel.innerHTML = app.evaluate(`pausedRunPanelHTML(${JSON.stringify(paused)})`);
+    assert.ok(panel.querySelector('[data-resume-paused]'));
+    assert.equal(!!panel.querySelector('[data-pass-node]'), canPass);
+    assert.equal(panel.querySelector('.callout-text').textContent.includes('手动通过'), canPass);
+  }
+});
+
 test('approval list sends context and removes the approved run after refreshing', async (t) => {
   const app = await loadApp();
   t.after(app.close);

@@ -22,12 +22,77 @@ test('designer configures routing conditions and join behavior', async (t) => {
   assert.equal(app.evaluate(`flowDiagnostics().some(x=>x.title==='Join'&&x.detail.includes('汇合条件分支'))`),true);
   join.value='none_failed_min_one_success';join.dispatchEvent(new app.window.Event('input'));
   assert.equal(app.evaluate(`state.workflow.nodes.find(n=>n.id==='join').joinRule`),'none_failed_min_one_success');
+  assert.doesNotMatch(app.document.querySelector('#properties').textContent,/汇合条件分支/);
   app.evaluate(`state.selectedNode='route';renderProperties()`);
   const fallback=app.document.querySelector('#properties [data-p="defaultTarget"]');
   fallback.value='large';fallback.dispatchEvent(new app.window.Event('input'));
   assert.equal(app.evaluate(`state.workflow.nodes[0].defaultTarget`),'large');
   app.evaluate(`state.workflow.edges[0].condition={type:'artifact',artifact:'classification',pointer:'/size',equals:null};renderProperties()`);
   assert.equal(app.document.querySelector('[data-route-edge="small-edge"] [data-route-field="equals"]').value,'null');
+});
+
+async function loadDuplicateEdgeDesigner(t) {
+  const app = await loadApp(); t.after(app.close);
+  app.evaluate(`switchView('flow');state.workflow={id:'duplicate-edges',projectId:'project-1',name:'Routing',status:'draft',nodes:[
+    {id:'left',name:'Left',type:'script',position:{x:20,y:30}},
+    {id:'right',name:'Right',type:'script',position:{x:20,y:200}},
+    {id:'join',name:'Join',type:'script',position:{x:350,y:30}},
+    {id:'other',name:'Other',type:'script',position:{x:350,y:200}}
+  ],edges:[{id:'shared',source:'left',target:'join'},{id:'shared',source:'right',target:'join'},{id:'other',source:'right',target:'other'}]};
+  state.selectedNode='right';renderCanvas();renderProperties()`);
+  return app;
+}
+
+test('routing condition edits only the edge from the selected source when IDs match', async (t) => {
+  const app = await loadDuplicateEdgeDesigner(t);
+  const field = key => app.document.querySelector(`[data-route-edge="shared"] [data-route-field="${key}"]`);
+  field('type').value = 'route';
+  field('type').dispatchEvent(new app.window.Event('change'));
+  assert.equal(app.evaluate(`state.workflow.edges[0].condition`), undefined);
+  field('values').value = 'right';
+  field('values').dispatchEvent(new app.window.Event('change'));
+  assert.equal(app.evaluate(`state.workflow.edges[1].condition.values[0]`), 'right');
+});
+
+test('canvas opens the clicked source when edge IDs match across sources', async (t) => {
+  const app = await loadDuplicateEdgeDesigner(t);
+  const rightEdge = () => [...app.document.querySelectorAll('#edges [data-edge="shared"]')]
+    .find(edge => edge.querySelector('title').textContent.startsWith('Right →'));
+  rightEdge().querySelector('.fd-e-hit').dispatchEvent(new app.window.MouseEvent('click', {bubbles:true}));
+  assert.equal(app.evaluate(`state.selectedNode`), 'right');
+});
+
+test('canvas deletion preserves an edge with the same ID from another source', async (t) => {
+  const app = await loadDuplicateEdgeDesigner(t);
+  const rightEdge = [...app.document.querySelectorAll('#edges [data-edge="shared"]')]
+    .find(edge => edge.querySelector('title').textContent.startsWith('Right →'));
+  rightEdge.querySelector('.fd-e-del').dispatchEvent(new app.window.MouseEvent('click', {bubbles:true}));
+  assert.equal(app.evaluate(`state.workflow.edges.find(e=>e.id==='shared')?.source`), 'left');
+  assert.equal(app.evaluate(`state.workflow.edges.some(e=>e.id==='shared'&&e.source==='right')`), false);
+});
+
+test('join diagnostics refresh immediately when clearing a default branch or changing the join rule', async (t) => {
+  const app = await loadDuplicateEdgeDesigner(t);
+  app.evaluate(`state.workflow.edges.find(e=>e.id==='other').condition={type:'route',values:['other']};
+    state.workflow.nodes.find(n=>n.id==='right').defaultTarget='join';renderProperties();setFlowView('check')`);
+  const warnings = () => app.document.querySelector('#flowCheckPanel').textContent;
+  const edit = (key, value) => {
+    const select = app.document.querySelector(`#properties [data-p="${key}"]`);
+    select.value = value;
+    select.dispatchEvent(new app.window.Event('input'));
+  };
+  assert.match(warnings(), /汇合条件分支/);
+  edit('defaultTarget', '');
+  assert.equal(app.document.querySelector('[data-route-edge="shared"] [data-route-field="type"]').disabled, false);
+  assert.doesNotMatch(warnings(), /汇合条件分支/);
+  edit('defaultTarget', 'join');
+  assert.match(warnings(), /汇合条件分支/);
+  app.evaluate(`state.selectedNode='join';renderProperties()`);
+  edit('joinRule', 'none_failed_min_one_success');
+  assert.doesNotMatch(warnings(), /汇合条件分支/);
+  assert.doesNotMatch(app.document.querySelector('#properties').textContent, /汇合条件分支/);
+  edit('joinRule', '');
+  assert.match(warnings(), /汇合条件分支/);
 });
 
 test('linear agent drawer hides branch configuration', async (t) => {
@@ -52,7 +117,7 @@ test('agent drawer hides the node artifact editor without dropping existing cont
       {id:'review',name:'独立评审',type:'agent',agentId:'review-role',position:{x:20,y:30},
        artifactOutputs:[{name:'review',path:'review.md',mediaType:'text/markdown',required:true}]}
     ],edges:[]};
-    state.genericTemplateAgents=[{id:'review-role',name:'独立评审'}];
+    state.genericTemplateAgents=[{id:'review-role',name:'独立评审',artifactOutputs:[{name:'role-report',path:'role/report.md',mediaType:'text/markdown',required:true}]}];
     state.genericTemplateAgentWorkflowId=state.workflow.id;
     state.selectedNode='review';renderProperties()`);
   const find = (selector) => app.document.querySelector(`#properties ${selector}`);
@@ -62,7 +127,8 @@ test('agent drawer hides the node artifact editor without dropping existing cont
     assert.ok(find('#openBoundAgent'));
   };
   assertNoEditor();
-  assert.match(find('.fd-stats').textContent, /1\s*产物/);
+  assert.match(find('.fd-stats').textContent, /2\s*产物/);
+  assert.match(find('[data-fold="gates"]').textContent, /role\/report\.md/);
   const contract = JSON.stringify(app.evaluate('state.workflow.nodes[0].artifactOutputs'));
   const name = find('[data-p="name"]');
   name.value = '独立评审（更新）';
@@ -76,6 +142,8 @@ test('agent drawer hides the node artifact editor without dropping existing cont
 
   app.evaluate(`state.workflow.nodes[0].artifactOutputs=[];renderProperties()`);
   assertNoEditor();
+  assert.match(find('.fd-stats').textContent, /1\s*产物/);
+  assert.match(find('[data-fold="gates"]').textContent, /role\/report\.md/);
 });
 
 test('routing picker disables unsupported node kinds and scopes', async (t) => {

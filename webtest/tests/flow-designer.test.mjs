@@ -66,7 +66,7 @@ test('flow node metadata, properties, artifact editors, menus, and edge deletion
     listEditorHTML(['one','two'],'item');
     ensureNodeDefaults(state.workflow.nodes[0]);
     renderAgentSummary();renderAgentPreview(state.data.agents[0]);
-    deleteEdgeById('edge-1');deleteRejectEdgeByNodeId('agent-node');
+    deleteEdgeById('edge-1','agent-node');deleteRejectEdgeByNodeId('agent-node');
   `);
   await settle(4);
   assert.equal(app.evaluate(`state.workflow.edges.length`), 0);

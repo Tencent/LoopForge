@@ -29,9 +29,9 @@ const clearCondition = (app) => {
 const edits = [
   ['deleting the last conditional target node', app => app.evaluate(`removeNode('small')`)],
   ['changing the last conditional edge to unconditional', clearCondition],
-  ['deleting the last conditional edge', app => app.evaluate(`deleteEdgeById('small-edge')`)],
+  ['deleting the last conditional edge', app => app.evaluate(`deleteEdgeById('small-edge','route')`)],
   ['deleting the default target node', app => app.evaluate(`removeNode('large')`)],
-  ['deleting the default edge', app => app.evaluate(`deleteEdgeById('large-edge')`)],
+  ['deleting the default edge', app => app.evaluate(`deleteEdgeById('large-edge','route')`)],
 ];
 
 for (const [name, edit] of edits) {

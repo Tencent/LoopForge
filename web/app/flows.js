@@ -558,12 +558,12 @@ function flowRejectPath(src,tgt){
   const y=Math.max(nodeBox(src).bottom,nodeBox(tgt).bottom)+46;
   return {d:`M ${a.x} ${a.y} C ${a.x+44} ${a.y}, ${a.x+44} ${y}, ${a.x} ${y} L ${b.x} ${y} C ${b.x-44} ${y}, ${b.x-44} ${b.y}, ${b.x} ${b.y}`,mx:(a.x+b.x)/2,my:y};
 }
-async function deleteEdgeById(id){
-  const edge=state.workflow?.edges.find(x=>x.id===id);
+async function deleteEdgeById(id,source){
+  const edge=state.workflow?.edges.find(x=>x.source===source&&x.id===id);
   if(!edge)return;
   if(flowReadOnly())return toast(flowReadOnlyReason());
   flowHistory.record();
-  state.workflow.edges=state.workflow.edges.filter(x=>x.id!==id);
+  state.workflow.edges=state.workflow.edges.filter(x=>x!==edge);
   clearInvalidDefaultTargets(state.workflow);
   dirty();renderCanvas();renderProperties();flowToast('已删除连线',{undo:true});
 }
@@ -584,7 +584,7 @@ function renderEdges(){
       const p=flowPortPoint(a,'success'),q=flowPortPoint(b,'in'),d=flowCurve(p,q);
       const label=a.defaultTarget===e.target?'默认':e.condition?.type==='route'?`route: ${(e.condition.values||[]).join(', ')}`:e.condition?.type==='artifact'?`${e.condition.artifact}${e.condition.pointer||''} = ${JSON.stringify(e.condition.equals)}`:'';
       const mx=(p.x+q.x)/2,my=(p.y+q.y)/2;
-      html+=`<g class="fd-e" data-edge="${escapeHTML(e.id)}"><path class="fd-e-hit" d="${d}"/><path class="edge fd-e-path" d="${d}"/>${label?`<g class="fd-e-label" transform="translate(${mx} ${my})"><rect x="-65" y="-10" width="130" height="20" rx="10"/><text text-anchor="middle" y="3.5">${escapeHTML(label.length>24?label.slice(0,24)+'…':label)}</text></g>`:''}${del(mx+75,my)}<title>${escapeHTML(a.name)} → ${escapeHTML(b.name)} · 点击配置条件</title></g>`;
+      html+=`<g class="fd-e" data-edge="${escapeHTML(e.id)}" data-edge-source="${escapeHTML(e.source)}"><path class="fd-e-hit" d="${d}"/><path class="edge fd-e-path" d="${d}"/>${label?`<g class="fd-e-label" transform="translate(${mx} ${my})"><rect x="-65" y="-10" width="130" height="20" rx="10"/><text text-anchor="middle" y="3.5">${escapeHTML(label.length>24?label.slice(0,24)+'…':label)}</text></g>`:''}${del(mx+75,my)}<title>${escapeHTML(a.name)} → ${escapeHTML(b.name)} · 点击配置条件</title></g>`;
     });
     wf.nodes.forEach(n=>{
       const t=n.rejectTo&&byId.get(n.rejectTo);if(!t)return;
@@ -606,7 +606,7 @@ function renderEdges(){
     const g=edgeAt(e);if(!g)return;
     e.stopPropagation();
     if(state.connectFrom)return;
-    if(g.dataset.edge){if(e.target.closest('.fd-e-del'))deleteEdgeById(g.dataset.edge);else{const edge=state.workflow.edges.find(x=>x.id===g.dataset.edge);if(edge)openNodeDrawer(edge.source)}}else deleteRejectEdgeByNodeId(g.dataset.rejectFrom);
+    if(g.dataset.edgeSource){if(e.target.closest('.fd-e-del'))deleteEdgeById(g.dataset.edge,g.dataset.edgeSource);else openNodeDrawer(g.dataset.edgeSource)}else deleteRejectEdgeByNodeId(g.dataset.rejectFrom);
   });
 }
 
@@ -1196,8 +1196,9 @@ function renderProperties(){
   if(refocus){refocus.focus({preventScroll:true});if(caret)try{refocus.setSelectionRange(caret[0],caret[1])}catch{}}
   setFlowDrawer(true,n.id);
 }
-function bindNodeProperties(host,n){  host.querySelectorAll('[data-route-edge]').forEach(row=>{
-    const edge=state.workflow.edges.find(e=>e.id===row.dataset.routeEdge);if(!edge)return;
+function bindNodeProperties(host,n){
+  host.querySelectorAll('[data-route-edge]').forEach(row=>{
+    const edge=state.workflow.edges.find(e=>e.source===n.id&&e.id===row.dataset.routeEdge);if(!edge)return;
     row.querySelectorAll('[data-route-field]').forEach(el=>el.onchange=()=>{
       const key=el.dataset.routeField;flowHistory.record();
       if(key==='type'){
@@ -1229,10 +1230,12 @@ function bindNodeProperties(host,n){  host.querySelectorAll('[data-route-edge]')
     }
     if(key!=='sopWorkflowId')flowHistory.record({merge:`p:${n.id}:${key}`});
     n[key]=el.type==='checkbox'?el.checked:el.type==='number'?Number(el.value):el.value;
-    if(key==='defaultTarget'&&n.defaultTarget){const edge=state.workflow.edges.find(e=>e.source===n.id&&e.target===n.defaultTarget);if(edge)delete edge.condition;clearInvalidDefaultTargets(state.workflow);renderProperties()}
+    if(key==='defaultTarget'){
+      if(n.defaultTarget){const edge=state.workflow.edges.find(e=>e.source===n.id&&e.target===n.defaultTarget);if(edge)delete edge.condition}
+      clearInvalidDefaultTargets(state.workflow);
+    }
     dirty();
-    if(key==='agentId'){renderProperties();renderCanvas();return}
-    if(key==='executionScope'){renderProperties();renderCanvas();return}
+    if(['agentId','executionScope','defaultTarget','joinRule'].includes(key))renderProperties();
     renderCanvas();
   });
   const sopSel=host.querySelector('[data-p="sopWorkflowId"]');
@@ -1279,7 +1282,10 @@ function bindNodeProperties(host,n){  host.querySelectorAll('[data-route-edge]')
   if(openScriptBtn) openScriptBtn.onclick=triggerScriptEditor;
   if(previewScriptBtn) previewScriptBtn.onclick=triggerScriptEditor;
 }
-function dirty(){state.workflowDirty=true;renderFlowHeader();flowViewport.renderMinimap()}
+function dirty(){
+  state.workflowDirty=true;renderFlowHeader();flowViewport.renderMinimap();
+  if($('#flowCheckPanel')?.hidden===false)setFlowView('check');
+}
 function markWorkflowClean(){state.workflowDirty=false;state.workflowSaved=clone(state.workflow);renderFlowHeader();rememberOpenWorkflow()}
 async function discardWorkflow(){
   if(!state.workflowDirty||!state.workflowSaved)return;

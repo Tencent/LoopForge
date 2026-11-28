@@ -819,7 +819,7 @@ function sopPane(issue,data){
     const wf=(state.data.workflows||[]).find(w=>w.id===lane.workflowId);
     const laneRun=lane.latestRunId?(state.data.runs||[]).find(r=>r.id===lane.latestRunId):null;
     const open=openId===lane.workflowId;
-    const stageRows=(stages,depth)=>(stages||[]).map(n=>`<div class="node-progress-row${depth?' is-child-stage':''}"${depth?` style="padding-left:${depth*20}px"`:''}><span class="node-name">${depth?'└ ':''}${escapeHTML(n.name||n.nodeId)}</span><div class="node-progress-track"><i style="width:${n.status==='succeeded'||n.status==='failed'?100:n.status==='running'||n.status==='waiting_approval'?55:0}%;background:${n.status==='succeeded'?'#34d399':n.status==='failed'?'#f87171':n.status==='waiting_approval'?'#fbbf24':n.status==='running'?'#5b8cff':'#64748b'}"></i></div><span class="status ${n.status}" style="flex-shrink:0">${statusText(n.status)||'未开始'}</span>${n.childRunId?`<button type="button" class="button ghost small" data-open-run="${escapeHTML(n.childRunId)}" title="查看这个子 LOOP 的运行">查看</button>`:''}${!depth&&!issueManuallyClosed(issue)&&!issueTrackerClosed(issue)&&canRerunFromHere(laneRun,n.nodeId)?`<button type="button" class="button ghost small" data-rerun-from-here="${escapeHTML(n.nodeId)}" data-run="${escapeHTML(lane.latestRunId)}">从这里重跑</button>`:''}</div>${stageRows(n.children,depth+1)}`).join('');
+    const stageRows=(stages,depth)=>(stages||[]).map(n=>`<div class="node-progress-row${depth?' is-child-stage':''}"${depth?` style="padding-left:${depth*20}px"`:''}><span class="node-name">${depth?'└ ':''}${escapeHTML(n.name||n.nodeId)}</span><div class="node-progress-track"><i style="width:${['succeeded','failed','skipped'].includes(n.status)?100:n.status==='running'||n.status==='waiting_approval'?55:0}%;background:${n.status==='succeeded'?'#34d399':n.status==='failed'?'#f87171':n.status==='waiting_approval'?'#fbbf24':n.status==='running'?'#5b8cff':'#64748b'}"></i></div><span class="status ${n.status}" style="flex-shrink:0">${statusText(n.status)||'未开始'}</span>${n.childRunId?`<button type="button" class="button ghost small" data-open-run="${escapeHTML(n.childRunId)}" title="查看这个子 LOOP 的运行">查看</button>`:''}${!depth&&!issueManuallyClosed(issue)&&!issueTrackerClosed(issue)&&canRerunFromHere(laneRun,n.nodeId)?`<button type="button" class="button ghost small" data-rerun-from-here="${escapeHTML(n.nodeId)}" data-run="${escapeHTML(lane.latestRunId)}">从这里重跑</button>`:''}</div>${stageRows(n.children,depth+1)}`).join('');
     const nodeRows=stageRows(plannedSOPNodes(lane,wf),0);
     const singleSOP=effectiveIssueSOPBindings(issue).length<=1;
     const actionWorkflow=singleSOP&&String(issue.workflowId||'').trim()?issue.workflowId:lane.workflowId;
@@ -914,6 +914,7 @@ function acceptancePane(issue,data){
   const nodes=wf?.nodes||[];
   const gates=nodesInExecutionOrder(wf).map(n=>{const nr=run.nodes?.[n.id]||{},agent=(state.data.agents||[]).find(a=>a.id===n.agentId),verif=roleGates(agent);const isApproval=n.type==='approval';const manual=verif.some(g=>g.mode==='manual');const commands=verif.filter(g=>g.mode==='command');let verdict='—';
     if(nr.status==='succeeded')verdict=isApproval?'已批准':(commands.length||manual)?'门禁通过':'完成';
+    if(nr.status==='skipped')verdict=statusText(nr.status);
     if(nr.status==='waiting_approval')verdict=turnsExhausted(nr)?'等待确认是否重试':(isApproval?'等待人工判断':'等待人工验收');
     if(nr.status==='failed')verdict='门禁失败';
     if(nr.status==='running')verdict='执行中';
@@ -931,7 +932,7 @@ function formatActivityTime(ts){
 function activityEventLabel(type){
   return ({
     'run.started':'开始执行','run.failed':'执行失败','run.succeeded':'执行完成','run.cancelled':'已取消',
-    'node.started':'节点开始','node.failed':'节点失败','node.retry':'准备重试','node.succeeded':'节点完成','node.passed':'人工通过节点',
+    'node.started':'节点开始','node.failed':'节点失败','node.retry':'准备重试','node.succeeded':'节点完成','node.skipped':'节点已跳过','node.passed':'人工通过节点',
     'task.created':'创建任务'
   }[type]||String(type||'').replace(/^node\./,'节点 · ').replace(/^run\./,'运行 · '));
 }
