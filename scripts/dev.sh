@@ -36,12 +36,17 @@ fi
 if database_is_postgres; then
   bash scripts/install-schema-extensions-pg.sh
 else
-  bash scripts/install-observability-schema.sh
   if [[ "${compose_mysql:-0}" == 1 ]]; then
+    bash scripts/install-observability-schema.sh
     docker compose exec -T mysql sh -c 'MYSQL_PWD="$MYSQL_PASSWORD" mysql -u loopforge loopforge' < migrations/seed/001_public_catalog.sql
     docker compose exec -T mysql sh -c 'MYSQL_PWD="$MYSQL_PASSWORD" mysql -u loopforge loopforge' < migrations/seed/002_welcome_project.sql
   else
-    printf 'Apply migrations/seed/001_public_catalog.sql and migrations/seed/002_welcome_project.sql to your MySQL server.\n'
+    # The observability script and the catalog seed drive the Compose stack's
+    # own database service. This fork's stack has none, so an installation
+    # against an own MySQL server applies them by hand.
+    printf "This fork's Compose stack defines no mysql service.\n"
+    printf 'Apply migrations/001_run_obs_generated_columns.sql, migrations/seed/001_public_catalog.sql\n'
+    printf 'and migrations/seed/002_welcome_project.sql to your MySQL server.\n'
   fi
 fi
 printf 'Open http://localhost:%s — account: admin — password: .local/admin-password\n' "$AGENTFLOW_HTTP_PORT"

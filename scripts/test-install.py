@@ -34,7 +34,7 @@ class InstallerTests(unittest.TestCase):
         self.root = Path(self.temp.name)
         (self.root / 'scripts').mkdir()
         (self.root / 'migrations/seed/pg').mkdir(parents=True)
-        for name in ('install.sh', 'configure.sh', 'docker-access.sh', 'ghcr-mirror.sh', 'install-address.py', 'install-compose.py', 'install-schema-extensions-pg.sh'):
+        for name in ('install.sh', 'configure.sh', 'docker-access.sh', 'ghcr-mirror.sh', 'install-address.py', 'install-compose.py', 'install-schema-extensions-pg.sh', 'install-schema-extensions.sh', 'install-observability-schema.sh'):
             shutil.copyfile(ROOT / 'scripts' / name, self.root / 'scripts' / name)
         shutil.copyfile(ROOT / 'start.sh', self.root / 'start.sh')
         (self.root / 'migrations/001_run_obs_generated_columns.pg.sql').write_text(
@@ -42,6 +42,14 @@ class InstallerTests(unittest.TestCase):
         for name in ('001_public_catalog.sql', '002_welcome_project.sql'):
             (self.root / 'migrations/seed/pg' / name).write_text(
                 (ROOT / 'migrations/seed/pg' / name).read_text())
+        # The upstream MySQL default path replays its own scripts and
+        # migrations; the fixture carries them so the MySQL branch stays
+        # covered on a branch that deploys to Postgres.
+        for name in ('001_run_obs_generated_columns.sql', '033_generic_sop_mr_node.sql', '038_generic_sop_host_credentials.sql', '043_loop_terminology.sql'):
+            (self.root / 'migrations' / name).write_text((ROOT / 'migrations' / name).read_text())
+        for name in ('001_public_catalog.sql', '002_welcome_project.sql'):
+            (self.root / 'migrations/seed' / name).write_text(
+                (ROOT / 'migrations/seed' / name).read_text())
         (self.root / 'mock').mkdir()
         self.executable('docker', '''#!/usr/bin/env bash
 printf '%s %s\\n' "${MOCK_PRIVILEGED:-0}" "$*" >> "$MOCK_LOG"
@@ -55,6 +63,12 @@ if [[ "$1" == tag && "${MOCK_TAG_FAIL:-0}" == 1 ]]; then exit 1; fi
 if [[ "$*" == 'compose version' && "${MOCK_COMPOSE_MISSING:-0}" == 1 && ! -f "$MOCK_COMPOSE_INSTALLED" ]]; then exit 1; fi
 if [[ "$*" == *'ps --status running'* ]]; then echo platform; fi
 if [[ "${MOCK_EXPIRE_AFTER_BUILD:-0}" == 1 && "$*" == *'build platform'* ]]; then touch "$MOCK_SUDO_EXPIRED_FILE"; fi
+if [[ "$*" == *'exec -T mysql'* ]]; then
+  query=$(cat)
+  printf '%s\\n' "$query" >> "$MOCK_MYSQL_LOG"
+  if [[ "$query" == *'information_schema.columns'* ]]; then printf '%s\\n' "${MOCK_COLUMN_COUNT:-1}"; fi
+  exit 0
+fi
 ''')
         # The Postgres client the schema extension script and the installer use.
         # The connection string is deliberately not written to the log.
@@ -84,7 +98,7 @@ exit 0
 export MOCK_PRIVILEGED=1
 exec "$@"
 ''')
-        self.environ = dict(os.environ, PATH=str(self.root / 'mock') + ':' + os.environ['PATH'], MOCK_LOG=str(self.root / 'docker.log'), MOCK_SQL_LOG=str(self.root / 'sql.log'), MOCK_PSQL_LOG=str(self.root / 'psql.log'), LOOPFORGE_PG_PASSWORD='fixture-password', AGENTFLOW_HTTP_PORT='18765', LOOPFORGE_PUBLIC_URL='https://team.example.test', LOOPFORGE_BIND='0.0.0.0')
+        self.environ = dict(os.environ, PATH=str(self.root / 'mock') + ':' + os.environ['PATH'], MOCK_LOG=str(self.root / 'docker.log'), MOCK_SQL_LOG=str(self.root / 'sql.log'), MOCK_PSQL_LOG=str(self.root / 'psql.log'), MOCK_MYSQL_LOG=str(self.root / 'mysql.log'), LOOPFORGE_PG_PASSWORD='fixture-password', AGENTFLOW_HTTP_PORT='18765', LOOPFORGE_PUBLIC_URL='https://team.example.test', LOOPFORGE_BIND='0.0.0.0')
         # The developer's own database password never reaches the fixture.
         for name in ('LOOPFORGE_DOCKER_USE_SUDO', 'LOOPFORGE_DATA_DIR', 'LOOPFORGE_IMAGE', 'COMPOSE_FILE', 'LOOPFORGE_BUILD_FROM_SOURCE', 'LOOPFORGE_PULL_POLICY', 'MIRROR', 'MOCK_USER', 'MOCK_DIRECT', 'MOCK_SUDO_DENIED', 'MOCK_IMAGE_PRESENT', 'MOCK_PULL_FAIL', 'MOCK_TAG_FAIL', 'MOCK_MIRROR_GHCR', 'MOCK_MIRROR_NJU', 'MOCK_CURL_LOG', 'POSTGRES_PASSWORD'):
             self.environ.pop(name, None)
@@ -568,6 +582,22 @@ esac
                 result = self.pull(MIRROR='ghcr.io')
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertEqual(env.read_text(), configured)
+
+    def test_mysql_dsn_keeps_the_upstream_mysql_path(self):
+        # MySQL stays the platform's default dialect: a MySQL DSN selects the
+        # MySQL schema extensions and never the Postgres ones. The Compose DSN
+        # is a Postgres-only value, so none is derived from a MySQL DSN.
+        env = self.root / '.env'
+        env.write_text("AGENTFLOW_DATABASE_URL='loopforge:fixture@tcp(127.0.0.1:33315)/loopforge'\n")
+        env.chmod(0o600)
+        result = self.install(MOCK_COLUMN_COUNT='0')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        mysql_sql = (self.root / 'mysql.log').read_text()
+        self.assertIn('ALTER TABLE run_telemetry', mysql_sql)
+        self.assertIn('INSERT IGNORE', mysql_sql)
+        psql_log = self.root / 'psql.log'
+        self.assertEqual(psql_log.read_text() if psql_log.exists() else '', '')
+        self.assertNotIn('LOOPFORGE_COMPOSE_DATABASE_URL', env.read_text())
 
     def test_start_pull_reapplies_schema_extensions_after_containers_are_up(self):
         self.assert_success(self.install())

@@ -4,6 +4,14 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 ROOT_DIR="$PWD"
 mkdir -p .local
+if ! docker compose -f "$ROOT_DIR/compose.yaml" config --services 2>/dev/null | grep -qx mysql; then
+  # The upstream acceptance harness drives the Compose stack's own database
+  # service. This fork's stack deploys to Postgres and defines no mysql
+  # service, so the harness cannot run here. The check comes before the
+  # fixture is created, so no directory with generated secrets is left behind.
+  printf 'This harness needs the Compose stack to define the mysql service (the upstream default path). This fork deploys to Postgres; use scripts/test-install.py for the installer checks.\n' >&2
+  exit 1
+fi
 TASK_DIR="$(mktemp -d "$ROOT_DIR/.local/container-e2e.XXXXXX")"
 TASK_PROJECT="loopforge-e2e-$(date +%s)-$$"
 TASK_PORT="${LOOPFORGE_CONTAINER_TEST_PORT:-8093}"
@@ -26,13 +34,6 @@ p.write_text(json.dumps({'services':{'platform':{'image':image,'environment':{'A
 PY_IMAGE
 fi
 COMPOSE=(docker compose -f "$ROOT_DIR/compose.yaml")
-if ! docker compose -f "$ROOT_DIR/compose.yaml" config --services 2>/dev/null | grep -qx mysql; then
-  # The upstream acceptance harness drives the Compose stack's own database
-  # service. This fork's stack deploys to Postgres and defines no mysql
-  # service, so the harness cannot run here.
-  printf 'This harness needs the Compose stack to define the mysql service (the upstream default path). This fork deploys to Postgres; use scripts/test-install.py for the installer checks.\n' >&2
-  exit 1
-fi
 if [[ "${LOOPFORGE_CONTAINER_SKIP_BUILD:-0}" != '1' ]]; then COMPOSE+=(-f "$ROOT_DIR/compose.dev.yaml"); fi
 if [[ -f "$TASK_DIR/image.json" ]]; then COMPOSE+=(-f "$TASK_DIR/image.json"); fi
 COMPOSE+=( --env-file "$TASK_DIR/install.env" --project-name "$TASK_PROJECT")

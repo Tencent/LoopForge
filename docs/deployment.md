@@ -83,6 +83,8 @@ A native platform process reaches the database on this machine through `127.0.0.
 
 Both point at the same database; only the host differs. `compose.yaml` reads `LOOPFORGE_COMPOSE_DATABASE_URL` and passes it to the container as `AGENTFLOW_DATABASE_URL`. Set `LOOPFORGE_PG_COMPOSE_HOST` before running `scripts/configure.sh` when the database is not on this machine.
 
+When `LOOPFORGE_COMPOSE_DATABASE_URL` is missing, Compose passes an empty DSN to the container and the platform refuses to start with `AGENTFLOW_DATABASE_URL 未配置`. The container therefore fails its health check rather than the installation failing at Compose-interpolation time — run `scripts/configure.sh` to write the DSN before `./start.sh`.
+
 ### Install
 
 ```bash
@@ -375,17 +377,17 @@ Postgres needs no equivalent: `run_artifacts.content` is created as unbounded
 
 ### Migrating existing sandboxes to inline assets
 
-This is the MySQL upgrade path: it migrates a legacy MySQL volume, and `./start.sh pull` in this fork no longer runs it. A Postgres installation has no legacy MySQL volume and no legacy asset tables to convert.
+This is the MySQL upgrade path: it migrates a legacy MySQL volume, and `./start.sh pull` in this fork no longer runs it. The `./start.sh migrate-sandboxes` subcommand that drove the migration was removed with it; apply the SQL by hand as described below. A Postgres installation has no legacy MySQL volume and no legacy asset tables to convert.
 
 For a published Compose release, check out the target release and run `./start.sh pull`. If other API or worker processes share the Compose database, stop them first. After pulling the images, the command checks that the target image supports inline Dockerfiles and that the database still has a legacy asset table. When both conditions hold, it stops the platform, saves a database dump in `.local/loopforge-before-041.*/loopforge.sql`, and runs 041 before starting the new platform. An empty database or one whose legacy tables are already gone skips 041.
 
 If the backup or migration fails, the platform stays stopped. Fix the error and rerun `./start.sh pull`. Keep the original backup if you plan to roll back to a release that uses the old sandbox format, and restore it before starting that release.
 
-For a Compose source upgrade, stop the old platform and any other processes using the database, and back up the database while MySQL remains running. Run these commands before starting the new platform with `./start.sh dev`.
+For a Compose source upgrade, stop the old platform and any other processes using the database, and back up the database while MySQL remains running. The `./start.sh migrate-sandboxes` subcommand was **removed in this fork**: the migration it drove belongs to the Compose stack's own MySQL volume, and this fork's stack has none. Apply the migration to the database directly instead, before starting the new platform with `./start.sh dev`:
 
 ```bash
 ./start.sh stop platform
-./start.sh migrate-sandboxes
+mysql -u loopforge -p < migrations/041_native_sandbox_inline_assets.sql
 ```
 
 For external MySQL deployments, stop the platform processes, back up the database and apply `migrations/041_native_sandbox_inline_assets.sql` directly before starting the upgraded platform.

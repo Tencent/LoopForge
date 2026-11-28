@@ -84,6 +84,19 @@ def pg_password(text=''):
 def pg_dsn(password):
  return f'postgres://{pg_user}:{password}@{pg_host}:{pg_port}/{pg_database}?sslmode=disable'
 
+def split_hostport(hostport):
+ # An IPv6 literal is bracketed, so the colons inside it do not end the host.
+ if hostport.startswith('['):
+  close=hostport.find(']')
+  if close>0:
+   host=hostport[:close+1]
+   rest=hostport[close+1:]
+   return (host,rest[1:]) if rest.startswith(':') else (host,'')
+ host,colon,port=hostport.partition(':')
+ if not colon or not port.isdigit():
+  return hostport,''
+ return host,port
+
 def dsn_parts(dsn):
  # Split a DSN by hand: scheme, userinfo, host, port, path and query.
  # A URL parser would misread a password that contains '#' (the fragment
@@ -96,20 +109,28 @@ def dsn_parts(dsn):
  userinfo,at,after=rest.rpartition('@')
  if not at:
   userinfo,after='',rest
- hostport,slash,remainder=after.partition('/')
- host,colon,port=hostport.partition(':')
- if not colon or not port.isdigit():
-  host,port=hostport,''
- path,question,query=remainder.partition('?')
+ # The query starts at the first '?' and the path ends at the first '/'; the
+ # database name may be absent. The userinfo is already split off, so a '?'
+ # inside the password is not mistaken for the query separator.
+ authority,question,query=after.partition('?')
+ hostport,slash,path=authority.partition('/')
+ host,port=split_hostport(hostport)
  return (scheme,userinfo,host,port,path,query if question else '')
 
 def compose_dsn(dsn,host):
  # The same database reached from a Compose container: the host publishes
- # host.docker.internal, the native process connects to 127.0.0.1.
+ # host.docker.internal, the native process connects to 127.0.0.1. The result
+ # is the native DSN with the host replaced, byte for byte.
  scheme,userinfo,_,port,path,query=dsn_parts(dsn)
- port=port or '5432'
- netloc=f'{userinfo}@{host}:{port}' if userinfo else f'{host}:{port}'
- return f'{scheme}://{netloc}/{path}' + (f'?{query}' if query else '')
+ netloc=f'{userinfo}@{host}' if userinfo else host
+ if port:
+  netloc+=f':{port}'
+ result=f'{scheme}://{netloc}'
+ if path:
+  result+=f'/{path}'
+ if query:
+  result+=f'?{query}'
+ return result
 
 def compose_host(dsn):
  # A database on this machine is reached through the Docker host gateway; a
@@ -118,7 +139,8 @@ def compose_host(dsn):
  if override:
   return override
  host=dsn_parts(dsn)[2]
- return 'host.docker.internal' if host in ('','127.0.0.1','localhost','::1') else host
+ bare=host[1:-1] if host.startswith('[') and host.endswith(']') else host
+ return 'host.docker.internal' if bare in ('','127.0.0.1','localhost','::1') else host
 
 def configure_project_credential(text):
  matches = list(re.finditer(rf'(?m)^[ \t]*(?:export[ \t]+)?{project_key_name}[ \t]*=([^\r\n]*)', text))
@@ -156,6 +178,11 @@ if p.exists():
   if 'AGENTFLOW_CREDENTIAL_KEYS=' not in text:
    text += f'\nAGENTFLOW_CREDENTIAL_KEYS={shlex.quote(credential_keys())}\n'
    added.append('AGENTFLOW_CREDENTIAL_KEYS')
+  # The deployment scripts read the HTTP port from the environment under
+  # `set -u`, so an .env without it stops the platform before it starts.
+  if not env_lookup(text,'AGENTFLOW_HTTP_PORT'):
+   text=set_env(text,'AGENTFLOW_HTTP_PORT',os.environ.get('AGENTFLOW_HTTP_PORT','8090'))
+   added.append('AGENTFLOW_HTTP_PORT')
   # An installation made before the Postgres port has no DSN yet. Fill it in
   # instead of leaving the platform without a database.
   native=env_lookup(text,'AGENTFLOW_DATABASE_URL')
@@ -171,7 +198,10 @@ if p.exists():
     added.append('AGENTFLOW_DATABASE_URL')
   if native:
    compose=env_lookup(text,'LOOPFORGE_COMPOSE_DATABASE_URL')
-   if not compose:
+   # The Compose DSN is the Postgres one with a different host. A MySQL DSN
+   # has no Compose counterpart, and deriving one from it would write a
+   # meaningless connection string into .env.
+   if not compose and native.startswith(('postgres://','postgresql://')):
     text=set_env(text,'LOOPFORGE_COMPOSE_DATABASE_URL',compose_dsn(native,compose_host(native)))
     added.append('LOOPFORGE_COMPOSE_DATABASE_URL')
  configured = configure_project_credential(text)
