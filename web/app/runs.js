@@ -297,7 +297,7 @@ function runRowHTML(r,workflows){
   const isPaused=Boolean(r.pauseRequested||r.status==='paused');
   const isDeletable=r.status!=='queued'&&(!['running','waiting'].includes(r.status)||isPaused);
   const sep='<span class="run-sep">·</span>';
-  const meta=group?`<span>${relativeTime(r.createdAt)}</span>${runTriggerChip(ctx.task)}`:`${ctx.issue?`<span class="run-ref">${escapeHTML(ctx.project?.key||'ISS')}-${escapeHTML(ctx.issue.number)}</span>${sep}`:''}<span class="run-meta-sop">${escapeHTML(sop)}</span>${sep}<span>${relativeTime(r.createdAt)}</span>${runTriggerChip(ctx.task)}`;
+  const meta=group?`<span>${relativeTime(r.createdAt)}</span>${runTriggerChip(ctx.task)}`:`${ctx.issue?`<span class="run-ref">${escapeHTML(issueKeyFor(ctx.issue,ctx.project))}</span>${sep}`:''}<span class="run-meta-sop">${escapeHTML(sop)}</span>${sep}<span>${relativeTime(r.createdAt)}</span>${runTriggerChip(ctx.task)}`;
   const progress=group?'<div class="run-row-progress is-empty">—</div>':`<div class="run-row-progress"><span class="run-progress-text">${p.done}/${p.total}</span><div class="run-progress tone-${runStatusTone(r)}"><i style="width:${p.pct}%"></i></div></div>`;
   const time=group?'<span class="run-row-time"></span>':`<span class="run-row-time" title="${escapeHTML(runTimingTitle(r))}">${runElapsed(r)}</span>`;
   const actions=`<button type="button" class="run-row-action run-view-btn" data-view-run="${escapeHTML(r.id)}" aria-label="查看详情" title="查看详情">${runIconSlot('eye',15)}</button>${isDeletable?`<button type="button" class="run-row-action run-del-btn" data-delete-run="${escapeHTML(r.id)}" aria-label="删除记录" title="删除记录">${runIconSlot('trash',15)}</button>`:''}`;
@@ -1805,7 +1805,7 @@ function renderRunDetail(r){
   const pickNodes=runIsGroupMode(r)?(graphNodes.length?graphNodes:nodes):nodes;if(!state.selectedRunNode||!pickNodes.some(n=>n.id===state.selectedRunNode)){state.selectedRunNode=pickNodes.find(n=>['running','waiting_approval','failed','cancelled'].includes(r.nodes?.[n.id]?.status))?.id||pickNodes.find(n=>r.nodes?.[n.id]?.status==='succeeded')?.id||pickNodes[0]?.id}const pg=runPageTarget(r,state.selectedRunNode);const selected=pickNodes.find(n=>n.id===state.selectedRunNode)||nodes.find(n=>n.id===state.selectedRunNode),nr=r.nodes?.[selected?.id]||{},nodeArtifacts=(r.artifacts||[]).filter(a=>a.nodeId===selected?.id),logPage=state.runLogs?.runId===pg.runId&&state.runLogs.nodeId===pg.nodeId&&state.runLogs.loaded?state.runLogs:null,telAdapter=state.runTelemetryAdapter||'live',telPage=state.runTelemetry?.runId===pg.runId&&state.runTelemetry.nodeId===pg.nodeId&&state.runTelemetry.adapter===telAdapter&&state.runTelemetry.loaded?state.runTelemetry:null,telemetry=compactTelemetry(telPage?.items||[]);
   /** 首次渲染与实时更新使用同一节点活动判断。 */
   const inspectorRunning=nodeInspectorIsRunning(r,selected?.id);
-  const issueRef=ctx.issue?`${escapeHTML(ctx.project?.key||'TASK')}-${ctx.issue.number}`:'独立运行';
+  const issueRef=ctx.issue?escapeHTML(issueKeyFor(ctx.issue,ctx.project)):'独立运行';
   const alignPanelHTML=r.workflowId==='scheduled-baseline-align'?alignConflictPanelHTML(r):'';
   const logBusy=state.runLogs?.runId===pg.runId&&state.runLogs.nodeId===pg.nodeId&&state.runLogs.loading&&!logPage;
   const previewEnabled=runPreviewDeclared(r);
