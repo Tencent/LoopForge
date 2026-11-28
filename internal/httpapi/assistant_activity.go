@@ -205,8 +205,9 @@ func replyCompact(text string) string {
 // A fence marker delimits a block. Compare the words and literals inside it individually.
 // Quoted literals are single-line: a lone apostrophe in a comment (# don't …) or
 // contraction inside a code block must not absorb the rest of the block up to the
-// next matching quote on a later line.
-var replyContentTokens = regexp.MustCompile("`{3,}" + `|"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'|` + "`[^`]*`" + `|[\pL\pN_]+`)
+// next matching quote on a later line. The same holds for a lone backtick
+// (// split on the ` rune) inside a code block.
+var replyContentTokens = regexp.MustCompile("`{3,}" + `|"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'|` + "`[^`\n]*`" + `|[\pL\pN_]+`)
 
 func replyRicher(streamed, final string) string {
 	if len(final) >= len(streamed) || !replySameContent(streamed, final) {

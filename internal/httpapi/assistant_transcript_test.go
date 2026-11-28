@@ -600,3 +600,18 @@ func TestAssistantVisibleReplyKeepsFenceWhenCLIGluesPhases(t *testing.T) {
 		}
 	}
 }
+
+// A lone backtick inside a code block must not swallow the lines up to the
+// next backtick, or flattened indentation reads as the same content.
+func TestAssistantVisibleReplyPreservesIndentationAfterLoneBacktick(t *testing.T) {
+	const block = "Done.\n\n```go\n// split on the ` rune\nfunc f() {\n\treturn\n}\n```"
+	final := "Done.\n\n```go\n// split on the ` rune\nfunc f() {\nreturn\n}\n```"
+	got := assistantVisibleReply(final, []domain.AssistantActivityEvent{
+		{Kind: "text", Text: "Done."},
+		{Kind: "tool", ID: "write"},
+		{Kind: "text", Text: "```go\n// split on the ` rune\nfunc f() {\n\treturn\n}\n```"},
+	})
+	if got != block {
+		t.Fatalf("indentation after a lone backtick was lost:\ngot  %q\nwant %q", got, block)
+	}
+}
