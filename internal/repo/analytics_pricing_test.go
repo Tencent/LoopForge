@@ -123,3 +123,21 @@ func TestAnalyticsCodeBuddyPlaceholderZeroFallsBack(t *testing.T) {
 		t.Fatal("analytics modified the persisted source fact")
 	}
 }
+
+func TestAnalyticsCodeBuddyInputIncludesCache(t *testing.T) {
+	// Real CodeBuddy LOOP node usage: input_tokens counts the whole prompt,
+	// so the 5.04M cache reads must not be charged again at the input rate.
+	cb := domain.TokenUsage{InputTokens: 5290722, OutputTokens: 82925, CacheReadTokens: 5037440, TotalTokens: 5373647, CostStatus: "reported"}
+	run := domain.Run{Usage: cb, Nodes: map[string]*domain.NodeRun{"work": {Provider: "codebuddy", Model: "deepseek-v4.1-flash", Usage: cb}}}
+	got := analyticsPricedRun(run)
+	want := (float64(5290722-5037440)*2 + 82925*8 + 5037440*.04) / 1e6
+	if got.Usage.CostStatus != "estimated" || math.Abs(got.Usage.CostUSD*domain.AnalyticsUSDToCNY-want) > 1e-9 {
+		t.Fatalf("CodeBuddy cache reads were charged twice: %+v, want CNY %g", got.Usage, want)
+	}
+	// Claude Code reports uncached input even when its endpoint serves a GPT model.
+	cc := domain.TokenUsage{InputTokens: 100000, OutputTokens: 10000, CacheReadTokens: 40000, TotalTokens: 110000}
+	run = domain.Run{Usage: cc, Nodes: map[string]*domain.NodeRun{"work": {Provider: "claude-code", Model: "gpt-5.5", Usage: cc}}}
+	if got := analyticsPricedRun(run); math.Abs(got.Usage.CostUSD*domain.AnalyticsUSDToCNY-5.74) > 1e-9 {
+		t.Fatalf("Claude Code input was treated as cache-inclusive: %+v", got.Usage)
+	}
+}

@@ -99,6 +99,26 @@ func pricingModel(model string) string {
 	return model
 }
 
+// UsageInputIncludesCache reports whether a CLI's input token count already
+// contains the cache reads and writes it reports separately, so pricing must
+// subtract them before charging the uncached input rate.
+//
+// Codex/OpenAI prompt counts include caches. So does CodeBuddy: its
+// stream-json input_tokens is the whole prompt (it equals
+// codebuddy.ai/contextUsed, and the result's modelUsage.inputTokens is
+// input_tokens minus cache_read_input_tokens). Claude Code reports
+// Anthropic-style uncached input whatever model its endpoint serves. Other
+// CLIs normalise to uncached input, except OpenAI models.
+func UsageInputIncludesCache(engine, model string) bool {
+	switch strings.ToLower(strings.TrimSpace(engine)) {
+	case "codex", "openai", "codebuddy":
+		return true
+	case "claude-code":
+		return false
+	}
+	return strings.HasPrefix(pricingModel(model), "gpt-")
+}
+
 func IsHYModel(model string) bool {
 	model = strings.ToLower(strings.TrimSpace(model))
 	// hy3-ioa / hy4std / hy4-preview-ioa are CodeBuddy's versioned Hy ids.
@@ -107,7 +127,8 @@ func IsHYModel(model string) bool {
 
 // AnalyticsPricedUsage never mutates stored billing facts. CostUSD in the
 // projection is a USD equivalent of the CNY statistic for legacy consumers.
-// Inclusive input (Codex/external API) includes caches; Anthropic input excludes them.
+// Inclusive input (Codex, CodeBuddy, external API) includes caches; Anthropic
+// (Claude Code) input excludes them. See UsageInputIncludesCache.
 func AnalyticsPricedUsage(model string, usage TokenUsage, inclusiveInput bool) TokenUsage {
 	out := usage
 	out.CostPricingVersion = AnalyticsPricingVersion
@@ -144,7 +165,10 @@ func AnalyticsPricedUsage(model string, usage TokenUsage, inclusiveInput bool) T
 		return out
 	}
 	input := usage.InputTokens
-	if inclusiveInput {
+	if inclusiveInput && input > 0 {
+		// A zero prompt count was not reported (a failed CodeBuddy result may
+		// carry only cache reads), so only the reported parts are priced. A
+		// prompt count smaller than its own cache is contradictory.
 		input -= usage.CacheReadTokens + usage.CacheWriteTokens
 		if input < 0 {
 			return out

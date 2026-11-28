@@ -57,16 +57,15 @@ func (e *ScheduleJobExecution) RecordUsage(model string, usage *TokenUsage) {
 }
 
 // PriceScheduleExecutionUsage resolves CLI routing before looking up a tariff.
-// Codex input includes caches; Claude Code input excludes them, even when a
-// custom endpoint names an OpenAI model. Unprefixed GPT usage stays inclusive.
+// Assistant model ids without a CLI prefix run on CodeBuddy. Whether the input
+// count includes caches follows UsageInputIncludesCache.
 func PriceScheduleExecutionUsage(model string, usage TokenUsage) TokenUsage {
 	model = strings.ToLower(strings.TrimSpace(model))
-	engine := ""
+	engine := "codebuddy"
 	if prefix, rest, ok := strings.Cut(model, ":"); ok && (prefix == "codex" || prefix == "claude-code" || prefix == "codebuddy" || IsAgentCLIKind(prefix)) {
 		engine, model = prefix, strings.TrimSpace(rest)
 	}
-	inclusive := engine == "codex" || engine != "claude-code" && strings.HasPrefix(pricingModel(model), "gpt-")
-	return AnalyticsPricedUsage(model, usage, inclusive)
+	return AnalyticsPricedUsage(model, usage, UsageInputIncludesCache(engine, model))
 }
 
 // usageTotalTokens is the billed total, falling back to input + output.

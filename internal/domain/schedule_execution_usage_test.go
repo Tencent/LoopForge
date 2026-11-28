@@ -16,6 +16,11 @@ func TestScheduleUsagePricesRoutedModels(t *testing.T) {
 		{model: "gpt-5.5", input: 100000, output: 10000, cache: 40000, wantCNY: 4.34},
 		{model: "claude-code:claude-sonnet-4-6", input: 100000, output: 10000, cache: 40000, wantCNY: 3.234},
 		{model: "claude-code:gpt-5.5", input: 100000, output: 10000, cache: 40000, wantCNY: 5.74},
+		// CodeBuddy input_tokens is the whole prompt, cache reads included
+		// (real CodeBuddy 2.x result for deepseek-v4.1-flash: 597 uncached).
+		{model: "deepseek-v4.1-flash", input: 77653, output: 246, cache: 77056, wantCNY: .00624424},
+		{model: "codebuddy:deepseek-v4.1-flash", input: 77653, output: 246, cache: 77056, wantCNY: .00624424},
+		{model: "opencode:glm-5.3-flash", input: 100000, output: 10000, cache: 40000, wantCNY: .1172},
 	} {
 		t.Run(tc.model, func(t *testing.T) {
 			u := TokenUsage{InputTokens: tc.input, OutputTokens: tc.output, CacheReadTokens: tc.cache, TotalTokens: tc.input + tc.output}

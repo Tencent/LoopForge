@@ -2,7 +2,6 @@ package repo
 
 import (
 	"agentflow/internal/domain"
-	"strings"
 )
 
 // Reprice a copy for analytics; raw adapter amounts and persisted Run/Node rows
@@ -26,9 +25,7 @@ func analyticsPricedRun(run domain.Run) domain.Run {
 		if node.Provider == "codebuddy" && node.Usage.CostStatus == "reported" && node.Usage.CostUSD == 0 {
 			node.Usage.CostStatus = ""
 		}
-		model := strings.ToLower(strings.TrimSpace(node.Model))
-		inclusive := node.Provider == "codex" || node.Provider == "openai" || strings.HasPrefix(model, "gpt-")
-		node.Usage = domain.AnalyticsPricedUsage(node.Model, node.Usage, inclusive)
+		node.Usage = domain.AnalyticsPricedUsage(node.Model, node.Usage, domain.UsageInputIncludesCache(node.Provider, node.Model))
 		nodes[id] = &node
 		input += node.Usage.InputTokens
 		output += node.Usage.OutputTokens
