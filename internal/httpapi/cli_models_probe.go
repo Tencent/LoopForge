@@ -32,7 +32,7 @@ type cliModelProbeResult struct {
 
 const assistantAnthropicAPIBase = "https://api.anthropic.com"
 
-// probeCLIModels backs 「获取可用模型」 for a personal model catalog.
+// probeCLIModels backs 「获取可用模型」 and 「测试连接」 for a personal model catalog.
 // The form's unsaved API Key, Base URL and protocol win over the stored ones
 // so a user can probe before saving; nothing is stored. Like
 // verifyGitToken it answers 200 with a structured result.
@@ -56,6 +56,8 @@ func (h *usersHandlers) probeCLIModels(c *gin.Context) {
 		// Protocol is the agent CLI's form value; null keeps the stored one.
 		Protocol    *string `json:"protocol"`
 		Environment *string `json:"environment"`
+		ConnectOnly bool    `json:"connectOnly"`
+		Model       string  `json:"model"`
 	}
 	if !decode(c, &req) {
 		return
@@ -97,27 +99,12 @@ func (h *usersHandlers) probeCLIModels(c *gin.Context) {
 		}
 	}
 	if engine == assistantEngineCodeBuddy && baseURL == "" {
-		ctx, cancel := context.WithTimeout(c.Request.Context(), 15*time.Second)
-		defer cancel()
-		var models []domain.CLIModel
-		for _, id := range discoverCLIModels(ctx, environment, apiKey) {
-			if !codeBuddyIsDefaultModel(id) && assistantValidEngineModel(id) {
-				models = append(models, domain.CLIModel{ID: id})
-			}
+		ctx := c.Request.Context()
+		if req.ConnectOnly {
+			c.JSON(http.StatusOK, testOfficialCodeBuddyConnection(ctx, environment, apiKey, strings.TrimSpace(req.Model)))
+		} else {
+			c.JSON(http.StatusOK, probeOfficialCodeBuddyModels(ctx, environment, apiKey))
 		}
-		if len(models) == 0 {
-			if _, err := resolveAssistantEngineBin(engine); errors.Is(err, errAssistantCLIMissing) {
-				c.JSON(http.StatusOK, cliModelProbeResult{Error: err.Error()})
-				return
-			}
-			c.JSON(http.StatusOK, cliModelProbeResult{Error: "CodeBuddy CLI 没有返回模型，请检查 CLI 和个人凭据"})
-			return
-		}
-		source := "official"
-		if apiKey == "" {
-			source = "builtin"
-		}
-		c.JSON(http.StatusOK, cliModelProbeResult{Models: cliModelsWithEfforts(engine, models, ""), Source: source})
 		return
 	}
 	if engine == runtime.AgentCLICursor {
@@ -172,6 +159,73 @@ func (h *usersHandlers) probeCLIModels(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, cliModelProbeResult{Models: cliModelsWithEfforts(engine, cliModelsOf(models), configuredBaseURL), Source: source, Connected: true})
+}
+
+func probeOfficialCodeBuddyModels(ctx context.Context, environment, apiKey string) cliModelProbeResult {
+	ids, err := readCodeBuddyModels(ctx, environment, apiKey)
+	if err != nil {
+		return cliModelProbeResult{Error: err.Error()}
+	}
+	var models []domain.CLIModel
+	for _, id := range ids {
+		if !codeBuddyIsDefaultModel(id) && assistantValidEngineModel(id) {
+			models = append(models, domain.CLIModel{ID: id})
+		}
+	}
+	if len(models) == 0 {
+		return cliModelProbeResult{Error: "CodeBuddy CLI 没有列出可添加的模型，可手动添加模型"}
+	}
+	source := "official"
+	if apiKey == "" {
+		source = "builtin"
+	}
+	return cliModelProbeResult{Models: cliModelsWithEfforts(assistantEngineCodeBuddy, models, ""), Source: source}
+}
+
+func testOfficialCodeBuddyConnection(ctx context.Context, environment, apiKey, model string) cliModelProbeResult {
+	if apiKey == "" {
+		return cliModelProbeResult{Error: "请先填写 CodeBuddy API Key"}
+	}
+	if model == "" || codeBuddyIsDefaultModel(model) {
+		// This Flash model is available on all three official sites.
+		model = "deepseek-v4.1-flash"
+	}
+	if !assistantValidEngineModel(model) {
+		return cliModelProbeResult{Error: "用于测试连接的模型 ID 无效"}
+	}
+	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	reply, _, err := runAssistantCLI(ctx, assistantCLIRequest{
+		Model:        assistantEngineCodeBuddy + ":" + model,
+		Prompt:       "Reply with OK.",
+		SystemPrompt: "Respond briefly to the connection check.",
+		ReviewOnly:   true,
+	}, domain.User{CodeBuddyAPIKey: apiKey, CodeBuddyInternetEnvironment: environment}, nil)
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		return cliModelProbeResult{Error: "测试 CodeBuddy 连接超时，请检查平台网络后重试"}
+	case errors.Is(err, errAssistantCLIMissing):
+		return cliModelProbeResult{Error: err.Error()}
+	case errors.Is(err, errAssistantCredentialRejected),
+		assistantAuthFailureText(reply), err != nil && assistantAuthFailureText(err.Error()):
+		return cliModelProbeResult{Error: errAssistantCredentialRejected.Error()}
+	case err == nil:
+		return cliModelProbeResult{Connected: true, Source: "official"}
+	}
+	failure := classifyAssistantFailureText(domain.AssistantFailure{}, err, err.Error())
+	switch failure.Code {
+	case "MODEL_UNAVAILABLE":
+		failure.Message = "CodeBuddy 无法使用模型 " + model + "，请确认模型 ID 拼写正确，并在当前网络环境下可用"
+	case "MISSING_RESULT":
+		// An empty answer with no recognisable reason is almost always a model
+		// the current network environment cannot serve, so name the model and
+		// the way out instead of asking the user to retry blindly.
+		failure.Message = "CodeBuddy 没有返回回答，请确认模型 " + model + " 在当前网络环境下可用，或换成模型目录里的其他模型"
+	}
+	if failure.Message != "" {
+		return cliModelProbeResult{Error: failure.Message}
+	}
+	return cliModelProbeResult{Error: "CodeBuddy 未完成连接测试，请检查平台服务器上的 CLI 或模型服务后重试"}
 }
 
 func discoverGeminiModels(ctx context.Context, key, baseURL string) ([]assistantDiscoveredModel, error) {

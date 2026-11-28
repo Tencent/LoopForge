@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"regexp"
@@ -56,7 +57,7 @@ func prefetchAssistantModels() {}
 // CodeBuddy publishes the models available in each network environment in its
 // --help output; the list differs between international, internal and iOA.
 var (
-	cliModelPattern    = regexp.MustCompile(`Currently supported: \(([^)]*)\)`)
+	cliModelPattern    = regexp.MustCompile(`(?i)Currently\s+supported\s*:\s*\(([^)]*)\)`)
 	cliModelMu         sync.Mutex
 	cliModelCache      = map[string]cliModelEntry{}
 	cliModelGeneration uint64
@@ -92,28 +93,59 @@ func cliModelCacheKey(environment, apiKey string) string {
 }
 
 func discoverCodeBuddyModels(ctx context.Context, environment, apiKey string) []string {
-	bin, err := resolveCodeBuddyBin()
-	if err != nil {
+	models, _ := readCodeBuddyModels(ctx, environment, apiKey)
+	if len(models) == 0 {
 		return nil
+	}
+	return models
+}
+
+func readCodeBuddyModels(ctx context.Context, environment, apiKey string) ([]string, error) {
+	bin, err := resolveAssistantEngineBin(assistantEngineCodeBuddy)
+	if err != nil {
+		if errors.Is(err, errAssistantCLIMissing) {
+			return nil, err
+		}
+		return nil, errors.New("无法定位 CodeBuddy CLI，请检查平台服务器上的 CLI 配置")
 	}
 	dir, err := os.MkdirTemp("", "loopforge-models-")
 	if err != nil {
-		return nil
+		return nil, errors.New("无法为 CodeBuddy CLI 创建临时目录，请检查平台服务器上的目录权限")
 	}
 	defer os.RemoveAll(dir)
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, bin, "--help")
 	cmd.Dir = dir
+	cmd.WaitDelay = time.Second
 	cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + dir, "CODEBUDDY_CONFIG_DIR=" + dir, "CODEBUDDY_INTERNET_ENVIRONMENT=" + environment}
 	if key := strings.TrimSpace(apiKey); key != "" {
 		cmd.Env = append(cmd.Env, "CODEBUDDY_API_KEY="+key)
 	}
 	out, err := cmd.Output()
-	if err != nil {
-		return nil
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return nil, errors.New("获取 CodeBuddy 模型列表超时，请重试或手动添加模型")
 	}
-	return parseCodeBuddyModels(string(out))
+	if err != nil && !errors.Is(err, exec.ErrWaitDelay) {
+		var exit *exec.ExitError
+		if errors.As(err, &exit) {
+			if assistantAuthFailureText(string(exit.Stderr)) || isCredentialRejection(string(out)) {
+				return nil, errAssistantCredentialRejected
+			}
+			return nil, fmt.Errorf("CodeBuddy CLI 获取模型时异常退出（退出码 %d），请检查平台服务器上的 CLI", exit.ExitCode())
+		}
+		return nil, errors.New("无法启动 CodeBuddy CLI，请检查平台服务器上的安装与文件权限")
+	}
+	// ErrWaitDelay means the CLI exited and its output was captured, but a
+	// child process it left behind still held stdout; keep the list we read.
+	models := parseCodeBuddyModels(string(out))
+	if models == nil {
+		if isCredentialRejection(string(out)) {
+			return nil, errAssistantCredentialRejected
+		}
+		return nil, errors.New("无法解析 CodeBuddy CLI 的模型列表，请检查 CLI 版本或手动添加模型")
+	}
+	return models, nil
 }
 
 func parseCodeBuddyModels(help string) []string {
@@ -121,7 +153,7 @@ func parseCodeBuddyModels(help string) []string {
 	if m == nil {
 		return nil
 	}
-	var models []string
+	models := []string{}
 	for _, id := range strings.Split(m[1], ",") {
 		id = strings.TrimSpace(id)
 		if id == "" || id == "echo" || strings.Contains(id, ":") {

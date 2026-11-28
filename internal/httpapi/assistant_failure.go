@@ -162,7 +162,10 @@ func classifyAssistantFailureParts(f domain.AssistantFailure, err error) (domain
 	return c, false
 }
 
-var assistantModelMissingRe = regexp.MustCompile("(?i)\\bmodel\\s+[`'\"]?[^\\s`'\"]*[`'\"]?\\s*(?:does not exist|not found|is not available)")
+// CodeBuddy reports an unknown model as `400 model [id] service info not found`
+// and OpenAI-compatible providers as `The model `x` does not exist ...`, so the
+// pattern accepts a bracketed, quoted or bare ID plus the provider's wording.
+var assistantModelMissingRe = regexp.MustCompile("(?i)\\bmodel\\s*[`'\"]?(?:\\[[^\\]]+\\]|[^\\s`'\"]*)[`'\"]?\\s*(?:does not exist|not found|is not available|service info not found)")
 
 func classifyAssistantFailureText(f domain.AssistantFailure, err error, text string) domain.AssistantFailure {
 	message := strings.ToLower(text)
@@ -221,3 +224,12 @@ func classifyAssistantFailureText(f domain.AssistantFailure, err error, text str
 // that was missing is reported separately, and a finished install replaces
 // both that report and this generic text.
 const assistantGenerationFailedMessage = "AI 助手生成失败，请稍后重试"
+
+// assistantProviderRejectionText reports whether an assistant text block is a
+// provider rejection (e.g. `400 model [x] service info not found`) rather than
+// narration, so only those are carried into the missing-result error.
+func assistantProviderRejectionText(text string) bool {
+	text = strings.TrimSpace(text)
+	return strings.HasPrefix(text, "400 ") || strings.HasPrefix(text, "403 ") ||
+		assistantModelMissingRe.MatchString(text) || assistantAuthFailureText(text)
+}

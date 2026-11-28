@@ -3,13 +3,17 @@ package httpapi
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"agentflow/internal/domain"
 
@@ -71,6 +75,130 @@ func TestProbeCodeBuddyIOAModelsReportsMissingCLI(t *testing.T) {
 	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "没有安装") {
 		t.Fatalf("missing CodeBuddy CLI: %d %s", w.Code, w.Body.String())
 	}
+}
+
+func TestProbeOfficialCodeBuddyModelsReportsSpecificResults(t *testing.T) {
+	for _, tt := range []struct {
+		name, body, wantError, wantModel string
+		deadline                         time.Duration
+	}{
+		{
+			name:      "wrapped help heading",
+			body:      `printf 'Currently\n supported :\n (fixture-model, echo, default-model, --invalid)\n'`,
+			wantModel: "fixture-model",
+		},
+		{
+			name:      "unrecognized output",
+			body:      `printf 'Ordinary CLI help\n'`,
+			wantError: "无法解析 CodeBuddy CLI 的模型列表",
+		},
+		{
+			name:      "no selectable models",
+			body:      `printf 'Currently supported: (default, echo, default-model)\n'`,
+			wantError: "没有列出可添加的模型",
+		},
+		{
+			name:      "unsuccessful process",
+			body:      `printf '%s\n' "$CODEBUDDY_API_KEY" >&2; exit 17`,
+			wantError: "退出码 17",
+		},
+		{
+			name:      "rejected api key",
+			body:      `printf 'HTTP 401: invalid api key %s\n' "$CODEBUDDY_API_KEY" >&2; exit 1`,
+			wantError: "拒绝了你的 API Key",
+		},
+		{
+			name:      "timed out",
+			body:      `exec /bin/sleep 5`,
+			wantError: "获取 CodeBuddy 模型列表超时",
+			deadline:  50 * time.Millisecond,
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			installCodeBuddyProbeFixture(t, "[ \"$1\" = --help ] || exit 91\n"+tt.body)
+			ctx := context.Background()
+			if tt.deadline > 0 {
+				withDeadline, cancel := context.WithTimeout(ctx, tt.deadline)
+				defer cancel()
+				ctx = withDeadline
+			}
+			result := probeOfficialCodeBuddyModels(ctx, "internal", "test-only-catalog-key")
+			if result.Connected || strings.Contains(result.Error, "test-only-catalog-key") {
+				t.Fatalf("catalog probe returned an unsafe result: %+v", result)
+			}
+			if tt.wantError != "" {
+				if !strings.Contains(result.Error, tt.wantError) || len(result.Models) != 0 {
+					t.Fatalf("want %q with no models, got %+v", tt.wantError, result)
+				}
+			} else if result.Error != "" || result.Source != "official" || len(result.Models) != 1 || result.Models[0].ID != tt.wantModel {
+				t.Fatalf("want model %q, got %+v", tt.wantModel, result)
+			}
+		})
+	}
+}
+
+func TestProbeOfficialCodeBuddyConnectionUsesFormOrSavedCredentials(t *testing.T) {
+	installCodeBuddyProbeFixture(t, `
+model=
+while [ "$#" -gt 0 ]; do
+    if [ "$1" = --model ]; then
+        model=$2
+        shift
+    fi
+    shift
+done
+case "$CODEBUDDY_API_KEY:$CODEBUDDY_INTERNET_ENVIRONMENT:$model" in
+    saved-fixture:internal:deepseek-v4.1-flash|draft-fixture:ioa:manual-model)
+        printf '%s\n' '{"type":"result","subtype":"success","result":"OK"}' ;;
+    rejected-fixture:ioa:manual-model)
+        printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"401 Authentication required"}]}}' '{"type":"result","subtype":"success","result":""}' ;;
+    *) exit 91 ;;
+esac
+`)
+	f := cvBNewHTTPFixture(t)
+	path := "/api/users/" + strconv.FormatInt(f.user.ID, 10)
+	saved := cvBRequest(t, f, http.MethodPut, path+"/credentials", map[string]string{
+		"codeBuddyApiKey": "saved-fixture", "codeBuddyInternetEnvironment": "internal",
+	}, true)
+	if saved.Code != http.StatusOK {
+		t.Fatalf("saving test credentials: %d", saved.Code)
+	}
+	for _, tt := range []struct {
+		name, key, model, wantError string
+	}{
+		{name: "saved settings and default test model"},
+		{name: "draft settings and manually configured model", key: "draft-fixture", model: "manual-model"},
+		{name: "authentication failed even with a clean exit", key: "rejected-fixture", model: "manual-model", wantError: "拒绝了你的 API Key"},
+		{name: "invalid model", key: "draft-fixture", model: "--model", wantError: "模型 ID 无效"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			body := map[string]any{"engine": "codebuddy", "connectOnly": true, "model": tt.model}
+			if tt.key != "" {
+				body["apiKey"], body["environment"] = tt.key, "ioa"
+			}
+			response := cvBRequest(t, f, http.MethodPost, path+"/cli-models/probe", body, true)
+			var result cliModelProbeResult
+			if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &result) != nil {
+				t.Fatalf("connection response: %d %s", response.Code, response.Body)
+			}
+			if tt.wantError == "" {
+				if !result.Connected || result.Error != "" || result.Source != "official" || len(result.Models) != 0 {
+					t.Fatalf("expected a live connection result, got %+v", result)
+				}
+			} else if result.Connected || !strings.Contains(result.Error, tt.wantError) {
+				t.Fatalf("want %q with no connection, got %+v", tt.wantError, result)
+			}
+		})
+	}
+}
+
+func installCodeBuddyProbeFixture(t *testing.T, script string) {
+	t.Helper()
+	bin := filepath.Join(t.TempDir(), "codebuddy")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\n"+script+"\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AGENTFLOW_CODEBUDDY_BIN", bin)
 }
 
 func TestDiscoverGeminiModelsKeepsGenerativeIDs(t *testing.T) {

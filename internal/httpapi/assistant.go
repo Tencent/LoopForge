@@ -1743,6 +1743,10 @@ func runAssistantCLI(ctx context.Context, req assistantCLIRequest, user domain.U
 	var streamFilter assistantStreamFilter
 	var stderrTail []string
 	var missingSession, modelStarted, credentialRejected bool
+	// The CLI sometimes reports the reason (e.g. an unknown model) only in an
+	// assistant text block and exits with an empty result payload; keep it so
+	// the failure classification can name the real cause.
+	var lastAssistantText string
 	var usageCollector assistantCLIUsage
 	if engine == assistantEngineCodeBuddy || engine == assistantEngineClaude {
 		usageCollector.session = newAssistantSessionUsage(root, sessionID, req.Resume, engine)
@@ -1833,6 +1837,11 @@ func runAssistantCLI(ctx context.Context, req assistantCLIRequest, user domain.U
 				resetClaudeText := result.Message.ID == "" || result.Message.ID != claudeMessageID
 				for _, block := range result.Message.Content {
 					credentialRejected = credentialRejected || isCredentialRejection(block.Text)
+					if block.Type == "text" {
+						if text := strings.TrimSpace(block.Text); text != "" && !assistantCLINoticeText(text) {
+							lastAssistantText = text
+						}
+					}
 					if !captureClaudeText || result.ParentToolUseID != "" || block.Type != "text" {
 						continue
 					}
@@ -1910,6 +1919,12 @@ func runAssistantCLI(ctx context.Context, req assistantCLIRequest, user domain.U
 		assistantDiagnosticsFrom(ctx).platform("protocol.result_text_recovered", "Claude Code 本轮成功但结果正文为空，采用已收到的回复", user)
 	}
 	out, err := decodeAssistantCLIResult(final, resultError, err, stderrTail)
+	// A model the account cannot use only shows up in that text block. Append it
+	// for classification; plain narration keeps the original error so the
+	// generic "interrupted, retry" reply and its tests are unchanged.
+	if err != nil && errors.Is(err, errAssistantMissingResult) && assistantProviderRejectionText(lastAssistantText) {
+		err = fmt.Errorf("%w; assistant=%s", err, truncateRunes(lastAssistantText, 500))
+	}
 	if err != nil && req.RunnerLogin && ctx.Err() == nil && !errors.Is(err, runtime.ErrConversationNotStarted) {
 		text := strings.ToLower(err.Error())
 		if assistantAuthFailureText(text) || strings.Contains(text, "not logged in") || strings.Contains(text, "login expired") || strings.Contains(text, "please run /login") {
