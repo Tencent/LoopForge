@@ -6743,6 +6743,8 @@ components:
       type: object
       additionalProperties: true
       properties:
+        projectId: {type: string, description: 'Project of the requirement; with issueNumber forms the <project key>-<number> key'}
+        issueNumber: {type: integer, description: 'Platform requirement number shown as <project key>-<number>'}
         mrs:
           type: array
           description: 'All associated MRs; singular mrUrl, mrIid and mrState remain primary-link compatibility fields'
