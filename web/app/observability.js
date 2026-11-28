@@ -130,10 +130,14 @@ function obsStepPeriodKey(key,grain,delta){
   day.setUTCDate(day.getUTCDate()+delta);
   return day.toISOString().slice(0,10);
 }
+// 进行中（运行中 / 等待审批）的执行 finishedAt 是 Go 零值 0001-01-01，不算结束时间，
+// 按创建时间归入时段，和服务端趋势点的口径一致；否则日 / 周 / 月视图会漏掉它们的用量和费用。
 function obsTraceEventAt(t){
-  const raw=t?.finishedAt||t?.createdAt;
-  const at=raw?new Date(raw):null;
-  return at&&!Number.isNaN(at.getTime())?at:null;
+  for(const raw of [t?.finishedAt,t?.createdAt]){
+    const at=raw?new Date(raw):null;
+    if(at&&!Number.isNaN(at.getTime())&&at.getUTCFullYear()>1)return at;
+  }
+  return null;
 }
 function obsTraceInRange(t,range){
   if(!range)return true;

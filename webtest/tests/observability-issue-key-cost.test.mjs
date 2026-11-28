@@ -65,3 +65,38 @@ test('overview cost card keeps the recognised amount when only some runs are unp
   assert.equal(app.evaluate(`window.lfT=(zh,en)=>en;obsDashboardCostText({cost:2.13,costKnown:false})`), '¥2.13 (partially unrecognized)');
   assert.equal(app.evaluate(`obsDashboardCostText({cost:0,costKnown:false})`), 'Unknown');
 });
+
+test('cost card formats sub-cent amounts exactly like costLabel and the exported report', async t => {
+  const app = await loadApp(); t.after(app.close);
+  setup(app, { ...base, summary: { ...base.summary, totalCostCny: .004, costUnknownRuns: 1 }, deliveries: [] });
+  const cost = () => app.document.querySelector('[data-obs-stat="cost"] .num')?.textContent;
+  app.evaluate(`state.obsTab='overview';renderObservability()`); await settle(3);
+  assert.equal(cost(), '¥0.00400（部分未识别）', 'a partly priced ¥0.004 must not read as ¥0.00');
+  assert.match(app.evaluate(`buildObsReportHTML()`), /¥0\.00400（部分未识别）/);
+  app.evaluate(`state.analytics.summary.costUnknownRuns=0;renderObservability()`); await settle(3);
+  assert.equal(cost(), '¥0.00400');
+});
+
+// Runs still running or waiting for approval carry finishedAt = Go zero time (0001-01-01).
+// The day / week / month views must count them by createdAt, like the server's trend point,
+// instead of dropping their usage and cost.
+test('day / week / month views count in-progress runs whose finishedAt is the zero time', async t => {
+  const app = await loadApp(); t.after(app.close);
+  const zero = '0001-01-01T00:00:00Z';
+  const runTraces = [
+    { runId: 'r-wait', status: 'waiting', createdAt: '2026-11-28T09:11:08Z', finishedAt: zero, tokens: 4000, costCny: 3.18, costKnown: false },
+    { runId: 'r-run', status: 'running', createdAt: '2026-11-28T09:13:08Z', finishedAt: zero, tokens: 4000, costCny: 3.19, costKnown: false },
+    { runId: 'r-fail', status: 'failed', createdAt: '2026-11-28T09:12:23Z', finishedAt: '2026-11-28T09:12:26Z', tokens: 0, costCny: 0, costKnown: true },
+  ];
+  const trend = g => [{ date: g, runs: 3, tokens: 8000, costCny: 6.37, costUnknownRuns: 2 }];
+  setup(app, { ...base, summary: { ...base.summary, totalRuns: 3, totalCostCny: 6.37, costUnknownRuns: 2 }, runTraces, deliveries: [] });
+  const cost = () => app.document.querySelector('[data-obs-stat="cost"] .num')?.textContent;
+  for (const [grain, key] of [['day', '2026-11-28'], ['week', '2026-W48'], ['month', '2026-11']]) {
+    app.evaluate(`state.analytics.trend=${JSON.stringify(trend(key))};state.obsTrendGrain='${grain}';state.obsPeriodKey='${key}';state.obsTab='overview';renderObservability()`); await settle(3);
+    const view = app.evaluate(`(()=>{const v=obsScopedView();return {n:v.traces.length,active:v.active,cost:Math.round(v.cost*100)/100}})()`);
+    assert.deepEqual({ ...view }, { n: 3, active: 2, cost: 6.37 }, `${grain} view keeps the in-progress runs`);
+    assert.equal(cost(), '¥6.37（部分未识别）', `${grain} card matches the all-time card`);
+  }
+  assert.equal(app.evaluate(`obsTraceEventAt({createdAt:'2026-11-28T09:11:08Z',finishedAt:'${zero}'}).toISOString()`), '2026-11-28T09:11:08.000Z');
+  assert.equal(app.evaluate(`obsTraceEventAt({createdAt:'${zero}'})`), null);
+});
