@@ -101,3 +101,19 @@ test('legacy GitHub Enterprise delivery URLs keep their PR number', async (t) =>
   })()`));
   assert.deepEqual(refs, ['#17', '#17', 'enterprise/acme/api', '#23', 0]);
 });
+
+test('PR wording follows the URL path, not a /pull/N inside the query string', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  const words = structuredClone(app.evaluate(`(() => {
+    const first = url => deliveryMRList({deliveryMrUrl:url})[0];
+    return [
+      'https://code.example.test/issues/2?next=/pull/30',
+      'https://code.example.test/group/repo/-/merge_requests/5?from=/pull/30',
+      'https://code.example.test/acme/api/pull/17/files',
+      'https://github.com/acme/api/pull/9',
+      'not a url /pull/3',
+    ].map(url => deliveryMRWord(first(url)));
+  })()`));
+  assert.deepEqual(words, ['MR', 'MR', 'PR', 'PR', 'MR']);
+});

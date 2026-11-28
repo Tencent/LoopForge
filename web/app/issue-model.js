@@ -379,7 +379,12 @@ function deliveryMRList(i){
 }
 const deliveryMRStateText={merged:'已合入',integrated:'已合入基线',opened:'待合入',reopened:'待合入',closed:'已关闭'};
 // GitHub 的合并请求叫 PR、编号写 #3；工蜂叫 MR、编号写 !3。GitHub 仓库在平台里存成 github:owner/repo。
-function deliveryMRIsPR(mr){return /\/pull\/\d+/.test(String(mr?.url||''))||String(mr?.project||'').startsWith('github:')}
+// 只看 URL 路径，与 deliveryMRList 的解析一致：查询串里的 /pull/N 不算 PR。
+function deliveryMRIsPR(mr){
+  if(String(mr?.project||'').startsWith('github:'))return true;
+  let url;try{url=new URL(String(mr?.url||''))}catch{return false}
+  return ['http:','https:'].includes(url.protocol)&&/^\/.+?\/pull\/\d+(?:\/|$)/i.test(url.pathname);
+}
 function deliveryMRWord(mr){return deliveryMRIsPR(mr)?'PR':'MR'}
 function deliveryMRRef(mr){const iid=Number(mr?.iid)||0;return iid?`${deliveryMRIsPR(mr)?'#':'!'}${iid}`:''}
 // 仓库路径给人看时去掉平台内部的 github: 前缀。
