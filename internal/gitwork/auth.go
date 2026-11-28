@@ -127,7 +127,14 @@ func Env(token string) []string {
 			strings.HasPrefix(kv, "GIT_ALLOW_PROTOCOL="),
 			strings.HasPrefix(kv, "GIT_PROTOCOL_FROM_USER="),
 			strings.HasPrefix(kv, gitHTTPUserEnv+"="),
-			strings.HasPrefix(kv, gitHTTPPassEnv+"="):
+			strings.HasPrefix(kv, gitHTTPPassEnv+"="),
+			// GIT_AUTHOR_* and GIT_COMMITTER_* override git config user.name /
+			// user.email set by applyWorkspaceGitIdentity. Strip them so the
+			// per-workspace identity written via "git config --local" always wins.
+			strings.HasPrefix(kv, "GIT_AUTHOR_NAME="),
+			strings.HasPrefix(kv, "GIT_AUTHOR_EMAIL="),
+			strings.HasPrefix(kv, "GIT_COMMITTER_NAME="),
+			strings.HasPrefix(kv, "GIT_COMMITTER_EMAIL="):
 			continue
 		}
 		env = append(env, kv)

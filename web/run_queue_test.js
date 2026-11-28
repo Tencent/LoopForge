@@ -16,6 +16,8 @@ function source(name) {
   return next ? tail.slice(0, next.index) : tail;
 }
 function load(context, names) {
+  // The page copy is Chinese unless i18n.js switched the page to English.
+  if (!('lfT' in context)) context.lfT = zh => zh;
   vm.createContext(context);
   for (const name of names) vm.runInContext(source(name), context);
   return context;
@@ -140,7 +142,7 @@ async function main() {
   auto.concurrencyExempt=true;
   assert.match(machine.runExecutionChipHTML(auto),/自动分配 · Team machine/);
 
-  const limitUI=load({escapeHTML:s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))},['runnerRunLimitHTML']);
+  const limitUI=load({escapeHTML:s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))},['platformRunnerLabel','runnerRunLimitHTML']);
   assert.equal(limitUI.runnerRunLimitHTML({id:'cloud',ownerUserId:0}),'','platform machines have no per-machine limit');
   const unlimited=limitUI.runnerRunLimitHTML({id:'m',name:'mac',ownerUserId:9});
   assert.match(unlimited,/placeholder="不限" value=""/);

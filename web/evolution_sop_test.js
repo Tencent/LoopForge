@@ -73,7 +73,7 @@ const { createDOM } = require('./hui_fake_dom');
         batchSize: 15,
         stage: 'optimize',
         pendingRuns: 15,
-        lastRunNote: '最近 1 次 · SOP 轨迹效率异常',
+        lastRunNote: '最近 1 次 · LOOP 轨迹效率异常',
         latestMetrics: { runs: 15, totalTokens: 1200000, avgTokens: 80000, totalTools: 300, avgTools: 20, avgDuration: 140, cleanCount: 11, cleanRate: 0.7333, score: 74, scoredRuns: 15, scoreSource: 'heuristic' },
         activeProposalId: 'evp-opt',
       },
@@ -140,7 +140,7 @@ const { createDOM } = require('./hui_fake_dom');
   const trendHTML = api.evoSOPDetailHTML({ workflowId: 'wf-bug', tab: 'trend', scope: 'versions', metric: 'score', fileIndex: 0, diffMode: 'split', detail: detailPayload });
   assert.doesNotMatch(trendHTML, /evo-sop-config-bar/, 'detail view must not show redundant config bar');
   assert.match(trendHTML, /v3 生效中/);
-  assert.match(trendHTML, /SOP 评分/);
+  assert.match(trendHTML, /LOOP 评分/);
   assert.match(trendHTML, /平均 Token/);
   assert.match(trendHTML, /平均工具调用/);
   assert.match(trendHTML, /平均执行耗时/);

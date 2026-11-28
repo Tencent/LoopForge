@@ -18,6 +18,11 @@ func RunAssistantSessionID(runID string) string {
 	return fmt.Sprintf("sop-%x", sum[:20])
 }
 func (r *AssistantRepo) SharedAssistantSession(id string) (domain.AssistantSession, bool) {
+	// Both run roots and their branches have an sop- ID. Ordinary chats
+	// only need ProjectAssistantSession's metadata for authorization.
+	if !strings.HasPrefix(id, "sop-") {
+		return domain.AssistantSession{}, false
+	}
 	var row assistantSessionRow
 	if r.DB.Where("id = ?", id).Take(&row).Error != nil {
 		return domain.AssistantSession{}, false
