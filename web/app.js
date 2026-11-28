@@ -221,6 +221,7 @@ function afNextDialog(){
   window.HuiPopover?.closeAll?.();
   window.HuiTooltip?.hide?.();
   modal.classList.add('open');
+  modal.dataset.explicitConfirm=opened.explicitConfirm?'1':'0';
   const focus=opened.focus||okBtn;
   focus.focus();
   if(opened.select)focus.select?.();
@@ -270,7 +271,7 @@ function bindConfirmModal(modal){
       else if(!e.shiftKey&&at===items.length-1){e.preventDefault();items[0].focus()}
       return;
     }
-    if(e.key!=='Enter')return;
+    if(e.key!=='Enter'||modal.dataset.explicitConfirm==='1')return;
     const tag=e.target?.tagName;
     if(tag==='BUTTON'||tag==='SELECT')return;
     if(tag==='TEXTAREA'&&!(e.ctrlKey||e.metaKey))return;
@@ -294,7 +295,7 @@ function afConfirm(options){
     if(danger)setConfirmIcon('danger','trash');
     else if(opt.info)setConfirmIcon('info','info');
     else setConfirmIcon('warn','warning');
-    return {focus:okBtn};
+    return {focus:danger?$('#confirmCancelBtn'):okBtn,explicitConfirm:danger};
   });
 }
 

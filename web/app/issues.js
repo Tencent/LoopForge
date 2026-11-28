@@ -145,6 +145,13 @@ function filteredIssues(){
   return [...issues].sort((a,b)=>issueHealthRank(a)-issueHealthRank(b)||(priority[a.priority]??4)-(priority[b.priority]??4)||(b.number||0)-(a.number||0));
 }
 
+function issueListEmptyState(query, runFilter){
+  if(query)return ['没有符合搜索条件的工作项','请尝试其他关键词，或清空搜索查看当前筛选下的工作项。'];
+  if(runFilter==='attention')return ['没有需要介入的工作项','待确认澄清结论、门禁失败、运行失败或已中断的工作项会显示在这里。'];
+  if(runFilter==='mr')return ['没有待处理 MR 的需求','已提 MR 但还没合入的需求会显示在这里。'];
+  return ['当前项目没有匹配的工作项','从 GitHub 同步，或在本平台新建需求。'];
+}
+
 function renderIssues(){
   const tapdImport=document.querySelector("#importTAPDIssue");if(tapdImport)tapdImport.hidden=!currentProject()?.tapdWorkspaceId;
   watchClarifyingIssues();
@@ -166,8 +173,7 @@ function renderIssues(){
     bindIssueSelection(visibleIssues);
     return;
   }
-  const emptyTitle=state.issueRunFilter==='attention'?'没有需要介入的工作项':state.issueRunFilter==='mr'?'没有待处理 MR 的需求':'当前项目没有匹配的工作项';
-  const emptyHint=state.issueRunFilter==='attention'?'待确认澄清结论、门禁失败、运行失败或已中断的工作项会显示在这里。':state.issueRunFilter==='mr'?'已提 MR 但还没合入的需求会显示在这里。':'从 GitHub 同步，或在本平台新建需求。';
+  const [emptyTitle,emptyHint]=issueListEmptyState(state.issueQuery,state.issueRunFilter);
   const keyWidth=issueKeyColumnWidth(paged.items);
   const pager=pagerHTML('issues',paged)||(paged.total?`<nav class="pager pager-summary" aria-label="分页"><span class="pager-meta">共 ${paged.total} 条</span></nav>`:'');
   board.innerHTML=`<div class="issue-table-card"><div class="issue-table-scroll"><div class="issue-table${state.issueSelectionMode?' issue-table-selectable':''}" data-page-anchor="issues" style="--issue-col-key:${keyWidth}"><div class="issue-table-row issue-table-head" role="row">${state.issueSelectionMode?`<div class="issue-select-cell">${issueSelectAllCheckbox('全选本页可删除的需求')}</div>`:''}<span>编号</span><span>标题</span><span>来源</span><span>责任人</span><span>仓库</span><span>优先级</span><span>关联 LOOP</span><span>当前环节</span><span>进度</span><span>操作</span></div><div class="issue-table-body">${paged.items.map(issueRow).join('')||`<div class="issue-table-empty">${huiIcon('search')}<b>${emptyTitle}</b><p>${emptyHint}</p></div>`}</div></div></div>${pager}</div>`;
@@ -487,7 +493,9 @@ function fillIssueAssignees(projectId,value=''){
   picker.innerHTML=userCombobox('assigneeUserId',selected,'使用项目 Owner');
   bindUserSearches(f);
 }
-function openIssue(issue=null){
+let issueEditorReturn=null;
+function openIssue(issue=null,returnToTab=null){
+  issueEditorReturn=issue?.id&&returnToTab?{id:issue.id,tab:returnToTab,view:activeViewName(),projectId:state.projectFilter}:null;
   state.selectedIssue=issue?.id||null;
   const f=$('#issueForm'),projects=state.data.projects||[];
   f.elements.projectId.innerHTML=projects.map(p=>`<option value="${p.id}">${escapeHTML(p.name)}</option>`).join('');
@@ -705,7 +713,19 @@ async function persistIssue(issue){
   rememberIssue(saved, id);
   return saved;
 }
-async function saveIssue(e){e.preventDefault();const button=e.currentTarget.querySelector('button[type="submit"]');try{button.disabled=true;button.textContent='正在保存…';const saved=await persistIssue(issueFromForm());state.selectedIssue=saved.id;$('#issueModal').classList.remove('open');renderIssues();toast('需求已保存')}catch(err){toast(err.message)}finally{button.disabled=false;button.textContent='保存'}}
+async function saveIssue(e){
+  e.preventDefault();
+  const button=e.currentTarget.querySelector('button[type="submit"]'),returnTo=issueEditorReturn;
+  try{
+    button.disabled=true;button.textContent='正在保存…';
+    const saved=await persistIssue(issueFromForm());
+    const modal=$('#issueModal');
+    const restore=returnTo&&returnTo===issueEditorReturn&&modal.classList.contains('open')&&returnTo.id===saved.id&&returnTo.view===activeViewName()&&returnTo.projectId===state.projectFilter;
+    state.selectedIssue=saved.id;
+    modal.classList.remove('open');renderIssues();toast('需求已保存');
+    if(restore)void openIssueDetail(saved.id,returnTo.tab);
+  }catch(err){toast(err.message)}finally{button.disabled=false;button.textContent='保存'}
+}
 async function dispatchIssue(){try{let issue=issueFromForm();const blocked=issueExecutionBlocked(issue);if(blocked)return toast(blocked);const current=latestIssueTask(issue),rerun=!!current;if(current&&!await afConfirm({title:'重新运行确认',message:['queued','dispatched','running'].includes(current.status)?'该需求已有进行中的任务，确定额外发起一次重新运行吗？':'该需求已经处理过，确定整条 LOOP 重新运行吗？',confirmText:'确认重新运行'}))return;const button=$('#dispatchIssue');button.disabled=true;button.textContent='正在调度…';issue=await persistIssue(issue);button.textContent=sopSandboxPendingText(issue.workflowId||defaultSOPForIssue(issue))||'正在调度…';const task=await api(`/api/issues/${issue.id}/dispatch`,{method:'POST',body:JSON.stringify({rerun,workflowId:issue.workflowId||''})});issue.latestTaskId=task.id;issue.status='in_progress';const idx=state.data.issues.findIndex(i=>i.id===issue.id);if(idx>=0)state.data.issues[idx]=issue;if(!state.data.tasks)state.data.tasks=[];const existingTaskIdx=state.data.tasks.findIndex(t=>t.id===task.id);if(existingTaskIdx>=0)state.data.tasks[existingTaskIdx]=task;else state.data.tasks.unshift(task);if(task.runId){startLiveRun(task.runId);try{const run=await api(`/api/runs/${encodeURIComponent(task.runId)}`,{silent:true});if(run?.id){if(!state.data.runs)state.data.runs=[];const rIdx=state.data.runs.findIndex(r=>r.id===run.id);if(rIdx>=0)state.data.runs[rIdx]={...state.data.runs[rIdx],...run};else state.data.runs=sortRunsDescending([run,...state.data.runs]);}}catch(e){}}$('#issueModal').classList.remove('open');renderIssues();await openIssueDetail(issue.id,'sop');toast(rerun?'已创建重新运行':'已创建执行任务并启动工作流','ok');Promise.all([refreshIssues(),refreshRuns(true)]).catch(()=>{});}catch(err){toast(err.message)}finally{const button=$('#dispatchIssue');button.disabled=false;button.textContent='启动 LOOP'}}
 async function dispatchIssueById(issueId,rerun=false,workflowId=''){try{const issue=(state.data.issues||[]).find(i=>i.id===issueId),blocked=issueExecutionBlocked(issue);if(blocked)return toast(blocked);if(clarificationNeedsConfirm(issue)){openIssueDetail(issueId,'clarify');return toast('请先确认澄清结论后再触发 LOOP')}
 const sandboxStatus=sopSandboxPendingText(workflowId||issue?.workflowId||defaultSOPForIssue(issue));
