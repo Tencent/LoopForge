@@ -123,10 +123,10 @@ func readCodeBuddyModels(ctx context.Context, environment, apiKey string) ([]str
 		cmd.Env = append(cmd.Env, "CODEBUDDY_API_KEY="+key)
 	}
 	out, err := cmd.Output()
-	if errors.Is(ctx.Err(), context.DeadlineExceeded) || errors.Is(err, exec.ErrWaitDelay) {
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 		return nil, errors.New("获取 CodeBuddy 模型列表超时，请重试或手动添加模型")
 	}
-	if err != nil {
+	if err != nil && !errors.Is(err, exec.ErrWaitDelay) {
 		var exit *exec.ExitError
 		if errors.As(err, &exit) {
 			if assistantAuthFailureText(string(exit.Stderr)) || isCredentialRejection(string(out)) {
@@ -136,6 +136,8 @@ func readCodeBuddyModels(ctx context.Context, environment, apiKey string) ([]str
 		}
 		return nil, errors.New("无法启动 CodeBuddy CLI，请检查平台服务器上的安装与文件权限")
 	}
+	// ErrWaitDelay means the CLI exited and its output was captured, but a
+	// child process it left behind still held stdout; keep the list we read.
 	models := parseCodeBuddyModels(string(out))
 	if models == nil {
 		if isCredentialRejection(string(out)) {

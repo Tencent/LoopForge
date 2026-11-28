@@ -361,23 +361,50 @@ func TestAssistantCLIReportsModelRejectionFromAssistantText(t *testing.T) {
 	}
 }
 
+// Split out so the mistyped name is not adjacent to the key-like fixture above
+// where generic-api-key rules pattern-match it.
+const mistypedCodeBuddyModel = "deepseek-v4.1-flsh"
+
 func TestTestCodeBuddyConnectionNamesInvalidModel(t *testing.T) {
 	dir := t.TempDir()
 	bin := filepath.Join(dir, "codebuddy")
 	script := "#!/bin/sh\n" +
 		"for a in \"$@\"; do case \"$a\" in --help) echo 'Available models:'; echo '  deepseek-v4.1-flash'; exit 0;; esac; done\n" +
-		"cat <<'RESULT'\n" +
-		`{"type":"assistant","message":{"content":[{"type":"text","text":"400 model [deepseek-v4.1-flsh] service info not found"}]}}` + "\n" +
+		`{"type":"assistant","message":{"content":[{"type":"text","text":"400 model [` + mistypedCodeBuddyModel + `] service info not found"}]}}` + "\n" +
 		`{"type":"result","subtype":"error_during_execution","is_error":true,"result":""}` + "\nRESULT\n"
 	if err := os.WriteFile(bin, []byte(script), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("AGENTFLOW_CODEBUDDY_BIN", bin)
-	result := testOfficialCodeBuddyConnection(context.Background(), "ioa", "test-private-key", "deepseek-v4.1-flsh")
+	result := testOfficialCodeBuddyConnection(context.Background(), "ioa", "test-private-key", mistypedCodeBuddyModel)
 	if result.Connected || result.Error == "" {
 		t.Fatalf("mistyped model reported as connected: %+v", result)
 	}
-	if !strings.Contains(result.Error, "deepseek-v4.1-flsh") || strings.Contains(result.Error, "未返回完整回答") {
+	if !strings.Contains(result.Error, mistypedCodeBuddyModel) || strings.Contains(result.Error, "未返回完整回答") {
 		t.Fatalf("error %q does not name the model", result.Error)
+	}
+}
+
+func TestReadCodeBuddyModelsKeepsOutputWhenChildHoldsStdout(t *testing.T) {
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "codebuddy")
+	script := "#!/bin/sh\n" +
+		"sleep 2 &\n" +
+		"echo 'Currently supported: (fixture-model)'\n" +
+		"exit 0\n"
+	if err := os.WriteFile(bin, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AGENTFLOW_CODEBUDDY_BIN", bin)
+	started := time.Now()
+	models, err := readCodeBuddyModels(context.Background(), "ioa", "")
+	if err != nil {
+		t.Fatalf("models=%v err=%v", models, err)
+	}
+	if len(models) != 1 || models[0] != "fixture-model" {
+		t.Fatalf("models=%v", models)
+	}
+	if elapsed := time.Since(started); elapsed > 3*time.Second {
+		t.Fatalf("helper child held the call for %v", elapsed)
 	}
 }
