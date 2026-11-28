@@ -47,6 +47,11 @@ export default function SopRunReview({ search = location.search }) {
         event.data.runId === runId
       )
         setRequestedNode(event.data.nodeId);
+      else if (
+        event.data?.type === "agentflow-run-review-refresh" &&
+        (!event.data.runId || event.data.runId === runId)
+      )
+        refresh((n) => n + 1);
     };
     window.addEventListener("message", receive);
     return () => window.removeEventListener("message", receive);

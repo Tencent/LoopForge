@@ -15,16 +15,23 @@
   gap: 8px;
   align-self: flex-start;
   max-width: 100%;
-  min-height: 34px;
-  border-radius: 8px;
-  padding: 5px 9px;
+  min-height: 36px;
+  border: 1px solid color-mix(in srgb, var(--hui-warn) 28%, var(--hui-border));
+  border-radius: 10px;
+  padding: 6px 11px;
+  background: color-mix(in srgb, var(--hui-warn) 6%, var(--hui-surface));
   color: var(--hui-warn);
-  font-size: 12px;
+  font-size: 12.5px;
+  font-weight: 500;
   white-space: nowrap;
   text-align: left;
+  transition:
+    background-color 150ms ease,
+    border-color 150ms ease;
 }
 .run-review-link:hover {
-  background: var(--hui-surface-2, var(--subtle));
+  border-color: color-mix(in srgb, var(--hui-warn) 48%, var(--hui-border));
+  background: color-mix(in srgb, var(--hui-warn) 11%, var(--hui-surface));
 }
 .run-review-link svg {
   flex: none;

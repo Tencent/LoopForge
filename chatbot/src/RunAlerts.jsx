@@ -98,12 +98,15 @@ export default function RunAlerts({
       {items.map((item) => {
         if (item.kind !== "failed") {
           const actionable = !readOnly && !item.run.pauseRequested && item.run.reviewAccess?.canOperate !== false;
+          const runName = runs.length > 1 ? item.run.workflowSnapshot?.name : "";
           return (
             <button type="button" className="run-review-link" key={item.key}
               aria-label={actionable ? "去审核" : "查看节点"} onClick={() => onOpenNode(item.run, item.nodeId)}>
               <HarnessIcon name={item.run.pauseRequested ? "pause" : "user-hold"} size={16} />
               <span>{item.run.pauseRequested ? "已暂停" : "待审核"}</span>
-              <span className="run-review-link-node">{item.nodeName}</span>
+              <span className="run-review-link-node">
+                {runName ? `${runName} · ${item.nodeName}` : item.nodeName}
+              </span>
               <HarnessIcon name="chevron-right" size={14} />
             </button>
           );

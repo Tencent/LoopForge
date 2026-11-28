@@ -1,5 +1,5 @@
 import React from "react";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, test, vi } from "vitest";
 
@@ -1063,6 +1063,209 @@ describe("content and panels", () => {
     const link = screen.getByTitle("agent-flow !631 · 在代码仓库打开");
     expect(link.getAttribute("href")).toBe(mr.url);
     expect(link.getAttribute("target")).toBe("_blank");
+  });
+
+  test("lets failed agent retry with note and failed script pass after confirmation", async () => {
+    const user = userEvent.setup();
+    apiMock.mockClear();
+    const failedRun = {
+      ...run,
+      id: "r-fail-controls",
+      reviewAccess: { canOperate: true },
+      workflowSnapshot: {
+        name: "交付流程",
+        nodes: [
+          { id: "n1", name: "实现", type: "agent" },
+          { id: "n2", name: "测试脚本", type: "script" },
+        ],
+      },
+      nodes: {
+        n1: { nodeId: "n1", status: "failed", error: "构建超时" },
+        n2: { nodeId: "n2", status: "failed", error: "退出码 1" },
+      },
+      artifacts: [],
+    };
+    render(<SopRunPanel runs={[failedRun]} onClose={vi.fn()} />);
+    await user.click(screen.getByText("实现"));
+    await user.click(await screen.findByRole("button", { name: "补充信息或重跑" }));
+    await user.type(screen.getByLabelText("重跑说明（选填）"), "跳过缓存重跑");
+    await user.click(screen.getByRole("button", { name: "补充信息并重跑" }));
+    expect(apiMock).toHaveBeenCalledWith(
+      "/api/runs/r-fail-controls/retry",
+      expect.objectContaining({
+        method: "POST",
+        body: expect.stringContaining("跳过缓存重跑"),
+      }),
+    );
+
+    await user.click(screen.getByRole("button", { name: "全部流程节点" }));
+    await user.click(screen.getByText("测试脚本"));
+    await user.click(await screen.findByRole("button", { name: "手动通过，继续下游" }));
+    await user.click(screen.getByRole("button", { name: "确认通过，跳过不重跑" }));
+    expect(apiMock).toHaveBeenCalledWith(
+      "/api/runs/r-fail-controls/pass",
+      expect.objectContaining({
+        method: "POST",
+        body: expect.stringContaining('"nodeId":"n2"'),
+      }),
+    );
+  });
+
+  test("steps between node artifacts in a single back-toolbar and groups upstream review artifacts in filesOnly", async () => {
+    const user = userEvent.setup();
+    const reviewRun = {
+      id: "r-art-nav",
+      status: "waiting",
+      workflowSnapshot: {
+        name: "审阅流程",
+        nodes: [
+          { id: "n1", name: "方案", type: "agent" },
+          { id: "n2", name: "人工门禁", type: "approval", after: ["n1"] },
+        ],
+      },
+      nodes: {
+        n1: { nodeId: "n1", status: "succeeded", output: "ok" },
+        n2: { nodeId: "n2", status: "waiting_approval" },
+      },
+      artifacts: [
+        { id: "a1", nodeId: "n1", path: "plan.md", mediaType: "text/markdown", content: "# 方案" },
+        { id: "a2", nodeId: "n2", path: "check.md", mediaType: "text/markdown", content: "# 检查" },
+        { id: "a3", nodeId: "n2", path: "summary.md", mediaType: "text/markdown", content: "# 总结" },
+      ],
+    };
+
+    function StatefulArtifactDrawer() {
+      const [selected, setSelected] = React.useState(null);
+      return (
+        <div className="chat-shell">
+          <header className="conversation-header" />
+          <main className="conversation-main" />
+          <ArtifactPanel
+            artifacts={[]}
+            runs={[reviewRun]}
+            selected={selected}
+            setSelected={setSelected}
+            chat={chat}
+            onClose={vi.fn()}
+            open
+          />
+        </div>
+      );
+    }
+
+    const { unmount } = render(<StatefulArtifactDrawer />);
+    await user.click(screen.getByText(/审阅流程/));
+    await user.click(screen.getByText("人工门禁"));
+    const nodeTabs = screen.getByRole("tablist", { name: "节点详情" });
+    await user.click(within(nodeTabs).getByRole("tab", { name: /产物/ }));
+    await user.click(screen.getByText("check.md"));
+    expect(screen.getAllByRole("button", { name: "返回节点产物" })).toHaveLength(1);
+    expect(screen.getByText("1 / 3")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "下一个产物" }));
+    expect(screen.getByText("2 / 3")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "返回节点产物" }));
+    expect(screen.getByText("check.md")).toBeInTheDocument();
+    unmount();
+
+    render(
+      <ArtifactPanel
+        artifacts={[
+          { id: "cur", nodeId: "n2", path: "check.md", mediaType: "text/markdown" },
+          { id: "up", nodeId: "n1", path: "plan.md", mediaType: "text/markdown", source: "上游待审 · 方案" },
+        ]}
+        selected={null}
+        setSelected={vi.fn()}
+        chat={chat}
+        onClose={vi.fn()}
+        filesOnly
+        open
+      />,
+    );
+    expect(screen.getByText("本节点产物")).toBeInTheDocument();
+    expect(screen.getByText("上游待审产物")).toBeInTheDocument();
+  });
+
+  test("supports resuming paused runs, replaying succeeded nodes inline, and showing workflow names on multi-run alerts", async () => {
+    const user = userEvent.setup();
+    apiMock.mockClear();
+    const pausedRun = {
+      id: "r-paused",
+      status: "waiting",
+      pauseRequested: true,
+      reviewAccess: { canOperate: true },
+      workflowSnapshot: {
+        name: "发布流程",
+        nodes: [
+          { id: "n1", name: "构想", type: "agent" },
+          { id: "n2", name: "审核", type: "approval", after: ["n1"] },
+        ],
+      },
+      nodes: {
+        n1: { nodeId: "n1", status: "succeeded", output: "done" },
+        n2: { nodeId: "n2", status: "waiting_approval" },
+      },
+      artifacts: [],
+    };
+    const { unmount } = render(<SopRunPanel runs={[pausedRun]} onClose={vi.fn()} />);
+    await user.click(screen.getByText("审核"));
+    await user.click(await screen.findByRole("button", { name: "继续运行" }));
+    expect(apiMock).toHaveBeenCalledWith(
+      "/api/runs/r-paused/resume",
+      expect.objectContaining({
+        method: "POST",
+        body: expect.stringContaining('"nodeId":"n2"'),
+      }),
+    );
+    unmount();
+
+    const completedRun = {
+      ...pausedRun,
+      id: "r-done",
+      status: "succeeded",
+      pauseRequested: false,
+      nodes: {
+        n1: { nodeId: "n1", status: "succeeded", output: "done" },
+        n2: { nodeId: "n2", status: "succeeded", output: "approved" },
+      },
+    };
+    render(<SopRunPanel runs={[completedRun]} onClose={vi.fn()} />);
+    await user.click(screen.getByText("构想"));
+    await user.click(await screen.findByRole("button", { name: "从本节点重跑" }));
+    await user.type(screen.getByLabelText("补充说明（选填）"), "换用简洁文案");
+    await user.click(screen.getByRole("button", { name: "确认从本节点重跑" }));
+    expect(apiMock).toHaveBeenCalledWith(
+      "/api/runs/r-done/retry",
+      expect.objectContaining({
+        method: "POST",
+        body: expect.stringContaining("换用简洁文案"),
+      }),
+    );
+
+    const rA = {
+      id: "ra",
+      status: "waiting",
+      workflowSnapshot: { name: "流程A", nodes: [{ id: "n1", name: "审批一" }] },
+      nodes: { n1: { nodeId: "n1", status: "waiting_approval" } },
+    };
+    const rB = {
+      id: "rb",
+      status: "waiting",
+      workflowSnapshot: { name: "流程B", nodes: [{ id: "n1", name: "审批二" }] },
+      nodes: { n1: { nodeId: "n1", status: "waiting_approval" } },
+    };
+    render(
+      <RunAlerts
+        runs={[rA, rB]}
+        user={{ id: 1 }}
+        users={[]}
+        readOnly={false}
+        onOpenNode={vi.fn()}
+        onAsk={vi.fn()}
+        onChanged={vi.fn()}
+      />,
+    );
+    expect(screen.getByText("流程A · 审批一")).toBeInTheDocument();
+    expect(screen.getByText("流程B · 审批二")).toBeInTheDocument();
   });
 
 });

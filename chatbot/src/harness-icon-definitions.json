@@ -703,6 +703,14 @@
     "strokeWidth": 1.7,
     "note": "两端角向各自对角方向展开后复位"
   },
+  "collapse": {
+    "body": "<path d=\"M4 10h6V4\"/><path d=\"M3 3l7 7\"/><path d=\"M20 14h-6v6\"/><path d=\"M21 21l-7-7\"/>",
+    "duration": 500,
+    "viewBox": "0 0 24 24",
+    "filled": false,
+    "strokeWidth": 1.7,
+    "note": "两端对角向内收拢，表示恢复默认宽度"
+  },
   "flag": {
     "body": "<path d=\"M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z\"/><path d=\"M4 22v-7\"/>",
     "duration": 560,

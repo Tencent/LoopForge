@@ -67,6 +67,27 @@ export function upstreamNodeIds(workflow, nodeId, recursive = false) {
   return queue.slice(1);
 }
 
+export function runAttentionNode(run) {
+  const nodes = run?.workflowSnapshot?.nodes || [];
+  for (const status of ["waiting_approval", "failed"]) {
+    const definition = nodes.find(({ id }) => run?.nodes?.[id]?.status === status);
+    if (definition) {
+      return {
+        status,
+        definition,
+        node: run.nodes[definition.id],
+      };
+    }
+  }
+  return null;
+}
+
+export function canPassScriptNode(run, node, definition) {
+  if (!["script", "command"].includes(definition?.type)) return false;
+  if (run?.pauseRequested) return node?.status === "waiting_approval";
+  return run?.status === "failed" && node?.status === "failed";
+}
+
 export function canReplayNode(run, node) {
   return (
     canDiscussNode(node) &&
@@ -141,7 +162,7 @@ export function openNodeConversation(run, node) {
 export async function decideRunNode(run, node, action, details, onRestoring) {
   const path = runPath(run.id);
   const headers =
-    action === "retry" && run.executionContext?.projectId
+    ["retry", "resume"].includes(action) && run.executionContext?.projectId
       ? { Prefer: "respond-async" }
       : {};
   const options = {

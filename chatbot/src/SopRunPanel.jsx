@@ -28,9 +28,12 @@ import {
 import { approvalWaitReason } from "./runs.js";
 import {
   canDiscussNode,
+  canReplayNode,
+  decideRunNode,
   nodeReviewArtifacts,
   openRunPage,
   runArtifact,
+  runAttentionNode,
   upstreamNodeIds,
 } from "./sop-review.js";
 import { ARTIFACT_COMPACT_WIDTH } from "./useArtifactPanelLayout";
@@ -50,6 +53,7 @@ const ChevronLeft = (props) => <HarnessIcon name="chevron-left" {...props} />;
 const ChevronRight = (props) => <HarnessIcon name="chevron-right" {...props} />;
 const FileText = (props) => <HarnessIcon name="doc" {...props} />;
 const MessageSquare = (props) => <HarnessIcon name="chat" {...props} />;
+
 export function SopNodeList({
   run,
   selectedNodeId,
@@ -99,6 +103,8 @@ export function SopNodeList({
               </span>
               {node.status === "waiting_approval" && !run.pauseRequested ? (
                 <span className="sop-node-review-label">审核</span>
+              ) : node.status === "failed" ? (
+                <span className="sop-node-failed-label">失败</span>
               ) : !showArtifacts ? (
                 <ChevronRight size={14} />
               ) : null}
@@ -126,15 +132,79 @@ function NodeFiles({ run, files, title, onPreview }) {
   );
 }
 
-export function SopNodeDetail({ run, nodeId, renderArtifacts, onChanged }) {
+function NodeArtifactStrip({ run, files, onPreview, label = "本节点产物" }) {
+  if (!files.length) return null;
+  return (
+    <div className="sop-inline-artifacts" aria-label={label}>
+      <span className="sop-inline-artifacts-label">{label}</span>
+      <div className="sop-inline-artifacts-list">
+        {files.map((file) => {
+          const artifact = runArtifact(run, file);
+          return (
+            <button
+              key={file.id}
+              type="button"
+              className="sop-artifact-pill"
+              title={artifact.name}
+              onClick={() => onPreview(artifact)}
+            >
+              <FileText size={13} />
+              <span>{artifact.name}</span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function CollapsibleMessage({ text, children }) {
+  const [expanded, setExpanded] = useState(false);
+  const raw = String(text || "");
+  const isLong = raw.length > 260 || raw.split("\n").length > 5;
+  if (!isLong) return children;
+  return (
+    <div className={`sop-collapsible${expanded ? " is-expanded" : ""}`}>
+      <div className="sop-collapsible-body">{children}</div>
+      <button
+        type="button"
+        className="sop-expand-toggle"
+        aria-expanded={expanded}
+        onClick={() => setExpanded((v) => !v)}
+      >
+        {expanded ? "收起内容" : "展开全文"}
+      </button>
+    </div>
+  );
+}
+
+export function SopNodeDetail({
+  run,
+  nodeId,
+  renderArtifacts,
+  selectedFileId,
+  onSelectFileId,
+  onChanged,
+}) {
   const [tab, setTab] = useState("conversation");
-  const [selectedFile, setSelectedFile] = useState(null);
+  const [localFile, setLocalFile] = useState(null);
   const [selectedAttempt, setSelectedAttempt] = useState(null);
   const [question, setQuestion] = useState("");
   const [artifactOpen, setArtifactOpen] = useState(null);
+  const [replayOpen, setReplayOpen] = useState(false);
+  const [replayNote, setReplayNote] = useState("");
+  const [replayBusy, setReplayBusy] = useState(false);
+  const [replayError, setReplayError] = useState("");
   const shell = useRef(null);
   const panel = usePanelPresence(!!artifactOpen);
   const standalone = !!renderArtifacts;
+  const controlledPreview = typeof onSelectFileId === "function";
+  const activeFileId = controlledPreview ? selectedFileId : localFile?.id;
+  const setSelectedFile = (file) => {
+    if (controlledPreview) onSelectFileId(file?.id || null);
+    else setLocalFile(file || null);
+  };
+
   const definition = run.workflowSnapshot?.nodes?.find(
     ({ id }) => id === nodeId,
   );
@@ -150,13 +220,21 @@ export function SopNodeDetail({ run, nodeId, renderArtifacts, onChanged }) {
   );
   const reviewFiles = latest ? handoffs : [];
   const visibleFiles = [...files, ...reviewFiles];
-  const activeFile = visibleFiles.find(({ id }) => id === selectedFile?.id);
+  const activeFileIndex = activeFileId
+    ? visibleFiles.findIndex(({ id }) => id === activeFileId)
+    : -1;
+  const activeFile = activeFileIndex >= 0 ? visibleFiles[activeFileIndex] : null;
   const preview = activeFile ? runArtifact(run, activeFile) : null;
 
   useLayoutEffect(() => {
     if (shell.current && artifactOpen === null && visibleFiles.length)
       setArtifactOpen(shell.current.clientWidth >= ARTIFACT_COMPACT_WIDTH);
   }, [artifactOpen, visibleFiles.length]);
+
+  useEffect(() => {
+    setReplayOpen(false);
+    setReplayError("");
+  }, [run.id, nodeId, node.status, node.attempt]);
 
   if (!definition) return null;
   const attempts = [
@@ -166,6 +244,16 @@ export function SopNodeDetail({ run, nodeId, renderArtifacts, onChanged }) {
     .sort((a, b) => b - a);
   const waitingApproval =
     latest && node.status === "waiting_approval" && !run.pauseRequested;
+  const hasUrgentDecision =
+    latest &&
+    (waitingApproval ||
+      (node.status === "failed" && run.status === "failed") ||
+      run.pauseRequested);
+  const showToolbarReplay =
+    latest &&
+    !hasUrgentDecision &&
+    run.reviewAccess?.canOperate &&
+    canReplayNode(run, node);
   const discussionBlock = !run.reviewAccess?.canDiscuss
     ? "需要项目编辑权限才能提问"
     : !latest
@@ -173,6 +261,90 @@ export function SopNodeDetail({ run, nodeId, renderArtifacts, onChanged }) {
       : !canDiscussNode(node)
         ? "节点执行结束或进入审核后可提问"
         : "";
+
+  async function triggerReplay() {
+    if (replayBusy) return;
+    setReplayBusy(true);
+    setReplayError("");
+    const note = replayNote.trim();
+    try {
+      await decideRunNode(
+        run,
+        node,
+        "retry",
+        {
+          reason: note || "从当前节点重跑",
+          ...(note ? { context: note } : {}),
+        },
+        () => {},
+      );
+      setReplayOpen(false);
+      setReplayNote("");
+      onChanged?.();
+    } catch (e) {
+      setReplayError(e.message);
+    } finally {
+      setReplayBusy(false);
+    }
+  }
+
+  const actionsDock = latest ? (
+    <RunNodeActions
+      run={run}
+      node={node}
+      definition={definition}
+      onChanged={onChanged}
+    />
+  ) : null;
+
+  const openFileFromConversation = (artifact) => {
+    setSelectedFile(artifact);
+    if (standalone) setArtifactOpen(true);
+  };
+
+  const replayBox =
+    replayOpen && showToolbarReplay ? (
+      <div className="sop-replay-box" role="region" aria-label="从本节点重跑">
+        <p className="sop-inline-note">
+          保留上游节点结果，从「{definition.name || nodeId}」及下游重新执行。
+        </p>
+        <label className="sop-feedback">
+          <span>补充说明（选填）</span>
+          <textarea
+            rows={2}
+            disabled={replayBusy}
+            value={replayNote}
+            onChange={(e) => setReplayNote(e.target.value)}
+            placeholder="告诉 Agent 重跑时需要注意或调整的内容"
+          />
+        </label>
+        <div className="sop-decision-buttons">
+          <button
+            type="button"
+            className="sop-action-button primary"
+            disabled={replayBusy}
+            onClick={triggerReplay}
+          >
+            <HarnessIcon name="refresh" size={13} />
+            {replayBusy ? "正在重跑…" : "确认从本节点重跑"}
+          </button>
+          <button
+            type="button"
+            className="quiet-button"
+            disabled={replayBusy}
+            onClick={() => setReplayOpen(false)}
+          >
+            取消
+          </button>
+        </div>
+        {replayError ? (
+          <p className="sop-inline-error" role="alert">
+            {replayError}
+          </p>
+        ) : null}
+      </div>
+    ) : null;
+
   const transcript = (
     <SopNodeChat
       key={`${node.attempt}:${node.reworkCount}`}
@@ -182,6 +354,8 @@ export function SopNodeDetail({ run, nodeId, renderArtifacts, onChanged }) {
       text={question}
       onTextChange={setQuestion}
       disabledReason={discussionBlock}
+      banner={standalone ? replayBox : null}
+      actions={actionsDock}
     >
       <NodeConversation
         run={run}
@@ -190,61 +364,84 @@ export function SopNodeDetail({ run, nodeId, renderArtifacts, onChanged }) {
         attempt={attempt}
         historical={!latest}
       />
+      {!standalone && files.length ? (
+        <NodeArtifactStrip
+          run={run}
+          files={files}
+          label="本节点产物"
+          onPreview={openFileFromConversation}
+        />
+      ) : null}
+      {standalone && !artifactOpen && visibleFiles.length ? (
+        <NodeArtifactStrip
+          run={run}
+          files={visibleFiles}
+          label="可查看产物"
+          onPreview={openFileFromConversation}
+        />
+      ) : null}
       {!standalone && waitingApproval ? (
         <NodeFiles
           run={run}
           files={reviewFiles}
           title="上游待审产物"
-          onPreview={setSelectedFile}
-        />
-      ) : null}
-      {latest ? (
-        <RunNodeActions
-          run={run}
-          node={node}
-          definition={definition}
-          onChanged={onChanged}
+          onPreview={openFileFromConversation}
         />
       ) : null}
     </SopNodeChat>
   );
   const toolbar = (
-    <div className="sop-node-toolbar">
-      {attempts.length > 1 ? (
-        <HarnessSelect
-          ariaLabel="查看执行尝试"
-          value={String(attempt)}
-          onChange={(event) => {
-            const next = Number(event.target.value);
-            setSelectedAttempt(next === latestAttempt ? null : next);
-            setSelectedFile(null);
-          }}
-          options={attempts.map((value) => ({
-            value: String(value),
-            label: `第 ${value} 次执行${value === latestAttempt ? "（当前）" : ""}`,
-          }))}
-        />
-      ) : null}
-      {node.childRunId ? (
-        <button
-          type="button"
-          className="sop-action-button"
-          onClick={() => openRunPage(node.childRunId)}
-        >
-          查看子 LOOP
-        </button>
-      ) : null}
-      {!standalone ? (
-        <button
-          type="button"
-          className="sop-action-button"
-          onClick={() => openRunPage(run.id, nodeId)}
-        >
-          <HarnessIcon name="arrow-right" size={14} />
-          运行记录
-        </button>
-      ) : null}
-    </div>
+    <>
+      <div className="sop-node-toolbar">
+        {attempts.length > 1 ? (
+          <HarnessSelect
+            ariaLabel="查看执行尝试"
+            value={String(attempt)}
+            onChange={(event) => {
+              const next = Number(event.target.value);
+              setSelectedAttempt(next === latestAttempt ? null : next);
+              setSelectedFile(null);
+            }}
+            options={attempts.map((value) => ({
+              value: String(value),
+              label: `第 ${value} 次执行${value === latestAttempt ? "（当前）" : ""}`,
+            }))}
+          />
+        ) : null}
+        {showToolbarReplay ? (
+          <button
+            type="button"
+            className={`sop-action-button${replayOpen ? " is-active" : ""}`}
+            onClick={() => {
+              setReplayOpen((open) => !open);
+              setReplayError("");
+            }}
+          >
+            <HarnessIcon name="refresh" size={13} />
+            从本节点重跑
+          </button>
+        ) : null}
+        {node.childRunId ? (
+          <button
+            type="button"
+            className="sop-action-button"
+            onClick={() => openRunPage(node.childRunId)}
+          >
+            查看子 LOOP
+          </button>
+        ) : null}
+        {!standalone ? (
+          <button
+            type="button"
+            className="sop-action-button"
+            onClick={() => openRunPage(run.id, nodeId)}
+          >
+            <HarnessIcon name="arrow-right" size={14} />
+            运行记录
+          </button>
+        ) : null}
+      </div>
+    </>
   );
 
   if (standalone) {
@@ -277,13 +474,18 @@ export function SopNodeDetail({ run, nodeId, renderArtifacts, onChanged }) {
           </div>
           {toolbar}
           <IconButton
-            className="panel-toggle"
+            className="panel-toggle sop-review-artifacts-toggle"
             label="查看会话产物"
             aria-expanded={!!artifactOpen}
             aria-controls="conversation-artifacts"
             onClick={() => setArtifactOpen(!artifactOpen)}
           >
             <HarnessIcon name="chat-artifacts" size={16} />
+            {visibleFiles.length ? (
+              <span className="sop-panel-toggle-count">
+                {visibleFiles.length}
+              </span>
+            ) : null}
           </IconButton>
         </header>
         {transcript}
@@ -313,16 +515,39 @@ export function SopNodeDetail({ run, nodeId, renderArtifacts, onChanged }) {
   if (preview) {
     return (
       <>
-        <div className="artifact-preview-toolbar">
-          <button
-            type="button"
-            className="artifact-preview-back"
-            onClick={() => setSelectedFile(null)}
-          >
-            <ChevronLeft size={14} />
-            {tab === "conversation" ? "返回会话" : "返回节点产物"}
-          </button>
-        </div>
+        {!controlledPreview ? (
+          <div className="artifact-preview-toolbar">
+            <button
+              type="button"
+              className="artifact-preview-back"
+              onClick={() => setSelectedFile(null)}
+            >
+              <ChevronLeft size={14} />
+              {tab === "conversation" ? "返回会话" : "返回节点产物"}
+            </button>
+            {visibleFiles.length > 1 ? (
+              <div className="artifact-preview-nav" role="group" aria-label="切换产物">
+                <IconButton
+                  label="上一个产物"
+                  disabled={activeFileIndex <= 0}
+                  onClick={() => setSelectedFile(visibleFiles[activeFileIndex - 1])}
+                >
+                  <ChevronLeft size={14} />
+                </IconButton>
+                <span className="artifact-preview-counter">
+                  {activeFileIndex + 1} / {visibleFiles.length}
+                </span>
+                <IconButton
+                  label="下一个产物"
+                  disabled={activeFileIndex >= visibleFiles.length - 1}
+                  onClick={() => setSelectedFile(visibleFiles[activeFileIndex + 1])}
+                >
+                  <ChevronRight size={14} />
+                </IconButton>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
         <div className="artifact-panel-preview">
           <ArtifactPreview
             artifact={preview}
@@ -336,27 +561,30 @@ export function SopNodeDetail({ run, nodeId, renderArtifacts, onChanged }) {
 
   return (
     <>
-      <SlidingTabs className="node-tabs" aria-label="节点详情">
-        <button
-          type="button"
-          role="tab"
-          aria-selected={tab === "conversation"}
-          onClick={() => setTab("conversation")}
-        >
-          <MessageSquare size={14} />
-          会话过程
-        </button>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={tab === "artifacts"}
-          onClick={() => setTab("artifacts")}
-        >
-          <FileText size={14} />
-          产物 {visibleFiles.length || ""}
-        </button>
-      </SlidingTabs>
-      {toolbar}
+      <div className="sop-node-detail-bar">
+        <SlidingTabs className="node-tabs" aria-label="节点详情">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={tab === "conversation"}
+            onClick={() => setTab("conversation")}
+          >
+            <MessageSquare size={14} />
+            会话过程
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={tab === "artifacts"}
+            onClick={() => setTab("artifacts")}
+          >
+            <FileText size={14} />
+            产物 {visibleFiles.length || ""}
+          </button>
+        </SlidingTabs>
+        {toolbar}
+      </div>
+      {!standalone ? replayBox : null}
       {tab === "conversation" ? (
         transcript
       ) : (
@@ -386,6 +614,8 @@ export default function SopRunPanel({
   embedded = false,
   selectedNodeId,
   onSelectNode,
+  selectedFileId,
+  onSelectFileId,
   onChanged,
 }) {
   const [runId, setRunId] = useState(runs[0]?.id);
@@ -399,6 +629,8 @@ export default function SopRunPanel({
   const completed = nodes.filter(({ id }) =>
     ["succeeded", "skipped"].includes(run.nodes?.[id]?.status),
   ).length;
+  const attention = !hasNode ? runAttentionNode(run) : null;
+  const runArtifacts = run.artifacts || [];
   const Container = embedded ? "section" : "aside";
   return (
     <Container
@@ -417,7 +649,7 @@ export default function SopRunPanel({
         </header>
       ) : null}
       <div className="sop-panel-scroll">
-        {runs.length > 1 ? (
+        {runs.length > 1 && !hasNode ? (
           <HarnessSelect
             ariaLabel="选择会话关联运行"
             value={run.id}
@@ -447,6 +679,8 @@ export default function SopRunPanel({
               key={`${run.id}:${nodeId}`}
               run={run}
               nodeId={nodeId}
+              selectedFileId={selectedFileId}
+              onSelectFileId={onSelectFileId}
               onChanged={onChanged}
             />
           </>
@@ -478,7 +712,62 @@ export default function SopRunPanel({
                 />
               </div>
             </div>
-            <SopNodeList run={run} onSelectNode={setNodeId} />
+            {attention ? (
+              <div
+                className={`sop-run-attention status-${attention.status}`}
+                role="status"
+              >
+                <div>
+                  <strong>
+                    「{attention.definition.name || attention.definition.id}」
+                    {attention.status === "waiting_approval"
+                      ? "等待审核"
+                      : "执行失败"}
+                  </strong>
+                  <span>
+                    {attention.status === "waiting_approval"
+                      ? "点击右侧进入审核并查看产物"
+                      : "点击右侧进入节点排查或重试"}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  className="sop-action-button primary"
+                  onClick={() => setNodeId(attention.definition.id)}
+                >
+                  {attention.status === "waiting_approval" ? "去审核" : "去处理"}
+                </button>
+              </div>
+            ) : null}
+            <SopNodeList run={run} onSelectNode={setNodeId} showArtifacts />
+            {runArtifacts.length ? (
+              <section
+                className="artifact-section sop-run-artifacts"
+                aria-label="本次运行产物"
+              >
+                <h3>本次运行产物 · {runArtifacts.length}</h3>
+                {runArtifacts.map((file) => {
+                  const producer =
+                    nodes.find(({ id }) => id === file.nodeId)?.name ||
+                    file.nodeId;
+                  const artifact = runArtifact(run, file);
+                  artifact.source = `${producer} · 第 ${file.attempt || 1} 次执行`;
+                  return (
+                    <ArtifactFileRow
+                      key={file.id}
+                      artifact={artifact}
+                      onSelect={() => {
+                        if (onSelectFileId) {
+                          onSelectFileId(file.id, file.nodeId);
+                        } else {
+                          setNodeId(file.nodeId);
+                        }
+                      }}
+                    />
+                  );
+                })}
+              </section>
+            ) : null}
             <footer className="sop-run-footnote">{run.id}</footer>
           </>
         )}
@@ -618,8 +907,13 @@ function NodeConversation({ run, node, definition, attempt, historical }) {
   const handleCitationClick = (citeIndex) => {
     setHighlightedCite(citeIndex);
     window.clearTimeout(highlightTimer.current);
-    highlightTimer.current = window.setTimeout(() => setHighlightedCite(null), 2000);
-    const row = sourcesRef.current?.querySelector?.(`[data-cite-index="${citeIndex}"]`);
+    highlightTimer.current = window.setTimeout(
+      () => setHighlightedCite(null),
+      2000,
+    );
+    const row = sourcesRef.current?.querySelector?.(
+      `[data-cite-index="${citeIndex}"]`,
+    );
     row?.scrollIntoView?.({ behavior: "smooth", block: "nearest" });
   };
   // A historical attempt only cites the reads recorded for that attempt.
@@ -663,11 +957,17 @@ function NodeConversation({ run, node, definition, attempt, historical }) {
             author={{ name: "LOOP 运行" }}
             body={
               <>
-                {opening.content}
+                {opening.content ? (
+                  <CollapsibleMessage text={opening.content}>
+                    <RichContent message={opening.content} />
+                  </CollapsibleMessage>
+                ) : null}
                 {!historical && node.feedback ? (
                   <div className="node-handoff-message">
                     <span className="node-message-sender">本次补充说明</span>
-                    <RichContent message={node.feedback} />
+                    <CollapsibleMessage text={node.feedback}>
+                      <RichContent message={node.feedback} />
+                    </CollapsibleMessage>
                   </div>
                 ) : null}
                 {handoffs.map((source) => (
@@ -675,10 +975,12 @@ function NodeConversation({ run, node, definition, attempt, historical }) {
                     <span className="node-message-sender">
                       {source.name || source.id}
                     </span>
-                    <RichContent
-                      message={source.output}
-                      knowledgeReads={source.knowledgeReads}
-                    />
+                    <CollapsibleMessage text={source.output}>
+                      <RichContent
+                        message={source.output}
+                        knowledgeReads={source.knowledgeReads}
+                      />
+                    </CollapsibleMessage>
                   </div>
                 ))}
               </>

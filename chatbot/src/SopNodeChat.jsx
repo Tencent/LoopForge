@@ -30,6 +30,8 @@ export default function SopNodeChat({
   onTextChange,
   disabledReason,
   standalone,
+  actions = null,
+  banner = null,
   children,
 }) {
   const [sessionId, setSessionId] = useState(undefined);
@@ -70,29 +72,35 @@ export default function SopNodeChat({
     >
       {disabledReason || error || sessionId === undefined ? (
         <NodeChatLayout
+          actions={actions}
+          banner={banner}
           composer={
-            <>
-              <NodeQuestionForm
-                text={text}
-                onTextChange={onTextChange}
-                disabled
-                placeholder={
-                  disabledReason || (error ? "会话加载失败" : "正在加载会话…")
-                }
-              />
-              {error && !disabledReason ? (
-                <p className="sop-inline-error" role="alert">
-                  {error}{" "}
-                  <button
-                    type="button"
-                    className="quiet-button"
-                    onClick={() => retry((n) => n + 1)}
-                  >
-                    重试加载
-                  </button>
-                </p>
-              ) : null}
-            </>
+            disabledReason ? (
+              <p className="sop-chat-disabled-note" role="status">
+                {disabledReason}
+              </p>
+            ) : (
+              <>
+                <NodeQuestionForm
+                  text={text}
+                  onTextChange={onTextChange}
+                  disabled
+                  placeholder={error ? "会话加载失败" : "正在加载会话…"}
+                />
+                {error ? (
+                  <p className="sop-inline-error" role="alert">
+                    {error}{" "}
+                    <button
+                      type="button"
+                      className="quiet-button"
+                      onClick={() => retry((n) => n + 1)}
+                    >
+                      重试加载
+                    </button>
+                  </p>
+                ) : null}
+              </>
+            )
           }
         >
           {children}
@@ -107,6 +115,8 @@ export default function SopNodeChat({
           }
           text={text}
           onTextChange={onTextChange}
+          actions={actions}
+          banner={banner}
         >
           {children}
         </NodeComposer>
@@ -115,12 +125,14 @@ export default function SopNodeChat({
   );
 }
 
-function NodeChatLayout({ children, composer }) {
+function NodeChatLayout({ children, banner, actions, composer }) {
   return (
     <>
+      {banner}
       <div className="message-scroll">
         <div className="message-column">{children}</div>
       </div>
+      {actions ? <div className="sop-node-actions-dock">{actions}</div> : null}
       <div className="composer-region">
         <div className="composer-column">{composer}</div>
       </div>
@@ -192,10 +204,13 @@ function NodeComposer({
   createSession,
   text,
   onTextChange,
+  actions,
+  banner,
   children,
 }) {
   const chat = useChat({ sessionId, projectId, runId, createSession });
   const follow = useRef(false);
+  const syncedInitial = useRef(false);
   const bottom = useRef(null);
   const saved = chat.session?.messages || [];
   // The synthetic task and result already appear in the node's transcript.
@@ -223,6 +238,14 @@ function NodeComposer({
     const scroll = bottom.current?.closest(".message-scroll");
     if (follow.current && scroll) scroll.scrollTop = scroll.scrollHeight;
   }
+  useEffect(() => {
+    if (loading || syncedInitial.current) return;
+    syncedInitial.current = true;
+    if (messages.length > 0 || chat.busy) {
+      follow.current = true;
+      followReply();
+    }
+  }, [loading, messages.length, chat.busy]);
   useEffect(followReply, [messages.length, chat.busy, chat.live.answer]);
   async function send() {
     if (!canSend) return;
@@ -233,6 +256,8 @@ function NodeComposer({
 
   return (
     <NodeChatLayout
+      actions={actions}
+      banner={banner}
       composer={
         <>
           <NodeQuestionForm
