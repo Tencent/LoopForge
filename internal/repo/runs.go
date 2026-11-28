@@ -179,8 +179,9 @@ func (r *RunsRepo) runSummariesFor(filter domain.AnalyticsFilter, issueID string
 			'collaborationMode', JSON_UNQUOTE(JSON_EXTRACT(snapshot, '$.collaborationMode')), 'status', JSON_UNQUOTE(JSON_EXTRACT(snapshot, '$.status')),
 			'version', JSON_EXTRACT(snapshot, '$.version'), 'publishedRevision', JSON_EXTRACT(snapshot, '$.publishedRevision')) AS snapshot`
 	}
+	// The summaries are sorted below. Sorting the projection in MySQL can
+	// exhaust the filesort buffer when runs contain large JSON snapshots.
 	if err := q.Select("id", "kind", "workflow_id", "status", "admission_state", "queue_entered_at", "quota_exempt", "cancel_requested", "pause_requested", "human_context", "revision", "SUBSTR(input, 1, 500) AS input", "repository", "repositories", snapshotExpr, "execution_context", "usage_json", "tool_calls", "telemetry_sequence", "log_sequence", "owner_instance_id", "lease_until", "execution_generation", "workspace_host", "workspace_root", "workspace_cleaned_at", "created_at", "updated_at").
-		Order("created_at DESC, id DESC").
 		Find(&rows).Error; err != nil {
 		return nil, nil, err
 	}
