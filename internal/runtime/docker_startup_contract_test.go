@@ -15,8 +15,11 @@ import (
 	"agentflow/internal/domain"
 )
 
-const fakeDockerRunningWorkspace = `{"Status":"running","Running":true,"ID":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","StartedAt":"2026-01-01T00:00:00Z"}`
-const fakeWorkspaceGeneration = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa|2026-01-01T00:00:00Z"
+const fakeWorkspaceID = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+const fakeStartedAt = "2026-01-01T00:00:00Z"
+const fakeWorkspaceGeneration = fakeWorkspaceID + "|" + fakeStartedAt
+const fakeDockerRunningWorkspace = `{"Status":"running","Running":true,"Paused":false,"OOMKilled":false,"ExitCode":0,"ID":"` + fakeWorkspaceID + `","StartedAt":"` + fakeStartedAt + `"}`
+const fakeDockerExited = `{"Status":"exited","Running":false,"Paused":false,"OOMKilled":true,"ExitCode":137,"ID":"` + fakeWorkspaceID + `","StartedAt":"` + fakeStartedAt + `"}`
 
 func TestDockerWorkspaceLoginProbe(t *testing.T) {
 	for _, test := range []struct{ name, profile, want string }{
@@ -42,7 +45,7 @@ func TestDockerWorkspaceStartupErrorKeepsSafeDiagnostics(t *testing.T) {
 	useFakeCommands(t, map[string]string{"docker": `#!/bin/sh
 case "$1" in
   start) echo 'OCI runtime create failed: permission denied; private diagnostics' >&2; exit 1;;
-  inspect) echo '{"Status":"exited","ExitCode":137,"OOMKilled":true}';;
+  inspect) echo '` + fakeDockerExited + `';;
 esac`})
 	err := startDockerWorkspace(t.Context(), "workspace", "test-image")
 	if err == nil || strings.Contains(err.Error(), "private diagnostics") {

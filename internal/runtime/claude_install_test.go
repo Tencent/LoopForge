@@ -100,7 +100,7 @@ printf '%s\n' "$*" >> "$DOCKER_TEST_LOG"
 case "$*" in
   "image inspect loopforge-platform:tested") exit 0 ;;
   "inspect --type container --format "*'.State.Status'*) echo '` + fakeDockerRunningWorkspace + `' ;;
-  "inspect "*) echo 'Error: No such container' >&2; exit 1 ;;
+  "inspect "*) printf '\n'; echo "Error response from daemon: No such container: $6" >&2; exit 1 ;;
   "exec "*) printf '\n%s\n' "$7" ;;
 esac
 `})

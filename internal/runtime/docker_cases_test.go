@@ -441,7 +441,7 @@ case "$*" in
   "inspect --type container --format "*'.State.Status'*) echo '` + fakeDockerRunningWorkspace + `'; exit 0 ;;
   "inspect --type container --format "*" box")
     printf '{"mounts":[{"Destination":"/workspace","Source":"%s"}],"privileged":%s,"entrypoint":["sh"],"command":["-c","cd /workspace && exec sleep infinity"]}\n' "$workspace" "${CVR_DOCKER_EXISTING_PRIVILEGED:-false}"; exit 0 ;;
-  "inspect --type container "*) echo 'Error: No such container' >&2; exit 1 ;;
+  "inspect --type container "*) printf '\n'; echo "Error response from daemon: No such container: $6" >&2; exit 1 ;;
   "inspect --format {{.State.Running}}|{{.Id}}|{{.State.StartedAt}} "*) echo 'true|container-id|now'; exit 0 ;;
   "image inspect --format {{.Config.User}} "*) exit 0 ;;
   "image inspect "*) exit 1 ;;

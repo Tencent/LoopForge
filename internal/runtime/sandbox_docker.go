@@ -109,11 +109,8 @@ func removeDockerWorkspaceContainers(ctx context.Context, container string) erro
 }
 
 func removeDockerContainer(ctx context.Context, name string) error {
-	out, err := exec.CommandContext(ctx, "docker", "rm", "-f", name).CombinedOutput()
-	if err != nil && !dockerObjectGone(string(out), err) {
-		return fmt.Errorf("remove Docker container %s: %w: %s", name, err, strings.TrimSpace(string(out)))
-	}
-	return nil
+	_, _, err := dockerContainerOutput(ctx, "remove container", name, "rm", "-f", name)
+	return err
 }
 
 // dockerAvailable keeps run teardown from spawning processes on control planes
@@ -497,12 +494,9 @@ type dockerWorkspaceInspection struct {
 
 func inspectDockerWorkspace(ctx context.Context, name string) (*dockerWorkspaceInspection, error) {
 	const format = `{"image":{{json .Config.Image}},"entrypoint":{{json .Config.Entrypoint}},"command":{{json .Config.Cmd}},"mounts":{{json .Mounts}},"privileged":{{.HostConfig.Privileged}},"limitsLabel":{{json (index .Config.Labels "` + dockerSandboxLimitsLabel + `")}},"limits":{"NanoCpus":{{.HostConfig.NanoCpus}},"Memory":{{.HostConfig.Memory}},"PidsLimit":{{json .HostConfig.PidsLimit}}}}`
-	out, err := exec.CommandContext(ctx, "docker", "inspect", "--type", "container", "--format", format, name).CombinedOutput()
-	if dockerObjectGone(string(out), err) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, dockerStageError("inspect workspace", name, out, err)
+	out, missing, err := dockerContainerOutput(ctx, "inspect workspace", name, "inspect", "--type", "container", "--format", format, name)
+	if err != nil || missing {
+		return nil, err
 	}
 	var config struct {
 		Image               string
@@ -884,7 +878,7 @@ func (s *dockerSandbox) start(ctx context.Context, mode dockerStartMode) error {
 	hasGitTools := false
 	if container != nil {
 		if !dockerBindMatchesWorkspace(container.source, workspace) {
-			return fmt.Errorf("docker sandbox %s is bound to %s, not %s", name, container.source, workspace)
+			return fmt.Errorf("Docker sandbox %s is bound to a different workspace", name)
 		}
 		if !slices.Equal(container.entrypoint, []string{"sh"}) || !slices.Equal(container.command, []string{"-c", dockerWorkspaceKeepalive}) {
 			s.incompatibleStartup = true
@@ -991,7 +985,7 @@ func (s *dockerSandbox) start(ctx context.Context, mode dockerStartMode) error {
 	// container. Its new ID invalidates old preparation receipts.
 	if container != nil || recreate {
 		if err := removeDockerWorkspaceContainers(ctx, name); err != nil {
-			return dockerStageError("retire previous workspace", name, []byte(err.Error()), errors.New("Docker removal failed"))
+			return fmt.Errorf("Docker retire previous workspace (%s): %w", name, err)
 		}
 	}
 	s.builtImage = built
@@ -1027,29 +1021,47 @@ func (s *dockerSandbox) start(ctx context.Context, mode dockerStartMode) error {
 	return nil
 }
 
+const dockerWorkspaceStartupLimit = 20 * time.Second
+
+type dockerWorkspaceStartupTimeout struct {
+	stage, object string
+}
+
+func (timeout *dockerWorkspaceStartupTimeout) Error() string {
+	return fmt.Sprintf("Docker %s (%s): workspace startup timed out (budget %s)", timeout.stage, timeout.object, dockerWorkspaceStartupLimit)
+}
+
 func startDockerWorkspace(ctx context.Context, name, image string) error {
-	readyCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	readyCtx, cancel := context.WithTimeout(ctx, dockerWorkspaceStartupLimit)
 	defer cancel()
 	object := name + " (image " + image + ")"
+	stage := "start workspace"
 	output, err := exec.CommandContext(readyCtx, "docker", "start", name).CombinedOutput()
-	if err != nil {
-		err = dockerStageError("start workspace", object, output, err)
-	} else {
+	if err == nil && readyCtx.Err() == nil {
+		stage = "workspace shell probe"
 		marker := rand.Text()
 		probe := &workspaceProbeOutput{marker: []byte("\n" + marker + "\n")}
 		var stderr cappedDockerOutput
 		cmd := exec.CommandContext(readyCtx, "docker", "exec", name, "sh", "-lc", `cd /workspace && printf '\n%s\n' "$1"`, "workspace-probe", marker)
 		cmd.Stdout, cmd.Stderr = probe, &stderr
 		if probeErr := cmd.Run(); probeErr != nil {
-			err = dockerStageError("workspace shell probe", object, stderr, probeErr)
+			err = dockerStageError(stage, object, stderr, probeErr)
 		} else if !probe.found {
 			err = fmt.Errorf("Docker workspace shell probe (%s): login shell exited 0 without executing the readiness probe", object)
 		}
+	} else if err != nil {
+		err = dockerStageError(stage, object, output, err)
 	}
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
+	if readyCtx.Err() != nil {
+		return &dockerWorkspaceStartupTimeout{stage: stage, object: object}
+	}
 	state, stateErr := inspectDockerWorkspaceState(ctx, name)
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
 	if err == nil {
 		if stateErr != nil {
 			return stateErr
@@ -1062,7 +1074,7 @@ func startDockerWorkspace(ctx context.Context, name, image string) error {
 	if stateErr != nil {
 		return fmt.Errorf("%w (container status unknown)", err)
 	}
-	return fmt.Errorf("%w (state=%s, exit=%d, OOMKilled=%t)", err, state.Status, state.ExitCode, state.OOMKilled)
+	return fmt.Errorf("%w (%s)", err, state.diagnostics("workspace keepalive (sh / sleep infinity)"))
 }
 
 type workspaceProbeOutput struct {
