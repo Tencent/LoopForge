@@ -501,7 +501,7 @@ async function botTenantAction(rediscover){
 function bindBotSessionSelection(host){host.querySelectorAll('[name="targetId"]').forEach(el=>el.onchange=()=>{botUI.selected.target=structuredClone(botUI.sessions.find(chat=>chat.id===el.value));botUI.selected._targetChanged=botStoredBot(botUI.selected)?.target?.id!==el.value;botMotion('pick');renderBots()})}
 async function botDelete(bot,row){
  if(!bot?.id||botUI.busy||botUI.deletingId===bot.id)return;
- if(!await afConfirm(`确定删除「${bot.name}」？已有节点绑定将无法继续发送。`))return;
+ if(!await afConfirm({message:lfT(`确定删除「${bot.name}」？已有节点绑定将无法继续发送。`,`Delete "${bot.name}"? Nodes bound to it will no longer be able to send.`),messageData:true,danger:true,confirmText:lfT('确认删除','Delete')}))return;
  if(botUI.deletingId===bot.id)return;
  const projectId=botUI.projectId,revision=botUI.revision;botUI.deletingId=bot.id;
  try{await botDeleteRequest(bot,row,projectId,revision)}

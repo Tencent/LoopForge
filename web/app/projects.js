@@ -1,7 +1,7 @@
 function renderProjectSwitcher(){
   const projects=state.data.projects||[];
   const switcher=$('#projectSwitcher');if(!switcher)return;
-  switcher.innerHTML=projects.map(p=>`<option value="${escapeHTML(p.id)}" ${p.id===state.projectFilter?'selected':''}>${escapeHTML(p.key||'PROJECT')} · ${escapeHTML(p.name)}</option>`).join('')||'<option value="">暂无项目</option>';
+  switcher.innerHTML=projects.map(p=>`<option value="${escapeHTML(p.id)}" data-i18n-data ${p.id===state.projectFilter?'selected':''}>${escapeHTML(p.key||'PROJECT')} · ${escapeHTML(p.name)}</option>`).join('')||'<option value="">暂无项目</option>';
   window.enhanceSelect?.(switcher);
   if(!projects.some(p=>p.id===state.projectFilter))state.projectFilter=defaultProjectId(projects,state.currentUser?.id);
 }
@@ -128,7 +128,7 @@ function projectCardHTML(p,ctx={}){
   const join=projectJoinCardHTML(p);
   const avatars=people.slice(0,3).map(id=>{const u=userById(id);return `<span class="pa-av" title="${escapeHTML(u?userDisplay(u):String(id))}">${userAvatarHTML(u||id,48)}</span>`}).join('')+(people.length>3?`<span class="pa-av more">+${people.length-3}</span>`:'');
   return `<article class="pa-card" tabindex="0" role="link" data-project-open="${escapeHTML(p.id)}" aria-label="打开项目 ${escapeHTML(p.name||p.id)}">
-    <div class="pa-card-top"><span class="pa-mark" style="background:${safeColor(p.color)}">${escapeHTML(key.slice(0,2).toUpperCase())}</span><div class="pa-card-m"><h3><span title="${escapeHTML(p.name||'')}">${escapeHTML(p.name||p.id)}</span>${p.id===ctx.currentId?'<span class="pa-chip cur">当前</span>':''}</h3><div class="pa-card-sub" title="${escapeHTML(p.id)} · ${escapeHTML(p.key||'')}">${escapeHTML(p.id)} · ${escapeHTML(p.key||'—')}</div></div><span class="pa-go">${paIcon('arrow',16)}</span></div>
+    <div class="pa-card-top"><span class="pa-mark" style="background:${safeColor(p.color)}">${escapeHTML(key.slice(0,2).toUpperCase())}</span><div class="pa-card-m"><h3><span data-i18n-data title="${escapeHTML(p.name||'')}">${escapeHTML(p.name||p.id)}</span>${p.id===ctx.currentId?'<span class="pa-chip cur">当前</span>':''}</h3><div class="pa-card-sub" title="${escapeHTML(p.id)} · ${escapeHTML(p.key||'')}">${escapeHTML(p.id)} · ${escapeHTML(p.key||'—')}</div></div><span class="pa-go">${paIcon('arrow',16)}</span></div>
     <p class="pa-card-desc${p.description?'':' none'}">${escapeHTML(p.description||'暂无项目说明')}</p>
     <div class="pa-facts">${repoFact}${sop?`<span class="pa-fact" title="默认 LOOP">${paIcon('flow',12)}<span>${escapeHTML(sop)}</span></span>`:''}${p.tapdWorkspaceId?`<span class="pa-fact" title="TAPD Workspace ${escapeHTML(p.tapdWorkspaceId)}">${paIcon('tapd',12)}<span>TAPD</span></span>`:''}${join.fact}</div>
     <div class="pa-card-foot"><div class="pa-avs">${avatars}</div><div class="pa-stats"><span><b>${issues.length}</b> 需求</span>${active?`<span class="pa-live"><i></i><b>${active}</b> 推进中</span>`:''}</div>${join.action}</div>
@@ -400,7 +400,7 @@ function syncProjectAdminRouteState(){
 async function confirmDiscardProjectDraft(){
   if(!projectAdminDirty())return true;
   const name=String(state.projectDraft?.name||'').trim()||'新项目';
-  return afConfirm({title:'放弃未保存的修改？',message:`「${name}」有未保存的修改，离开后这些修改会丢失。`,danger:true,confirmText:'放弃修改',cancelText:'继续编辑'});
+  return afConfirm({title:lfT('放弃未保存的修改？','Discard unsaved changes?'),message:lfT(`「${name}」有未保存的修改，离开后这些修改会丢失。`,`"${name}" has unsaved changes that will be lost if you leave.`),messageData:true,danger:true,confirmText:'放弃修改',cancelText:'继续编辑'});
 }
 function openProjectAdminDetail(id,tab='basic'){
   if(id==='new')return openProjectWizard();
@@ -605,7 +605,7 @@ function projectDeleteRow(project){
 }
 async function deleteProjectAdmin(projectId){
   const project=(state.data.projects||[]).find(p=>p.id===projectId);if(!project)return;
-  const ok=await afConfirm({title:'删除项目',message:`确定删除项目「${project.name||project.id}」吗？\n\n项目会从列表中移除，需求、运行记录和设置保留，可以恢复；标识 ${project.id} 仍被占用。`,danger:true,confirmText:'确定删除'});
+  const ok=await afConfirm({title:lfT('删除项目','Delete project'),message:lfT(`确定删除项目「${project.name||project.id}」吗？\n\n项目会从列表中移除，需求、运行记录和设置保留，可以恢复；标识 ${project.id} 仍被占用。`,`Delete project "${project.name||project.id}"?\n\nThe project is removed from the list; its requirements, runs and settings are kept and can be restored. The ID ${project.id} stays reserved.`),messageData:true,danger:true,confirmText:'确定删除'});
   if(!ok)return;
   try{
     await api('/api/projects/'+encodeURIComponent(project.id),{method:'DELETE'});
@@ -624,7 +624,7 @@ async function deleteProjectAdmin(projectId){
 async function deleteProjectRepository(repoId){
   const repo=(state.data.repositories||[]).find(r=>r.id===repoId);if(!repo)return;
   const project=(state.data.projects||[]).find(p=>p.id===repo.projectId),isDefault=project?.defaultRepositoryId===repo.id;
-  const ok=await afConfirm({title:'删除关联仓库',message:`确定删除仓库「${repo.name||repo.gongfengProjectId||repo.id}」吗？已在执行中的 LOOP 不受影响，该操作不可恢复。${isDefault?'\n\n这是当前的默认仓库，删除后默认仓库将变为「暂未绑定」。':''}`,danger:true,confirmText:'确定删除'});
+  const ok=await afConfirm({title:lfT('删除关联仓库','Delete repository'),message:lfT(`确定删除仓库「${repo.name||repo.gongfengProjectId||repo.id}」吗？已在执行中的 LOOP 不受影响，该操作不可恢复。${isDefault?'\n\n这是当前的默认仓库，删除后默认仓库将变为「暂未绑定」。':''}`,`Delete repository "${repo.name||repo.gongfengProjectId||repo.id}"? Running LOOPs are unaffected. This can't be undone.${isDefault?'\n\nThis is the current default repository; after deletion the default becomes "not bound".':''}`),messageData:true,danger:true,confirmText:'确定删除'});
   if(!ok)return;
   try{
     captureProjectAdminForm();

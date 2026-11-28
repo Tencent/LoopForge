@@ -34,7 +34,7 @@ async function toggleShare(kind,id){
     // The list is reloaded: a skill may have been added since the page loaded.
     if(kind==='agent'&&!full.shared&&(full.skills||[]).length)state.data.skills=await api('/api/skills',{silent:true});
     const newlyShared=kind==='agent'&&!full.shared?(state.data.skills||[]).filter(s=>(full.skills||[]).includes(s.id)&&s.projectId===full.projectId&&!s.shared):[];
-    if(newlyShared.length&&!(await afConfirm({title:'共享角色',message:`共享这个角色会同时共享它绑定的技能：${newlyShared.map(s=>s.name||s.id).join('、')}。${SHARED_SKILL_NOTICE}`,confirmText:'共享'})))return;
+    if(newlyShared.length&&!(await afConfirm({title:lfT('共享角色','Share role'),message:lfT(`共享这个角色会同时共享它绑定的技能：${newlyShared.map(s=>s.name||s.id).join('、')}。${SHARED_SKILL_NOTICE}`,`Sharing this role also shares its bound skills: ${newlyShared.map(s=>s.name||s.id).join(', ')}. ${SHARED_SKILL_NOTICE_EN}`),messageData:true,confirmText:'共享'})))return;
     const saved=await api(kind==='workflow'?'/api/workflows':'/api/agents',{method:'PUT',body:JSON.stringify({...full,shared:!full.shared})});
     replaceCatalogItem(kind,saved);
     if(kind==='agent'&&saved.shared){(state.data.rules||[]).forEach(item=>{if((saved.rules||[]).includes(item.id)&&item.projectId===saved.projectId)item.shared=true});(state.data.skills||[]).forEach(item=>{if((saved.skills||[]).includes(item.id)&&item.projectId===saved.projectId)item.shared=true})}
@@ -373,9 +373,7 @@ function restoreSOPCatalogFocus(root,focus){
 }
 function liveSOPCards(root){return [...root.querySelectorAll('.sop-card:not(.is-leaving)')]}
 function openSOPDesigner(id,missing='LOOP 不存在或已删除'){
-  const wf=(state.data.workflows||[]).find(x=>x.id===id);
-  if(!wf)return toast(missing);
-  state.workflow=clone(wf);state.selectedNode=null;renderWorkflowMeta();renderCanvas();renderProperties();switchView('flow');
+  return openWorkflowInDesigner(id,missing);
 }
 function activateSOPCard(card){
   if(card.dataset.genericId)openGenericTemplateModal(card.dataset.genericId);

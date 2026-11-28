@@ -371,8 +371,11 @@ function restoreRequirementComposer(){
   persistRequirementComposer();
   return true;
 }
-async function closeRequirementComposer(){
+// confirmDiscard: Escape can be pressed by accident while typing, so it asks
+// before throwing away a written description or pasted images.
+async function closeRequirementComposer({confirmDiscard=false}={}){
   if(requirementComposerBusy())return toast('正在建单，请稍候');
+  if(confirmDiscard&&(reqDescription()||reqImages.length)&&!(await afConfirm({title:'放弃这条需求？',message:'已填写的需求描述和图片会被清空。',danger:true,confirmText:'放弃',cancelText:'继续编辑'})))return;
   $('#requirementModal').classList.remove('open');
   resetRequirementComposer();
   clearRequirementComposer();

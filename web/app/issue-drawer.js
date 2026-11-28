@@ -14,9 +14,14 @@ function closeIssueDrawer(){
   const d=$('#issueDetailDrawer');if(d){d.classList.remove('open');d.setAttribute('aria-hidden','true')}
   if(running)toast('澄清继续在后台进行');
 }
+// Bumped on every open so a slower response for an earlier issue cannot
+// overwrite the drawer after the user has moved on to another one.
+let issueDetailRequestSeq=0;
 async function openIssueDetail(id,tab){
   if(!id)return;
   const issueId=String(id);
+  const seq=++issueDetailRequestSeq;
+  const stale=()=>seq!==issueDetailRequestSeq||!state.drawerOpen||state.selectedIssue!==issueId;
   state.drawerOpen=true;state.selectedIssue=issueId;state.issueDetailData=null;
   const drawer=$('#issueDetailDrawer');
   if(drawer&&drawer.parentElement!==document.body)document.body.appendChild(drawer);
@@ -24,7 +29,7 @@ async function openIssueDetail(id,tab){
   drawer.setAttribute('aria-hidden','false');
   $('#issueDetailBody').innerHTML='<div class="detail-empty">正在加载需求详情…</div>';
   try{
-    const detail=await api(`/api/issues/${encodeURIComponent(issueId)}`);const issue=detail.issue;const comments=detail.comments||[];
+    const detail=await api(`/api/issues/${encodeURIComponent(issueId)}`);if(stale())return;const issue=detail.issue;const comments=detail.comments||[];
     const localIssue=(state.data.issues||[]).find(i=>i.id===issueId);
     // Keep local view state, but deletion feedback must come from this fresh detail response.
     const permissions={deletionAllowed:issue.deletionAllowed,deletionRequiresForce:issue.deletionRequiresForce,deletionBlock:issue.deletionBlock,closureAllowed:issue.closureAllowed};
@@ -49,6 +54,7 @@ async function openIssueDetail(id,tab){
       try{deletionTask=await api(`/api/tasks/${encodeURIComponent(issue.deletionBlock.taskId)}`,{silent:true})}catch(e){}
       if(deletionTask?.issueId!==issueId)deletionTask=null;
     }
+    if(stale())return;
     state.issueDetailData={issue,comments,run,task,requirement,deletionTask,images:detail.images||[]};
     const health=issueRunHealth(issue),stage=issueCurrentStage(issue),needsConfirm=clarificationNeedsConfirm(issue);
     state.issueDetailTab=tab||(issueClarifying(issueId)||needsConfirm?'clarify':((health==='attention'||health==='active'||stage.key==='waiting')?'sop':'overview'));
@@ -58,7 +64,7 @@ async function openIssueDetail(id,tab){
       restoreIssueClarifyThinking(issueId);
       attachIssueClarifyStream(issueId);
     }
-  }catch(e){$('#issueDetailBody').innerHTML=`<div class="detail-empty">加载失败：${escapeHTML(e.message)}</div>`}
+  }catch(e){if(!stale())$('#issueDetailBody').innerHTML=`<div class="detail-empty">加载失败：${escapeHTML(e.message)}</div>`}
 }
 function issueClarifyViewKey(issue,project){
   const c=issue?.clarification||{};
@@ -111,8 +117,11 @@ function clarifySubmittedHTML(reply){
 function clarifyQuestionCardsHTML(questions,saved){
   return (questions||[]).map((q,i)=>{
     const picked=saved?.questions?.[i];
-    const options=clarifyQuestionOptions(q).map((opt,j)=>`<button type="button" class="issue-clarify-option${picked?.selected?.[j]?' selected':''}" data-multi="${!!q.multiSelect}">${escapeHTML(opt)}</button>`).join('');
-    return `<div class="issue-clarify-question"><b>${i+1}. ${escapeHTML(q.question)}</b><div class="issue-clarify-options">${options}</div><input class="issue-clarify-other" data-question="${i}" placeholder="其他：自己填写" value="${escapeHTML(picked?.other||'')}"></div>`;
+    // AI-written questions and options are data: data-i18n-skip keeps English
+    // mode from rewriting them, so collectIssueClarifyReply sends back exactly
+    // the text the agent offered and the user picked.
+    const options=clarifyQuestionOptions(q).map((opt,j)=>`<button type="button" class="issue-clarify-option${picked?.selected?.[j]?' selected':''}" data-multi="${!!q.multiSelect}" data-i18n-skip>${escapeHTML(opt)}</button>`).join('');
+    return `<div class="issue-clarify-question"><b data-i18n-skip>${i+1}. ${escapeHTML(q.question)}</b><div class="issue-clarify-options">${options}</div><input class="issue-clarify-other" data-question="${i}" placeholder="其他：自己填写" value="${escapeHTML(picked?.other||'')}"></div>`;
   }).join('');
 }
 function captureIssueClarifyDraft(host){
@@ -465,8 +474,9 @@ async function closeIssueById(issueId){
   if(issueManuallyClosed(issue)||issueTrackerClosed(issue))return toast('该需求单已处于关闭状态');
   if(!issueCanClose(issue))return toast('需求正在澄清或执行 LOOP，请先停止后再关闭','err');
   const ok=await afConfirm({
-    title:'手动关闭需求',
-    message:`确定手动关闭需求「${issue.title||issue.id}」？关闭后可在状态里筛「已关闭」。`,
+    title:lfT('手动关闭需求','Close requirement'),
+    message:lfT(`确定手动关闭需求「${issue.title||issue.id}」？关闭后可在状态里筛「已关闭」。`,`Close requirement "${issue.title||issue.id}" manually? You can find it later under the "Closed" status filter.`),
+    messageData:true,
     confirmText:'确认关闭'
   });
   if(!ok)return;
@@ -999,8 +1009,9 @@ async function deleteIssueById(issueId){
   if(!issueCanDelete(issue))return toast(issueDeletionBlock(issue).reason,'err');
   const force=issue.deletionRequiresForce===true;
   const title=force?'强制删除需求':'删除需求';
+  const titleEn=force?'Force delete requirement':'Delete requirement';
   const external=issue.source==='tapd'||issue.source==='gongfeng';
-  if(!await afConfirm({title,message:`确定${title}「${issue.title||issue.id}」？${issueDeletionWarning(force,external)}`,danger:true,confirmText:force?'确认强制删除':'确认删除'}))return;
+  if(!await afConfirm({title:lfT(title,titleEn),message:lfT(`确定${title}「${issue.title||issue.id}」？${issueDeletionWarning(force,external)}`,`${titleEn} "${issue.title||issue.id}"? ${issueDeletionWarningEn(force,external)}`),messageData:true,danger:true,confirmText:force?'确认强制删除':'确认删除'}))return;
   try{
     await api(issueDeletePath(issueId,force),{method:'DELETE'});
     state.data.issues=(state.data.issues||[]).filter(i=>i.id!==issueId);

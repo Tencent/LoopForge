@@ -203,6 +203,21 @@ func (d deps) allowAssetWrite(c *gin.Context, path string) bool {
 			return d.requirePlatformAdmin(c)
 		}
 		return d.requireProjectWriter(c, strings.TrimSpace(body.ProjectID))
+	case "/api/skillhub/install":
+		// Installing a SkillHub skill writes a new skill into the project.
+		var body struct {
+			ProjectID string `json:"projectId"`
+		}
+		peekJSON(c, &body)
+		return d.requireProjectWriter(c, strings.TrimSpace(body.ProjectID))
+	case "/api/skillhub/update":
+		// Updating rewrites an existing skill's files; reuse the stored-asset
+		// check so platform-wide skills still require an administrator.
+		var body struct {
+			SkillID string `json:"skillId"`
+		}
+		peekJSON(c, &body)
+		return d.allowStoredAsset(c, "skills", strings.TrimSpace(body.SkillID))
 	case "/api/schedule-jobs/:id", "/api/schedule-jobs/:id/run":
 		project, _, _ := d.assetOwner("schedule-jobs", c.Param("id"))
 		return d.requireProjectWriter(c, project)
@@ -268,13 +283,24 @@ func (d deps) allowStoredAsset(c *gin.Context, kind, id string) bool {
 }
 
 // peekJSON decodes the request body without consuming it for the handler.
+// It must read the body exactly as decode() does: handlers stop after the
+// first JSON value, so json.Unmarshal (which rejects trailing data and leaves
+// v empty) would let `{"projectId":"other"} {}` skip the guard while the
+// handler still writes to "other".
+//
+// Only the first jsonBodyLimit+1 bytes are buffered, which is all decode()
+// accepts; the rest stays unread for the handler, whose own limit rejects it.
 func peekJSON(c *gin.Context, v any) {
 	if c.Request.Body == nil {
 		return
 	}
-	raw, err := io.ReadAll(c.Request.Body)
-	c.Request.Body = io.NopCloser(bytes.NewReader(raw))
+	body := c.Request.Body
+	raw, err := io.ReadAll(io.LimitReader(body, jsonBodyLimit+1))
+	c.Request.Body = struct {
+		io.Reader
+		io.Closer
+	}{io.MultiReader(bytes.NewReader(raw), body), body}
 	if err == nil {
-		_ = json.Unmarshal(raw, v)
+		_ = json.NewDecoder(bytes.NewReader(raw)).Decode(v)
 	}
 }

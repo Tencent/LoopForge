@@ -281,7 +281,7 @@ function bindConfirmModal(modal){
 function afConfirm(options){
   const opt=typeof options==='string'?{message:options}:(options||{});
   return afOpenDialog(()=>{
-    const danger=!!opt.danger;
+    const danger=!!(opt.danger||opt.isDanger);
     $('#confirmTitle').textContent=opt.title||(danger?'危险操作确认':'操作确认');
     // messageData: the message quotes user data (a name), so English mode only takes whole-message dictionary hits.
     const message=$('#confirmMessage');
@@ -720,10 +720,10 @@ function resourceIdProblem(id){
 }
 function uid(prefix){return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,6)}`}
 const PRODUCTION_SOPS=new Set(['issue-fix-production','requirement-development-production']);
-function catalogOwned(projectId){return !!state.projectFilter&&projectId===state.projectFilter}
+function catalogOwned(projectId,activeProject=state.projectFilter){return !!activeProject&&projectId===activeProject}
 function catalogForeign(projectId){return !!projectId&&projectId!==state.projectFilter}
-function catalogShared(projectId,shared){return !projectId||(!!shared&&projectId!==state.projectFilter)}
-function catalogVisible(projectId,shared){return catalogOwned(projectId)||catalogShared(projectId,shared)}
+function catalogShared(projectId,shared,activeProject=state.projectFilter){return !projectId||(!!shared&&projectId!==activeProject)}
+function catalogVisible(projectId,shared,activeProject=state.projectFilter){return catalogOwned(projectId,activeProject)||catalogShared(projectId,shared,activeProject)}
 // Generic templates are platform-provided and project independent: every
 // project sees them, but they are read-only blueprints until adopted.
 function isPlatformAdmin(){return !!(state.currentUser&&!state.currentUser.isGuest&&state.currentUser.isPlatformAdmin)}
@@ -854,8 +854,9 @@ function preferredWorkflow(){
   const usable=catalogWorkflows(), mine=usable.filter(w=>catalogOwned(w.projectId));
   return mine.find(w=>w.id==='issue-fix-production')||mine[0]||usable.find(w=>w.id==='issue-fix-production')||usable[0]||null;
 }
+function workflowKeptForProject(projectId=state.projectFilter){return !!(state.workflow&&!catalogGeneric(state.workflow)&&catalogVisible(state.workflow.projectId,state.workflow.shared,projectId))}
 function syncWorkflowToProject(){
-  if(state.workflow&&!catalogGeneric(state.workflow)&&catalogVisible(state.workflow.projectId,state.workflow.shared))return;
+  if(workflowKeptForProject())return;
   state.workflow=clone(preferredWorkflow());
   state.workflowSaved=clone(state.workflow);
   state.workflowDirty=false;
@@ -1400,7 +1401,7 @@ function bind(){
       if(state.drawerOpen)return closeIssueDrawer();
       if($('#requirementModal')?.classList.contains('open')){
         if(!$('#reqRepoPopover')?.hidden){toggleReqRepoPopover(false);return}
-        closeRequirementComposer();return
+        closeRequirementComposer({confirmDiscard:true});return
       }
       const open=[...$$('.modal.open')].pop();
       if(open?.id==='scheduleModal')return closeScheduleJobModal();
@@ -2074,10 +2075,14 @@ function rememberOpenWorkflow(){
   if(location.hash!==next)history.replaceState(null,'',next);
 }
 // Switches the active project like the project switcher does. Resolves false
-// when the user keeps unsaved asset edits instead.
+// when the user keeps unsaved asset or LOOP edits.
 async function selectProject(projectId){
   const select=$('#projectSwitcher');
-  if(!await confirmAssetLeave()){if(select)select.value=state.projectFilter||'';return false}
+  if(!await confirmAssetLeave()){renderProjectSwitcher();return false}
+  if(state.workflowDirty&&!workflowKeptForProject(projectId)){
+    const discard=await afConfirm({title:'放弃修改并切换项目？',message:'当前流程有未保存修改，切换项目后将丢弃这些修改。',danger:true,confirmText:'放弃修改并切换',cancelText:'继续编辑'});
+    if(!discard){renderProjectSwitcher();return false}
+  }
   if(select)select.value=projectId;
   const frame=$('#chatNextFrame');
   if(frame?.contentWindow)frame.contentWindow.postMessage({type:'agentflow-project-context',projectId},location.origin);

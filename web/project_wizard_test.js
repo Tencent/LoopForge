@@ -48,6 +48,7 @@ let hashListener = null;
 const ctx = {
   URL,
   console, Event,
+  lfT:zh=>zh,
   state:{projectFilter:"agentflow",currentUser:{id:1},projectAdminDetailId:null,projectAdminTab:"basic",projectDraft:null,projectDraftFor:"",projectDraftBase:null,
     data:{projects,repositories,issues:[],users,workflows:[{id:"generic-backend-delivery",name:"后端交付",generic:true},{id:"wf",name:"Backend"}],businessDomains:[],mcpServers:[{id:"tapd",marketId:"70"}]}},
   escapeHTML:s=>String(s??"").replace(/[&<>'"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","'":"&#39;",'"':"&quot;"}[c])),

@@ -74,8 +74,11 @@ func appErrStatus(kind apperr.Kind) int {
 // It always caps the body at 2 MiB; a handler that accepts more calls
 // decodeLimit with its own limit.
 func decode(c *gin.Context, v any) bool {
-	return decodeLimit(c, v, 2<<20)
+	return decodeLimit(c, v, jsonBodyLimit)
 }
+
+// jsonBodyLimit is the default request body cap of decode().
+const jsonBodyLimit = 2 << 20
 
 // decodeLimit binds the JSON request body with an explicit size limit.
 func decodeLimit(c *gin.Context, v any, limit int64) bool {

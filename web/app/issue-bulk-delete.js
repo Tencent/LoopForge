@@ -52,7 +52,7 @@ function renderIssueBulkActions(visibleIssues){
   host.innerHTML=`<div class="issue-bulk-toolbar">
     <div class="issue-bulk-summary">${issueSelectAllCheckbox(scope,true)}<span aria-live="polite">已选择 <b>${selected}</b> 项</span><small>可跨页选择；切换筛选条件会清空选择</small></div>
     <div class="issue-bulk-buttons"><button type="button" class="button ghost small" data-issue-cancel-selection${busy?' disabled':''}>取消</button><button type="button" class="button ghost small" data-issue-clear-selection${!selected||busy?' disabled':''}>清空选择</button><button type="button" class="button danger-outline small" data-issue-bulk-delete${!selected||busy?' disabled':''}>${buttonText}</button></div>
-  </div>${blocked.length?`<details class="issue-bulk-blocked"${reasonsOpen?' open':''}><summary>当前列表 ${blocked.length} 项不可删除，查看原因</summary><ul>${blocked.map(i=>`<li><div><b>${escapeHTML(i.title||i.id)}</b><p>${escapeHTML(issueDeletionBlock(i).reason)}</p></div>${issueDeletionContextHTML(i)}</li>`).join('')}</ul></details>`:''}${result?.failures.length?`<details class="issue-bulk-result" open><summary>已删除 ${result.deleted} 条，${result.failures.length} 条未删除</summary><ul>${result.failures.map(f=>`<li><b>${escapeHTML(f.title||f.id)}</b>：${escapeHTML(f.message)}</li>`).join('')}</ul></details>`:''}`;
+  </div>${blocked.length?`<details class="issue-bulk-blocked"${reasonsOpen?' open':''}><summary>当前列表 ${blocked.length} 项不可删除，查看原因</summary><ul>${blocked.map(i=>`<li><div><b data-i18n-data>${escapeHTML(i.title||i.id)}</b><p>${escapeHTML(issueDeletionBlock(i).reason)}</p></div>${issueDeletionContextHTML(i)}</li>`).join('')}</ul></details>`:''}${result?.failures.length?`<details class="issue-bulk-result" open><summary>已删除 ${result.deleted} 条，${result.failures.length} 条未删除</summary><ul>${result.failures.map(f=>`<li><b>${escapeHTML(f.title||f.id)}</b>：${escapeHTML(f.message)}</li>`).join('')}</ul></details>`:''}`;
   bindIssueDeletionContext(host);
   host.querySelector('[data-issue-cancel-selection]').onclick=()=>setIssueSelectionMode(false);
   host.querySelector('[data-issue-clear-selection]').onclick=()=>{state.issueSelection.clear();renderIssueBulkActions(visibleIssues);bindIssueSelection(visibleIssues)};
@@ -102,13 +102,17 @@ async function deleteSelectedIssues(){
   if(!issues.length)return toast('请先选择可删除的需求');
   const scope=issueSelectionFilterKey(),external=issues.some(i=>i.source==='tapd'||i.source==='gongfeng');
   const forceIDs=new Set(issues.filter(i=>i.deletionRequiresForce===true).map(i=>i.id));
-  const names=issues.slice(0,5).map(i=>`「${i.title||i.id}」`).join('、')+(issues.length>5?'等':'');
+  const shown=issues.slice(0,5).map(i=>i.title||i.id),more=issues.length>5;
+  const names=shown.map(n=>`「${n}」`).join('、')+(more?'等':'');
+  const namesEn=shown.map(n=>`"${n}"`).join(', ')+(more?', and more':'');
   const forceNotice=forceIDs.size?`其中 ${forceIDs.size} 条已有执行记录或已完成，将强制删除。`:'';
+  const forceNoticeEn=forceIDs.size?` ${forceIDs.size} of them already have run records or are completed and will be force-deleted.`:'';
   state.issueBulkDeleting=true;
   renderIssues();
   try{
     const action=forceIDs.size?'确认强制删除':'确认删除';
-    if(!await afConfirm({title:'批量删除需求',message:`确定删除选中的 ${issues.length} 条需求（${names}）？${forceNotice}${issueDeletionWarning(forceIDs.size>0,external)}`,danger:true,confirmText:`${action} ${issues.length} 条需求`}))return;
+    const actionEn=forceIDs.size?'Force delete':'Delete';
+    if(!await afConfirm({title:lfT('批量删除需求','Delete requirements'),message:lfT(`确定删除选中的 ${issues.length} 条需求（${names}）？${forceNotice}${issueDeletionWarning(forceIDs.size>0,external)}`,`Delete ${issues.length} selected requirement(s) (${namesEn})?${forceNoticeEn} ${issueDeletionWarningEn(forceIDs.size>0,external)}`),messageData:true,danger:true,confirmText:`${action} ${issues.length} 条需求`}))return;
     if(scope!==issueSelectionFilterKey())return toast('筛选条件已变化，请重新选择需求','info');
     const result={deleted:0,failures:[]};
     state.issueBulkDeleteResult=result;

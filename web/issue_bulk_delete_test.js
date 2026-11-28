@@ -18,7 +18,7 @@ function setup(items, options = {}) {
   }};
   const state = {data:{issues:items, tasks:items.map(i => ({id:`task-${i.id}`, issueId:i.id}))},
     issueSelectionMode:false, issueSelection:new Set(), issueBulkDeleting:false, issueView:'table'};
-  const c = {state, Set, escapeHTML, $:s => s === '#issueBulkActions' ? host : s === '#startIssueSelection' ? (buttons[s] ||= {}) : root,
+  const c = {state, Set, escapeHTML, lfT:zh=>zh, $:s => s === '#issueBulkActions' ? host : s === '#startIssueSelection' ? (buttons[s] ||= {}) : root,
     issueCanDelete:i => i?.deletionAllowed === true && i.clarification?.status !== 'analyzing',
     issueDeletionBlock:i => i.deletionBlock || {reason:'暂时无法确认删除条件，请刷新后重试'},
     issueDeletionContextHTML:() => '', bindIssueDeletionContext:() => {},
