@@ -18,7 +18,7 @@ func TestAssistantEngineModelsKeepPersonalCatalogOnOfficialKey(t *testing.T) {
 		return []assistantDiscoveredModel{{ID: "remote-model", Name: "Remote"}}, nil
 	}
 	ids := func(user domain.User) []string {
-		models, _ := assistantEngineModels(context.Background(), user, nil)
+		models, _ := assistantEngineModels(context.Background(), user, nil, nil)
 		var out []string
 		for _, model := range models {
 			out = append(out, model.ID)

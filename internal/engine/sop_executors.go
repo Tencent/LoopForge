@@ -8,6 +8,7 @@ import (
 
 	"agentflow/internal/domain"
 	"agentflow/internal/repo"
+	"agentflow/internal/runtime"
 )
 
 type SOPExecutorRequirement struct {
@@ -19,11 +20,13 @@ type SOPExecutorRequirement struct {
 var errSOPExecutorUnconfigured = errors.New("请在个人配置中添加当前执行环境可用的执行器，再重试此节点")
 
 type sopExecutorAccess struct {
-	user            domain.User
-	runner          domain.Runner
-	usesRunner      bool
-	execution       domain.TelemetryContext
-	sharedCodeBuddy bool
+	user       domain.User
+	runner     domain.Runner
+	usesRunner bool
+	execution  domain.TelemetryContext
+	// shared marks the CLIs whose personal key the responsible user lacks and
+	// whose platform-shared key stands in for it.
+	shared map[string]bool
 }
 
 func (e *Engine) sopExecutorAccess(ec domain.TelemetryContext) sopExecutorAccess {
@@ -33,9 +36,19 @@ func (e *Engine) sopExecutorAccess(ec domain.TelemetryContext) sopExecutorAccess
 func newSOPExecutorAccess(s *repo.Store, ec domain.TelemetryContext) sopExecutorAccess {
 	user, _ := s.User(ec.ResponsibleUserID)
 	runner, _ := s.Runner(ec.ExecutionRunnerID)
+	shared := map[string]bool{}
+	if resolveCodeBuddyCredential(s, user.ID).Sponsored {
+		shared[domain.SharedModelProviderCodeBuddy] = true
+	}
+	if resolveProviderCredential(s, user.ID, domain.SharedModelProviderCodex, runtime.ProviderCredential{APIKey: user.CodexAPIKey}).Sponsored {
+		shared[domain.SharedModelProviderCodex] = true
+	}
+	if resolveProviderCredential(s, user.ID, domain.SharedModelProviderClaude, runtime.ProviderCredential{APIKey: user.ClaudeCodeAPIKey}).Sponsored {
+		shared[domain.SharedModelProviderClaude] = true
+	}
 	return sopExecutorAccess{
 		user: user, runner: runner, usesRunner: ec.ExecutionRunnerID != "", execution: ec,
-		sharedCodeBuddy: resolveCodeBuddyCredential(s, user.ID).Sponsored,
+		shared: shared,
 	}
 }
 
@@ -113,13 +126,13 @@ func (a sopExecutorAccess) configured(kind string) bool {
 	return a.hasCredential(kind)
 }
 
-// hasCredential accepts a personal key, the platform's shared CodeBuddy Key,
-// or account login on the run's machine.
+// hasCredential accepts a personal key, the platform's shared key for that
+// CLI, or account login on the run's machine.
 func (a sopExecutorAccess) hasCredential(kind string) bool {
 	if a.runner.SupportsProvider(kind) && a.runnerLogin(kind) {
 		return true
 	}
-	return a.user.HasExecutorCredential(kind) || kind == "codebuddy" && a.sharedCodeBuddy
+	return a.user.HasExecutorCredential(kind) || a.shared[kind]
 }
 
 func (a sopExecutorAccess) defaults() domain.AssistantDefaults {
@@ -138,8 +151,10 @@ func (a sopExecutorAccess) defaults() domain.AssistantDefaults {
 			return a.defaultsFor(ex, "", "")
 		}
 	}
-	if a.configured("codebuddy") {
-		return domain.AssistantDefaults{Executor: "codebuddy"}
+	for _, kind := range domain.SharedModelProviders {
+		if a.shared[kind] && a.configured(kind) {
+			return domain.AssistantDefaults{Executor: kind}
+		}
 	}
 	return domain.AssistantDefaults{}
 }

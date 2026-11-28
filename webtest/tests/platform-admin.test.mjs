@@ -49,7 +49,14 @@ test('platform admin tabs separate all five settings sections and support keyboa
   app.evaluate(`state.currentUser={...state.data.users[0],isGuest:false,isPlatformAdmin:true}`);
   app.router.get('/api/platform/admins', [{ userId: 1, loginName: 'owner', chineseName: '', source: 'granted', revocable: true }]);
   app.router.get('/api/platform/accounts', { signupEnabled: true, accounts: [1, 2, 3].map((id) => ({ userId: id, loginName: `user${id}`, admin: id === 1, password: true, codeBuddyApiKeyConfigured: false })) });
-  app.router.get(/^\/api\/platform\/codebuddy-key/, { configured: true, internetEnvironment: '', models: ['glm-5.1'], updatedBy: 'owner', catalog: [{ id: 'glm-5.1', name: 'GLM-5.1' }, { id: 'kimi-k2.6', name: 'Kimi-K2.6' }] });
+  app.router.get('/api/platform/model-keys', { keys: [
+    { provider: 'codebuddy', configured: true, internetEnvironment: '', models: ['glm-5.1'] },
+    { provider: 'codex', configured: false, baseUrl: '', models: [] },
+    { provider: 'claude-code', configured: false, baseUrl: '', models: [] },
+  ] });
+  app.router.get(/^\/api\/platform\/model-keys\/codebuddy(\?|$)/, { provider: 'codebuddy', configured: true, internetEnvironment: '', models: ['glm-5.1'], updatedBy: 'owner', catalog: [{ id: 'glm-5.1', name: 'GLM-5.1' }, { id: 'kimi-k2.6', name: 'Kimi-K2.6' }] });
+  app.router.get('/api/platform/model-keys/codex', { provider: 'codex', configured: false, baseUrl: '', models: [], catalog: [{ id: 'gpt-6.1-terra', name: 'GPT-6.1-Terra' }] });
+  app.router.get('/api/platform/model-keys/claude-code', { provider: 'claude-code', configured: false, baseUrl: '', models: [], catalog: [{ id: 'claude-opus-5', name: 'Claude Opus 5' }] });
   app.router.get('/api/platform/public-url', { source: 'env', value: 'https://loopforge.example.com', envValue: 'https://loopforge.example.com' });
   app.evaluate(`renderPlatformAdminPanel()`);
   await settle(8);
@@ -273,7 +280,7 @@ test('platform admins create accounts and reset passwords from the page', async 
   assert.equal(card.querySelectorAll('[data-account-row]').length, 1);
 });
 
-test('platform admins share a CodeBuddy key limited to the models they pick', async (t) => {
+test('platform admins share model keys per CLI, limited to the models they pick', async (t) => {
   const app = await loadApp();
   t.after(app.close);
   app.evaluate(`state.currentUser={...state.data.users[0],isGuest:false,isPlatformAdmin:true}`);
@@ -281,20 +288,31 @@ test('platform admins share a CodeBuddy key limited to the models they pick', as
     '': [{ id: 'default', name: 'CLI 默认模型' }, { id: 'glm-5.1', name: 'GLM-5.1', credits: '0.2x' }, { id: 'kimi-k2.6', name: 'Kimi-K2.6' }],
     internal: [{ id: 'default', name: 'CLI 默认模型' }, { id: 'deepseek-v4.1-flash', name: 'Deepseek-V4.1-Flash' }, { id: 'glm-5.1', name: 'GLM-5.1' }],
   };
-  let saved = { configured: false, internetEnvironment: '', models: [], legacySponsor: 'sponsor', legacySponsorModel: 'deepseek-v4.1-flash' };
+  const saved = {
+    codebuddy: { provider: 'codebuddy', configured: false, internetEnvironment: '', models: [], legacySponsor: 'sponsor', legacySponsorModel: 'deepseek-v4.1-flash' },
+    codex: { provider: 'codex', configured: false, baseUrl: '', models: [] },
+    'claude-code': { provider: 'claude-code', configured: false, baseUrl: '', models: [] },
+  };
   app.router.get('/api/platform/admins', []);
   app.router.get('/api/platform/accounts', { accounts: [], signupEnabled: true });
-  app.router.get(/^\/api\/platform\/codebuddy-key/, (call) => {
-    const env = call.url.searchParams.has('environment') ? call.url.searchParams.get('environment') : saved.internetEnvironment;
-    return { ...saved, catalog: catalogs[env] || [] };
+  app.router.get('/api/platform/model-keys', () => ({ keys: Object.values(saved) }));
+  app.router.get(/^\/api\/platform\/model-keys\/codebuddy(\?|$)/, (call) => {
+    const env = call.url.searchParams.has('environment') ? call.url.searchParams.get('environment') : saved.codebuddy.internetEnvironment;
+    return { ...saved.codebuddy, catalog: catalogs[env] || [] };
   });
-  app.router.put('/api/platform/codebuddy-key', (call) => {
-    saved = { ...saved, configured: true, internetEnvironment: call.body.internetEnvironment, models: call.body.models, updatedBy: 'owner' };
-    return saved;
+  app.router.get('/api/platform/model-keys/codex', () => ({ ...saved.codex, catalog: [{ id: 'gpt-6.1-terra', name: 'GPT-6.1-Terra' }] }));
+  app.router.get('/api/platform/model-keys/claude-code', () => ({ ...saved['claude-code'], catalog: [{ id: 'claude-opus-5', name: 'Claude Opus 5' }] }));
+  app.router.put('/api/platform/model-keys/codebuddy', (call) => {
+    saved.codebuddy = { ...saved.codebuddy, configured: true, internetEnvironment: call.body.internetEnvironment, models: call.body.models, updatedBy: 'owner' };
+    return saved.codebuddy;
   });
-  app.router.delete('/api/platform/codebuddy-key', () => {
-    saved = { ...saved, configured: false, models: [] };
-    return saved;
+  app.router.put('/api/platform/model-keys/codex', (call) => {
+    saved.codex = { ...saved.codex, configured: true, baseUrl: call.body.baseUrl, models: call.body.models, updatedBy: 'owner' };
+    return saved.codex;
+  });
+  app.router.delete('/api/platform/model-keys/codebuddy', () => {
+    saved.codebuddy = { ...saved.codebuddy, configured: false, models: [] };
+    return saved.codebuddy;
   });
   app.evaluate(`renderPlatformAdminPanel()`);
   await settle(8);
@@ -305,14 +323,15 @@ test('platform admins share a CodeBuddy key limited to the models they pick', as
   assert.ok(!card.querySelector('[data-shared-models] input[value="default"]'), 'the CLI default is not offered');
   assert.ok(card.querySelector('[data-shared-models] input[value="deepseek-v4.1-flash"]').checked, 'the legacy sponsor model starts selected');
   assert.ok(card.querySelector('[data-shared-key-clear]').hidden);
+  assert.equal(card.querySelector('[data-shared-baseurl-field]').hidden, true, 'CodeBuddy uses a network environment');
 
   form.elements.internetEnvironment.value = 'internal';
   form.elements.internetEnvironment.dispatchEvent(new app.window.Event('change', { bubbles: true }));
   await settle(6);
   assert.equal(card.querySelector('[data-shared-key-link]').getAttribute('href'), 'https://copilot.tencent.com/profile/');
-  const box = (id) => card.querySelector(`[data-shared-models] input[value="${id}"]`);
-  box('glm-5.1').checked = true;
-  box('glm-5.1').dispatchEvent(new app.window.Event('change', { bubbles: true }));
+  const codeBuddyBox = (id) => card.querySelector(`[data-shared-models] input[value="${id}"]`);
+  codeBuddyBox('glm-5.1').checked = true;
+  codeBuddyBox('glm-5.1').dispatchEvent(new app.window.Event('change', { bubbles: true }));
   form.elements.extraModels.value = 'custom-model';
   form.elements.extraModels.dispatchEvent(new app.window.Event('input', { bubbles: true }));
   assert.deepEqual([...form.elements.defaultModel.options].map((o) => o.value), ['deepseek-v4.1-flash', 'glm-5.1', 'custom-model']);
@@ -330,24 +349,117 @@ test('platform admins share a CodeBuddy key limited to the models they pick', as
   assert.equal(card.querySelector('[data-shared-key-warning]').hidden, true);
   form.dispatchEvent(new app.window.Event('submit', { bubbles: true, cancelable: true }));
   await settle(6);
-  const put = app.router.calls.find((call) => call.method === 'PUT' && call.path === '/api/platform/codebuddy-key');
-  assert.deepEqual(put.body, { apiKey: 'ck_shared', internetEnvironment: 'internal', models: ['glm-5.1', 'deepseek-v4.1-flash', 'custom-model'] });
+  const put = app.router.calls.find((call) => call.method === 'PUT' && call.path === '/api/platform/model-keys/codebuddy');
+  assert.deepEqual(put.body, { apiKey: 'ck_shared', models: ['glm-5.1', 'deepseek-v4.1-flash', 'custom-model'], internetEnvironment: 'internal' });
   assert.equal(form.elements.apiKey.value, '', 'the key is not kept in the page');
   assert.equal(form.elements.apiKey.placeholder, '已配置，留空保持不变');
   assert.match(card.querySelector('[data-shared-key-badge]').textContent, /已启用/);
   assert.match(card.querySelector('[data-shared-key-meta]').textContent, /国内站，3 个模型，默认 glm-5.1/);
   assert.deepEqual(app.evaluate(`state.data.sponsoredModels`), ['glm-5.1', 'deepseek-v4.1-flash', 'custom-model']);
   assert.equal(app.evaluate(`sharedModelSummary()`), 'glm-5.1、Deepseek-V4.1-Flash、custom-model');
+  assert.ok(card.querySelector('[data-shared-provider="codebuddy"] [data-shared-provider-state]').classList.contains('is-on'));
 
+  // Codex and Claude Code take a Base URL instead of a network environment.
+  card.querySelector('[data-shared-provider="codex"]').click();
+  await settle(6);
+  assert.ok(card.querySelector('[data-shared-provider="codex"]').classList.contains('active'));
+  assert.equal(card.querySelector('[data-shared-env-field]').hidden, true);
+  assert.equal(card.querySelector('[data-shared-baseurl-field]').hidden, false);
+  assert.equal(card.querySelector('[data-shared-probe]').hidden, false, 'a gateway can be probed for models');
+  assert.ok(card.querySelector('[data-shared-models] input[value="gpt-6.1-terra"]'), 'the built-in Codex catalog is offered');
+  form.elements.baseUrl.value = 'https://gateway.example.com/v1';
+  const codexBox = card.querySelector('[data-shared-models] input[value="gpt-6.1-terra"]');
+  codexBox.checked = true;
+  codexBox.dispatchEvent(new app.window.Event('change', { bubbles: true }));
+  form.elements.apiKey.value = 'sk-gateway';
+  form.dispatchEvent(new app.window.Event('submit', { bubbles: true, cancelable: true }));
+  await settle(6);
+  const codexPut = app.router.calls.find((call) => call.method === 'PUT' && call.path === '/api/platform/model-keys/codex');
+  assert.deepEqual(codexPut.body, { apiKey: 'sk-gateway', models: ['gpt-6.1-terra'], baseUrl: 'https://gateway.example.com/v1' });
+  assert.match(card.querySelector('[data-shared-key-meta]').textContent, /https:\/\/gateway\.example\.com\/v1，1 个模型，默认 gpt-6\.1-terra/);
+
+  card.querySelector('[data-shared-provider="codebuddy"]').click();
+  await settle(6);
   const clear = card.querySelector('[data-shared-key-clear]');
   assert.equal(clear.hidden, false);
   clear.click();
   await settle();
   app.document.querySelector('#confirmOkBtn').click();
   await settle(6);
-  assert.ok(app.router.calls.some((call) => call.method === 'DELETE' && call.path === '/api/platform/codebuddy-key'));
+  assert.ok(app.router.calls.some((call) => call.method === 'DELETE' && call.path === '/api/platform/model-keys/codebuddy'));
   assert.match(card.querySelector('[data-shared-key-badge]').textContent, /使用旧配置/);
   assert.equal(app.evaluate(`state.data.sponsoredModel`), 'deepseek-v4.1-flash');
+});
+
+// A slow reply for the tab the admin already left must not fill the form of
+// the tab now shown; saving would otherwise write another CLI's models and an
+// empty Base URL under it.
+test('shared model key tabs ignore a late reply from the tab that was left', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  app.evaluate(`state.currentUser={...state.data.users[0],isGuest:false,isPlatformAdmin:true}`);
+  const saved = {
+    codebuddy: { provider: 'codebuddy', configured: true, internetEnvironment: '', models: ['cb-model-1'] },
+    codex: { provider: 'codex', configured: false, baseUrl: '', models: [] },
+    'claude-code': { provider: 'claude-code', configured: true, baseUrl: 'http://127.0.0.1:18511', models: ['claude-opus-5'] },
+  };
+  const held = [];
+  let holdCodeBuddy = false;
+  app.router.get('/api/platform/admins', []);
+  app.router.get('/api/platform/accounts', { accounts: [], signupEnabled: true });
+  app.router.get('/api/platform/model-keys', () => ({ keys: Object.values(saved) }));
+  app.router.get(/^\/api\/platform\/model-keys\/codebuddy(\?|$)/, () => {
+    const reply = { ...saved.codebuddy, catalog: [{ id: 'cb-model-1', name: 'CB Model 1' }] };
+    if (!holdCodeBuddy) return reply;
+    return new Promise((resolve) => held.push(() => resolve(reply)));
+  });
+  app.router.get('/api/platform/model-keys/codex', () => ({ ...saved.codex, catalog: [{ id: 'gpt-6.1-terra', name: 'GPT-6.1-Terra' }] }));
+  app.router.get('/api/platform/model-keys/claude-code', () => ({ ...saved['claude-code'], catalog: [{ id: 'claude-opus-5', name: 'Claude Opus 5' }] }));
+  app.router.put('/api/platform/model-keys/claude-code', (call) => ({ ...saved['claude-code'], ...call.body, configured: true }));
+  app.evaluate(`renderPlatformAdminPanel()`);
+  await settle(8);
+  const card = app.document.querySelector('#platformSharedKeyCard');
+  const form = card.querySelector('#platformSharedKeyForm');
+  const boxes = () => [...card.querySelectorAll('[data-shared-models] input[type="checkbox"]')].filter((box) => box.checked).map((box) => box.value);
+  card.querySelector('[data-shared-provider="codex"]').click();
+  await settle(6);
+
+  // Start loading CodeBuddy, then switch to Claude Code before it replies.
+  holdCodeBuddy = true;
+  card.querySelector('[data-shared-provider="codebuddy"]').click();
+  await settle(2);
+  assert.equal(held.length, 1, 'the CodeBuddy request is pending');
+  card.querySelector('[data-shared-provider="claude-code"]').click();
+  await settle(6);
+  assert.equal(form.elements.baseUrl.value, 'http://127.0.0.1:18511');
+  assert.deepEqual(boxes(), ['claude-opus-5']);
+
+  held.shift()();
+  await settle(6);
+  assert.ok(card.querySelector('[data-shared-provider="claude-code"]').classList.contains('active'));
+  assert.equal(card.querySelector('[data-shared-baseurl-field]').hidden, false, 'the late CodeBuddy reply did not switch the fields');
+  assert.equal(form.elements.baseUrl.value, 'http://127.0.0.1:18511', 'the Claude Code Base URL is kept');
+  assert.deepEqual(boxes(), ['claude-opus-5'], 'CodeBuddy models were not checked under Claude Code');
+  assert.ok(!card.querySelector('[data-shared-models] input[value="cb-model-1"]'), 'the CodeBuddy catalog is not shown');
+
+  form.dispatchEvent(new app.window.Event('submit', { bubbles: true, cancelable: true }));
+  await settle(6);
+  const put = app.router.calls.find((call) => call.method === 'PUT' && call.path === '/api/platform/model-keys/claude-code');
+  assert.deepEqual(put.body, { apiKey: '', models: ['claude-opus-5'], baseUrl: 'http://127.0.0.1:18511' });
+  assert.ok(!app.router.calls.some((call) => call.method === 'PUT' && call.path !== '/api/platform/model-keys/claude-code'));
+
+  // Saving while the shown tab is still loading is refused instead of saving
+  // what the form showed for the previous tab.
+  holdCodeBuddy = true;
+  card.querySelector('[data-shared-provider="codebuddy"]').click();
+  await settle(2);
+  const puts = app.router.calls.filter((call) => call.method === 'PUT').length;
+  form.dispatchEvent(new app.window.Event('submit', { bubbles: true, cancelable: true }));
+  await settle(4);
+  assert.equal(app.router.calls.filter((call) => call.method === 'PUT').length, puts, 'no save while loading');
+  held.shift()();
+  await settle(6);
+  assert.deepEqual(boxes(), ['cb-model-1']);
 });
 
 test('platform admins authorize HTTPS and HTTP separately in the Git host trust tab', async (t) => {
@@ -441,4 +553,97 @@ test('platform admins authorize HTTPS and HTTP separately in the Git host trust 
   const plainRevoke = app.router.calls.find(call => call.method === 'DELETE' && call.path === plainPath);
   assert.equal(new Headers(plainRevoke.options.headers).get('If-Match'), '"plain"');
   assert.equal(plainCard.querySelector('[data-http-host-revoke]'), null);
+});
+
+// Save, stop and a failed load reply after the request; the admin may have
+// switched tabs meanwhile. Each reply belongs to the CLI it was sent for: a
+// Codex save that returns under Claude Code must not check Codex's models
+// there (saving would write them into Claude Code's shared key), and a stale
+// failure must not clear a tab a later request already filled.
+test('shared model key saves, stops and failed loads write back only to their own CLI', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  app.evaluate(`state.currentUser={...state.data.users[0],isGuest:false,isPlatformAdmin:true}`);
+  const saved = {
+    codebuddy: { provider: 'codebuddy', configured: true, internetEnvironment: '', models: ['cb-model-1'] },
+    codex: { provider: 'codex', configured: true, baseUrl: '', models: ['gpt-shared-only'] },
+    'claude-code': { provider: 'claude-code', configured: true, baseUrl: '', models: ['claude-shared-only'] },
+  };
+  const held = [];
+  let holdCodex = false, failCodex = false;
+  const hold = (reply) => new Promise((resolve) => held.push(() => resolve(reply)));
+  app.router.get('/api/platform/admins', []);
+  app.router.get('/api/platform/accounts', { accounts: [], signupEnabled: true });
+  app.router.get('/api/platform/model-keys', () => ({ keys: Object.values(saved) }));
+  app.router.get(/^\/api\/platform\/model-keys\/codebuddy(\?|$)/, () => ({ ...saved.codebuddy, catalog: [{ id: 'cb-model-1', name: 'CB Model 1' }] }));
+  app.router.get('/api/platform/model-keys/codex', () => {
+    const reply = failCodex ? { status: 502, body: { error: 'codex upstream down' } } : { ...saved.codex, catalog: [{ id: 'gpt-shared-only', name: 'GPT Shared' }] };
+    return holdCodex ? hold(reply) : reply;
+  });
+  app.router.get('/api/platform/model-keys/claude-code', () => ({ ...saved['claude-code'], catalog: [{ id: 'claude-shared-only', name: 'Claude Shared' }] }));
+  app.router.put('/api/platform/model-keys/codex', (call) => hold({ ...saved.codex, ...call.body, configured: true }));
+  app.router.put('/api/platform/model-keys/claude-code', (call) => ({ ...saved['claude-code'], ...call.body, configured: true }));
+  app.router.delete('/api/platform/model-keys/codex', () => hold({ provider: 'codex', configured: false, baseUrl: '', models: [] }));
+  app.evaluate(`renderPlatformAdminPanel()`);
+  await settle(8);
+  const card = app.document.querySelector('#platformSharedKeyCard');
+  const form = card.querySelector('#platformSharedKeyForm');
+  const boxes = () => [...card.querySelectorAll('[data-shared-models] input[type="checkbox"]')].filter((box) => box.checked).map((box) => box.value);
+  const submit = () => form.dispatchEvent(new app.window.Event('submit', { bubbles: true, cancelable: true }));
+  const tab = (id) => card.querySelector(`[data-shared-provider="${id}"]`).click();
+
+  // Save Codex, switch to Claude Code before the save replies.
+  tab('codex');
+  await settle(6);
+  assert.deepEqual(boxes(), ['gpt-shared-only']);
+  submit();
+  await settle(2);
+  assert.equal(held.length, 1, 'the Codex save is pending');
+  tab('claude-code');
+  await settle(6);
+  held.shift()();
+  await settle(6);
+  assert.ok(card.querySelector('[data-shared-provider="claude-code"]').classList.contains('active'));
+  assert.deepEqual(boxes(), ['claude-shared-only'], 'the Codex save did not check its models under Claude Code');
+  assert.equal(form.elements.baseUrl.value, '');
+  submit();
+  await settle(6);
+  const claudePut = app.router.calls.filter((call) => call.method === 'PUT' && call.path === '/api/platform/model-keys/claude-code');
+  assert.equal(claudePut.length, 1);
+  assert.deepEqual(claudePut[0].body, { apiKey: '', models: ['claude-shared-only'], baseUrl: '' });
+
+  // Stop Codex, switch to Claude Code before the stop replies.
+  tab('codex');
+  await settle(6);
+  card.querySelector('[data-shared-key-clear]').click();
+  await settle(2);
+  app.document.querySelector('#confirmOkBtn').click();
+  await settle(2);
+  assert.equal(held.length, 1, 'the Codex stop is pending');
+  tab('claude-code');
+  await settle(6);
+  held.shift()();
+  await settle(6);
+  assert.deepEqual(boxes(), ['claude-shared-only'], 'stopping Codex did not clear the Claude Code selection');
+  assert.match(card.querySelector('[data-shared-key-badge]').textContent, /已启用/, 'Claude Code still shows as enabled');
+  assert.equal(card.querySelector('[data-shared-provider="codex"] [data-shared-provider-state]').hidden, true, 'the Codex tab shows it was stopped');
+
+  // A failed Codex load that replies after a later Codex load succeeded must
+  // not clear that tab.
+  holdCodex = true; failCodex = true;
+  tab('codex');
+  await settle(2);
+  tab('claude-code');
+  await settle(6);
+  holdCodex = false; failCodex = false;
+  saved.codex = { provider: 'codex', configured: true, baseUrl: 'http://127.0.0.1:19650/v1', models: ['gpt-shared-only'] };
+  tab('codex');
+  await settle(6);
+  assert.equal(form.elements.baseUrl.value, 'http://127.0.0.1:19650/v1');
+  assert.deepEqual(boxes(), ['gpt-shared-only']);
+  held.shift()();
+  await settle(6);
+  assert.equal(form.elements.baseUrl.value, 'http://127.0.0.1:19650/v1', 'the stale failure kept the loaded Base URL');
+  assert.deepEqual(boxes(), ['gpt-shared-only'], 'the stale failure kept the loaded models');
+  assert.ok(!app.document.body.textContent.includes('codex upstream down'), 'no error toast for the stale load');
 });

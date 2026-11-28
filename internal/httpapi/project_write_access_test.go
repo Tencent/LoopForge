@@ -77,6 +77,13 @@ func TestProjectContentWritesRequireMembership(t *testing.T) {
 		if _, err := s.UpdateUserCredentials(ownerUser.ID, repo.UserCredentialUpdate{CodexAPIKey: key, CodexModels: &models}); err != nil {
 			t.Fatal(err)
 		}
+		// Clarification runs on the owner's own credentials, so the platform's
+		// shared keys must not add models it would then refuse.
+		for provider, model := range map[string]string{domain.SharedModelProviderClaude: "shared-claude", domain.SharedModelProviderCodex: "shared-codex"} {
+			if err := s.SetPlatformModelKey(repo.PlatformModelKeyUpdate{Provider: provider, APIKey: "shared-" + provider, Models: []string{model}}, 0); err != nil {
+				t.Fatal(err)
+			}
+		}
 		for _, cookie := range []*http.Cookie{other, viewer} {
 			if code := call(cookie, "GET", path, ""); code != 403 {
 				t.Fatalf("clarification catalog requires project write access: %d", code)
@@ -92,6 +99,11 @@ func TestProjectContentWritesRequireMembership(t *testing.T) {
 		}
 		if len(catalog.Models) != 1 || catalog.Models[0].ID != "codex:owner-model" {
 			t.Fatalf("want the project owner's model: %+v", catalog.Models)
+		}
+		for _, engine := range catalog.Engines {
+			if engine.Shared {
+				t.Fatalf("clarification must not offer shared-key engines: %+v", catalog.Engines)
+			}
 		}
 	})
 	if code := call(other, "PUT", "/api/issues", `{"id":"i1","projectId":"p1","title":"Hijacked"}`); code != 403 {

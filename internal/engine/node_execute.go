@@ -924,10 +924,14 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 				options.GateResultPath = gateResultPath(nodeControlKey(current, node.ID), attempt)
 			}
 			ex := ex
-			if cb := sb.credentialSnapshot().CodeBuddy; ex.Kind == "codebuddy" && cb.Sponsored {
-				ex = e.sponsoredExecutor(runID, ex, cb.SponsoredModels, sink)
+			execMachine := e.defaultExecutionRunner(current)
+			// A node that runs on an execution machine with that machine's own
+			// CLI login uses no shared key, so its model is not pinned to the
+			// shared key's allowed list.
+			if !e.runnerUsesLocalLogin(current, execMachine, ex.Kind) {
+				ex = e.applySponsoredExecutor(runID, ex, sb.credentialSnapshot(), sink)
 			}
-			if execMachine := e.defaultExecutionRunner(current); execMachine != "" {
+			if execMachine != "" {
 				// 执行机器 mode (bind-cli): the responsible user selected a default
 				// execution machine, so the compiled task book, asset bundle, and
 				// repository checkout are dispatched there; Codex / Claude Code use

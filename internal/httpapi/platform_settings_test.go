@@ -205,7 +205,7 @@ func TestPlatformAdminsConfigureSharedCodeBuddyKey(t *testing.T) {
 		t.Fatalf("update models: %d %s", w.Code, w.Body.String())
 	}
 	w = client.call(owner, "GET", "/api/platform/codebuddy-key", "", "")
-	var status platformCodeBuddyKeyResponse
+	var status platformModelKeyResponse
 	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &status) != nil || !status.Configured || status.InternetEnvironment != "internal" || strings.Join(status.Models, ",") != "kimi-k2.6" || status.UpdatedBy != "owner" || len(status.Catalog) == 0 {
 		t.Fatalf("status: %d %s", w.Code, w.Body.String())
 	}

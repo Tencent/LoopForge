@@ -2,6 +2,12 @@
 
 Platform releases use `vX.Y.Z` tags and publish `ghcr.io/tencent/loopforge`. LoopForge Local packages use `local-vX.Y.Z` tags and are published by manually running the `release-local` workflow.
 
+## Unreleased
+
+### Platform
+
+- Platform administration shares model credentials per CLI instead of one CodeBuddy key. 平台管理 → 共享模型 Key holds one API Key per CLI (CodeBuddy, Codex, Claude Code), each with its own allow list of models and default; CodeBuddy keeps its network environment, Codex and Claude Code take an optional Base URL so a self-hosted gateway works, and the page can fetch the models a gateway publishes. Members without their own key for a CLI chat and run LOOP nodes on the shared one, limited to those models, while members with their own key are unaffected. The keys live in `platform_model_keys`; `migrations/050_platform_model_keys.sql` copies the earlier CodeBuddy row and the platform keeps reading the old table until then. Scheduled tasks, clarification, reports, bots and run evaluation keep using personal credentials.
+
 ## 0.4.3 — LOOP orchestration, execution machines and asset evolution
 
 ### Platform

@@ -218,8 +218,10 @@ func (e *Engine) resolveRunCredentials(run domain.Run) runtime.RunCredentials {
 		CodeBuddy: resolveCodeBuddyCredential(e.repo, userID),
 	}
 	if user, ok := e.repo.User(userID); ok {
-		credentials.Codex = runtime.ProviderCredential{APIKey: user.CodexAPIKey, BaseURL: user.CodexBaseURL}
-		credentials.ClaudeCode = runtime.ProviderCredential{APIKey: user.ClaudeCodeAPIKey, BaseURL: user.ClaudeCodeBaseURL}
+		credentials.Codex = resolveProviderCredential(e.repo, userID, domain.SharedModelProviderCodex,
+			runtime.ProviderCredential{APIKey: user.CodexAPIKey, BaseURL: user.CodexBaseURL})
+		credentials.ClaudeCode = resolveProviderCredential(e.repo, userID, domain.SharedModelProviderClaude,
+			runtime.ProviderCredential{APIKey: user.ClaudeCodeAPIKey, BaseURL: user.ClaudeCodeBaseURL})
 		credentials.AgentCLI = runtime.AgentCLIUserCredentials(user)
 	}
 	// Replay only receives the model credentials required to produce output.

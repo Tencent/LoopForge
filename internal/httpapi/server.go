@@ -283,6 +283,13 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.GET("/api/platform/accounts", api.users.platformAccounts)
 	g.POST("/api/platform/accounts", api.users.platformAccounts)
 	g.PUT("/api/platform/accounts/:id/password", api.users.resetPlatformAccountPassword)
+	g.GET("/api/platform/model-keys", api.users.platformModelKeyList)
+	g.GET("/api/platform/model-keys/:provider", api.users.platformModelKeys)
+	g.PUT("/api/platform/model-keys/:provider", api.users.platformModelKeys)
+	g.DELETE("/api/platform/model-keys/:provider", api.users.platformModelKeys)
+	g.POST("/api/platform/model-keys/:provider/probe", api.users.probePlatformModelKey)
+	// The single shared CodeBuddy key endpoint stays for older cached
+	// frontends; the page now calls /api/platform/model-keys/:provider.
 	g.GET("/api/platform/codebuddy-key", api.users.platformCodeBuddyKey)
 	g.PUT("/api/platform/codebuddy-key", api.users.platformCodeBuddyKey)
 	g.DELETE("/api/platform/codebuddy-key", api.users.platformCodeBuddyKey)

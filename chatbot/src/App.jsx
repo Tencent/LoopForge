@@ -3138,6 +3138,7 @@ export default function App() {
         defaultModel={chat.model}
         sponsoredModel={chat.sponsoredModel}
         sponsoredModels={chat.sponsoredModels}
+        sharedEngines={chat.sharedEngines}
         onClose={closeQuickAccess}
         onOpenView={(view) => navigate(view)}
         onCredentialsSaved={chat.refreshCredentials}

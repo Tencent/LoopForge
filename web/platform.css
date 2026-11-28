@@ -1566,6 +1566,12 @@ textarea.pa-input{height:auto;min-height:76px;padding:9px 11px;resize:vertical;l
 .platform-note.is-ok{border-color:color-mix(in srgb,var(--hui-success) 28%,transparent);background:color-mix(in srgb,var(--hui-success) 7%,var(--hui-surface));color:var(--text)}
 .platform-note.is-warn{border-color:color-mix(in srgb,var(--hui-warn) 28%,transparent);background:color-mix(in srgb,var(--hui-warn) 8%,var(--hui-surface));color:var(--hui-warn)}
 .platform-account-created[hidden]{display:none}
+.platform-shared-key-providers{align-self:flex-start}
+.platform-shared-key-providers .platform-filter-btn{display:inline-flex;align-items:center;gap:6px}
+.platform-provider-state{width:7px;height:7px;border-radius:50%;background:var(--muted-2)}
+.platform-provider-state[hidden]{display:none}
+.platform-provider-state.is-on{background:var(--hui-success,var(--green))}
+.platform-shared-key-probe{align-self:flex-start}
 .platform-shared-key-form{display:flex;flex-direction:column;gap:18px}
 .platform-shared-key-grid{display:grid;grid-template-columns:minmax(280px,1fr) minmax(0,1.5fr);gap:20px 28px;align-items:start}
 .platform-shared-key-col{display:flex;flex-direction:column;gap:16px;min-width:0}

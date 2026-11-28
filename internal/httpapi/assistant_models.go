@@ -45,6 +45,9 @@ type assistantModelCatalog struct {
 	// SponsoredModel is the first (the default).
 	SponsoredModel  string   `json:"sponsoredModel,omitempty"`
 	SponsoredModels []string `json:"sponsoredModels,omitempty"`
+	// SharedEngines lists, per CLI, the models the platform lends to a
+	// signed-in user who configured no key of their own for it.
+	SharedEngines map[string][]string `json:"sharedEngines,omitempty"`
 	// Engines lists the CLIs a signed-in user can switch between.
 	Engines             []assistantEngineOption   `json:"engines,omitempty"`
 	Preferences         *domain.AssistantDefaults `json:"preferences,omitempty"`
@@ -222,9 +225,10 @@ func (h *assistantHandlers) models(c *gin.Context) {
 			engine = assistantEngineClaude
 		}
 		var user domain.User
-		if h.repo != nil && (engine == runtime.AgentCLIKimi || engine == runtime.AgentCLIAntigravity) {
-			if current, signedIn := h.requestUser(c.Request, true); signedIn {
-				user, _ = h.repo.User(current.ID)
+		signedIn := false
+		if h.repo != nil {
+			if current, ok := h.requestUser(c.Request, true); ok {
+				user, signedIn = h.repo.User(current.ID)
 			}
 		}
 		_, kimiBaseURL := assistantEngineCredential(user, runtime.AgentCLIKimi)
@@ -238,6 +242,15 @@ func (h *assistantHandlers) models(c *gin.Context) {
 			c.Header("Cache-Control", "private, no-store")
 			c.JSON(200, result)
 			return
+		}
+		if signedIn && sharedEngine(engine) {
+			// A caller without their own key sees only the models the
+			// platform's shared key allows.
+			if key, _ := assistantEngineCredential(user, engine); key == "" {
+				if shared, found := h.repo.SharedModelKey(engine); found && len(shared.Models) > 0 {
+					catalog = restrictExecutorCatalog(catalog, shared.Models)
+				}
+			}
 		}
 		for _, item := range catalog.Models {
 			levels := make([]string, 0, len(item.Efforts))
@@ -260,6 +273,7 @@ func (h *assistantHandlers) models(c *gin.Context) {
 		user, signedIn = h.repo.User(current.ID)
 	}
 	usingSharedKey := signedIn && shared && strings.TrimSpace(user.CodeBuddyAPIKey) == ""
+	sharedModels := assistantSharedEngineModels(h.repo, user)
 	switch {
 	case usingSharedKey:
 		// Chat runs on the shared key, so list what that key's environment offers.
@@ -294,7 +308,10 @@ func (h *assistantHandlers) models(c *gin.Context) {
 		if strings.TrimSpace(c.Query("refresh")) == "1" {
 			invalidateAssistantEngineDiscoveryCache(user)
 		}
-		catalog.Engines = assistantEngineOptions(user, usingSharedKey)
+		catalog.Engines = assistantEngineOptions(user, sharedModels)
+		if len(sharedModels) > 0 {
+			catalog.SharedEngines = sharedModels
+		}
 		cloudPool := false
 		if h.engine != nil {
 			cloudPool, _ = h.engine.CloudPoolStatus()
@@ -320,7 +337,7 @@ func (h *assistantHandlers) models(c *gin.Context) {
 				}
 			}
 		}
-		models, pending := assistantEngineModels(c.Request.Context(), user, runnerLogin)
+		models, pending := assistantEngineModels(c.Request.Context(), user, runnerLogin, sharedModels)
 		catalog.Models = append(catalog.Models, models...)
 		catalog.CursorModelsPending = pending
 		h.saveCursorCatalog(user)

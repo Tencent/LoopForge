@@ -132,6 +132,28 @@ func effortOptions(levels []string) []executorEffortOption {
 
 // executorModelCatalogs returns built-in options plus the caller's CodeBuddy
 // catalog.
+// restrictExecutorCatalog keeps the allowed models in the administrator's
+// order, adding the IDs the built-in catalog does not list.
+func restrictExecutorCatalog(catalog executorModelCatalog, allowed []string) executorModelCatalog {
+	byID := map[string]executorModelInfo{}
+	for _, model := range catalog.Models {
+		byID[model.ID] = model
+	}
+	models := make([]executorModelInfo, 0, len(allowed))
+	for _, id := range allowed {
+		model, ok := byID[id]
+		if !ok {
+			model = executorModelInfo{ID: id, Name: id}
+		}
+		models = append(models, model)
+	}
+	catalog.Models = models
+	if len(allowed) > 0 {
+		catalog.Default = allowed[0]
+	}
+	return catalog
+}
+
 func executorModelCatalogs(kimiBaseURL string, codebuddy assistantModelCatalog) map[string]executorModelCatalog {
 	codebuddyModels := make([]executorModelInfo, 0)
 	for _, model := range selectableCodeBuddyModels(codebuddy.Models) {
