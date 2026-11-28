@@ -8,6 +8,9 @@ import (
 	"testing"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/engine"
+	"agentflow/internal/runtime"
+	"agentflow/internal/tracker"
 )
 
 // "创建并去对话澄清" opens a new conversation whose first message @-mentions
@@ -209,5 +212,45 @@ func TestIssueReferenceAndTurnContextIncludeBoundSOPAndDeliveryMode(t *testing.T
 	}
 	if !strings.Contains(noSOPReq.contextText, `"sopMode":"none"`) || strings.Contains(noSOPReq.contextText, `"boundSops"`) || !strings.Contains(noSOPReq.contextText, "交付方式：不使用 LOOP") {
 		t.Fatalf("no-SOP context unexpected:\n%s", noSOPReq.contextText)
+	}
+}
+
+func TestAssistantIssuesSaveRecordsIssueAsset(t *testing.T) {
+	h, u := workbenchFixture(t)
+	h.api = New(h.repo, engine.New(h.repo, runtime.NewManager(t.TempDir())), tracker.NewService(), "", "")
+	if err := h.repo.PutIssue(domain.Issue{
+		ID:         "iss-clarified",
+		ProjectID:  "workbench",
+		Title:      "列表导出 CSV",
+		Status:     "backlog",
+		WorkflowID: "generic-frontend-delivery",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var recorded []domain.AssistantAssetRef
+	ctx := withAssistantExecMode(context.Background(), assistantExecMode{AutoWrite: true})
+	ctx = context.WithValue(ctx, assistantAssetObserverKey{}, func(asset domain.AssistantAssetRef) {
+		recorded = append(recorded, asset)
+	})
+	_, err := h.callAssistantPlatform(ctx, u, "workbench", assistantMCPCall{
+		Tool: "issues_save",
+		Arguments: map[string]any{
+			"body": map[string]any{
+				"id":          "iss-clarified",
+				"projectId":   "workbench",
+				"title":       "列表导出 CSV（已澄清）",
+				"description": "补齐字段格式与空值处理",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("callAssistantPlatform(issues_save): %v", err)
+	}
+	if len(recorded) != 1 {
+		t.Fatalf("recorded assets = %+v, want 1", recorded)
+	}
+	got := recorded[0]
+	if got.Kind != "issue" || got.ID != "iss-clarified" || got.Name != "列表导出 CSV（已澄清）" || got.ProjectID != "workbench" || got.Tool != "issues_save" {
+		t.Fatalf("unexpected recorded issue asset: %+v", got)
 	}
 }

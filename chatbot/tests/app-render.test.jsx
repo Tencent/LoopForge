@@ -1514,3 +1514,88 @@ describe("sidebar reply status", () => {
     }
   });
 });
+
+describe("saved requirement dispatch card", () => {
+  test("offers a one-click LOOP dispatch card below a reply that saved a bound requirement", async () => {
+    const user = userEvent.setup();
+    const previous = { ...chat };
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn(async (url, init) => {
+      if (url === "/api/issues/iss-4/requirement") {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            issue: { id: "iss-4", number: 4, title: "列表导出 CSV", projectId: "p1", status: "backlog", workflowId: "wf-fe" },
+            overall: { runCount: 0 },
+            lanes: [{ workflowId: "wf-fe", workflowName: "通用前端交付", started: false, runCount: 0 }],
+          }),
+        };
+      }
+      if (url === "/api/issues/iss-4/dispatch") {
+        expect(init.headers["x-agentflow-chat-session"]).toBe("s-dispatch");
+        return {
+          ok: true,
+          status: 201,
+          json: async () => ({ id: "task-4", runId: "run-404", workflowId: "wf-fe" }),
+        };
+      }
+      if (url === "/api/runs/run-404") {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            id: "run-404",
+            status: "running",
+            workflowId: "wf-fe",
+            executionContext: { projectId: "p1", issueId: "iss-4" },
+            workflowSnapshot: { id: "wf-fe", name: "通用前端交付", nodes: [] },
+            nodes: {},
+          }),
+        };
+      }
+      return { ok: true, status: 200, json: async () => ({}) };
+    });
+    const session = {
+      id: "s-dispatch",
+      title: "澄清导出 CSV",
+      projectId: "p1",
+      issueId: "iss-4",
+      messages: [
+        { role: "user", content: "@列表导出 CSV 帮我澄清这个需求" },
+        {
+          role: "assistant",
+          content: JSON.stringify({ message: "需求 #4 已成功保存。", drafts: [] }),
+          assets: [
+            { kind: "issue", id: "iss-4", name: "列表导出 CSV", projectId: "p1", tool: "issues_save" },
+          ],
+        },
+      ],
+    };
+    Object.assign(chat, {
+      activeId: "s-dispatch",
+      projectId: "p1",
+      issueId: "iss-4",
+      session,
+      sessions: [session],
+    });
+    const view = render(<App />);
+    try {
+      const dispatchBtn = await screen.findByRole("button", { name: "派发 LOOP" });
+      expect(screen.getByText("#4 列表导出 CSV")).toBeInTheDocument();
+      expect(screen.getByText("需求已保存 · 已绑定 LOOP「通用前端交付」")).toBeInTheDocument();
+
+      await user.click(dispatchBtn);
+      await waitFor(() => expect(screen.getByRole("button", { name: "已派发" })).toBeDisabled());
+      expect(screen.getByRole("button", { name: "查看运行" })).toBeInTheDocument();
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        "/api/issues/iss-4/dispatch",
+        expect.objectContaining({ method: "POST" }),
+      );
+    } finally {
+      view.unmount();
+      globalThis.fetch = originalFetch;
+      Object.assign(chat, previous);
+    }
+  });
+});
