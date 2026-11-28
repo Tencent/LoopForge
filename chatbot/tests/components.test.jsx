@@ -1111,6 +1111,48 @@ describe("content and panels", () => {
     );
   });
 
+  test("previews earlier node attempts from the run overview and its file navigation", async () => {
+    const user = userEvent.setup();
+    const reviewRun = {
+      ...run,
+      id: "r-replayed",
+      status: "succeeded",
+      nodes: { n1: { nodeId: "n1", status: "succeeded", attempt: 2 } },
+      artifacts: [
+        { id: "new", nodeId: "n1", path: "new.md", mediaType: "text/markdown", attempt: 2 },
+        { id: "old", nodeId: "n1", path: "old.md", mediaType: "text/markdown", attempt: 1 },
+      ],
+    };
+    const fileRead = vi.spyOn(globalThis, "fetch").mockImplementation(async (url) => ({
+      ok: true,
+      text: async () => `Body of ${String(url).split("/").pop()}`,
+    }));
+    try {
+      render(
+        <ArtifactPanel
+          artifacts={[]}
+          runs={[reviewRun]}
+          selected={{ kind: "run", id: "run-replayed", runId: reviewRun.id }}
+          setSelected={vi.fn()}
+          chat={chat}
+          onClose={vi.fn()}
+          open
+        />,
+      );
+      await user.click(screen.getByText("new.md"));
+      expect(await screen.findByText("Body of new")).toBeInTheDocument();
+      await user.click(screen.getByRole("button", { name: "下一个产物" }));
+      expect(await screen.findByText("Body of old")).toBeInTheDocument();
+      await user.click(screen.getByRole("button", { name: "上一个产物" }));
+      expect(await screen.findByText("Body of new")).toBeInTheDocument();
+      await user.click(screen.getByRole("button", { name: "返回运行概览" }));
+      await user.click(screen.getByText("old.md"));
+      expect(await screen.findByText("Body of old")).toBeInTheDocument();
+    } finally {
+      fileRead.mockRestore();
+    }
+  });
+
   test("steps between node artifacts in a single back-toolbar and groups upstream review artifacts in filesOnly", async () => {
     const user = userEvent.setup();
     const reviewRun = {

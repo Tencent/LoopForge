@@ -213,7 +213,13 @@ export function SopNodeDetail({
   const latestAttempt =
     node.attempt ??
     own.reduce((attempt, file) => Math.max(attempt, file.attempt || 0), 0);
-  const attempt = selectedAttempt ?? latestAttempt;
+  // The run overview can select an artifact from any saved node attempt.
+  const selectedOwnFile = controlledPreview && selectedFileId
+    ? own.find(({ id }) => id === selectedFileId)
+    : null;
+  const attempt = selectedOwnFile
+    ? selectedOwnFile.attempt || latestAttempt
+    : (selectedAttempt ?? latestAttempt);
   const latest = attempt === latestAttempt;
   const files = own.filter((file) =>
     file.attempt ? file.attempt === attempt : latest,
