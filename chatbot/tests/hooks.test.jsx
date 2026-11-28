@@ -74,6 +74,311 @@ describe("conversation hooks", () => {
     } finally { apiMock.mockImplementation(original); }
   });
 
+  test.each(["/", "/?session=s1"])("reveals the embedded chat on %s while models and history are pending", async (url) => {
+    const postMessage = vi.fn();
+    const parent = vi.spyOn(window, "parent", "get").mockReturnValue({ postMessage });
+    const original = apiMock.getMockImplementation();
+    const auth = Promise.withResolvers();
+    const remaining = Promise.withResolvers();
+    apiMock.mockImplementation(async (path, options) => {
+      if (path === "/api/auth/current") await auth.promise;
+      if (path === "/api/assistant/models" || path.endsWith("?view=recent")) await remaining.promise;
+      return original(path, options);
+    });
+    history.replaceState({}, "", url);
+    const { result, unmount } = renderHook(useChat);
+    try {
+      const visible = { type: "agentflow-chat-visible" };
+      const ready = { type: "agentflow-chat-ready" };
+      expect(postMessage).not.toHaveBeenCalledWith(visible, location.origin);
+      await act(async () => auth.resolve());
+      await waitFor(() => expect(postMessage).toHaveBeenCalledWith(visible, location.origin));
+      expect(result.current.session).toBeNull();
+      expect(result.current.ready).toBe(false);
+      expect(postMessage).not.toHaveBeenCalledWith(ready, location.origin);
+      await act(async () => remaining.resolve());
+      await waitFor(() => expect(postMessage).toHaveBeenCalledWith(ready, location.origin));
+    } finally {
+      unmount();
+      auth.resolve();
+      remaining.resolve();
+      apiMock.mockImplementation(original);
+      parent.mockRestore();
+    }
+  });
+
+  test("opens a deep link after authentication while the model catalog is still loading", async () => {
+    const original = apiMock.getMockImplementation();
+    let releaseCatalog;
+    const catalogGate = new Promise((resolve) => { releaseCatalog = resolve; });
+    apiMock.mockImplementation((path, options) => {
+      if (path === "/api/assistant/models") return catalogGate.then(() => ({
+        models: [{ id: "legacy-model", engine: "codex" }],
+        engines: [{ id: "codex", configured: true }],
+      }));
+      if (path.includes("/generation")) return Promise.reject(Object.assign(Error(), { status: 404 }));
+      if (path.startsWith("/api/assistant/sessions/existing")) return {
+        id: "existing", projectId: "", titleGenerated: true, model: "legacy-model",
+        messages: [{ role: "assistant", model: "legacy-model", content: "已保存的回复" }],
+      };
+      return original(path, options);
+    });
+    try {
+      history.replaceState({}, "", "/?session=existing");
+      const { result } = renderHook(useChat);
+      await waitFor(() => expect(result.current.session?.messages[0].content).toBe("已保存的回复"));
+      expect(result.current.ready).toBe(false);
+      const writes = writeMock.mock.calls.length;
+      act(() => window.dispatchEvent(new MessageEvent("message", {
+        origin: location.origin, source: window.parent,
+        data: { type: "agentflow-project-context", initial: true, projectId: "stale" },
+      })));
+      expect(writeMock.mock.calls.slice(writes)).toHaveLength(0);
+      expect(result.current.projectId).toBe("");
+      releaseCatalog();
+      await waitFor(() => expect(result.current.ready).toBe(true));
+      await waitFor(() => expect(result.current.executor).toBe("codex"));
+    } finally {
+      releaseCatalog();
+      apiMock.mockImplementation(original);
+    }
+  });
+
+  test.each([false, true])("checks a saved reply against its session revision (changed: %s)", async (changed) => {
+    const original = apiMock.getMockImplementation();
+    const base = "/api/assistant/sessions/compact";
+    const revision = "2026-11-01T10:00:00Z";
+    const newer = "2026-11-01T10:01:00Z";
+    const stored = { id: "compact", titleGenerated: true, updatedAt: revision, messages: [
+      { role: "assistant", generationId: "g", content: "Answer", activityRef: "trace-ref" },
+    ] };
+    apiMock.mockImplementation(async (url, options) => {
+      if (url === base + "?view=recent") return stored;
+      if (url === base + "?view=transcript") return { ...stored, updatedAt: newer };
+      if (url === base + "/generation?after=0&savedReply=g") return {
+        id: "g", status: "completed", events: [], sessionUpdatedAt: changed ? newer : revision,
+      };
+      if (url === base + "?view=activity&index=0&ref=trace-ref") return [{ kind: "tool", detail: "full trace" }];
+      return original(url, options);
+    });
+    try {
+      history.replaceState({}, "", "/?session=compact");
+      const { result } = renderHook(useChat);
+      await waitFor(() => expect(result.current.replyStatePending).toBe(false));
+      const urls = apiMock.mock.calls.map(([url]) => url);
+      expect(urls).toContain(base + "/generation?after=0&savedReply=g");
+      expect(urls.filter(url => url === base + "?view=transcript")).toHaveLength(changed ? 1 : 0);
+      expect(urls.some(url => url.includes("view=activity"))).toBe(false);
+      await act(async () => {
+        await Promise.all([result.current.loadActivity("compact", 0, "trace-ref"), result.current.loadActivity("compact", 0, "trace-ref")]);
+      });
+      expect(apiMock.mock.calls.filter(([url]) => url.includes("view=activity"))).toHaveLength(1);
+      expect(result.current.session.messages[0].activity[0].detail).toBe("full trace");
+    } finally { apiMock.mockImplementation(original); }
+  });
+
+  test("shows the workbench before the session list and paints a long transcript from its tail", async () => {
+    const original = apiMock.getMockImplementation();
+    let releaseList;
+    let releaseFull;
+    const listGate = new Promise((resolve) => { releaseList = resolve; });
+    const fullGate = new Promise((resolve) => { releaseFull = resolve; });
+    const messages = Array.from({ length: 45 }, (_, index) => ({ role: "user", content: `第${index}轮` }));
+    apiMock.mockImplementation((path, options) => {
+      if (path === "/api/assistant/sessions") return listGate.then(() => [{ id: "long", title: "长会话" }]);
+      if (path === "/api/assistant/sessions/long?view=recent") return {
+        id: "long", messagesPartial: true, messages: messages.slice(-40),
+      };
+      if ((path.split("?")[0] === "/api/assistant/sessions/long")) return fullGate.then(() => ({ id: "long", messages }));
+      if (path.includes("/generation")) return Promise.reject(Object.assign(Error("生成不存在"), { status: 404 }));
+      return original(path, options);
+    });
+    try {
+      history.replaceState({}, "", "/?session=long");
+      const { result } = renderHook(useChat);
+      await waitFor(() => expect(result.current.ready).toBe(true));
+      expect(result.current.sessions).toEqual([]);
+      await waitFor(() => expect(result.current.session?.messages).toHaveLength(40));
+      await waitFor(() => expect(result.current.replyStatePending).toBe(false));
+      expect(result.current.session.messages[0].content).toBe("第5轮");
+      expect(result.current.session.messagesPartial).toBe(true);
+      await act(async () => expect(await result.current.send({ text: "还不能发" })).toBe(false));
+      expect(result.current.error).toContain("更早的对话");
+      releaseFull();
+      await waitFor(() => expect(result.current.session?.messages).toHaveLength(45));
+      expect(result.current.session.messagesPartial).toBeFalsy();
+      releaseList();
+      await waitFor(() => expect(result.current.sessions).toHaveLength(1));
+    } finally {
+      releaseList?.();
+      releaseFull?.();
+      apiMock.mockImplementation(original);
+    }
+  });
+
+  test("keeps index writes and project binding off the recent tail of a long transcript", async () => {
+    const original = apiMock.getMockImplementation();
+    const originalWrite = writeMock.getMockImplementation();
+    let releaseFull;
+    const fullGate = new Promise((resolve) => { releaseFull = resolve; });
+    const messages = Array.from({ length: 46 }, (_, index) => ({
+      role: index % 2 ? "assistant" : "user", content: `MSG-${String(index).padStart(3, "0")}`,
+    }));
+    const stored = { id: "long", title: "长会话", updatedAt: "2026-11-27T00:00:00Z", messages };
+    apiMock.mockImplementation((path, options) => {
+      if (path === "/api/assistant/sessions") return Promise.resolve([{ id: "long", title: "长会话" }]);
+      if (path === "/api/assistant/sessions/long?view=recent") return Promise.resolve({
+        ...stored, messagesPartial: true, messages: messages.slice(-40),
+      });
+      if (path === "/api/assistant/sessions/long?view=transcript") return fullGate.then(() => structuredClone(stored));
+      if (path.includes("/generation")) return Promise.reject(Object.assign(Error("生成不存在"), { status: 404 }));
+      return original(path, options);
+    });
+    writeMock.mockImplementation((path, body, method) =>
+      path === "/api/assistant/sessions/long" && method === "PUT"
+        ? Promise.resolve({ ...structuredClone(stored), projectId: body.projectId })
+        : originalWrite(path, body, method));
+    try {
+      history.replaceState({}, "", "/?session=long");
+      const { result } = renderHook(useChat);
+      await waitFor(() => expect(result.current.session?.messagesPartial).toBe(true));
+      // Index 38 of the tail is MSG-044; on the stored transcript it is MSG-038.
+      expect(result.current.session.messages[38].content).toBe("MSG-044");
+      writeMock.mockClear();
+      await act(async () => expect(await result.current.edit(38, "EDITED")).toBeNull());
+      await act(async () => expect(await result.current.edit(38, "FORKED", true)).toBeNull());
+      expect(result.current.error).toContain("更早的对话");
+      await act(async () => {
+        await expect(result.current.decideProposal(39, 0, "accepted")).rejects.toThrow("更早的对话");
+        await expect(result.current.applyDraft(39, 0)).rejects.toThrow("更早的对话");
+      });
+      expect(writeMock).not.toHaveBeenCalled();
+
+      // Binding sends metadata only, so the server keeps the stored transcript.
+      await act(() => result.current.selectProject("p1"));
+      const bind = writeMock.mock.calls.find(([path, , method]) => path === "/api/assistant/sessions/long" && method === "PUT");
+      expect(bind?.[1]).toMatchObject({ id: "long", projectId: "p1" });
+      const sent = JSON.parse(JSON.stringify(bind[1]));
+      expect(sent).not.toHaveProperty("messages");
+      expect(sent).not.toHaveProperty("messagesPartial");
+
+      releaseFull();
+      await waitFor(() => expect(result.current.session?.messages).toHaveLength(46));
+      expect(result.current.session.messagesPartial).toBeFalsy();
+      writeMock.mockClear();
+      await act(() => result.current.edit(44, "EDITED"));
+      expect(writeMock).toHaveBeenCalledWith(
+        "/api/assistant/sessions/long/edit",
+        expect.objectContaining({ messageIndex: 44, content: "EDITED" }),
+      );
+    } finally {
+      releaseFull?.();
+      apiMock.mockImplementation(original);
+      writeMock.mockImplementation(originalWrite);
+    }
+  });
+
+  // The full read can be served before a write made while the tail is shown
+  // and still arrive after it (a slow server). It must not undo that write.
+  test.each([
+    ["binds a project", (chat) => chat.selectProject("p1"), (session) => expect(session.projectId).toBe("p1")],
+    ["chooses a sandbox", (chat) => chat.selectSandbox("sandbox-1"), (session) => expect(session.sandboxProfileId).toBe("sandbox-1")],
+    ["chooses knowledge", (chat) => chat.saveKnowledgeRefs([{ connectorId: "kb-1", id: "doc-1" }]),
+      (session) => expect(session.knowledgeRefs).toEqual([{ connectorId: "kb-1", id: "doc-1" }])],
+    ["links an issue", (chat) => chat.linkIssue("CRL-1"), (session) => expect(session.issueId).toBe("CRL-1")],
+    ["renames the conversation", (chat) => chat.rename("long", "改过的标题"), (session) => expect(session.title).toBe("改过的标题")],
+  ])("a late full read keeps what the user saved when it %s on the recent tail", async (_, change, check) => {
+    const original = apiMock.getMockImplementation();
+    const originalWrite = writeMock.getMockImplementation();
+    let releaseFull;
+    const fullGate = new Promise((resolve) => { releaseFull = resolve; });
+    const messages = Array.from({ length: 46 }, (_, index) => ({
+      role: index % 2 ? "assistant" : "user", content: `MSG-${String(index).padStart(3, "0")}`,
+    }));
+    let stored = { id: "long", title: "长会话", projectId: "", updatedAt: "2026-11-27T00:00:00.000Z", messages };
+    apiMock.mockImplementation((path, options) => {
+      if (path === "/api/assistant/sessions") return Promise.resolve([{ id: "long", title: stored.title }]);
+      if (path === "/api/assistant/sessions/long?view=recent") return Promise.resolve({
+        ...structuredClone(stored), messagesPartial: true, messagesOffset: 6, messages: messages.slice(-40),
+      });
+      if (path === "/api/assistant/sessions/long?view=transcript") {
+        // Served now, delivered when the test releases it.
+        const snapshot = structuredClone(stored);
+        return fullGate.then(() => snapshot);
+      }
+      if (path.includes("/generation")) return Promise.reject(Object.assign(Error("生成不存在"), { status: 404 }));
+      return original(path, options);
+    });
+    writeMock.mockImplementation((path, body, method) => {
+      if (!path.startsWith("/api/assistant/sessions/long")) return originalWrite(path, body, method);
+      const saved = (changes) => {
+        stored = { ...stored, ...changes, updatedAt: "2026-11-27T00:00:01.000Z" };
+        return Promise.resolve(structuredClone(stored));
+      };
+      if (path.endsWith("/title")) {
+        stored = { ...stored, title: body.title, titleEdited: true };
+        return Promise.resolve({ title: body.title, titleEdited: true });
+      }
+      if (path.endsWith("/sandbox")) return saved({ sandboxProfileId: body.sandboxProfileId });
+      if (path.endsWith("/knowledge")) return saved({ knowledgeRefs: body.knowledgeRefs });
+      if (path.endsWith("/issue")) return saved({ issueId: body.issueId });
+      return saved({ projectId: body.projectId });
+    });
+    try {
+      history.replaceState({}, "", "/?session=long");
+      const { result } = renderHook(useChat);
+      await waitFor(() => expect(result.current.session?.messagesPartial).toBe(true));
+      await waitFor(() => expect(apiMock).toHaveBeenCalledWith("/api/assistant/sessions/long?view=transcript"));
+      await act(async () => { await change(result.current); });
+      expect(result.current.error).toBe("");
+      check(result.current.session);
+
+      releaseFull();
+      await act(async () => { await fullGate; await new Promise((resolve) => setTimeout(resolve, 0)); });
+      expect(result.current.session.messages).toHaveLength(46);
+      expect(result.current.session.messagesPartial).toBeFalsy();
+      check(result.current.session);
+      // Choosing another project follows the server's binding, not the late
+      // read's: a bound conversation starts a new chat instead of a PUT (409).
+      const bound = !!stored.projectId;
+      writeMock.mockClear();
+      await act(() => result.current.selectProject("p2"));
+      expect(writeMock.mock.calls.filter(([path, , method]) => path === "/api/assistant/sessions/long" && method === "PUT"))
+        .toHaveLength(bound ? 0 : 1);
+    } finally {
+      releaseFull?.();
+      apiMock.mockImplementation(original);
+      writeMock.mockImplementation(originalWrite);
+    }
+  });
+
+  test("drops the recent tail when the server refuses the full transcript", async () => {
+    const original = apiMock.getMockImplementation();
+    let fullReads = 0;
+    const messages = Array.from({ length: 45 }, (_, index) => ({ role: "user", content: `第${index}轮` }));
+    apiMock.mockImplementation((path, options) => {
+      if (path === "/api/assistant/sessions/gone?view=recent") return Promise.resolve({
+        id: "gone", messagesPartial: true, messages: messages.slice(-40),
+      });
+      if (path === "/api/assistant/sessions/gone?view=transcript") {
+        fullReads++;
+        return Promise.reject(Object.assign(Error("对话不存在"), { status: 404 }));
+      }
+      if (path.includes("/generation")) return Promise.reject(Object.assign(Error("生成不存在"), { status: 404 }));
+      return original(path, options);
+    });
+    try {
+      history.replaceState({}, "", "/?session=gone");
+      const { result } = renderHook(useChat);
+      await waitFor(() => expect(result.current.error).toBe("对话不存在"));
+      expect(result.current.session).toBeNull();
+      expect(fullReads).toBe(1);
+      await act(async () => expect(await result.current.send({ text: "不能发" })).toBe(false));
+    } finally {
+      apiMock.mockImplementation(original);
+    }
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
     history.replaceState({}, "", "/");
@@ -197,7 +502,7 @@ describe("conversation hooks", () => {
         id: "concurrent-generation", status, events: [],
         clientRequestId: accepted && !superseded ? submitted.clientRequestId : "another-members-request",
       };
-      if (submitted && path === "/api/assistant/sessions/s1") {
+      if (submitted && (path.split("?")[0] === "/api/assistant/sessions/s1")) {
         if (transcriptUnavailable) throw Object.assign(Error("记录暂不可用"), { status: 503 });
         if (superseded) return { ...(await originalAPI(path, options)), recentClientRequestIds: [submitted.clientRequestId] };
       }
@@ -266,7 +571,7 @@ describe("conversation hooks", () => {
     };
     let loadCatalog;
     apiMock.mockImplementation(async (path, options) => {
-      if (path === "/api/assistant/sessions/s1") return session;
+      if ((path.split("?")[0] === "/api/assistant/sessions/s1")) return session;
       if (path === "/api/runners?mine=1") return [
         { id: "codex-runner", ownerUserId: 1, runtimes: [{ provider: "codex", authMode: "local" }] },
       ];
@@ -368,7 +673,7 @@ describe("conversation hooks", () => {
         default: "m1",
         models: [{ id: "m1" }, { id: "m2", efforts: ["high"] }, { id: "m3", efforts: ["max"] }],
       };
-      if (path === "/api/assistant/sessions/s2") return { id: "s2", model: "m1", messages: [] };
+      if ((path.split("?")[0] === "/api/assistant/sessions/s2")) return { id: "s2", model: "m1", messages: [] };
       return original(path, options);
     });
     try {
@@ -405,7 +710,7 @@ describe("conversation hooks", () => {
     }
   });
 
-  test("restores model choices if the generation poll opens the transcript first", async () => {
+  test("restores model choices before polling the generation of an opened transcript", async () => {
     const original = apiMock.getMockImplementation();
     const stored = {
       id: "s1", title: "会话", titleGenerated: true, model: "m1", executor: "codebuddy",
@@ -416,7 +721,7 @@ describe("conversation hooks", () => {
       if (path === "/api/assistant/models") return Promise.resolve({
         default: "m1", models: [{ id: "m1" }, { id: "m2", efforts: ["high"] }],
       });
-      if (path === "/api/assistant/sessions/s1") {
+      if ((path.split("?")[0] === "/api/assistant/sessions/s1")) {
         if (++reads > 1) return Promise.resolve(stored);
         return new Promise((resolve) => { initial = () => resolve(stored); });
       }
@@ -426,14 +731,15 @@ describe("conversation hooks", () => {
     try {
       history.replaceState({}, "", "/?session=s1");
       const { result } = renderHook(useChat);
-      await waitFor(() => expect(result.current.session?.id).toBe("s1"));
-      expect(reads).toBe(2);
+      await waitFor(() => expect(reads).toBe(1));
+      expect(apiMock.mock.calls.some(([path]) => path.includes("/s1/generation"))).toBe(false);
+      await act(async () => initial());
+      await waitFor(() => expect(result.current.replyStatePending).toBe(false));
       expect(result.current).toMatchObject({ model: "m2", effort: "high" });
       await act(() => result.current.send({ text: "继续" }));
       expect(writeMock).toHaveBeenCalledWith("/api/assistant/generations", expect.objectContaining({
         sessionId: "s1", model: "m2", effort: "high",
       }));
-      await act(async () => initial());
       expect(result.current.session.messages.at(-1)?.content).toBe("继续");
     } finally {
       initial?.();
@@ -457,7 +763,7 @@ describe("conversation hooks", () => {
           completePending = () => resolve([{ id: 1, loginName: "tester", codeBuddyApiKeyConfigured: true }]);
         });
       }
-      if (path === "/api/assistant/sessions/new-session") return Promise.resolve(saved);
+      if ((path.split("?")[0] === "/api/assistant/sessions/new-session")) return Promise.resolve(saved);
       return originalAPI(path, options);
     });
     writeMock.mockImplementation((path, body, method) => {
@@ -546,7 +852,7 @@ describe("conversation hooks", () => {
     apiMock.mockImplementation((path, options) => {
       if (path === "/api/assistant/models?executor=codex")
         return new Promise((_, reject) => { rejectCatalog = reject; });
-      if (path === "/api/assistant/sessions/s1")
+      if ((path.split("?")[0] === "/api/assistant/sessions/s1"))
         return Promise.resolve({ id: "s1", executor: "codex", model: "codex:historical", messages: [{ role: "user", content: "原消息" }] });
       if (path === "/api/assistant/sessions/s1/generation")
         return Promise.resolve({ id: "another-turn", status: "running" });
@@ -658,7 +964,7 @@ describe("conversation hooks", () => {
       if (path === "/api/runners?mine=1") return [
         { id: "mac", status: "online", ownerUserId: 1, runtimes: [{ provider: "agy", authMode: "local" }] },
       ];
-      if (path === "/api/assistant/sessions/legacy-agy") return structuredClone(session);
+      if ((path.split("?")[0] === "/api/assistant/sessions/legacy-agy")) return structuredClone(session);
       return originalAPI(path, options);
     });
     writeMock.mockImplementation(async (path, body) => path === "/api/runners/mac/models/probe"
@@ -771,7 +1077,7 @@ describe("conversation hooks", () => {
       : Promise.resolve(runners);
     apiMock.mockImplementation((path, options) => {
       if (path === "/api/runners?mine=1" || path === "/api/runners?projectId=p1") return machines;
-      if (path === "/api/assistant/sessions/agy-session") return Promise.resolve(stored);
+      if ((path.split("?")[0] === "/api/assistant/sessions/agy-session")) return Promise.resolve(stored);
       return originalAPI(path, options);
     });
     writeMock.mockImplementation((path, body, method) => {
@@ -927,7 +1233,7 @@ describe("conversation hooks", () => {
       if (path === "/api/assistant/models") return Promise.resolve({
         default: catalogDefault, preferences, models: [{ id: "m1" }, { id: "m2" }, { id: "m3", efforts: ["high"] }],
       });
-      if (path === "/api/assistant/sessions/s1") return Promise.resolve(saved);
+      if ((path.split("?")[0] === "/api/assistant/sessions/s1")) return Promise.resolve(saved);
       return original(path, options);
     });
     try {
@@ -1083,7 +1389,7 @@ describe("conversation hooks", () => {
           { id: "codex:gpt-alternate", engine: "codex", efforts: ["high"] },
         ],
       });
-      if (path === "/api/assistant/sessions/main") return Promise.resolve(main);
+      if ((path.split("?")[0] === "/api/assistant/sessions/main")) return Promise.resolve(main);
       return originalAPI(path, options);
     });
     writeMock.mockImplementation((path, body, method) =>
@@ -1119,8 +1425,8 @@ describe("conversation hooks", () => {
     const parent = { ...fork, id: "s1", parentSessionId: undefined, executor: "codex" };
     apiMock.mockImplementation((path, options) => {
       if (path === "/api/assistant/sessions") return Promise.resolve([parent, fork]);
-      if (path === "/api/assistant/sessions/s1") return Promise.resolve(parent);
-      if (path === "/api/assistant/sessions/fork") return Promise.resolve(fork);
+      if ((path.split("?")[0] === "/api/assistant/sessions/s1")) return Promise.resolve(parent);
+      if ((path.split("?")[0] === "/api/assistant/sessions/fork")) return Promise.resolve(fork);
       return original(path, options);
     });
     try {
@@ -1149,7 +1455,7 @@ describe("conversation hooks", () => {
       messages: [{ role: "user", content: "hi" }, { role: "assistant", content: "ok", model: "codex:gpt-5.6-sol" }],
     };
     apiMock.mockImplementation(async (path, options) =>
-      path === "/api/assistant/sessions/s9" ? structuredClone(codexSession) : original(path, options));
+      (path.split("?")[0] === "/api/assistant/sessions/s9") ? structuredClone(codexSession) : original(path, options));
     try {
       history.replaceState({}, "", "/?session=s9");
       const { result } = renderHook(() => useChat());
@@ -1250,7 +1556,7 @@ describe("conversation hooks", () => {
     const originalAPI = apiMock.getMockImplementation();
     const originalWrite = writeMock.getMockImplementation();
     const stale = { id: "s1", title: "旧名字", titleGenerated: true, projectId: "", messages: [{ role: "user", content: "问题" }] };
-    apiMock.mockImplementation(async (url, options) => url === path ? structuredClone(stale)
+    apiMock.mockImplementation(async (url, options) => url.split("?")[0] === path ? structuredClone(stale)
       : url === "/api/assistant/sessions" ? [stale] : originalAPI(url, options));
     let bound;
     writeMock.mockImplementation(async (url, body, method) => {
@@ -1265,8 +1571,9 @@ describe("conversation hooks", () => {
       act(() => result.current.open("s1"));
       await waitFor(() => expect(result.current.session?.id).toBe("s1"));
       await act(() => result.current.selectProject("p1"));
-      expect(bound).toMatchObject({ id: "s1", projectId: "p1", messages: stale.messages });
-      for (const field of ["title", "titleEdited", "titleGenerated"]) expect(bound).not.toHaveProperty(field);
+      expect(bound).toMatchObject({ id: "s1", projectId: "p1" });
+      // Binding leaves the transcript to the server, which keeps the stored one.
+      for (const field of ["title", "titleEdited", "titleGenerated", "messages"]) expect(bound).not.toHaveProperty(field);
       expect(result.current.session).toMatchObject({ title: "另一台设备的新名字", projectId: "p1" });
     } finally {
       apiMock.mockImplementation(originalAPI);
@@ -1293,7 +1600,7 @@ describe("conversation hooks", () => {
     const list = new Promise((resolve) => { releaseList = resolve; });
     apiMock.mockImplementation(async (url, options) => {
       if (url.startsWith(path + "/generation")) return { id: "g1", status: finishReply ? "completed" : "running" };
-      if (url === path) {
+      if (url.split("?")[0] === path) {
         if (!finishReply) return old;
         replyRequested = true;
         return reply;
@@ -1422,7 +1729,7 @@ describe("conversation hooks", () => {
       const accept = writeMock.mock.calls.findIndex(([path]) => path.endsWith("/proposals"));
       const mcp = apiMock.mock.calls.findIndex(([path]) => path === "/mcp");
       expect(writeMock.mock.invocationCallOrder[accept]).toBeLessThan(apiMock.mock.invocationCallOrder[mcp]);
-      const saved = writeMock.mock.calls.find(([path, , method]) => path === "/api/assistant/sessions/s1" && method === "PUT");
+      const saved = writeMock.mock.calls.find(([path, , method]) => (path.split("?")[0] === "/api/assistant/sessions/s1") && method === "PUT");
       expect(JSON.parse(saved[1].messages[0].content).drafts[0]).toMatchObject({ decision: "accepted", saved: true });
     } finally {
       writeMock.mockImplementation(original);
@@ -1636,7 +1943,7 @@ describe("conversation hooks", () => {
     const original = apiMock.getMockImplementation();
     let summarized = false;
     apiMock.mockImplementation(async (path, options) => {
-      if (path === "/api/assistant/sessions/s1") {
+      if ((path.split("?")[0] === "/api/assistant/sessions/s1")) {
         const messages = [{ role: "user", content: prompt }];
         if (!summarized) return { id: "s1", title: prompt.slice(0, 36), projectId: "p1", model: "m1", messages };
         return { id: "s1", title: "积分商城梳理", titleGenerated: true, messages: [] };

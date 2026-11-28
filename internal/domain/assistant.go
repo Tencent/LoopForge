@@ -69,6 +69,8 @@ type AssistantMessage struct {
 	Content        string                   `json:"content"`
 	References     []AssistantReference     `json:"references,omitempty"`
 	Attachments    []AssistantAttachment    `json:"attachments,omitempty"`
+	// ActivityRef identifies the full trace in compact HTTP responses.
+	ActivityRef string `json:"activityRef,omitempty"`
 	// Unfinished names why a reply stopped early (stopped, failed, timed out
 	// or interrupted). The reply keeps its partial answer and activity.
 	Unfinished   string            `json:"unfinished,omitempty"`

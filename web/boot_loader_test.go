@@ -81,4 +81,12 @@ func TestBootLoaderClosesAfterShellOrChatReady(t *testing.T) {
 	if !strings.Contains(start, "boot().catch(e=>{finishBootLoader();document.body.innerHTML=") {
 		t.Error("the boot failure page should drop the loader before replacing body")
 	}
+	home := strings.Index(app, "Home opens the chatbot while the rest of the shell catalog is still loading.")
+	bootstrap := strings.Index(app, "const shell = await api('/api/bootstrap'")
+	if home < 0 || bootstrap < 0 || home > bootstrap {
+		t.Error("the AI workbench should mount the chatbot before waiting for /api/bootstrap")
+	}
+	if !strings.Contains(app[home:bootstrap], "mountNativeChat()") {
+		t.Error("the early home path should mount the chatbot iframe")
+	}
 }

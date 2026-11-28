@@ -77,6 +77,10 @@ func (h *assistantHandlers) startGeneration(c *gin.Context) {
 		return
 	}
 	old, _ := h.repo.AssistantSession(ownerID, req.SessionID)
+	if !restoreAssistantActivities(req.Messages, old.Messages) {
+		c.JSON(409, gin.H{"error": "会话执行记录已更新，请重新打开后发送"})
+		return
+	}
 	req.Model = h.assistantChatRequestModel(req, old, stored)
 	if !h.bindTurnExecutionTarget(c, &req, stored.ID, old) {
 		return
@@ -248,6 +252,17 @@ func (h *assistantHandlers) generation(c *gin.Context) {
 	if err != nil {
 		c.JSON(403, gin.H{"error": err.Error()})
 		return
+	}
+	saved := c.Query("savedReply")
+	if c.Request.Method == "GET" && c.Query("stream") != "1" && saved != "" {
+		if status, updatedAt, found := h.repo.CompletedAssistantGeneration(ownerID, c.Param("id"), saved); found {
+			c.Header("Cache-Control", "no-store")
+			c.JSON(200, struct {
+				domain.AssistantGeneration
+				SessionUpdatedAt time.Time `json:"sessionUpdatedAt"`
+			}{status, updatedAt})
+			return
+		}
 	}
 	g, ok := h.currentGeneration(ownerID, c.Param("id"))
 	if !ok {

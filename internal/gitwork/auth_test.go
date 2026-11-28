@@ -89,6 +89,20 @@ func TestGitEnvAddsInsteadOfWhenTokenSet(t *testing.T) {
 	}
 }
 
+func TestEnvStripsInheritedCommitIdentity(t *testing.T) {
+	t.Setenv("GIT_AUTHOR_NAME", "leaked")
+	t.Setenv("GIT_AUTHOR_EMAIL", "leaked@example.com")
+	t.Setenv("GIT_COMMITTER_NAME", "leaked")
+	t.Setenv("GIT_COMMITTER_EMAIL", "leaked@example.com")
+	for _, kv := range Env("") {
+		for _, prefix := range []string{"GIT_AUTHOR_NAME=", "GIT_AUTHOR_EMAIL=", "GIT_COMMITTER_NAME=", "GIT_COMMITTER_EMAIL="} {
+			if strings.HasPrefix(kv, prefix) {
+				t.Fatalf("Env kept inherited %s: %q", prefix, kv)
+			}
+		}
+	}
+}
+
 func TestGitTokenFromContextOverridesEnv(t *testing.T) {
 	t.Setenv(TokenEnv, "tok_env")
 	ctx := WithToken(context.Background(), "tok_repo")

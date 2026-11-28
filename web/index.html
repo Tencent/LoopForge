@@ -12,7 +12,7 @@
   <link rel="stylesheet" href="/app/hui-controls.css">
   <link rel="stylesheet" href="/styles.css?v=20261031v1">
   <link rel="stylesheet" href="/assets.css?v=20260823v1">
-  <link rel="stylesheet" href="/platform.css?v=20261121settingsrows">
+  <link rel="stylesheet" href="/platform.css?v=20261127toasthome">
   <link rel="stylesheet" href="/observability.css?v=20261031metrics2">
   <link rel="stylesheet" href="/artifacts.css?v=20261122artifactfeedback">
   <link rel="stylesheet" href="/sops.css?v=20261030cards1">
@@ -828,6 +828,17 @@
           </details>
         </div>
       </details>
+
+      <div id="runnerDispatchBar" class="runner-dispatch-bar panel">
+        <div class="runner-dispatch-copy">
+          <div class="runner-dispatch-head">
+            <span class="runner-dispatch-label" id="runnerDispatchLabel">当前执行调度</span>
+            <p class="runner-pool-status" id="runnerPoolStatus" aria-live="polite" data-i18n-data></p>
+          </div>
+          <p class="runner-dispatch-hint" id="runnerDispatchHint" hidden></p>
+        </div>
+        <button type="button" class="button ghost small" id="runnerAutoAssign" aria-pressed="false" hidden>自动分配</button>
+      </div>
 
       <div id="platformRunnerSection" class="runner-platform-section" hidden>
         <div class="runner-section-heading"><h2>平台机器</h2><span class="runner-section-meta">所有项目共用名额</span></div>

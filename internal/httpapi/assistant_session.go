@@ -3,6 +3,7 @@ package httpapi
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -25,9 +26,14 @@ import (
 // included because the viewer's project list does not contain the project.
 type readOnlyConversation struct {
 	domain.AssistantSession
-	ReadOnly    bool   `json:"readOnly"`
-	ProjectName string `json:"projectName,omitempty"`
+	ReadOnly        bool   `json:"readOnly"`
+	ProjectName     string `json:"projectName,omitempty"`
+	MessagesPartial bool   `json:"messagesPartial,omitempty"`
+	MessagesOffset  int    `json:"messagesOffset,omitempty"`
 }
+
+// assistantRecentMessages matches the chat transcript's first painted page.
+const assistantRecentMessages = 40
 
 func (h *assistantHandlers) listSessions(c *gin.Context) {
 	current, ok := h.requestUser(c.Request, true)
@@ -311,29 +317,78 @@ func (h *assistantHandlers) session(c *gin.Context) {
 	}
 	switch c.Request.Method {
 	case "GET":
-		item, err := loadAssistantConversation(h.repo, ownerID, id)
+		mode := c.Query("view")
+		recent := mode == "recent"
+		var item assistantConversation
+		var messageTotal int
+		var err error
+		if mode == "title" {
+			session, found := h.repo.AssistantSessionMetadata(id)
+			if !found || session.UserID != ownerID {
+				c.JSON(404, gin.H{"error": "对话不存在"})
+				return
+			}
+			header := decorateRunSessionView(h.repo, session)
+			c.JSON(200, gin.H{"id": header.ID, "title": header.Title, "displayTitle": header.DisplayTitle, "titleEdited": header.TitleEdited, "titleGenerated": header.TitleGenerated})
+			return
+		}
+		if recent {
+			item, messageTotal, err = loadAssistantConversationRecent(h.repo, ownerID, id, assistantRecentMessages)
+		} else {
+			item, err = loadAssistantConversation(h.repo, ownerID, id)
+		}
 		if err != nil {
 			c.JSON(404, gin.H{"error": "对话不存在"})
 			return
 		}
-		if !item.Shared && !readOnly {
-			if job, ok := h.readGeneration(ownerID, id); !ok || job.Status != "running" {
-				if materializeWorkspaceImages(ownerID, &item) {
-					updated := item
-					updated.TitleEdited = false
-					if err := saveAssistantConversation(h.repo, ownerID, updated); err == nil {
-						if stored, err := loadAssistantConversation(h.repo, ownerID, id); err == nil {
-							item = stored
-						}
-					}
-				}
+		partial := recent && messageTotal > len(item.Messages)
+		// offset is the stored index of the first message in a recent tail, so
+		// the client can keep message positions (and the ids derived from them)
+		// stable when the full transcript replaces the tail.
+		offset := 0
+		if partial {
+			offset = messageTotal - len(item.Messages)
+		}
+		if mode == "activity" {
+			index, err := strconv.Atoi(c.Query("index"))
+			if err != nil || index < 0 || index >= len(item.Messages) {
+				c.JSON(404, gin.H{"error": "执行记录不存在"})
+				return
+			}
+			raw, _ := json.Marshal(item.Messages[index].Activity)
+			if assistantActivityRef(raw) != c.Query("ref") {
+				c.JSON(409, gin.H{"error": "执行记录已更新，请重新打开会话"})
+				return
+			}
+			c.Data(200, "application/json; charset=utf-8", raw)
+			return
+		}
+		if !partial && !item.Shared && !readOnly && materializeWorkspaceImages(ownerID, &item, func() bool {
+			job, ok := h.readGeneration(ownerID, id)
+			return !ok || job.Status != "running"
+		}) {
+			// Another tab can send a turn during the filesystem scan. Publish
+			// the recovered media only if we still have that exact transcript.
+			saved, err := h.repo.SetAssistantSessionMedia(ownerID, id, item.UpdatedAt, item.Messages)
+			if err != nil || !saved {
+				h.queueConversationAttachments(item)
+			}
+			item, err = loadAssistantConversation(h.repo, ownerID, id)
+			if err != nil {
+				c.JSON(404, gin.H{"error": "对话不存在"})
+				return
+			}
+		}
+		if recent || mode == "transcript" {
+			for i := range item.Messages {
+				previewAssistantActivity(&item.Messages[i])
 			}
 		}
 		item.Executor = h.forkExecutor(c, item, current.ID)
 		item = sanitizeAssistantSessionForViewer(item, current.ID)
 		if readOnly {
 			project, _ := h.repo.Project(item.ProjectID)
-			c.JSON(200, readOnlyConversation{AssistantSession: item, ReadOnly: true, ProjectName: project.Name})
+			c.JSON(200, readOnlyConversation{AssistantSession: item, ReadOnly: true, ProjectName: project.Name, MessagesPartial: partial, MessagesOffset: offset})
 			return
 		}
 		if shared {
@@ -341,7 +396,10 @@ func (h *assistantHandlers) session(c *gin.Context) {
 				item.IssueID = run.ExecutionContext.IssueID
 			}
 		}
-		c.JSON(200, decorateRunSessionView(h.repo, item))
+		view := decorateRunSessionView(h.repo, item)
+		view.MessagesPartial = partial
+		view.MessagesOffset = offset
+		c.JSON(200, view)
 	case "PUT":
 		if job, ok := h.readGeneration(ownerID, id); ok && job.Status == "running" {
 			c.JSON(409, gin.H{"error": "生成期间不能改写会话"})
@@ -350,13 +408,29 @@ func (h *assistantHandlers) session(c *gin.Context) {
 		existing, _ := loadAssistantConversation(h.repo, ownerID, id)
 		var body struct {
 			assistantConversation
-			Effort         *string `json:"effort"`
-			ApprovalUserID int64   `json:"approvalUserId"`
+			Effort          *string `json:"effort"`
+			ApprovalUserID  int64   `json:"approvalUserId"`
+			MessagesPartial bool    `json:"messagesPartial"`
 		}
 		if !decodeLimit(c, &body, assistantRequestBodyLimit) || !requireAssistantApprovalUser(c, current.ID, body.ApprovalUserID) {
 			return
 		}
+		if body.MessagesPartial {
+			// A view=recent response holds only the tail. Saving it back would
+			// drop every earlier turn of the stored transcript.
+			c.JSON(409, gin.H{"error": "会话历史尚未加载完整，请稍候再试"})
+			return
+		}
 		conv := body.assistantConversation
+		if !restoreAssistantActivities(conv.Messages, existing.Messages) {
+			c.JSON(409, gin.H{"error": "会话执行记录已更新，请重新打开后保存"})
+			return
+		}
+		if conv.Messages == nil && existing.ID != "" {
+			// A metadata update (such as binding a project) may omit messages;
+			// the stored transcript stays as it is.
+			conv.Messages = existing.Messages
+		}
 		if conv.ProjectID == "" {
 			conv.ProjectID = existing.ProjectID
 		}
@@ -636,6 +710,17 @@ func loadAssistantConversation(st *repo.Store, userID int64, id string) (assista
 		return assistantConversation{}, os.ErrNotExist
 	}
 	return item, nil
+}
+
+func loadAssistantConversationRecent(st *repo.Store, userID int64, id string, limit int) (assistantConversation, int, error) {
+	if st == nil {
+		return assistantConversation{}, 0, os.ErrNotExist
+	}
+	item, total, ok := st.AssistantSessionRecent(userID, id, limit)
+	if !ok {
+		return assistantConversation{}, 0, os.ErrNotExist
+	}
+	return item, total, nil
 }
 
 func listAssistantConversations(st *repo.Store, userID int64) ([]assistantConversation, error) {
