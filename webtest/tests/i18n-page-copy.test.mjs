@@ -33,7 +33,7 @@ const COPY = [
   '排队会等当前回复结束；立即发送会打断当前回复，保留已输出内容并继续处理新消息。',
   '还没有访问密钥，创建后即可接入 REST API 和 MCP。',
   '没有需要你拍板的需求', '流程停在人工确认节点时会出现在这里。',
-  '批量操作',
+  '批量操作', '暂无项目说明',
 ];
 
 async function englishWindow() {
@@ -88,4 +88,105 @@ test('English mode translates copy split by inline markup as one sentence', asyn
   assert.match(split.textContent, /hands work to roles or LOOPs more eagerly/);
   assert.match(document.getElementById('data').textContent, /UI 走查/);
   window.close();
+});
+
+// The merge pass must not fold independent, individually styled siblings into a
+// single text node: grid/flex children carry the layout, and the class names go
+// away with them. Regression for the review on head 6ea4b3ff (PR #1530).
+async function render(html, lang = 'en') {
+  const dom = new JSDOM(`<!doctype html><html data-lang="${lang}"><body></body></html>`, {
+    runScripts: 'outside-only', url: 'http://127.0.0.1/',
+  });
+  for (const file of ['i18n-en.js', 'i18n.js']) {
+    new vm.Script(await readFile(path.join(WEB_ROOT, file), 'utf8'), { filename: file })
+      .runInContext(dom.getInternalVMContext());
+  }
+  const host = dom.window.document.createElement('div');
+  host.innerHTML = html;
+  dom.window.document.body.appendChild(host);
+  await new Promise(r => setTimeout(r, 30));
+  return dom;
+}
+
+test('English mode keeps the requirement table header as ten aligned cells', async () => {
+  const head = '<span>编号</span><span>标题</span><span>来源</span><span>责任人</span><span>仓库</span>'
+    + '<span>优先级</span><span>关联 LOOP</span><span>当前环节</span><span>进度</span><span>操作</span>';
+  const dom = await render(`<div id="issueBoard"><div class="issue-table"><div class="issue-table-row issue-table-head" role="row">${head}</div></div></div>`);
+  const cells = dom.window.document.querySelectorAll('#issueBoard .issue-table-head > span');
+  const text = dom.window.document.querySelector('#issueBoard .issue-table-head').textContent;
+  assert.equal(cells.length, 10, `header collapsed into: ${JSON.stringify(text)}`);
+  assert.deepEqual([...cells].map(c => c.textContent), ['ID', 'Title', 'Source', 'Assignee', 'Repository', 'Priority', 'Linked LOOP', 'Current stage', 'Progress', 'Actions']);
+  assert.equal(dom.window.document.querySelector('#issueBoard .issue-table-head').className, 'issue-table-row issue-table-head');
+  dom.window.close();
+});
+
+test('English mode keeps styled sibling blocks on their own lines', async () => {
+  const dom = await render(`
+    <div id="metric" class="platform-metric-info">
+      <span class="platform-metric-label">平台管理员</span>
+      <b class="platform-metric-num">--</b>
+      <small>具有跨项目通用模板与角色编辑权</small>
+    </div>
+    <div id="user" class="upp-name-row">
+      <span class="upp-name">李四</span>
+      <span class="upp-badge-tag is-guest">未认证</span>
+    </div>
+    <div id="row" class="upp-info-item">
+      <span class="upp-label">显示名称</span>
+      <span class="upp-value">李四</span>
+    </div>
+    <div id="sec" class="flow-settings-sec-head"><span class="sec-dot"></span><b>LOOP 通知</b><small>选一个 Bot，自动接收提醒与完成汇报</small></div>
+    <label id="label" class="flow-field-label">流程名称 <span class="required-badge">必填</span></label>
+  `);
+  const d = dom.window.document;
+  const metric = d.getElementById('metric');
+  assert.deepEqual([...metric.children].map(c => c.className), ['platform-metric-label', 'platform-metric-num', '']);
+  assert.equal(metric.querySelector('.platform-metric-label').textContent, 'Platform admin');
+  assert.equal(metric.querySelector('small').textContent, 'Can edit cross-project templates and roles');
+
+  const user = d.getElementById('user');
+  assert.equal(user.querySelectorAll('span').length, 2, `name row collapsed into: ${user.innerHTML}`);
+  assert.equal(user.querySelector('.upp-name').textContent, '李四');
+  assert.ok(user.querySelector('.upp-badge-tag'), `badge lost: ${user.innerHTML}`);
+
+  const row = d.getElementById('row');
+  assert.equal(row.querySelectorAll('span').length, 2, `info row collapsed into: ${row.innerHTML}`);
+  assert.equal(row.querySelector('.upp-label').textContent, 'Display name');
+  assert.equal(row.querySelector('.upp-value').textContent, '李四');
+
+  const sec = d.getElementById('sec');
+  assert.equal(sec.children.length, 3, `section head collapsed into: ${sec.innerHTML}`);
+  assert.equal(sec.querySelector('b').textContent, 'LOOP 通知');
+  assert.ok(sec.querySelector('span.sec-dot'));
+
+  const label = d.getElementById('label');
+  assert.ok(label.querySelector('.required-badge'), `required badge lost: ${label.innerHTML}`);
+  assert.equal(label.textContent, 'LOOP name Required');
+  dom.window.close();
+});
+
+test('Chinese mode leaves the requirement table header untouched', async () => {
+  const head = '<span>编号</span><span>标题</span><span>来源</span><span>责任人</span>';
+  const dom = await render(`<div class="issue-table-row issue-table-head">${head}</div>`, 'zh');
+  const el = dom.window.document.querySelector('.issue-table-head');
+  assert.equal(el.children.length, 4);
+  assert.equal(el.textContent, '编号标题来源责任人');
+  dom.window.close();
+});
+
+test('English mode never stitches a user-named project into UI copy', async () => {
+  const dom = await render(`
+    <div id="card" class="project-card">
+      <div class="project-name">测试项目</div>
+      <span class="project-badge">当前项目</span>
+    </div>
+    <div id="row" class="credential-row"><span class="cred-label">标题</span><span class="cred-value">生产环境</span></div>
+  `);
+  const d = dom.window.document;
+  assert.equal(d.querySelector('#card .project-name').textContent, '测试项目');
+  assert.equal(d.querySelector('#card .project-badge').textContent, 'Current project');
+  assert.equal(d.querySelectorAll('#row > span').length, 2);
+  assert.equal(d.querySelector('#row .cred-label').textContent, 'Title');
+  assert.equal(d.querySelector('#row .cred-value').textContent, '生产环境');
+  dom.window.close();
 });

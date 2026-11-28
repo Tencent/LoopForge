@@ -123,17 +123,14 @@
     return trimmed && Object.prototype.hasOwnProperty.call(dict, trimmed) ? text.replace(trimmed, dict[trimmed]) : text;
   }
 
-  function translate(text, exactOnly) {
+  function translate(text) {
     if (!text || !HAN.test(text)) return text;
-    const cacheKey = exactOnly ? '=' + text : text;
-    const hit = cache.get(cacheKey);
+    const hit = cache.get(text);
     if (hit !== undefined) return hit;
     const trimmed = text.trim();
     let out;
     if (Object.prototype.hasOwnProperty.call(dict, trimmed)) {
       out = text.replace(trimmed, dict[trimmed]);
-    } else if (exactOnly) {
-      return text;
     } else {
       out = fragmentRE ? text.replace(fragmentRE, m => dict[m]) : text;
       if (sentenceRE && HAN.test(out)) out = out.replace(sentenceRE, m => dict[m]);
@@ -146,7 +143,7 @@
       if (/\s$/.test(text) === false) out = out.replace(/\s+$/, '');
     }
     if (cache.size > 20000) cache.clear();
-    cache.set(cacheKey, out);
+    cache.set(text, out);
     return out;
   }
   window.lfTranslate = translate;
@@ -154,10 +151,10 @@
   function skipped(el) {
     return !el || SKIP.has(el.tagName) || (el.closest && el.closest(SKIP_SEL));
   }
-  function translateText(node, partial) {
+  function translateText(node) {
     const parent = node.parentElement;
     if (skipped(parent)) return;
-    const next = parent.closest(DATA_SEL) ? translateExact(node.nodeValue) : translate(node.nodeValue, partial);
+    const next = parent.closest(DATA_SEL) ? translateExact(node.nodeValue) : translate(node.nodeValue);
     if (next !== node.nodeValue) node.nodeValue = next;
   }
   function translateAttrs(el) {
@@ -174,15 +171,9 @@
   // Copy such as "<strong>平台所有项目共用执行名额</strong>，默认 10 条…" arrives
   // split over several text nodes by inline markup, so a dictionary key for the
   // whole sentence can never match a single node. Collect runs of text nodes and
-  // plain inline wrappers inside one block and match dictionary keys across them,
-  // replacing the run with the translation only when keys cover all of it.
+  // plain inline wrappers inside one block and replace the run only when one
+  // dictionary entry covers the whole sentence.
   const INLINE = new Set(['A', 'B', 'BR', 'CITE', 'CODE', 'EM', 'I', 'MARK', 'SMALL', 'SPAN', 'STRONG', 'TIME', 'U']);
-  const byInitial = new Map();
-  for (const key of fragments) {
-    const first = key[0];
-    if (!byInitial.has(first)) byInitial.set(first, []);
-    byInitial.get(first).push(key);
-  }
   const KEEP_ATTRS = new Set(['class', 'style', 'title', 'aria-label', 'aria-hidden', 'role', 'lang', 'dir', 'data-i18n-skip']);
   function inlineOnly(el) {
     if (!INLINE.has(el.tagName) || !el.childNodes.length) return false;
@@ -199,28 +190,20 @@
       return node.childNodes.length ? flatten([...node.childNodes]) : (node.textContent || '');
     }).join('');
   }
-  function matchRun(text) {
-    const out = [];
-    let i = 0;
-    let covered = 0;
-    let leftover = '';
-    while (i < text.length) {
-      const keys = byInitial.get(text[i]);
-      let best = null;
-      if (keys) for (const key of keys) if (text.startsWith(key, i)) { best = key; break; }
-      if (best) {
-        out.push(dict[best]);
-        covered += best.length;
-        i += best.length;
-      } else {
-        out.push(text[i]);
-        leftover += text[i];
-        i += 1;
-      }
-    }
-    // Only merge when the dictionary covers the whole run; a partial match would
-    // flatten markup around copy that still needs its own translation.
-    return covered && !leftover.trim() ? out.join('') : null;
+  function matchRun(text, nodes) {
+    // Only a single dictionary entry that covers the whole run may replace it.
+    // Stitching several entries together would treat unrelated siblings (grid
+    // cells, label + badge, metric label + value) as one sentence and flatten
+    // them into a single text node, dropping their classes and layout.
+    const trimmed = text.trim();
+    const key = Object.prototype.hasOwnProperty.call(dict, trimmed)
+      ? trimmed
+      : (Object.prototype.hasOwnProperty.call(dict, trimmed.replace(/\s+/g, ' ')) ? trimmed.replace(/\s+/g, ' ') : null);
+    if (!key) return null;
+    // The entry has to cross a node boundary; if one node already holds the
+    // whole sentence, translateText handles it and the markup must stay.
+    const local = nodes.map(node => (node.nodeType === 3 ? node.nodeValue : node.textContent) || '');
+    return local.some(value => value.includes(key)) ? null : dict[key];
   }
   function mergeRuns(el) {
     // Never rewrite rendered controls or observable subtrees: app code binds to
@@ -241,7 +224,7 @@
       if (nodes.length < 2) continue;
       const text = flatten(nodes);
       if (!HAN.test(text)) continue;
-      const hit = matchRun(text);
+      const hit = matchRun(text, nodes);
       if (!hit) continue;
       let anchor = nodes[0];
       if (anchor.nodeType === 1) {
@@ -249,7 +232,7 @@
         nodes[0].replaceWith(anchor);
         nodes[0] = anchor;
       }
-      anchor.nodeValue = translate(hit);
+      anchor.nodeValue = hit;
       for (const node of nodes.slice(1)) node.remove();
     }
   }

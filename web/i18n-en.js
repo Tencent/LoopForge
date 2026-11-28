@@ -1165,3 +1165,7 @@ Object.assign(window.LF_I18N_EN, {
   "排队": "Queue",
   "立即发送": "Send now",
 });
+
+Object.assign(window.LF_I18N_EN, {
+  "暂无项目说明": "No project description",
+});
