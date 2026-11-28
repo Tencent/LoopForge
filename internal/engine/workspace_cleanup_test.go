@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
@@ -160,5 +161,78 @@ func TestCompletedConversationSavesBeforeReclamationEvenWhenNotArchived(t *testi
 	got, _ = s.RunState(r.ID)
 	if got.WorkspaceCleanedAt.IsZero() {
 		t.Fatal("archived workspace was never reclaimed")
+	}
+}
+
+// Regression for #1473: the runner workspace of a terminal run can disappear
+// before the sweep saves its last checkpoint. That is an idempotent reclaim,
+// not a permanent failure: finish cleanup, release the admission slot and let
+// the sweep settle. Real RPC failures must still abort cleanup.
+func TestTerminalRunnerCleanupTreatsMissingWorkspaceAsReclaimed(t *testing.T) {
+	t.Parallel()
+	store, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(store.Close)
+	e := New(store, runtime.NewManager(t.TempDir()))
+	runner := domain.Runner{ID: "missing-ws-runner", Name: "runner", Status: domain.RunnerStatusOffline}
+	if err := store.PutRunner(runner); err != nil {
+		t.Fatal(err)
+	}
+	run := domain.Run{
+		ID: "missing-ws-run", Status: "succeeded", AdmissionState: "held",
+		ExecutionContext: domain.TelemetryContext{ExecutionMode: domain.ExecutionModeRunner, ExecutionRunnerID: runner.ID},
+		Nodes:            map[string]*domain.NodeRun{},
+	}
+	if err := store.PutRun(run); err != nil {
+		t.Fatal(err)
+	}
+	missing := domain.RunnerWorkspaceResponse{Status: 404, Code: domain.WorkspaceErrorMissing, Error: "workspace directory missing"}
+	e.WorkspaceCheckpointTransport = func(_ context.Context, _ domain.Run, req domain.RunnerWorkspaceRequest) (domain.RunnerWorkspaceResponse, error) {
+		return missing, nil
+	}
+	e.reconcileTerminalWorkspaceCleanup()
+
+	got, _ := store.RunState(run.ID)
+	if got.WorkspaceCleanedAt.IsZero() {
+		t.Fatal("missing runner workspace was not treated as reclaimed")
+	}
+	if got.AdmissionState != "released" {
+		t.Fatalf("admission slot stayed held: %q", got.AdmissionState)
+	}
+	if task, ok := store.RunnerTask("rt-cleanup-" + run.ID); !ok || task.Action != domain.RunnerTaskActionCleanupRun {
+		t.Fatalf("runner cleanup was not queued: %+v", task)
+	}
+}
+
+func TestTerminalRunnerCleanupStillReportsRealTransportFailure(t *testing.T) {
+	t.Parallel()
+	store, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(store.Close)
+	e := New(store, runtime.NewManager(t.TempDir()))
+	runner := domain.Runner{ID: "failing-ws-runner", Name: "runner", Status: domain.RunnerStatusOffline}
+	if err := store.PutRunner(runner); err != nil {
+		t.Fatal(err)
+	}
+	run := domain.Run{
+		ID: "failing-ws-run", Status: "cancelled", AdmissionState: "held",
+		ExecutionContext: domain.TelemetryContext{ExecutionMode: domain.ExecutionModeRunner, ExecutionRunnerID: runner.ID},
+		Nodes:            map[string]*domain.NodeRun{},
+	}
+	if err := store.PutRun(run); err != nil {
+		t.Fatal(err)
+	}
+	e.WorkspaceCheckpointTransport = func(_ context.Context, _ domain.Run, _ domain.RunnerWorkspaceRequest) (domain.RunnerWorkspaceResponse, error) {
+		return domain.RunnerWorkspaceResponse{}, errors.New("runner offline")
+	}
+	e.reconcileTerminalWorkspaceCleanup()
+
+	got, _ := store.RunState(run.ID)
+	if !got.WorkspaceCleanedAt.IsZero() || got.AdmissionState != "held" {
+		t.Fatalf("real transport failure was swallowed: cleaned=%v admission=%q", got.WorkspaceCleanedAt, got.AdmissionState)
 	}
 }

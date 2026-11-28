@@ -228,3 +228,21 @@ func TestRunnerReadWorkspaceBaseFileForIntentToAdd(t *testing.T) {
 		}
 	}
 }
+
+// Regression for #1473: a vanished workspace must be reported with the
+// semantic missing code so the platform can treat terminal cleanup as
+// already done instead of retrying it forever.
+func TestReadRunnerWorkspaceMissingRootReportsSemanticCode(t *testing.T) {
+	d := &Daemon{cfg: Config{DefaultWorkspaceRoot: t.TempDir()}}
+	req := domain.RunnerWorkspaceRequest{
+		RunID: "gone", WorkspaceLayout: domain.RunnerWorkspaceLayoutShared,
+		Operation: domain.RunnerWorkspaceOperationInfo,
+	}
+	response := d.readRunnerWorkspace(context.Background(), req)
+	if response.Status != 404 {
+		t.Fatalf("missing root status = %d, want 404: %+v", response.Status, response)
+	}
+	if response.Code != domain.WorkspaceErrorMissing {
+		t.Fatalf("missing root code = %q, want %q: %+v", response.Code, domain.WorkspaceErrorMissing, response)
+	}
+}

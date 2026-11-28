@@ -135,7 +135,12 @@ func (e *Engine) downloadConversationCheckpoint(ctx context.Context, run domain.
 		return err
 	}
 	if err = workspaceCheckpointResponseError(response); err != nil {
-		if errors.Is(err, os.ErrNotExist) && idleSOPStatus(run) && e.defaultExecutionRunner(run) != "" {
+		// A terminal run's workspace may be removed from the host (tmp cleaner,
+		// manual cleanup) before its last checkpoint is saved. That is an
+		// idempotent reclaim, not a permanent failure: the sweep would otherwise
+		// retry every 20s and never release the run's admission slot.
+		terminal := run.Status == "succeeded" || run.Status == "cancelled"
+		if errors.Is(err, os.ErrNotExist) && (idleSOPStatus(run) || terminal) && e.defaultExecutionRunner(run) != "" {
 			// Export may also report a missing file inside the checkout. Only
 			// the Runner's direct probe can confirm that the root is absent.
 			meta, _ := e.repo.WorkspaceCheckpoint(run.ID)
