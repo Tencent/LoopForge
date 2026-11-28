@@ -49,6 +49,15 @@ func TestNativeProviderCustomGateway(t *testing.T) {
 					http.Error(w, "bad body", 400)
 					return
 				}
+				unsupportedSearch := false
+				if kind == "codex" {
+					tools, _ := body["tools"].([]any)
+					for _, raw := range tools {
+						tool, _ := raw.(map[string]any)
+						toolType, _ := tool["type"].(string)
+						unsupportedSearch = unsupportedSearch || strings.HasPrefix(toolType, "web_search")
+					}
+				}
 				mu.Lock()
 				requests++
 				expectedPath, header := "/v1/responses", r.Header.Get("Authorization")
@@ -61,7 +70,14 @@ func TestNativeProviderCustomGateway(t *testing.T) {
 				if r.URL.Path != expectedPath || header != expectedKey || body["model"] != "gateway-test-model" {
 					wrong = "wrong endpoint, key or model"
 				}
+				if unsupportedSearch {
+					wrong = "unexpected built-in web search tool"
+				}
 				mu.Unlock()
+				if unsupportedSearch {
+					http.Error(w, "web_search is not supported by this gateway", http.StatusBadRequest)
+					return
+				}
 				w.Header().Set("Content-Type", "text/event-stream")
 				emit := func(event string, data any) {
 					raw, _ := json.Marshal(data)

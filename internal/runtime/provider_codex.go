@@ -22,6 +22,8 @@ func (codexProvider) Materialize(ctx *providerMaterializeContext) error {
 func (codexProvider) Prepare(in providerInvocation) (CommandSpec, error) {
 	argv := buildProviderArgs(in)
 	argv = dropCodexResumeArgs(argv)
+	// Runs expose tools through the Agent's MCP allowlist, as chat does.
+	argv = append(argv, "-c", `web_search="disabled"`)
 	// exec options must precede the `resume` subcommand, so the effort config
 	// override is appended here rather than after the resume session ID.
 	if effort := strings.TrimSpace(in.Executor.Effort); effort != "" && !codexHasReasoningEffort(argv) {
