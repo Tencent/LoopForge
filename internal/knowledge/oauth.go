@@ -272,6 +272,9 @@ func oauthInsecureAllowed() bool {
 // CGNAT (100.64.0.0/10), unspecified, multicast, benchmarking and NAT64
 // addresses unless the test hook is enabled.
 func blockedOAuthIP(ip net.IP) bool {
+	if ip.IsLoopback() && oauthInsecureAllowed() {
+		return false
+	}
 	return isBlockedConnectorIP(ip, false)
 }
 

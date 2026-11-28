@@ -77,8 +77,8 @@ func resolveObsidianSkipTLS(endpoint string, extra map[string]string) bool {
 	return isLocalOrPrivateHost(u.Hostname())
 }
 
-func (obsidianFactory) ValidateAndNormalize(endpoint string, cfg domain.KnowledgeConnectorConfig, secret domain.KnowledgeConnectorSecret, hasExistingSecret bool) (string, domain.KnowledgeConnectorConfig, domain.KnowledgeConnectorSecret, error) {
-	normalized, err := validateNativeBaseURL(endpoint, "", "Obsidian")
+func (obsidianFactory) ValidateAndNormalize(endpoint string, cfg domain.KnowledgeConnectorConfig, secret domain.KnowledgeConnectorSecret, hasExistingSecret, storedEndpoint bool) (string, domain.KnowledgeConnectorConfig, domain.KnowledgeConnectorSecret, error) {
+	normalized, err := validateNativeBaseURLWithPolicy(endpoint, "", "Obsidian", storedEndpoint)
 	if err != nil {
 		return "", cfg, secret, err
 	}
@@ -91,7 +91,7 @@ func (obsidianFactory) ValidateAndNormalize(endpoint string, cfg domain.Knowledg
 
 	// Enforce local/private-only self-signed TLS boundary at validation time.
 	skipTLS := resolveObsidianSkipTLS(normalized, cfg.Extra)
-	if _, err := newNativeHTTPClient(nativeDefaultTimeout, normalized, skipTLS); err != nil {
+	if _, err := newNativeHTTPClientWithPolicy(nativeDefaultTimeout, normalized, skipTLS, storedEndpoint || privateConnectorOriginAllowed(normalized)); err != nil {
 		return "", cfg, secret, err
 	}
 

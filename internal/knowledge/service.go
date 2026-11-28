@@ -183,7 +183,7 @@ func (s *Service) CreateConnector(_ context.Context, ownerUserID int64, input Co
 	if input.Config != nil {
 		rawCfg = *input.Config
 	}
-	endpoint, cfg, secret, err := factory.ValidateAndNormalize(input.Endpoint, rawCfg, input.Secret, false)
+	endpoint, cfg, secret, err := factory.ValidateAndNormalize(input.Endpoint, rawCfg, input.Secret, false, false)
 	if err != nil {
 		return domain.KnowledgeConnector{}, err
 	}
@@ -258,13 +258,20 @@ func (s *Service) UpdateConnector(_ context.Context, ownerUserID int64, id strin
 	if endpointIn == "" {
 		endpointIn = existing.Endpoint
 	}
+	// An update that keeps the stored endpoint (and type) only re-validates the
+	// format: the loopback/private opt-in check is skipped so connectors created
+	// under an earlier LOOPFORGE_KNOWLEDGE_INTERNAL_ORIGINS can still be renamed
+	// or disabled. Check/run paths and the dial-time SSRF guard are unaffected.
+	storedEndpoint := strings.TrimSpace(existing.Endpoint) != "" &&
+		strings.EqualFold(typ, strings.TrimSpace(existing.Type)) &&
+		sameConnectorEndpoint(existing.Endpoint, endpointIn)
 
 	rawCfg := existing.Config
 	if input.Config != nil {
 		rawCfg = *input.Config
 	}
 	keepExistingSecret := !input.ClearSecret && !input.Secret.HasCredential() && strings.TrimSpace(existing.SecretEnc) != ""
-	endpoint, cfg, secret, err := factory.ValidateAndNormalize(endpointIn, rawCfg, input.Secret, keepExistingSecret)
+	endpoint, cfg, secret, err := factory.ValidateAndNormalize(endpointIn, rawCfg, input.Secret, keepExistingSecret, storedEndpoint)
 	if err != nil {
 		return domain.KnowledgeConnector{}, err
 	}
@@ -379,7 +386,7 @@ func (s *Service) CheckConnector(ctx context.Context, ownerUserID int64, id stri
 			return CheckResult{ConnectorID: id, OK: false, Error: fmt.Sprintf("不支持的知识库连接器类型 %q", typ)}
 		}
 		factory = f
-		normEndpoint, normCfg, normSecret, err := factory.ValidateAndNormalize(endpoint, cfg, secret, hasSavedSecret && useSavedSecret)
+		normEndpoint, normCfg, normSecret, err := factory.ValidateAndNormalize(endpoint, cfg, secret, hasSavedSecret && useSavedSecret, false)
 		if err != nil {
 			return CheckResult{ConnectorID: id, OK: false, Error: err.Error()}
 		}
@@ -417,7 +424,7 @@ func (s *Service) CheckConnector(ctx context.Context, ownerUserID int64, id stri
 		if override.Config != nil {
 			rawCfg = *override.Config
 		}
-		normEndpoint, normCfg, normSecret, err := factory.ValidateAndNormalize(override.Endpoint, rawCfg, override.Secret, false)
+		normEndpoint, normCfg, normSecret, err := factory.ValidateAndNormalize(override.Endpoint, rawCfg, override.Secret, false, false)
 		if err != nil {
 			return CheckResult{OK: false, Error: err.Error()}
 		}

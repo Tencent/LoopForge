@@ -51,6 +51,7 @@ func TestDebugLogsCaptureMCPFilterAndRedactedPayloads(t *testing.T) {
 		}
 	}))
 	defer srv.Close()
+	allowConnectorTestOrigins(t, srv.URL)
 
 	var buf bytes.Buffer
 	prevOut := log.Writer()

@@ -139,6 +139,7 @@ func TestSiYuanConnectorAuthScopeAndEvidence(t *testing.T) {
 		}
 	}))
 	defer srv.Close()
+	allowConnectorTestOrigins(t, srv.URL)
 
 	svc := NewService(newMemoryConnectorStore(), nil)
 	ctx := context.Background()
@@ -279,6 +280,7 @@ func TestObsidianConnectorSelfSignedTLSAuthAndScope(t *testing.T) {
 		}
 	}))
 	defer srv.Close()
+	allowConnectorTestOrigins(t, srv.URL)
 
 	svc := NewService(newMemoryConnectorStore(), nil)
 	ctx := context.Background()
@@ -437,10 +439,11 @@ func TestNotionConnectorHeadersBlocksAnd429Retry(t *testing.T) {
 		}
 	}))
 	defer srv.Close()
+	allowConnectorTestOrigins(t, srv.URL)
 
 	// 1. Blank endpoint defaults to https://api.notion.com.
 	f := newNotionFactory()
-	normEndpoint, _, _, err := f.ValidateAndNormalize("", domain.KnowledgeConnectorConfig{}, domain.KnowledgeConnectorSecret{Token: token}, false)
+	normEndpoint, _, _, err := f.ValidateAndNormalize("", domain.KnowledgeConnectorConfig{}, domain.KnowledgeConnectorSecret{Token: token}, false, false)
 	if err != nil || normEndpoint != notionDefaultBaseURL {
 		t.Fatalf("expected default notion endpoint %q, got %q err=%v", notionDefaultBaseURL, normEndpoint, err)
 	}
@@ -587,6 +590,7 @@ func TestFeishuConnectorTATCacheRefreshPermErrorAndCitation(t *testing.T) {
 		}
 	}))
 	defer srv.Close()
+	allowConnectorTestOrigins(t, srv.URL)
 
 	svc := NewService(newMemoryConnectorStore(), nil)
 	ctx := context.Background()
@@ -662,11 +666,13 @@ func TestNativeHTTPClientRejectsCrossOriginRedirect(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer target.Close()
+	allowConnectorTestOrigins(t, target.URL)
 
 	redirector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, target.URL+"/steal", http.StatusFound)
 	}))
 	defer redirector.Close()
+	allowConnectorTestOrigins(t, redirector.URL)
 
 	client, err := newNativeHTTPClient(nativeDefaultTimeout, redirector.URL, false)
 	if err != nil {

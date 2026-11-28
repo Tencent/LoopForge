@@ -59,14 +59,14 @@ test('knowledge: usage and candidates answer for the project', async () => {
 
 test('knowledge: personal connector CRUD, secret masking, isolation and check', async () => {
   const me = await tokenOwner();
-  await api('POST', '/api/knowledge/connectors', { name: '', type: 'mcp', endpoint: 'http://127.0.0.1:1/mcp' }, { expect: 400 });
-  await api('POST', '/api/knowledge/connectors', { name: uid('kb-bad'), type: 'no-such-type', endpoint: 'http://127.0.0.1:1/mcp' }, { expect: 400 });
+  await api('POST', '/api/knowledge/connectors', { name: '', type: 'mcp', endpoint: 'https://knowledge-fixture.invalid/mcp' }, { expect: 400 });
+  await api('POST', '/api/knowledge/connectors', { name: uid('kb-bad'), type: 'no-such-type', endpoint: 'https://knowledge-fixture.invalid/mcp' }, { expect: 400 });
 
   const secret = `e2e-secret-${cfg.runTag}`;
   const createdRes = await api('POST', '/api/knowledge/connectors', {
     name: `E2E 知识连接器 ${cfg.runTag}`,
     type: 'mcp',
-    endpoint: 'http://127.0.0.1:1/mcp',
+    endpoint: 'https://knowledge-fixture.invalid/mcp',
     token: secret,
     config: { timeoutSec: 3 },
   }, { expect: 201, raw: true });
@@ -86,14 +86,14 @@ test('knowledge: personal connector CRUD, secret masking, isolation and check', 
   if (cfg.tokenB) {
     assert.ok(!list(await get('/api/knowledge/connectors', asB())).some(c => c.id === conn.id), 'another user must not list private connectors');
     await api('GET', `/api/knowledge/connectors/${conn.id}`, undefined, asB({ expect: 404 }));
-    await api('PUT', `/api/knowledge/connectors/${conn.id}`, { name: 'hijacked', type: 'mcp', endpoint: 'http://127.0.0.1:1/mcp' }, asB({ expect: 404 }));
+    await api('PUT', `/api/knowledge/connectors/${conn.id}`, { name: 'hijacked', type: 'mcp', endpoint: 'https://knowledge-fixture.invalid/mcp' }, asB({ expect: 404 }));
     await api('DELETE', `/api/knowledge/connectors/${conn.id}`, undefined, asB({ expect: 404 }));
   }
 
   const updated = await put(`/api/knowledge/connectors/${conn.id}`, {
     name: `E2E 知识连接器（改） ${cfg.runTag}`,
     type: 'mcp',
-    endpoint: 'http://127.0.0.1:1/mcp',
+    endpoint: 'https://knowledge-fixture.invalid/mcp',
     config: { timeoutSec: 3 },
   });
   assert.equal(updated.name, `E2E 知识连接器（改） ${cfg.runTag}`);
@@ -102,7 +102,7 @@ test('knowledge: personal connector CRUD, secret masking, isolation and check', 
   const cleared = await put(`/api/knowledge/connectors/${conn.id}`, {
     name: updated.name,
     type: 'mcp',
-    endpoint: 'http://127.0.0.1:1/mcp',
+    endpoint: 'https://knowledge-fixture.invalid/mcp',
     clearSecret: true,
     config: { timeoutSec: 3 },
   });

@@ -71,8 +71,8 @@ func (feishuFactory) Meta() domain.ConnectorTypeMeta {
 	}
 }
 
-func (feishuFactory) ValidateAndNormalize(endpoint string, cfg domain.KnowledgeConnectorConfig, secret domain.KnowledgeConnectorSecret, hasExistingSecret bool) (string, domain.KnowledgeConnectorConfig, domain.KnowledgeConnectorSecret, error) {
-	normalized, err := validateNativeBaseURL(endpoint, feishuDefaultBaseURL, "飞书")
+func (feishuFactory) ValidateAndNormalize(endpoint string, cfg domain.KnowledgeConnectorConfig, secret domain.KnowledgeConnectorSecret, hasExistingSecret, storedEndpoint bool) (string, domain.KnowledgeConnectorConfig, domain.KnowledgeConnectorSecret, error) {
+	normalized, err := validateNativeBaseURLWithPolicy(endpoint, feishuDefaultBaseURL, "飞书", storedEndpoint)
 	if err != nil {
 		return "", cfg, secret, err
 	}

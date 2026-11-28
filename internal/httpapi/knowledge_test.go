@@ -97,6 +97,7 @@ func newKnowledgeTestServer(t *testing.T) (*repo.Store, http.Handler, *fakeKB, s
 	kb := &fakeKB{}
 	upstream := httptest.NewServer(kb)
 	t.Cleanup(upstream.Close)
+	t.Setenv("LOOPFORGE_KNOWLEDGE_INTERNAL_ORIGINS", upstream.URL)
 	handler := New(s, engine.New(s, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
 	return s, handler, kb, upstream.URL + "/mcp"
 }
@@ -295,7 +296,7 @@ func TestKnowledgeProxyIsReadOnlyAndUserConnectorScoped(t *testing.T) {
 	_ = s.PutRun(domain.Run{
 		ID:               "run-proxy-iso",
 		Status:           "running",
-		ExecutionContext: domain.TelemetryContext{ProjectID: "p1", ResponsibleUserID: 42},
+		ExecutionContext: domain.TelemetryContext{ProjectID: "p1", ResponsibleUserID: 42, KnowledgeUserID: 42},
 		Nodes:            map[string]*domain.NodeRun{"n1": {NodeID: "n1", Status: "running", Attempt: 1}},
 	})
 	token, err := knowledge.SignProxyToken(knowledge.ProxyClaims{RunID: "run-proxy-iso", NodeID: "n1", Attempt: 1, ProjectID: "p1", UserID: 42, AgentID: "dev", Ref: &ref}, time.Now())
@@ -435,6 +436,9 @@ func TestManualRunKnowledgeRefsOverridePersistence(t *testing.T) {
 
 	// 1. Omitted knowledgeRefs keeps nil (follow node/role defaults).
 	respOmitted, dbOmitted := startAndStop(`{"workflowId":"wf-run-kb","projectId":"p-run-kb","input":"omitted"}`)
+	if !dbOmitted.ExecutionContext.AllowsPersonalKnowledge() {
+		t.Fatal("the stored run should retain the authenticated initiator's permission")
+	}
 	if respOmitted.ExecutionContext.KnowledgeRefs != nil || dbOmitted.ExecutionContext.KnowledgeRefs != nil {
 		t.Fatalf("omitted knowledgeRefs should stay nil: resp=%#v db=%#v", respOmitted.ExecutionContext.KnowledgeRefs, dbOmitted.ExecutionContext.KnowledgeRefs)
 	}

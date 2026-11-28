@@ -75,6 +75,13 @@ func nativeReadOnlyToolNames() []string {
 }
 
 func validateNativeBaseURL(raw, defaultURL, label string) (string, error) {
+	return validateNativeBaseURLWithPolicy(raw, defaultURL, label, false)
+}
+
+// validateNativeBaseURLWithPolicy validates a native connector base URL.
+// storedEndpoint marks an already-saved address (see ConnectorFactory): it
+// skips only the loopback/private opt-in check for IP literals.
+func validateNativeBaseURLWithPolicy(raw, defaultURL, label string, storedEndpoint bool) (string, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" && strings.TrimSpace(defaultURL) != "" {
 		raw = strings.TrimSpace(defaultURL)
@@ -108,10 +115,49 @@ func validateNativeBaseURL(raw, defaultURL, label string) (string, error) {
 	if s == "" {
 		return "", apperr.New(apperr.Invalid, label+"服务地址不能为空")
 	}
-	if err := validateConnectorEndpointIP(s, true, label); err != nil {
+	if err := validateConnectorEndpointIP(s, storedEndpoint || privateConnectorOriginAllowed(s), label); err != nil {
 		return "", err
 	}
 	return s, nil
+}
+
+const privateConnectorOriginsEnv = "LOOPFORGE_KNOWLEDGE_INTERNAL_ORIGINS"
+
+// privateConnectorOriginAllowed checks exact origins configured by the
+// deployment operator. An origin covers one scheme, host and port.
+func privateConnectorOriginAllowed(endpoint string) bool {
+	target, err := url.Parse(strings.TrimSpace(endpoint))
+	if err != nil {
+		return false
+	}
+	origin := connectorOrigin(target)
+	if origin == "" {
+		return false
+	}
+	for _, raw := range strings.Split(os.Getenv(privateConnectorOriginsEnv), ",") {
+		entry, err := url.Parse(strings.TrimSpace(raw))
+		if err != nil || entry.User != nil || (entry.Path != "" && entry.Path != "/") || entry.ForceQuery || entry.RawQuery != "" || entry.Fragment != "" {
+			continue
+		}
+		if connectorOrigin(entry) == origin {
+			return true
+		}
+	}
+	return false
+}
+
+func connectorOrigin(u *url.URL) string {
+	if u.Hostname() == "" || (u.Scheme != "http" && u.Scheme != "https") {
+		return ""
+	}
+	port := u.Port()
+	if port == "" {
+		port = "80"
+		if u.Scheme == "https" {
+			port = "443"
+		}
+	}
+	return u.Scheme + "://" + net.JoinHostPort(strings.ToLower(u.Hostname()), port)
 }
 
 var (
@@ -147,9 +193,7 @@ func isAlwaysBlockedIP(ip net.IP) bool {
 	return false
 }
 
-// isBlockedConnectorIP enforces the SSRF IP boundary. When allowLocalOrPrivate
-// is false, RFC1918/ULA private ranges are blocked, and loopback is only
-// permitted when tests or LOOPFORGE_KNOWLEDGE_OAUTH_INSECURE opt in.
+// isBlockedConnectorIP rejects loopback and private ranges by default.
 func isBlockedConnectorIP(ip net.IP, allowLocalOrPrivate bool) bool {
 	if isAlwaysBlockedIP(ip) {
 		return true
@@ -160,10 +204,7 @@ func isBlockedConnectorIP(ip net.IP, allowLocalOrPrivate bool) bool {
 	if allowLocalOrPrivate {
 		return false
 	}
-	if ip.IsLoopback() {
-		return !oauthInsecureAllowed()
-	}
-	return ip.IsPrivate()
+	return ip.IsLoopback() || ip.IsPrivate()
 }
 
 // validateConnectorEndpointIP rejects literals in forbidden IP ranges at
@@ -176,6 +217,9 @@ func validateConnectorEndpointIP(rawURL string, allowLocalOrPrivate bool, label 
 	host := strings.Trim(u.Hostname(), "[]")
 	if ip := net.ParseIP(host); ip != nil {
 		if isBlockedConnectorIP(ip, allowLocalOrPrivate) {
+			if !isAlwaysBlockedIP(ip) {
+				return apperr.New(apperr.Invalid, label+"地址不允许访问受保护的网络网段；如为部署内可信服务，请让运维把该 origin 加入 "+privateConnectorOriginsEnv)
+			}
 			return apperr.New(apperr.Invalid, label+"地址不允许访问受保护的网络网段")
 		}
 	}
@@ -249,7 +293,7 @@ func isLocalOrPrivateHost(host string) bool {
 }
 
 func newNativeHTTPClient(timeout time.Duration, endpoint string, allowLocalInsecureTLS bool) (*http.Client, error) {
-	return newNativeHTTPClientWithPolicy(timeout, endpoint, allowLocalInsecureTLS, true)
+	return newNativeHTTPClientWithPolicy(timeout, endpoint, allowLocalInsecureTLS, privateConnectorOriginAllowed(endpoint))
 }
 
 func newNativeHTTPClientWithPolicy(timeout time.Duration, endpoint string, allowLocalInsecureTLS, allowLocalOrPrivate bool) (*http.Client, error) {
@@ -322,6 +366,9 @@ func doRequestWithDockerFallback(client *http.Client, req *http.Request) (*http.
 		retryURL.Host = "host.docker.internal:" + port
 	} else {
 		retryURL.Host = "host.docker.internal"
+	}
+	if !privateConnectorOriginAllowed(retryURL.String()) {
+		return nil, err
 	}
 	retryReq.URL = &retryURL
 	retryReq.Host = retryURL.Host

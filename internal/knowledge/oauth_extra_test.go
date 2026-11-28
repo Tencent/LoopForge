@@ -384,6 +384,7 @@ func TestServiceOAuthErrorPathsCIMDAndCAS(t *testing.T) {
 		}
 	}))
 	defer srv.Close()
+	allowConnectorTestOrigins(t, srv.URL)
 	srvURL = srv.URL
 
 	baseStore := newMemoryConnectorStore()

@@ -246,6 +246,7 @@ func TestMCPOAuthAutoFlowUsesDiscoveryDCRAndSession(t *testing.T) {
 	provider := &fakeOAuthProvider{}
 	srv := httptest.NewServer(provider)
 	t.Cleanup(srv.Close)
+	allowConnectorTestOrigins(t, srv.URL)
 	provider.setBaseURL(srv.URL)
 
 	store := newMemoryConnectorStore()
@@ -492,6 +493,7 @@ func TestMCPOAuthFeishuRefreshRotatesOnceUnderConcurrency(t *testing.T) {
 	fake := &feishuFake{}
 	srv := httptest.NewServer(fake)
 	t.Cleanup(srv.Close)
+	allowConnectorTestOrigins(t, srv.URL)
 
 	store := newMemoryConnectorStore()
 	svc := NewService(store, func() string { return "fs" })
@@ -720,6 +722,7 @@ func TestMCPOAuth401RefreshRetriesOnce(t *testing.T) {
 	fake := &refresh401Fake{}
 	srv := httptest.NewServer(fake)
 	t.Cleanup(srv.Close)
+	allowConnectorTestOrigins(t, srv.URL)
 
 	store := newMemoryConnectorStore()
 	svc := NewService(store, func() string { return "r401" })
@@ -965,6 +968,7 @@ func TestOAuthRefreshDoesNotClobberConcurrentAuthorization(t *testing.T) {
 	fake := newRotationGateFake()
 	srv := httptest.NewServer(fake)
 	t.Cleanup(srv.Close)
+	allowConnectorTestOrigins(t, srv.URL)
 
 	store := newMemoryConnectorStore()
 	svc := NewService(store, func() string { return "p0a" })
@@ -1028,6 +1032,7 @@ func TestOAuthRefreshKeepsConcurrentConnectorEdits(t *testing.T) {
 	fake := newRotationGateFake()
 	srv := httptest.NewServer(fake)
 	t.Cleanup(srv.Close)
+	allowConnectorTestOrigins(t, srv.URL)
 
 	store := newMemoryConnectorStore()
 	svc := NewService(store, func() string { return "p0b" })
@@ -1106,6 +1111,7 @@ func TestOAuthCallbackRejectsChangedConnectorEndpoint(t *testing.T) {
 	fake := &tokenCountFake{}
 	srv := httptest.NewServer(fake)
 	t.Cleanup(srv.Close)
+	allowConnectorTestOrigins(t, srv.URL)
 
 	store := newMemoryConnectorStore()
 	svc := NewService(store, func() string { return "p0c" })
@@ -1165,6 +1171,7 @@ func TestOAuthDCRRegistrationSurvivesAbandonedCallback(t *testing.T) {
 	provider := &fakeOAuthProvider{}
 	srv := httptest.NewServer(provider)
 	t.Cleanup(srv.Close)
+	allowConnectorTestOrigins(t, srv.URL)
 	provider.setBaseURL(srv.URL)
 
 	store := newMemoryConnectorStore()
@@ -1294,6 +1301,7 @@ func TestOAuthOmittedAuthMethodFallsBackToBasic(t *testing.T) {
 	fake := &basicAuthFake{}
 	srv := httptest.NewServer(fake)
 	t.Cleanup(srv.Close)
+	allowConnectorTestOrigins(t, srv.URL)
 	fake.setBase(srv.URL)
 
 	store := newMemoryConnectorStore()
@@ -1372,6 +1380,7 @@ func TestOAuthClientIgnoresEnvironmentProxy(t *testing.T) {
 		_, _ = w.Write([]byte("direct"))
 	}))
 	t.Cleanup(srv.Close)
+	allowConnectorTestOrigins(t, srv.URL)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -1487,6 +1496,7 @@ func TestOAuthLate401ReusesRefreshedToken(t *testing.T) {
 	fake := newLate401Fake()
 	srv := httptest.NewServer(fake)
 	t.Cleanup(srv.Close)
+	allowConnectorTestOrigins(t, srv.URL)
 
 	store := newMemoryConnectorStore()
 	svc := NewService(store, func() string { return "p1c" })
@@ -1562,11 +1572,13 @@ func TestOAuthDiscoveryCacheFollowsEndpointChange(t *testing.T) {
 	providerA := &fakeOAuthProvider{}
 	srvA := httptest.NewServer(providerA)
 	t.Cleanup(srvA.Close)
+	allowConnectorTestOrigins(t, srvA.URL)
 	providerA.setBaseURL(srvA.URL)
 
 	providerB := &fakeOAuthProvider{}
 	srvB := httptest.NewServer(providerB)
 	t.Cleanup(srvB.Close)
+	allowConnectorTestOrigins(t, srvB.URL)
 	providerB.setBaseURL(srvB.URL)
 
 	store := newMemoryConnectorStore()
@@ -1642,7 +1654,7 @@ func TestOAuthStartFailsClosedWithoutEntropy(t *testing.T) {
 	connector, err := svc.CreateConnector(ctx, uid, ConnectorInput{
 		Name:     "entropy",
 		Type:     domain.ConnectorTypeMCP,
-		Endpoint: "http://127.0.0.1:1/mcp",
+		Endpoint: "https://knowledge-fixture.invalid/mcp",
 		Config: &domain.KnowledgeConnectorConfig{Extra: map[string]string{
 			"oauthMode":         OAuthModeCustom,
 			"oauthTokenUrl":     "http://127.0.0.1:1/token",
@@ -1709,6 +1721,7 @@ func TestOAuthCallbackRedactsEchoedSecrets(t *testing.T) {
 	fake := &echoingTokenFake{}
 	srv := httptest.NewServer(fake)
 	t.Cleanup(srv.Close)
+	allowConnectorTestOrigins(t, srv.URL)
 
 	store := newMemoryConnectorStore()
 	svc := NewService(store, func() string { return "p1f" })
@@ -1786,7 +1799,7 @@ func TestOAuthStartConfigWriteKeepsConcurrentRename(t *testing.T) {
 	connector, err := svc.CreateConnector(ctx, uid, ConnectorInput{
 		Name:     "旧名称",
 		Type:     domain.ConnectorTypeMCP,
-		Endpoint: "http://127.0.0.1:1/mcp",
+		Endpoint: "https://knowledge-fixture.invalid/mcp",
 		Config: &domain.KnowledgeConnectorConfig{Extra: map[string]string{
 			"oauthMode":         OAuthModeCustom,
 			"oauthTokenUrl":     "http://127.0.0.1:1/token",
@@ -1875,6 +1888,7 @@ func TestOAuthStartDoesNotRebaseRegistrationOntoChangedEndpoint(t *testing.T) {
 	provider := newGatedRegisterProvider()
 	srv := httptest.NewServer(provider)
 	t.Cleanup(srv.Close)
+	allowConnectorTestOrigins(t, srv.URL)
 	provider.setBaseURL(srv.URL)
 
 	store := newMemoryConnectorStore()
@@ -1938,6 +1952,7 @@ func TestOAuthStartAllowsConcurrentRenameDuringDCR(t *testing.T) {
 	provider := newGatedRegisterProvider()
 	srv := httptest.NewServer(provider)
 	t.Cleanup(srv.Close)
+	allowConnectorTestOrigins(t, srv.URL)
 	provider.setBaseURL(srv.URL)
 
 	store := newMemoryConnectorStore()
@@ -2048,6 +2063,7 @@ func TestOAuthEnsureValidSecretRefreshesExpiredTokenWrittenWhileWaiting(t *testi
 	fake := &countingRefreshFake{}
 	srv := httptest.NewServer(fake)
 	t.Cleanup(srv.Close)
+	allowConnectorTestOrigins(t, srv.URL)
 
 	store := newSignalGetStore()
 	svc := NewService(store, func() string { return "p1w" })
@@ -2137,7 +2153,7 @@ func TestOAuthEnsureValidSecretReusesAuthorizationWrittenWhileWaiting(t *testing
 	connector, err := svc.CreateConnector(ctx, uid, ConnectorInput{
 		Name:     "no refresh",
 		Type:     domain.ConnectorTypeMCP,
-		Endpoint: "http://127.0.0.1:1/mcp",
+		Endpoint: "https://knowledge-fixture.invalid/mcp",
 		Config: &domain.KnowledgeConnectorConfig{Extra: map[string]string{
 			"oauthMode":         OAuthModeCustom,
 			"oauthTokenUrl":     "http://127.0.0.1:1/token",

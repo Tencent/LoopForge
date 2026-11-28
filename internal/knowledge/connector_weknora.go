@@ -67,8 +67,8 @@ func (weknoraFactory) Meta() domain.ConnectorTypeMeta {
 	}
 }
 
-func (weknoraFactory) ValidateAndNormalize(endpoint string, cfg domain.KnowledgeConnectorConfig, secret domain.KnowledgeConnectorSecret, hasExistingSecret bool) (string, domain.KnowledgeConnectorConfig, domain.KnowledgeConnectorSecret, error) {
-	normalized, err := ValidateOutboundWeKnoraURL(endpoint)
+func (weknoraFactory) ValidateAndNormalize(endpoint string, cfg domain.KnowledgeConnectorConfig, secret domain.KnowledgeConnectorSecret, hasExistingSecret, storedEndpoint bool) (string, domain.KnowledgeConnectorConfig, domain.KnowledgeConnectorSecret, error) {
+	normalized, err := validateWeKnoraURL(endpoint, storedEndpoint)
 	if err != nil {
 		return "", cfg, secret, err
 	}
@@ -101,7 +101,7 @@ func (weknoraFactory) New(spec ConnectorSpec) (Connector, error) {
 	}
 	client := &http.Client{
 		Timeout:       timeout,
-		Transport:     newWeKnoraTransport(),
+		Transport:     newGuardedHTTPTransport(privateConnectorOriginAllowed(base), "WeKnora "),
 		CheckRedirect: checkWeKnoraRedirect,
 	}
 	spec.Endpoint = base
@@ -116,6 +116,13 @@ func (weknoraFactory) New(spec ConnectorSpec) (Connector, error) {
 // ValidateOutboundWeKnoraURL validates and normalizes a WeKnora base URL,
 // stripping trailing slashes and an optional /api/v1 suffix.
 func ValidateOutboundWeKnoraURL(raw string) (string, error) {
+	return validateWeKnoraURL(raw, false)
+}
+
+// validateWeKnoraURL is ValidateOutboundWeKnoraURL with storedEndpoint
+// semantics (see ConnectorFactory): an already-saved address skips only the
+// loopback/private opt-in check for IP literals.
+func validateWeKnoraURL(raw string, storedEndpoint bool) (string, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return "", apperr.New(apperr.Invalid, "WeKnora 服务地址不能为空")
@@ -148,14 +155,10 @@ func ValidateOutboundWeKnoraURL(raw string) (string, error) {
 	if s == "" {
 		return "", apperr.New(apperr.Invalid, "WeKnora 服务地址不能为空")
 	}
-	if err := validateConnectorEndpointIP(s, true, "WeKnora "); err != nil {
+	if err := validateConnectorEndpointIP(s, storedEndpoint || privateConnectorOriginAllowed(s), "WeKnora "); err != nil {
 		return "", err
 	}
 	return s, nil
-}
-
-func newWeKnoraTransport() *http.Transport {
-	return newGuardedHTTPTransport(true, "WeKnora ")
 }
 
 func checkWeKnoraRedirect(req *http.Request, via []*http.Request) error {
@@ -187,9 +190,9 @@ type weknoraConnector struct {
 	baseURL string
 	http    *http.Client
 
-	mu        sync.Mutex
-	kbNames   kbNamesEntry
-	docMeta   map[string]docMetaEntry
+	mu      sync.Mutex
+	kbNames kbNamesEntry
+	docMeta map[string]docMetaEntry
 }
 
 func (c *weknoraConnector) Type() string { return domain.ConnectorTypeWeKnora }

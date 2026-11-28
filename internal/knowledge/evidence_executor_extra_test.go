@@ -96,7 +96,7 @@ type catalogVariantConnector struct {
 	err     error
 }
 
-func (c *catalogVariantConnector) Type() string                 { return c.typ }
+func (c *catalogVariantConnector) Type() string                      { return c.typ }
 func (c *catalogVariantConnector) Check(context.Context) CheckResult { return CheckResult{OK: true} }
 func (c *catalogVariantConnector) ListSources(context.Context) ([]Source, error) {
 	return c.sources, c.err
@@ -119,7 +119,7 @@ type catalogVariantFactory struct {
 func (f catalogVariantFactory) Meta() domain.ConnectorTypeMeta {
 	return domain.ConnectorTypeMeta{Type: f.typ, Name: f.typ}
 }
-func (f catalogVariantFactory) ValidateAndNormalize(ep string, cfg domain.KnowledgeConnectorConfig, sec domain.KnowledgeConnectorSecret, _ bool) (string, domain.KnowledgeConnectorConfig, domain.KnowledgeConnectorSecret, error) {
+func (f catalogVariantFactory) ValidateAndNormalize(ep string, cfg domain.KnowledgeConnectorConfig, sec domain.KnowledgeConnectorSecret, _, _ bool) (string, domain.KnowledgeConnectorConfig, domain.KnowledgeConnectorSecret, error) {
 	return ep, cfg, sec, nil
 }
 func (f catalogVariantFactory) New(ConnectorSpec) (Connector, error) { return f.conn, nil }
@@ -265,6 +265,7 @@ func TestServiceCRUDNilUsageAndCheckOverrides(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer srv.Close()
+	allowConnectorTestOrigins(t, srv.URL)
 
 	created, err := svc.CreateConnector(ctx, 1, ConnectorInput{
 		ID:       "kc-fixed",
@@ -331,20 +332,20 @@ func TestMCPConnectorValidationScopeErrorsAndRetry(t *testing.T) {
 		t.Fatalf("unexpected mcp meta: %+v", meta)
 	}
 	for _, bad := range []string{"", "https://a\n.com", "ftp://a.com", "https://u:p@a.com", "http://169.254.169.254/mcp"} {
-		if _, _, _, err := f.ValidateAndNormalize(bad, domain.KnowledgeConnectorConfig{}, domain.KnowledgeConnectorSecret{}, false); !isAppErrKind(err, apperr.Invalid) {
+		if _, _, _, err := f.ValidateAndNormalize(bad, domain.KnowledgeConnectorConfig{}, domain.KnowledgeConnectorSecret{}, false, false); !isAppErrKind(err, apperr.Invalid) {
 			t.Fatalf("expected Invalid for %q, got %v", bad, err)
 		}
 	}
-	if _, _, _, err := f.ValidateAndNormalize("https://a.com/mcp", domain.KnowledgeConnectorConfig{TimeoutSec: 301}, domain.KnowledgeConnectorSecret{}, false); !isAppErrKind(err, apperr.Invalid) {
+	if _, _, _, err := f.ValidateAndNormalize("https://a.com/mcp", domain.KnowledgeConnectorConfig{TimeoutSec: 301}, domain.KnowledgeConnectorSecret{}, false, false); !isAppErrKind(err, apperr.Invalid) {
 		t.Fatalf("expected Invalid for timeout >300, got %v", err)
 	}
-	if _, _, _, err := f.ValidateAndNormalize("https://a.com/mcp", domain.KnowledgeConnectorConfig{Extra: map[string]string{"oauthMode": "bogus"}}, domain.KnowledgeConnectorSecret{}, false); !isAppErrKind(err, apperr.Invalid) {
+	if _, _, _, err := f.ValidateAndNormalize("https://a.com/mcp", domain.KnowledgeConnectorConfig{Extra: map[string]string{"oauthMode": "bogus"}}, domain.KnowledgeConnectorSecret{}, false, false); !isAppErrKind(err, apperr.Invalid) {
 		t.Fatalf("expected Invalid for bad oauthMode, got %v", err)
 	}
-	if _, _, _, err := f.ValidateAndNormalize("https://a.com/mcp", domain.KnowledgeConnectorConfig{Extra: map[string]string{"oauthMode": OAuthModeCustom, "oauthTokenUrl": "javascript:1"}}, domain.KnowledgeConnectorSecret{}, false); !isAppErrKind(err, apperr.Invalid) {
+	if _, _, _, err := f.ValidateAndNormalize("https://a.com/mcp", domain.KnowledgeConnectorConfig{Extra: map[string]string{"oauthMode": OAuthModeCustom, "oauthTokenUrl": "javascript:1"}}, domain.KnowledgeConnectorSecret{}, false, false); !isAppErrKind(err, apperr.Invalid) {
 		t.Fatalf("expected Invalid for bad oauthTokenUrl, got %v", err)
 	}
-	_, _, sec, err := f.ValidateAndNormalize("https://a.com/mcp", domain.KnowledgeConnectorConfig{}, domain.KnowledgeConnectorSecret{AuthType: domain.ConnectorAuthOAuth, Headers: map[string]string{"X-Api": "1"}}, false)
+	_, _, sec, err := f.ValidateAndNormalize("https://a.com/mcp", domain.KnowledgeConnectorConfig{}, domain.KnowledgeConnectorSecret{AuthType: domain.ConnectorAuthOAuth, Headers: map[string]string{"X-Api": "1"}}, false, false)
 	if err != nil || sec.AuthType != domain.ConnectorAuthHeaders {
 		t.Fatalf("expected oauthMode=none to reset AuthType to headers, got %+v err=%v", sec, err)
 	}
@@ -418,7 +419,7 @@ func TestMCPConnectorValidationScopeErrorsAndRetry(t *testing.T) {
 func TestSiYuanAndObsidianRemainingBranches(t *testing.T) {
 	// SiYuan remaining validation and error paths.
 	sf := newSiYuanFactory()
-	if _, _, _, err := sf.ValidateAndNormalize("http://127.0.0.1:6806", domain.KnowledgeConnectorConfig{}, domain.KnowledgeConnectorSecret{}, false); !isAppErrKind(err, apperr.Invalid) {
+	if _, _, _, err := sf.ValidateAndNormalize("http://127.0.0.1:6806", domain.KnowledgeConnectorConfig{}, domain.KnowledgeConnectorSecret{}, false, false); !isAppErrKind(err, apperr.Invalid) {
 		t.Fatalf("expected Invalid when SiYuan lacks token, got %v", err)
 	}
 	var syMode atomic.Int32
@@ -445,6 +446,7 @@ func TestSiYuanAndObsidianRemainingBranches(t *testing.T) {
 		}
 	}))
 	defer sySrv.Close()
+	allowConnectorTestOrigins(t, sySrv.URL)
 
 	syConn, err := sf.New(ConnectorSpec{ID: "sy-1", Endpoint: sySrv.URL, Secret: domain.KnowledgeConnectorSecret{Token: "sy-tok"}})
 	if err != nil {
@@ -475,7 +477,7 @@ func TestSiYuanAndObsidianRemainingBranches(t *testing.T) {
 
 	// Obsidian remaining path traversal and read/list paths.
 	of := newObsidianFactory()
-	if _, _, _, err := of.ValidateAndNormalize("http://127.0.0.1:27123", domain.KnowledgeConnectorConfig{}, domain.KnowledgeConnectorSecret{}, false); !isAppErrKind(err, apperr.Invalid) {
+	if _, _, _, err := of.ValidateAndNormalize("http://127.0.0.1:27123", domain.KnowledgeConnectorConfig{}, domain.KnowledgeConnectorSecret{}, false, false); !isAppErrKind(err, apperr.Invalid) {
 		t.Fatalf("expected Invalid when Obsidian lacks key, got %v", err)
 	}
 	for _, badPath := range []string{"", "a\\b.md", "a/../b.md", ".hidden.md", "notes/file.txt"} {
@@ -502,6 +504,7 @@ func TestSiYuanAndObsidianRemainingBranches(t *testing.T) {
 		}
 	}))
 	defer obSrv.Close()
+	allowConnectorTestOrigins(t, obSrv.URL)
 
 	obConn, err := of.New(ConnectorSpec{ID: "ob-1", Endpoint: obSrv.URL, Secret: domain.KnowledgeConnectorSecret{Token: "ob-tok"}})
 	if err != nil {

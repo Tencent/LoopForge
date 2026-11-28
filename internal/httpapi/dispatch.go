@@ -235,6 +235,9 @@ func dispatchIssue(d *deps, req dispatchRequest) (domain.Task, error) {
 		ProjectID: issue.ProjectID, IssueID: issue.ID, TAPDID: tapdID, ResponsibleUserID: runUserID, IssueNumber: issue.Number,
 		TaskID: taskID, ScheduleJobID: strings.TrimSpace(req.ScheduleJobID), WorkspaceRunID: req.WorkspaceRunID,
 	}
+	if req.TriggerUserID == runUserID {
+		exec.KnowledgeUserID = req.TriggerUserID
+	}
 	origin := req.ChatOrigin
 	if origin != nil && origin.ProjectID == issue.ProjectID {
 		origin.IssueID, origin.RunID = issue.ID, ""

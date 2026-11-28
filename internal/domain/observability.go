@@ -30,7 +30,10 @@ type TelemetryContext struct {
 	IssueID         string `json:"issueId,omitempty"`
 	// TAPDID is the external requirement key; local IssueID may differ across imports.
 	TAPDID            string `json:"tapdId,omitempty"`
-	ResponsibleUserID int64 `json:"responsibleUserId,omitempty"`
+	ResponsibleUserID int64  `json:"responsibleUserId,omitempty"`
+	// KnowledgeUserID records the authenticated user who starts their own
+	// run and is eligible to use personal connectors in it.
+	KnowledgeUserID int64 `json:"knowledgeUserId,omitempty"`
 	// KnowledgeRefs optionally pins the running user's connector bindings for
 	// this SOP Run (nil = follow node KnowledgeRefs / role toggle).
 	KnowledgeRefs *[]KnowledgeRef `json:"knowledgeRefs,omitempty"`
@@ -85,6 +88,10 @@ type TelemetryContext struct {
 	// EvolutionCanaryIDs name the proposals in a trial whose candidate this
 	// business run uses instead of the live body (assigned at run start).
 	EvolutionCanaryIDs []string `json:"evolutionCanaryIds,omitempty"`
+}
+
+func (c TelemetryContext) AllowsPersonalKnowledge() bool {
+	return c.ResponsibleUserID > 0 && c.KnowledgeUserID == c.ResponsibleUserID
 }
 
 type MetricPoint struct {

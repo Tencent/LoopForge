@@ -54,6 +54,7 @@ func TestTencentDocsSearchAndGetContentCorrelation(t *testing.T) {
 		}
 	}))
 	defer srv.Close()
+	allowConnectorTestOrigins(t, srv.URL)
 
 	svc := NewService(newMemoryConnectorStore(), func() string { return "conn_td" })
 	conn, err := svc.CreateConnector(context.Background(), 1, ConnectorInput{

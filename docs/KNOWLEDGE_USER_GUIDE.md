@@ -15,6 +15,8 @@
    - **WeKnora / 通用 MCP**：在新建连接器下拉框中选择 `WeKnora`（填写服务地址与 `X-API-Key`）或 `自定义 MCP`（支持 Bearer Token、自定义 Header 与 OAuth 2.0 授权）。
 3. 填写参数后可点击 **「测试连接」** 探测连通性与可见知识库/工具列表，确认无误后点击 **「保存」**。
 
+平台默认禁止个人连接器访问环回或私网地址。自托管部署可以在服务端用 `LOOPFORGE_KNOWLEDGE_INTERNAL_ORIGINS` 放行确认属于知识库服务的来源。Docker 部署应优先填写容器可直接访问的来源。若使用环回地址到 `host.docker.internal` 的自动重试，两个来源都需要放行。
+
 ---
 
 ## 2. 在 AI 工作台与 SOP 流程中使用知识库
@@ -26,8 +28,13 @@
 2. **SOP 流程设计**：
    - 在 SOP 画布中选中 **Agent 节点**，在右侧面板点击 **「关联知识库」** 选择要绑定的连接器与来源白名单；或在 **「角色定义」** 中打开角色的 **「接入知识库」** 开关。
    - 运行详情与产物面板会实时展示每次知识库调用轨迹、命中文档及最终被产物引用的证据。
+   - 只有执行人亲自发起的运行可以挂载其个人知识库。代派和没有登录触发人的定时运行继续运行流程，个人来源不参与。
 3. **用量统计与审计**：
    - 在 **「我的知识库」** 页面下方可查看各连接器与热门文档的调用次数、命中次数、被引用次数（`citedCount`）及近期调用明细。
+
+### 从旧团队知识库升级
+
+兼容 API 仍可读取旧平台知识库。升级前请确认哪些角色通过「接入知识库」使用旧团队知识源。要让这些 LOOP 继续检索知识，可由执行人配置适用的个人连接器和来源范围，再启动运行。旧团队凭据由平台管理员保管。
 
 ---
 
@@ -35,9 +42,10 @@
 
 | 环境变量 | 作用说明 |
 |---|---|
-| `LOOPFORGE_KNOWLEDGE_SECRET` / `AGENTFLOW_SESSION_SECRET` | 连接器凭据 AES-GCM 加密、OAuth State 签名与 `afkb1.` 代理令牌签发密钥（生产环境必填） |
+| `LOOPFORGE_KNOWLEDGE_SECRET_KEY` / `AGENTFLOW_SESSION_SECRET` | 连接器凭据 AES-GCM 加密、OAuth State 签名与 `afkb1.` 代理令牌签发密钥（生产环境必填） |
 | `LOOPFORGE_PUBLIC_BASE_URL` | 平台对外访问基准 URL（用于生成固定可信的 OAuth 回调地址 `redirect_uri`） |
 | `AGENTFLOW_PLATFORM_MCP_URL` | 平台内部/外部基准 URL，供远程或容器 Runner 访问 `/runners/knowledge/mcp` |
+| `LOOPFORGE_KNOWLEDGE_INTERNAL_ORIGINS` | 可选。逗号分隔的完整来源，每项由协议、主机和端口组成，例如 `https://notes.example.test:27124`。链接本地等受保护网段始终拦截。 |
 
 ### 本地开发与测试命令
 

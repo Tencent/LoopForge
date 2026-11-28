@@ -72,7 +72,9 @@ func (h *knowledgeHandlers) proxyMCP(c *gin.Context) {
 	}
 	run, ok := h.repo.RunState(claims.RunID)
 	nr := run.Nodes[claims.NodeID]
-	if !ok || nr == nil || nr.Status != "running" || nr.Attempt != claims.Attempt || run.ExecutionContext.ProjectID != claims.ProjectID || run.ExecutionContext.ResponsibleUserID != claims.UserID {
+	exec := run.ExecutionContext
+	if !ok || nr == nil || nr.Status != "running" || nr.Attempt != claims.Attempt ||
+		exec.ProjectID != claims.ProjectID || exec.KnowledgeUserID != claims.UserID || !exec.AllowsPersonalKnowledge() {
 		c.JSON(http.StatusForbidden, gin.H{"error": "节点执行身份已失效"})
 		return
 	}
