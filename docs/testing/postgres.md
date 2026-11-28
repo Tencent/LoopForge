@@ -173,16 +173,24 @@ sqlite 是默认路径：所有包在没有上面两个变量时都用内存 sql
 ## 6. 与本次移植无关的已知失败
 
 下面这些用例在本机 macOS 上失败，基线（`fd039e5`）上同样失败，不是回归。
-其中三条浏览器用例是**本机环境相关的 flaky 用例**（基线同样失败），不是稳定断言：
+分支 HEAD 与基线的全量跑失败集合逐条相同：`--- FAIL` 一共 **12 条**，另有
+`internal/engine` 的一条用例把整个包拖到超时（它没有 `--- FAIL` 行），合计 **13 个用例**。
+
+表里还列了一条 **flaky 用例**（`internal/httpapi` 的
+`TestInstallCLIContinuesAfterTheBrowserGoesAway`）：它有时失败、有时通过，基线同样如此。
+
+浏览器用例一共 5 条（`internal/httpapi` 三条、`internal/runtime` 两条），都要真的
+Chromium，所以失败集合随机器负载浮动：两次全量跑里失败的是 4 条
+（httpapi 2 条 + runtime 2 条），单独跑 `internal/httpapi` 时三条都失败。
 
 | 包 | 用例 | 原因 |
 | --- | --- | --- |
 | `cmd/agentflow` | `TestSDNotifySendsReadyAndMainPID` | unixgram 套接字路径 |
 | `deploy` | `TestBindCLIUninstallStopsTheRunnerNamedInServicePID`、`TestBindCLIReinstallStopsTheRunnerNamedInServicePID`、`TestBindCLIUninstallStopsARunnerWhoseArgv0IsTheScript`、`TestBindCLIUninstallSignalsOnlyTheBackgroundRunner` | launchd 的 `service.pid` |
-| `internal/engine` | `TestEnsureRunBrowserRestoresReclaimedWorkspaceWithStaleRun` | 需要真的 Chromium |
+| `internal/engine` | `TestEnsureRunBrowserRestoresReclaimedWorkspaceWithStaleRun` | 需要真的 Chromium；整包超时，不是断言失败 |
 | `internal/gitwork` | `TestGitDiscoveryStopsBeforeParentRepository` | 本机 git 目录拓扑 |
-| `internal/httpapi` | `TestBrowserStreamPushesFramesAndRunsCommands`、`TestMainBotBrowserStartsAndDrivesRunBrowser`、`TestInstallCLIContinuesAfterTheBrowserGoesAway` | 本机环境相关的 flaky 用例（基线同样失败）：需要真的 Chromium |
-| `internal/runtime` | `TestProcessSandboxPathsProfilesAndCommands`、`TestLocalWorkspaceGitDiscoveryCannotReachParent` | 本机沙箱路径与 git 拓扑 |
+| `internal/httpapi` | `TestBrowserStreamPushesFramesAndRunsCommands`、`TestMainBotBrowserStartsAndDrivesRunBrowser`、`TestInstallCLIContinuesAfterTheBrowserGoesAway`（flaky：有时失败、基线同样失败） | 本机环境相关的 flaky 用例（基线同样失败）：需要真的 Chromium |
+| `internal/runtime` | `TestBrowserAgentOperationsDriveRealChromium`、`TestBrowserScrollEndsOnASharpFrame`、`TestProcessSandboxPathsProfilesAndCommands`、`TestLocalWorkspaceGitDiscoveryCannotReachParent` | 前两条需要真的 Chromium；后两条是本机沙箱路径与 git 拓扑 |
 
 另有 10 个文件上游就不是 gofmt 干净的（`internal/domain/observability.go`、
 `internal/repo/knowledge_usage.go` 等），与本次移植无关。

@@ -61,6 +61,37 @@ jobs:
           # The runner image ships a PostgreSQL server this job does not use.
           # Stopping it frees the port the service container publishes.
           sudo systemctl stop postgresql.service 2>/dev/null || true
+          # systemctl returns before the server has released the port, so the
+          # wait for the release is explicit instead of silent.
+          # The runner starts the service container before the first step and
+          # that container already publishes the host port, so the port may
+          # legitimately be in use here: what has to disappear is the
+          # runner's own server. Its listener belongs to a process called
+          # "postgres", the published one belongs to "docker-proxy", and the
+          # process inside the container is not visible on the host at all.
+          runner_postgres_holds_5432() {
+            if command -v ss > /dev/null 2>&1; then
+              sudo ss -ltnp 2>/dev/null | grep -q ':5432 .*postgres'
+            else
+              pgrep -x postgres > /dev/null 2>&1
+            fi
+          }
+          for attempt in $(seq 1 30); do
+            if ! runner_postgres_holds_5432; then
+              break
+            fi
+            sleep 1
+          done
+          if runner_postgres_holds_5432; then
+            echo "::error::the runner's PostgreSQL still holds port 5432 after 30s"
+            exit 1
+          fi
+          # The published port has to answer: the service container is the only
+          # PostgreSQL left. The probe carries no credential.
+          if ! (exec 3<>/dev/tcp/127.0.0.1/5432) 2>/dev/null; then
+            echo "::error::nothing is listening on 127.0.0.1:5432"
+            exit 1
+          fi
           # The installer applies the schema with the client tools on the host.
           command -v psql >/dev/null 2>&1 || {
             sudo apt-get update

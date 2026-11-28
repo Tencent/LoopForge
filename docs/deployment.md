@@ -133,6 +133,8 @@ Two differences between the dialects remain, both deliberate and both narrow. Yo
 
 The `core` job also runs the Postgres integration tests of `internal/repo`. They read `AGENTFLOW_TEST_POSTGRES_URL` and skip when it is unset, so the job creates the `loopforge_test` database and points the variable at it — the database name has to contain `test`, because `internal/repo` refuses a database without it. Without that step the suite would never run a Postgres statement at all. The observability generated columns are not part of gorm's AutoMigrate, so the job applies them to the test database as well, in the order the [Postgres testing guide](testing/postgres.md) describes.
 
+The `first-run` job **builds this checkout** instead of installing the pinned release image. `compose.yaml` pins the upstream image `ghcr.io/tencent/loopforge:0.4.3`, which has no Postgres support — the platform would connect a Postgres DSN to a MySQL-only image — and this fork's schema scripts differ from the pinned tag as well. The job installs the pinned image only when the image exists, its tag can be fetched, and the schema scripts did not change since that tag; that is a state this fork reaches once it publishes an image of its own. When the tag cannot be fetched, the schema scripts cannot be compared at all, so the job builds this checkout too.
+
 The upstream MySQL paths are unchanged: an installation without a Postgres password still falls back to the upstream MySQL variables, and no Compose file of this fork defines a `mysql` service.
 
 ## Choosing an executor
