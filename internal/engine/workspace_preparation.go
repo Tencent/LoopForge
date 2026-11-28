@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"agentflow/internal/domain"
 	"agentflow/internal/procwatch"
@@ -72,6 +73,36 @@ func (e *Engine) acquireConversationEnvironment(ctx context.Context, run domain.
 	env := &runEnvironment{sandbox: sb, credentials: credentials}
 	e.runEnvs[run.ID] = env
 	return env, nil
+}
+
+// WorkspaceBrowseGit uses the conversation environment without running its
+// preparation workflow or attaching credentials to a read-only Git request.
+func (e *Engine) WorkspaceBrowseGit(ctx context.Context, run domain.Run) context.Context {
+	if !run.IsWorkspace() || e.defaultExecutionRunner(run) != "" {
+		return ctx
+	}
+	openCtx, cancel := context.WithTimeout(ctx, 4*time.Second)
+	defer cancel()
+	env, err := e.acquireConversationEnvironment(openCtx, run)
+	if err != nil || !domain.ConversationSandboxDriver(env.Driver()) {
+		return ctx
+	}
+	return runtime.WithSandboxGit(ctx, env.sandbox, runtime.RunCredentials{})
+}
+
+// RunnerWorkspaceBrowseRequest sends only the frozen sandbox needed by a Git
+// reader. Readers do not need preparation recipes, MCP assets or credentials.
+func (e *Engine) RunnerWorkspaceBrowseRequest(run domain.Run, request domain.RunnerWorkspaceRequest) domain.RunnerWorkspaceRequest {
+	if !run.IsWorkspace() || run.ExecutionContext.RunnerWorkspaceLayout != domain.RunnerWorkspaceLayoutShared {
+		return request
+	}
+	spec, err := e.runnerSandboxSpec(run)
+	if err != nil {
+		return request
+	}
+	request.RunKind = run.Kind
+	request.Sandbox = spec
+	return request
 }
 
 func (e *Engine) preparationSink(runID string) runtime.EventSink {

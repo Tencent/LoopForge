@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/gitwork"
 )
 
 func cvRInstallRunnerDocker(t *testing.T) {
@@ -83,11 +84,11 @@ func TestWorkspaceLogicalPathsAndRepositoryDefaults(t *testing.T) {
 		t.Fatalf("logical path=%q err=%v", got, err)
 	}
 	root := t.TempDir()
-	if roots := runnerWorkspaceRepositoryRoots(root, nil); len(roots) != 1 || roots[0].path != root || roots[0].label != "" {
+	if roots := runnerWorkspaceRepositoryRoots(context.Background(), root, nil); len(roots) != 1 || roots[0].Path != root || roots[0].Label != "" {
 		t.Fatalf("default roots=%+v", roots)
 	}
-	if path, label, ok := runnerFindWorkspaceRepository(root, nil, "workspace"); !ok || path != root || label != "" {
-		t.Fatalf("default repository path=%q label=%q ok=%v", path, label, ok)
+	if repository, ok := gitwork.FindBrowserRepository(context.Background(), root, nil, "workspace"); !ok || repository.Path != root || repository.Label != "" {
+		t.Fatalf("default repository %+v ok=%v", repository, ok)
 	}
 }
 
@@ -202,7 +203,7 @@ func TestWorkspaceLargeSearchAndGitEdges(t *testing.T) {
 	cvRGit(t, repo, "add", ".")
 	cvRGit(t, repo, "commit", "-qm", "second")
 	repositories := []domain.RepositoryContext{{WorkspaceDir: "repo"}, {WorkspaceDir: "repo"}}
-	if names := runnerCollectWorkspaceGitRepositories(root, repositories); len(names) != 1 {
+	if names := runnerCollectWorkspaceGitRepositories(context.Background(), root, repositories); len(names) != 1 {
 		t.Fatalf("repository names=%v", names)
 	}
 	log, err := runnerCollectWorkspaceLog(context.Background(), root, repositories[:1], "repo")
@@ -284,11 +285,11 @@ func TestWorkspaceRemainingRepositoryEdges(t *testing.T) {
 		t.Fatal(err)
 	}
 	repositories := []domain.RepositoryContext{{WorkspaceDir: "other"}}
-	if roots := runnerWorkspaceRepositoryRoots(root, []domain.RepositoryContext{{WorkspaceDir: "."}}); len(roots) != 1 || roots[0].label != "" {
+	if roots := runnerWorkspaceRepositoryRoots(context.Background(), root, []domain.RepositoryContext{{WorkspaceDir: "."}}); len(roots) != 1 || roots[0].Label != "" {
 		t.Fatalf("dot roots=%+v", roots)
 	}
-	if path, _, ok := runnerFindWorkspaceRepository(root, repositories, ""); !ok || path != filepath.Join(root, "other") {
-		t.Fatalf("single repository path=%q ok=%v", path, ok)
+	if repository, ok := gitwork.FindBrowserRepository(context.Background(), root, repositories, ""); !ok || repository.Path != filepath.Join(root, "other") {
+		t.Fatalf("single repository %+v ok=%v", repository, ok)
 	}
 	if body, truncated, err := runnerReadWorkspaceBaseFile(context.Background(), root, repositories, "plain.txt"); err != nil || body != "" || truncated {
 		t.Fatalf("base body=%q truncated=%v err=%v", body, truncated, err)

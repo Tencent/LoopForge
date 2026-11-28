@@ -15,6 +15,7 @@ type WorkspaceCommand struct {
 	Args       []string
 	Stdin      io.Reader
 	StdoutOnly bool
+	Offline    bool
 	Watch      *procwatch.Options
 }
 

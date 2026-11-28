@@ -176,7 +176,7 @@ func (r *ProjectsRepo) SetProjectArchived(id string, at *time.Time, by int64) er
 // PutProject preserves members when omitted. Replacing an existing roster
 // requires the MembersVersion returned by Project or Projects.
 func (r *ProjectsRepo) PutProject(v domain.Project) error {
-	return r.writeProject(v)
+	return RetryDeadlock(func() error { return r.writeProject(v) })
 }
 
 func (r *ProjectsRepo) writeProject(v domain.Project) error {

@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/gitwork"
 
 	"github.com/gin-gonic/gin"
 )
@@ -61,18 +62,18 @@ func TestWorkspaceMoreFilesystemGitPaths(t *testing.T) {
 		{RepositoryID: "bad", WorkspaceDir: "../outside"},
 		{RepositoryID: "two", WorkspaceDir: "two"},
 	}}
-	roots := workspaceRepositoryRoots(root, run)
-	if len(roots) != 2 || roots[0].label != "one" || roots[1].label != "two" {
+	roots := workspaceRepositoryRoots(context.Background(), root, run)
+	if len(roots) != 2 || roots[0].Label != "one" || roots[1].Label != "two" {
 		t.Fatalf("repository roots: %#v", roots)
 	}
-	if got := collectWorkspaceGitRepositories(root, run); len(got) != 2 {
+	if got := collectWorkspaceGitRepositories(context.Background(), root, run); len(got) != 2 {
 		t.Fatalf("git repositories: %#v", got)
 	}
-	if _, _, ok := findWorkspaceRepository(root, run, "workspace"); ok {
+	if _, ok := gitwork.FindBrowserRepository(context.Background(), root, run.RepositoryContexts(), "workspace"); ok {
 		t.Fatal("ambiguous workspace repository resolved")
 	}
-	if path, label, ok := findWorkspaceRepository(root, run, "one"); !ok || path != filepath.Join(root, "one") || label != "one" {
-		t.Fatalf("find one: %q %q %v", path, label, ok)
+	if repository, ok := gitwork.FindBrowserRepository(context.Background(), root, run.RepositoryContexts(), "one"); !ok || repository.Path != filepath.Join(root, "one") || repository.Label != "one" {
+		t.Fatalf("find one: %+v %v", repository, ok)
 	}
 
 	cvBWrite(t, filepath.Join(root, "one", "tracked.txt"), []byte("changed\n"))

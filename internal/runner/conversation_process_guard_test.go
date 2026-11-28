@@ -183,17 +183,29 @@ func TestConversationProcessNativeStartRequiresInstalledCLI(t *testing.T) {
 }
 
 func TestConversationProcessReportsWorkspaceSetupFailure(t *testing.T) {
-	d := &Daemon{cfg: Config{DefaultWorkspaceRoot: t.TempDir()}}
-	d.conversationForward = func(context.Context, string, json.RawMessage) (json.RawMessage, error) { return nil, nil }
-	got := d.conversationProcess(t.Context(), domain.RunnerWorkspaceRequest{
-		RunID:   "legacy-workspace",
-		Sandbox: &domain.RunnerSandboxSpec{Profile: domain.SandboxProfile{Driver: domain.SandboxDriverDocker}},
-		Conversation: conversationRequest(t, runtime.ConversationProcessRequest{
-			Operation: "start", SessionKey: strings.Repeat("a", 64),
-			Command: &runtime.ConversationCommand{Argv: []string{"codebuddy"}},
-		}),
-	})
-	if got.Status != 400 || got.Code != domain.WorkspaceErrorConversationSetup || !strings.Contains(got.Error, "legacy per-node workspace layout") {
-		t.Fatalf("workspace startup failure lost its cause or code: %+v", got)
+	for _, tc := range []struct {
+		name     string
+		workflow *domain.WorkflowDefinition
+		want     string
+	}{
+		{"missing frozen workflow", nil, "frozen run sandbox and workflow are required"},
+		{"legacy workspace", &domain.WorkflowDefinition{}, "legacy per-node workspace layout"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			d := &Daemon{cfg: Config{DefaultWorkspaceRoot: t.TempDir()}}
+			d.conversationForward = func(context.Context, string, json.RawMessage) (json.RawMessage, error) { return nil, nil }
+			got := d.conversationProcess(t.Context(), domain.RunnerWorkspaceRequest{
+				RunID:    "legacy-workspace",
+				Sandbox:  &domain.RunnerSandboxSpec{Profile: domain.SandboxProfile{Driver: domain.SandboxDriverDocker}},
+				Workflow: tc.workflow,
+				Conversation: conversationRequest(t, runtime.ConversationProcessRequest{
+					Operation: "start", SessionKey: strings.Repeat("a", 64),
+					Command: &runtime.ConversationCommand{Argv: []string{"codebuddy"}},
+				}),
+			})
+			if got.Status != 400 || got.Code != domain.WorkspaceErrorConversationSetup || !strings.Contains(got.Error, tc.want) {
+				t.Fatalf("workspace startup failure lost its cause or code: %+v, want %q", got, tc.want)
+			}
+		})
 	}
 }

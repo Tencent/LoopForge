@@ -58,7 +58,10 @@ func WithSandboxGit(ctx context.Context, sandbox Sandbox, credentials RunCredent
 		for _, key := range workspaceGitSecretEnvironment {
 			environment[key] = ""
 		}
-		if len(git.Args) > 0 {
+		if git.Offline {
+			environment["GIT_ALLOW_PROTOCOL"] = ""
+			environment["GIT_NO_LAZY_FETCH"] = "1"
+		} else if len(git.Args) > 0 {
 			switch git.Args[0] {
 			case "clone", "fetch", "pull", "push", "ls-remote":
 				remote := gitwork.WorkspaceRemote(ctx, git.Args)

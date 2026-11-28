@@ -82,12 +82,12 @@ export function parseUnifiedDiff(text = "") {
       continue;
     }
     if (line.startsWith("rename from ")) {
-      file.oldPath = line.slice(12).trim();
+      file.oldPath ||= line.slice(12).trim();
       file.status = "R";
       continue;
     }
     if (line.startsWith("rename to ")) {
-      file.path = line.slice(10).trim();
+      file.path ||= line.slice(10).trim();
       file.status = "R";
       continue;
     }

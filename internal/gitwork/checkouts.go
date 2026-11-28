@@ -20,8 +20,9 @@ type Checkout struct {
 }
 
 const (
-	checkoutScanDepth = 2
-	checkoutScanLimit = 50
+	checkoutScanDepth      = 2
+	checkoutScanLimit      = 50
+	checkoutScanVisitLimit = 5000
 )
 
 // Checkouts lists the git checkouts at most two directory levels below root
@@ -40,36 +41,7 @@ func CheckoutsIncludingNested(ctx context.Context, root string) []Checkout {
 }
 
 func checkouts(ctx context.Context, root string, includeNested bool) []Checkout {
-	dirs := []string{}
-	var walk func(dir string, depth int)
-	walk = func(dir string, depth int) {
-		if len(dirs) >= checkoutScanLimit {
-			return
-		}
-		// Only a real .git directory: a .git file or symlink could point
-		// the scan at a repository outside the workspace.
-		if info, err := os.Lstat(filepath.Join(dir, ".git")); err == nil && info.IsDir() {
-			dirs = append(dirs, dir)
-			if !includeNested {
-				return
-			}
-		}
-		if depth == checkoutScanDepth {
-			return
-		}
-		entries, err := os.ReadDir(dir)
-		if err != nil {
-			return
-		}
-		for _, entry := range entries {
-			name := entry.Name()
-			if !entry.IsDir() || strings.HasPrefix(name, ".") || name == "node_modules" || name == "vendor" {
-				continue
-			}
-			walk(filepath.Join(dir, name), depth+1)
-		}
-	}
-	walk(root, 0)
+	dirs := checkoutDirs(ctx, root, checkoutScanDepth, includeNested)
 	out := []Checkout{}
 	for _, dir := range dirs {
 		remotes, _ := checkoutGit(ctx, dir, "config", "--local", "--no-includes", "--get-regexp", `^remote\..*\.url$`)
@@ -91,6 +63,45 @@ func checkouts(ctx context.Context, root string, includeNested bool) []Checkout 
 		out = append(out, checkout)
 	}
 	return out
+}
+
+func checkoutDirs(ctx context.Context, root string, maxDepth int, includeNested bool) []string {
+	dirs := []string{}
+	visited := 0
+	var walk func(dir string, depth int)
+	walk = func(dir string, depth int) {
+		if len(dirs) >= checkoutScanLimit || visited >= checkoutScanVisitLimit || ctx.Err() != nil {
+			return
+		}
+		visited++
+		// Only a real .git directory: a .git file or symlink could point
+		// the scan at a repository outside the workspace.
+		if info, err := os.Lstat(filepath.Join(dir, ".git")); err == nil && info.IsDir() {
+			dirs = append(dirs, dir)
+			if !includeNested {
+				return
+			}
+		}
+		if depth == maxDepth {
+			return
+		}
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			return
+		}
+		for _, entry := range entries {
+			if len(dirs) >= checkoutScanLimit || visited >= checkoutScanVisitLimit || ctx.Err() != nil {
+				break
+			}
+			name := entry.Name()
+			if !entry.IsDir() || strings.HasPrefix(name, ".") || name == "node_modules" || name == "vendor" {
+				continue
+			}
+			walk(filepath.Join(dir, name), depth+1)
+		}
+	}
+	walk(root, 0)
+	return dirs
 }
 
 // SameCheckoutOrigin compares the configured URL or local path with origin,

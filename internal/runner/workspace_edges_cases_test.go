@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/gitwork"
 )
 
 func TestWorkspaceResolutionAndRepositoryErrorBranches(t *testing.T) {
@@ -35,11 +36,11 @@ func TestWorkspaceResolutionAndRepositoryErrorBranches(t *testing.T) {
 		t.Fatalf("notfound=%+v", response)
 	}
 	repositories := []domain.RepositoryContext{{WorkspaceDir: "../bad"}, {WorkspaceDir: "repo"}}
-	roots := runnerWorkspaceRepositoryRoots(root, repositories)
-	if len(roots) != 1 || roots[0].label != "repo" {
+	roots := runnerWorkspaceRepositoryRoots(context.Background(), root, repositories)
+	if len(roots) != 1 || roots[0].Label != "repo" {
 		t.Fatalf("roots=%+v", roots)
 	}
-	if _, _, ok := runnerFindWorkspaceRepository(root, []domain.RepositoryContext{{WorkspaceDir: "a"}, {WorkspaceDir: "b"}}, ""); ok {
+	if _, ok := gitwork.FindBrowserRepository(context.Background(), root, []domain.RepositoryContext{{WorkspaceDir: "a"}, {WorkspaceDir: "b"}}, ""); ok {
 		t.Fatal("ambiguous default repository found")
 	}
 	if _, err := runnerCollectWorkspaceLog(context.Background(), root, repositories, "missing"); err == nil {

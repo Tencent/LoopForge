@@ -47,6 +47,24 @@ test('multi-file skill upload reads files concurrently and replaces metadata', a
   assert.match(app.evaluate(`state.data.skills[0].fileRefs.map(x=>x.path).join(',')`), /SKILL\.md/);
 });
 
+test('skill ZIP upload reports the count and size of the unpacked files', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  app.evaluate(`
+    state.data.skills=[{id:'skill-zip',projectId:'project-1',name:'ZIP Skill',fileRefs:[]}];
+    state.assetType='skills';state.selectedAsset='skill-zip';renderAssets();
+  `);
+  app.router.post('/api/skills/skill-zip/files', {
+    id: 'skill-zip', projectId: 'project-1', name: 'ZIP Skill',
+    fileRefs: [{ path: 'SKILL.md', size: 50 }, { path: 'data.json', size: 25 }],
+  });
+  await app.evaluate('uploadSkillFiles').call(null, {
+    value: 'selected',
+    files: [{ name: 'skill.zip', size: 120, arrayBuffer: async () => new ArrayBuffer(120) }],
+  });
+  assert.match(app.document.querySelector('#skillUploadStatus').textContent, /已替换为 2 个文件 · 75 B/);
+});
+
 test('skill upload validation handles empty, new, foreign, and invalid markdown selections', async (t) => {
   const app = await loadApp();
   t.after(app.close);

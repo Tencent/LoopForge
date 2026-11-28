@@ -192,24 +192,32 @@ func jobDue(job domain.ScheduleJob, now time.Time) bool {
 	if !job.Enabled {
 		return false
 	}
+	if job.LastRunAt.IsZero() && job.UpdatedAt.After(job.CreatedAt) {
+		// A job that has never run starts its clock when last saved, so
+		// re-enabling or reconfiguring it does not fire a missed occurrence.
+		// The explicit Run now action bypasses jobDue.
+		job.CreatedAt = job.UpdatedAt
+	}
 	if job.LastStatus == "running" {
 		return false
 	}
+	base := job.LastRunAt
+	if base.IsZero() {
+		// The first timer run follows the configured schedule, just like later runs.
+		base = job.CreatedAt
+	}
+	if base.IsZero() {
+		return false
+	}
 	if cron := strings.TrimSpace(job.Cron); cron != "" {
-		if job.LastRunAt.IsZero() {
-			return true
-		}
-		next, err := cronexpr.Next(cron, job.LastRunAt)
+		next, err := cronexpr.Next(cron, base)
 		return err == nil && !next.After(now)
 	}
 	interval := time.Duration(job.IntervalSec) * time.Second
 	if interval < 30*time.Second {
 		interval = 30 * time.Second
 	}
-	if job.LastRunAt.IsZero() {
-		return true
-	}
-	return now.Sub(job.LastRunAt) >= interval
+	return now.Sub(base) >= interval
 }
 func (s *Service) RunJob(id string) (domain.ScheduleJob, error) {
 	return s.runJob(id, "timer")

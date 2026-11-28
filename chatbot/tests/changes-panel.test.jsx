@@ -134,7 +134,7 @@ test("empty state points at the work branch on the code host", () => {
   );
 });
 
-test("git failures surface above the empty state", () => {
+test("git failures do not report a clean worktree", () => {
   render(
     <ChangesPanel
       changes={readyChanges({
@@ -146,6 +146,7 @@ test("git failures surface above the empty state", () => {
     />,
   );
   expect(screen.getByRole("alert")).toHaveTextContent("Git 状态读取失败");
+  expect(screen.queryByText("工作区没有未提交改动。")).not.toBeInTheDocument();
 });
 
 // A reclaimed workspace is the usual state once the work is pushed, so the
