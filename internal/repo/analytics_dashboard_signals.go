@@ -25,6 +25,9 @@ func (r *AnalyticsRepo) analyticsDashboardSignalRuns(runs []domain.Run, filter d
 	if r.isMySQL() {
 		snapshot = "JSON_OBJECT('collaborationMode', JSON_UNQUOTE(JSON_EXTRACT(snapshot, '$.collaborationMode'))) AS snapshot"
 	}
+	if r.isPostgres() {
+		snapshot = "jsonb_build_object('collaborationMode', " + r.jsonTextLiteral("snapshot", "$.collaborationMode") + ") AS snapshot"
+	}
 	for len(frontier) > 0 {
 		var next []string
 		for start := 0; start < len(frontier); start += 500 {

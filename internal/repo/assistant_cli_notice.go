@@ -101,8 +101,11 @@ func (r *AssistantRepo) replaceSessionCLIFailure(engine, missing, generic, next 
 // LIKE does not see the sqlite JSON blob, so both drivers search the cast text.
 func wherePayloadHas(query *gorm.DB, db *gorm.DB, missing, generic string) *gorm.DB {
 	expr := "instr(CAST(payload AS TEXT), ?) > 0"
-	if db.Dialector.Name() == "mysql" {
+	if db.Dialector.Name() == dialectMySQL {
 		expr = "INSTR(CAST(payload AS CHAR), ?) > 0"
+	}
+	if db.Dialector.Name() == dialectPostgres {
+		expr = payloadContainsExpr(db)
 	}
 	if strings.TrimSpace(generic) == "" {
 		return query.Where(expr, missing)

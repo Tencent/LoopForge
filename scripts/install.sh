@@ -11,12 +11,22 @@ fail() { printf '\n✗ %s\n' "$1" >&2; exit 1; }
 step() { printf '\n▸ %s\n' "$1"; }
 source scripts/docker-access.sh
 source scripts/ghcr-mirror.sh
+source scripts/pg-connection-env.sh
 
 confirm() {
   [[ "${LOOPFORGE_YES:-}" == 1 ]] && return 0
   [[ -t 0 ]] || return 1
   read -r -p "$1 [Y/n] " answer
   [[ -z "$answer" || "$answer" =~ ^[Yy] ]]
+}
+
+# The DSN decides the dialect. AGENTFLOW_DATABASE_URL accepts a Postgres URL
+# and a MySQL DSN alike, so the presence of the variable is not enough.
+database_is_postgres() {
+  case "${AGENTFLOW_DATABASE_URL:-}" in
+    postgres://*|postgresql://*) return 0 ;;
+    *) return 1 ;;
+  esac
 }
 
 usable_python() {
@@ -119,11 +129,24 @@ requested_public_url="${LOOPFORGE_PUBLIC_URL:-}"
 [[ ! -e .env || -r .env ]] || fail 'The existing .env is not readable by this user. Use the installation owner or ask an administrator to correct its ownership.'
 bash scripts/configure.sh
 [[ -r .env ]] || fail 'The existing .env is not readable by this user. Use the installation owner or ask an administrator to correct its ownership.'
-set -a; source .env; set +a
+# The .env is sourced with 'set +u': docs/deployment.md asks the operator to
+# write the .env by hand, and a hand-written .env may reference a variable
+# that is not set. An unbound reference would abort the installer under
+# 'set -u' even though the rest of the .env is fine. 'set -e' stays on, so a
+# command in the .env that really fails still stops the installer.
+set +u
+set -a
+source .env
+set +a
+set -u
 export LOOPFORGE_BIND="${LOOPFORGE_BIND:-0.0.0.0}"
 if [[ -n "$requested_public_url" ]]; then export LOOPFORGE_PUBLIC_URL="$requested_public_url"; fi
 python3 scripts/install-address.py --prepare "${AGENTFLOW_HTTP_PORT:-8090}"
-set -a; source .env; set +a
+set +u
+set -a
+source .env
+set +a
+set -u
 if [[ -z "${LOOPFORGE_DOCKER_SOCKET:-}" ]]; then
   docker_host="${DOCKER_HOST:-$(docker_access context inspect --format '{{(index .Endpoints "docker").Host}}' 2>/dev/null || true)}"
   case "$docker_host" in
@@ -165,16 +188,11 @@ if [[ "${COMPOSE_FILE:-}" != "$dev_compose" ]]; then
   pull_policy="${LOOPFORGE_PULL_POLICY:-missing}"
   if mirror_published_ghcr "$pull_policy"; then
     # The platform name is already local. Pull it with missing so Compose does
-    # not contact ghcr.io; MySQL keeps the requested policy.
-    if [[ "$pull_policy" == always ]]; then
-      docker_access compose --profile platform pull --policy missing platform
-      docker_access compose --profile platform pull --policy always mysql
-    else
-      docker_access compose --profile platform pull --policy "$pull_policy" platform mysql
-    fi
+    # not contact ghcr.io.
+    docker_access compose --profile platform pull --policy missing platform
   else
     step "Pulling the published LoopForge image ${LOOPFORGE_IMAGE:-pinned in compose.yaml}"
-    docker_access compose --profile platform pull --policy "$pull_policy" platform mysql
+    docker_access compose --profile platform pull --policy "$pull_policy" platform
   fi
   docker_access compose --profile platform up -d --no-build --wait --wait-timeout 180
 else
@@ -183,19 +201,27 @@ else
     LOOPFORGE_COMMIT="$(git rev-parse HEAD 2>/dev/null || true)"
     export LOOPFORGE_COMMIT
   fi
-  # Download MySQL while the platform image builds instead of afterwards.
-  docker_access compose pull --quiet --policy missing mysql >/dev/null 2>&1 &
-  mysql_pull=$!
   docker_access compose --profile platform build platform
-  wait "$mysql_pull" || true
   step 'Starting LoopForge'
   docker_access compose --profile platform up -d --no-build --wait --wait-timeout 180
 fi
 step 'Installing the schema extensions and the starter catalog'
-bash scripts/install-schema-extensions.sh
+if database_is_postgres; then
+  bash scripts/install-schema-extensions-pg.sh
+else
+  bash scripts/install-schema-extensions.sh
+fi
 
 python3 scripts/install-address.py "$port"
-users=$(docker_access compose exec -T mysql sh -c 'MYSQL_PWD="$MYSQL_PASSWORD" mysql -N -u loopforge loopforge -e "select count(*) from users"' 2>/dev/null || echo 0)
+users=0
+if database_is_postgres; then
+  # The database is the operator's own Postgres; the host client answers
+  # whether an administrator account exists already. The connection travels
+  # in the libpq environment variables, so the password does not appear on
+  # the command line where every local user could read it.
+  users=$(pg_connection_env "$AGENTFLOW_DATABASE_URL" \
+    && psql -w -tAc 'select count(*) from users' 2>/dev/null || echo 0)
+fi
 if [[ "${users//[^0-9]/}" == 0 ]]; then
   printf '  Open it in your browser and create the administrator account.\n'
 else

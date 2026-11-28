@@ -185,7 +185,7 @@ func (r *RunsRepo) beginWorkspaceLease(runID string, now time.Time, touch, resto
 			if strings.HasPrefix(current.LeaseToken, workspaceBackgroundSavePrefix) && len(preempted) > 0 {
 				*preempted[0] = current.LeaseToken
 			}
-			query = query.Where("lease_until IS NULL OR lease_until < ? OR lease_token LIKE ?", now, workspaceBackgroundSavePrefix+"%")
+			query = query.Where("lease_until IS NULL OR lease_until < ? OR lease_token "+likeOperatorFor(tx)+" ?", now, workspaceBackgroundSavePrefix+"%")
 		} else {
 			query = query.Where("lease_until IS NULL OR lease_until < ?", now)
 		}
@@ -466,9 +466,14 @@ func (r *RunsRepo) ReleaseAbandonedWorkspaceUse(runID, token string, now time.Ti
 			return err
 		}
 		silent := tx.Where("lease_renewed_at IS NULL AND lease_until <= ?", now.Add(workspaceUseTerm-assistantHeartbeatTimeout))
-		if r.isMySQL() {
+		switch {
+		case r.isPostgres():
+			// The renewal age is measured on the clock that stamped the
+			// renewal (the database's), not on the reader's.
+			silent = silent.Or("lease_renewed_at <= clock_timestamp() - (?::bigint * INTERVAL '1 microsecond')", assistantHeartbeatTimeout.Microseconds())
+		case r.isMySQL():
 			silent = silent.Or("lease_renewed_at <= UTC_TIMESTAMP(3) - INTERVAL ? MICROSECOND", assistantHeartbeatTimeout.Microseconds())
-		} else {
+		default:
 			silent = silent.Or("lease_renewed_at <= ?", now.Add(-assistantHeartbeatTimeout))
 		}
 		result := tx.Model(&WorkspaceCheckpoint{}).
@@ -482,10 +487,14 @@ func (r *RunsRepo) ReleaseAbandonedWorkspaceUse(runID, token string, now time.Ti
 }
 
 // leaseRenewalClock stamps lease_renewed_at: the database's commit-time clock
-// on MySQL, shared by every replica, and the caller's clock elsewhere.
+// on MySQL and Postgres, shared by every replica, and the caller's clock
+// elsewhere.
 func (r *RunsRepo) leaseRenewalClock(now time.Time) any {
 	if r.isMySQL() {
 		return clause.Expr{SQL: "UTC_TIMESTAMP(3)"}
+	}
+	if r.isPostgres() {
+		return clause.Expr{SQL: "clock_timestamp()"}
 	}
 	return now
 }

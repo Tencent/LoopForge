@@ -111,7 +111,15 @@ func (r *RoomsRepo) MessageWithAttachment(roomID, attachmentID string) (domain.C
 		return domain.ChatMessage{}, false
 	}
 	var rows []chatMessageRow
-	if err := r.DB.Table("chat_messages").Where("room_id = ? AND CAST(payload AS CHAR) LIKE ?", roomID, "%"+attachmentID+"%").Limit(20).Find(&rows).Error; err != nil {
+	// Postgres' CAST(payload AS CHAR) is bpchar(1) — only the first character —
+	// so the pattern would never match. MySQL's LIKE is case-insensitive under
+	// the utf8mb4_unicode_ci collation, so Postgres needs ILIKE to keep the
+	// same search behaviour.
+	like := "CAST(payload AS CHAR) " + r.likeOperator()
+	if r.isPostgres() {
+		like = "payload::text " + r.likeOperator()
+	}
+	if err := r.DB.Table("chat_messages").Where("room_id = ? AND "+like+" ?", roomID, "%"+attachmentID+"%").Limit(20).Find(&rows).Error; err != nil {
 		return domain.ChatMessage{}, false
 	}
 	for _, row := range rows {

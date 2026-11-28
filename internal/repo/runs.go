@@ -179,6 +179,18 @@ func (r *RunsRepo) runSummariesFor(filter domain.AnalyticsFilter, issueID string
 			'collaborationMode', JSON_UNQUOTE(JSON_EXTRACT(snapshot, '$.collaborationMode')), 'status', JSON_UNQUOTE(JSON_EXTRACT(snapshot, '$.status')),
 			'version', JSON_EXTRACT(snapshot, '$.version'), 'publishedRevision', JSON_EXTRACT(snapshot, '$.publishedRevision')) AS snapshot`
 	}
+	if r.isPostgres() {
+		// The text fields are unquoted in MySQL, so they land in the object as
+		// JSON strings; the last two keep the JSON value.
+		snapshotExpr = "jsonb_build_object(" +
+			"'id', " + r.jsonTextLiteral("snapshot", "$.id") +
+			", 'name', " + r.jsonTextLiteral("snapshot", "$.name") +
+			", 'collaborationMode', " + r.jsonTextLiteral("snapshot", "$.collaborationMode") +
+			", 'status', " + r.jsonTextLiteral("snapshot", "$.status") +
+			", 'version', " + r.jsonValueLiteral("snapshot", "$.version") +
+			", 'publishedRevision', " + r.jsonValueLiteral("snapshot", "$.publishedRevision") +
+			") AS snapshot"
+	}
 	if err := q.Select("id", "kind", "workflow_id", "status", "admission_state", "queue_entered_at", "quota_exempt", "cancel_requested", "pause_requested", "human_context", "revision", "SUBSTR(input, 1, 500) AS input", "repository", "repositories", snapshotExpr, "execution_context", "usage_json", "tool_calls", "telemetry_sequence", "log_sequence", "owner_instance_id", "lease_until", "execution_generation", "workspace_host", "workspace_root", "workspace_cleaned_at", "created_at", "updated_at").
 		Order("created_at DESC, id DESC").
 		Find(&rows).Error; err != nil {
@@ -335,6 +347,9 @@ func (r *RunsRepo) RunWorkflowProjectID(id string) (string, error) {
 	project := "JSON_EXTRACT(snapshot, '$.projectId')"
 	if r.isMySQL() {
 		project = "JSON_UNQUOTE(" + project + ")"
+	}
+	if r.isPostgres() {
+		project = r.jsonTextLiteral("snapshot", "$.projectId")
 	}
 	var row struct{ ProjectID string }
 	err := r.DB.Table("runs").Select(project+" AS project_id").Where("id = ?", id).Scan(&row).Error
@@ -559,6 +574,9 @@ func (r *RunsRepo) LiveSandboxDockerfiles() []domain.DockerfileDefinition {
 	if r.isMySQL() {
 		expr = "JSON_EXTRACT(snapshot, '$.sandboxSnapshot.dockerfile')"
 	}
+	if r.isPostgres() {
+		expr = r.jsonValueLiteral("snapshot", "$.sandboxSnapshot.dockerfile")
+	}
 	var raws []string
 	if err := r.DB.Model(&runRow{}).Where("workspace_cleaned_at IS NULL").
 		Where(expr+" IS NOT NULL").Pluck(expr, &raws).Error; err != nil {
@@ -686,11 +704,31 @@ func (r *RunsRepo) loadRunNodes(run *domain.Run) error {
 // clipRunText still decides whether to append an ellipsis, including UTF-8.
 // Engine state reads retain the complete payload through loadRunNodes.
 func (r *RunsRepo) runViewNodesQuery() *gorm.DB {
-	parts := []string{"payload"}
-	for _, field := range []struct {
+	fields := []struct {
 		name  string
 		limit int
-	}{{"output", 2501}, {"error", 1201}, {"feedback", 801}, {"activity", 301}} {
+	}{{"output", 2501}, {"error", 1201}, {"feedback", 801}, {"activity", 301}}
+	if r.isPostgres() {
+		// Postgres has no path/value alternation, so the four members are
+		// built as a key/value object and merged into the payload.
+		//
+		// MySQL's CASE unifies both arms to a string, so the value arm stores
+		// the JSON value's text as a JSON string. Postgres has to do the same
+		// by hand: a text arm and a jsonb arm cannot share one CASE, and
+		// keeping the raw JSON value would make json.Unmarshal fail on a
+		// non-string output and drop the whole node from the run view.
+		pairs := make([]string, 0, len(fields))
+		for _, field := range fields {
+			extract := r.jsonValueLiteral("payload", "$."+field.name)
+			text := r.jsonTextLiteral("payload", "$."+field.name)
+			pairs = append(pairs, "'"+field.name+"'", fmt.Sprintf(
+				"CASE WHEN jsonb_typeof(%s) = 'string' THEN to_jsonb(SUBSTR(%s, 1, %d)) ELSE to_jsonb((%s)::text) END",
+				extract, text, field.limit, extract))
+		}
+		return r.DB.Select("run_id, node_id, payload::jsonb || jsonb_build_object(" + strings.Join(pairs, ", ") + ") AS payload")
+	}
+	parts := []string{"payload"}
+	for _, field := range fields {
 		path := "'$." + field.name + "'"
 		extract := "JSON_EXTRACT(payload, " + path + ")"
 		text := extract
@@ -738,6 +776,19 @@ func (r *RunsRepo) runNodeSummaries(ids []string) (map[string]map[string]*domain
 	errorExpr := "json_extract(payload, '$.error')"
 	if r.isMySQL() {
 		errorExpr = "JSON_UNQUOTE(JSON_EXTRACT(payload, '$.error'))"
+	}
+	if r.isPostgres() {
+		projection = "jsonb_build_object(" +
+			"'reworkCount', " + r.jsonValueLiteral("payload", "$.reworkCount") +
+			", 'provider', " + r.jsonValueLiteral("payload", "$.provider") +
+			", 'model', " + r.jsonValueLiteral("payload", "$.model") +
+			", 'childRunId', " + r.jsonValueLiteral("payload", "$.childRunId") +
+			", 'usage', " + r.jsonValueLiteral("payload", "$.usage") +
+			", 'toolCalls', " + r.jsonValueLiteral("payload", "$.toolCalls") +
+			", 'startedAt', " + r.jsonValueLiteral("payload", "$.startedAt") +
+			", 'finishedAt', " + r.jsonValueLiteral("payload", "$.finishedAt") +
+			", 'error', SUBSTR(%s, 1, 160)) AS payload"
+		errorExpr = r.jsonTextLiteral("payload", "$.error")
 	}
 	for start := 0; start < len(ids); start += 500 {
 		batch := ids[start:min(start+500, len(ids))]
@@ -918,6 +969,9 @@ func (r *RunsRepo) TelemetryEventExists(runID, eventID string) bool {
 	expr := "json_extract(payload, '$.id')"
 	if r.isMySQL() {
 		expr = "JSON_UNQUOTE(JSON_EXTRACT(payload, '$.id'))"
+	}
+	if r.isPostgres() {
+		expr = r.jsonTextLiteral("payload", "$.id")
 	}
 	var count int64
 	err := r.DB.Table("run_telemetry").Where("run_id = ? AND "+expr+" = ?", runID, eventID).Limit(1).Count(&count).Error

@@ -58,6 +58,17 @@ func (r *AssistantRepo) assistantParticipantSummarySQL() string {
     AND COALESCE(json_extract(m.value,'$.trigger'),'')=''
     AND COALESCE(json_extract(m.value,'$.content'),'') NOT LIKE '已确认并执行 %请核对这条草稿的保存回执，继续完成原始请求%') END`
 	}
+	if r.isPostgres() {
+		// Postgres expands the transcript with jsonb_array_elements. The
+		// author id keeps its JSON number shape, the way the MySQL BIGINT
+		// column does. LIKE becomes ILIKE because MySQL's collation ignores
+		// case while Postgres' LIKE does not.
+		messages := r.jsonValueLiteral("payload", "$.messages")
+		return "CASE WHEN " + r.jsonTextLiteral("payload", "$.participantsVersion") + " = '1' THEN '[]'::jsonb ELSE " +
+			"(SELECT COALESCE(jsonb_agg(jsonb_build_object('role','user','authorId',m->'authorId','authorName',m->'authorName')), '[]'::jsonb) " +
+			"FROM jsonb_array_elements(CASE WHEN jsonb_typeof(" + messages + ") = 'array' THEN " + messages + " ELSE '[]'::jsonb END) AS m " +
+			"WHERE m->>'role' = 'user' AND COALESCE(m->>'trigger','')='' AND COALESCE(m->>'content','') NOT ILIKE '已确认并执行 %请核对这条草稿的保存回执，继续完成原始请求%') END"
+	}
 	return `CASE WHEN JSON_EXTRACT(payload, '$.participantsVersion') = 1 THEN '[]' ELSE
   (SELECT COALESCE(JSON_ARRAYAGG(JSON_OBJECT('role','user','authorId',m.author_id,'authorName',m.author_name)),JSON_ARRAY())
    FROM JSON_TABLE(payload,'$.messages[*]' COLUMNS (role VARCHAR(32) PATH '$.role', author_id BIGINT PATH '$.authorId', author_name VARCHAR(255) PATH '$.authorName', message_trigger VARCHAR(64) PATH '$.trigger', content LONGTEXT PATH '$.content')) m

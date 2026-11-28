@@ -38,9 +38,12 @@ func (r *RunsRepo) pendingSOPDetections(projectID string, includeWorkflowIDs, ex
 	if r.isMySQL() {
 		snapshotMode = "JSON_UNQUOTE(" + snapshotMode + ")"
 	}
+	if r.isPostgres() {
+		snapshotMode = r.jsonTextLiteral("snapshot", "$.collaborationMode")
+	}
 	var ids []string
 	q := r.DB.Table("runs").
-		Joins("LEFT JOIN run_evals AS checks ON checks.run_id = runs.id AND checks.id LIKE ?", sopDetectionIDPrefix+"%").
+		Joins("LEFT JOIN run_evals AS checks ON checks.run_id = runs.id AND checks.id "+r.likeOperator()+" ?", sopDetectionIDPrefix+"%").
 		Where("runs.status IN ?", []string{"succeeded", "failed"}).
 		Where("runs.workflow_id <> '' AND COALESCE(runs.kind, '') <> ? AND runs.created_at >= ?", domain.RunKindWorkspace, since).
 		Where("COALESCE("+snapshotMode+", '') <> ?", "group").
@@ -80,7 +83,7 @@ func (r *RunsRepo) SOPDetectionEvaluations(runIDs []string) map[string]domain.Ru
 		return out
 	}
 	var rows []runEvalRow
-	if err := r.DB.Where("run_id IN ? AND id LIKE ? AND status = ?", runIDs, sopDetectionIDPrefix+"%", domain.RunEvalSucceeded).Find(&rows).Error; err != nil {
+	if err := r.DB.Where("run_id IN ? AND id "+r.likeOperator()+" ? AND status = ?", runIDs, sopDetectionIDPrefix+"%", domain.RunEvalSucceeded).Find(&rows).Error; err != nil {
 		return out
 	}
 	for _, row := range rows {

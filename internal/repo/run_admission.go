@@ -186,10 +186,12 @@ func (s *admissionScope) rowBucketKey(row runRow) (string, error) {
 
 // admissionBuckets matches the fixed queues for the given machines. Older
 // platform runs used a project-prefixed bucket and now share the platform gate.
-func admissionBuckets(keys []string) (string, []any) {
+// The pattern-matching operator is passed in, because the legacy bucket prefix
+// has to be matched with the collation of the database in use.
+func admissionBuckets(keys []string, like string) (string, []any) {
 	for _, key := range keys {
 		if key == PlatformAdmissionBucketKey {
-			return "(quota_bucket IN ? OR quota_bucket LIKE ?)", []any{keys, legacyProjectBucketPrefix + "%"}
+			return "(quota_bucket IN ? OR quota_bucket " + like + " ?)", []any{keys, legacyProjectBucketPrefix + "%"}
 		}
 	}
 	return "quota_bucket IN ?", []any{keys}
@@ -206,7 +208,7 @@ func (s *admissionScope) loadSnapshots(keys []string, exclude string) (map[strin
 		return loads, nil
 	}
 	var rows []runRow
-	buckets, args := admissionBuckets(keys)
+	buckets, args := admissionBuckets(keys, likeOperatorFor(s.tx))
 	q := s.tx.Select("status", "quota_bucket", "quota_parent_run_id", "quota_exempt",
 		"CASE WHEN quota_bucket IS NULL OR quota_bucket = '' OR quota_parent_run_id IS NULL THEN execution_context END AS execution_context").
 		Where("("+buckets+" OR quota_bucket IS NULL OR quota_bucket = '')", args...).
@@ -279,7 +281,7 @@ func (r *RunsRepo) RunnerLoadSnapshots(ids []string) (map[string]domain.RunnerLo
 // hasQueued reports whether a run already waits in the bucket; a new request
 // must not overtake it. Queued rows always carry a persisted bucket.
 func (s *admissionScope) hasQueued(key, exclude string) (bool, error) {
-	buckets, args := admissionBuckets([]string{canonicalAdmissionBucketKey(key)})
+	buckets, args := admissionBuckets([]string{canonicalAdmissionBucketKey(key)}, likeOperatorFor(s.tx))
 	var ids []string
 	err := s.tx.Model(&runRow{}).Where(buckets, args...).Where("status = ? AND id <> ?", "queued", exclude).Limit(1).Pluck("id", &ids).Error
 	return len(ids) > 0, err

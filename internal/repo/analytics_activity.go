@@ -68,7 +68,7 @@ func (r *AnalyticsRepo) analyticsActivity(filter domain.AnalyticsFilter, issues 
 	}
 	// SQL removes transcripts for modern rows. Legacy rows are read in bounded
 	// batches below so older conversations are counted without writing backfills.
-	q := r.DB.Table("assistant_sessions").Select(assistantSessionMetadataColumns)
+	q := r.DB.Table("assistant_sessions").Select(r.assistantSessionMetadataColumns())
 	if filter.ProjectID != "" {
 		q = q.Where("project_id = ?", filter.ProjectID)
 	}

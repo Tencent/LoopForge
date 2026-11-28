@@ -34,6 +34,12 @@ func (r *AnalyticsRepo) analyticsSessionUsage(ids []string, visit func(string, [
 			if r.isMySQL() {
 				expr = `(SELECT COALESCE(JSON_ARRAYAGG(JSON_OBJECT('index',m.pos-1,'createdAt',JSON_EXTRACT(s.payload,CONCAT('$.messages[',m.pos-1,'].createdAt')),'startedAt',JSON_EXTRACT(s.payload,CONCAT('$.messages[',m.pos-1,'].startedAt')),'usage',JSON_EXTRACT(s.payload,CONCAT('$.messages[',m.pos-1,'].usage')))),JSON_ARRAY()) FROM JSON_TABLE(s.payload,'$.messages[*]' COLUMNS(pos FOR ORDINALITY,role VARCHAR(32) PATH '$.role')) m WHERE m.role='assistant')`
 			}
+			if r.isPostgres() {
+				// WITH ORDINALITY counts from one, so the index stays the
+				// zero-based position the MySQL branch reports.
+				messages := r.jsonValueLiteral("s.payload", "$.messages")
+				expr = `(SELECT COALESCE(jsonb_agg(jsonb_build_object('index',m.ord - 1,'createdAt',m.msg->'createdAt','startedAt',m.msg->'startedAt','usage',m.msg->'usage')), '[]'::jsonb) FROM (SELECT ord, msg FROM jsonb_array_elements(CASE WHEN jsonb_typeof(` + messages + `) = 'array' THEN ` + messages + ` ELSE '[]'::jsonb END) WITH ORDINALITY AS t(msg, ord)) m WHERE m.msg->>'role' = 'assistant')`
+			}
 			err := r.DB.Table("assistant_sessions s").Select("s.id, "+expr+" AS messages").Where("s.id IN ?", batch).Scan(&rows).Error
 			if err != nil {
 				if !r.isMySQL() || !summaryProjectionUnsupported(err) {
@@ -45,7 +51,11 @@ func (r *AnalyticsRepo) analyticsSessionUsage(ids []string, visit func(string, [
 		}
 		if !projected {
 			rows = nil
-			if err := r.DB.Table("assistant_sessions").Select("id, JSON_EXTRACT(payload,'$.messages') AS messages").Where("id IN ?", batch).Scan(&rows).Error; err != nil {
+			messages := "id, JSON_EXTRACT(payload,'$.messages') AS messages"
+			if r.isPostgres() {
+				messages = "id, " + r.jsonValueLiteral("payload", "$.messages") + " AS messages"
+			}
+			if err := r.DB.Table("assistant_sessions").Select(messages).Where("id IN ?", batch).Scan(&rows).Error; err != nil {
 				return err
 			}
 		}

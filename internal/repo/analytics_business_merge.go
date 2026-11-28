@@ -24,10 +24,11 @@ func (r *AnalyticsRepo) businessDeliveryMRs(runs []domain.Run) (map[string][]dom
 			byID[run.ID] = run
 		}
 	}
+	like := r.likeOperator()
 	for start := 0; start < len(ids); start += 500 {
 		var rows []runArtifactRow
 		if err := r.DB.Select("id", "run_id", "node_id", "name", "path", "content", "created_at").
-			Where("run_id IN ? AND content LIKE ? AND name NOT LIKE ? AND name NOT LIKE ?", ids[start:min(start+500, len(ids))], "%merge_requests/%", "%patch%", "%diff%").
+			Where("run_id IN ? AND content "+like+" ? AND name NOT "+like+" ? AND name NOT "+like+" ?", ids[start:min(start+500, len(ids))], "%merge_requests/%", "%patch%", "%diff%").
 			Order("created_at, id").Find(&rows).Error; err != nil {
 			return nil, err
 		}

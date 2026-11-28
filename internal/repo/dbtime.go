@@ -21,9 +21,12 @@ import (
 // and UNIX_TIMESTAMP use the same zone) and honours SET timestamp in tests.
 // SQLite: julianday('now') in microseconds; precision is about one
 // millisecond, far below any lease or window used here.
+// Postgres: clock_timestamp() is the wall clock, independent of the session
+// time zone, in epoch microseconds.
 const (
-	mysqlNowUS  = "CAST(UNIX_TIMESTAMP(NOW(6)) * 1000000 AS SIGNED)"
-	sqliteNowUS = "CAST(ROUND((julianday('now') - 2440587.5) * 86400000000.0) AS INTEGER)"
+	mysqlNowUS    = "CAST(UNIX_TIMESTAMP(NOW(6)) * 1000000 AS SIGNED)"
+	sqliteNowUS   = "CAST(ROUND((julianday('now') - 2440587.5) * 86400000000.0) AS INTEGER)"
+	postgresNowUS = "CAST((EXTRACT(EPOCH FROM clock_timestamp()) * 1000000)::bigint AS bigint)"
 )
 
 // dbClockOverrideUS pins the database clock for tests; 0 means the real
@@ -37,6 +40,9 @@ func (d *deps) dbNowUSSQL() string {
 	}
 	if d.isMySQL() {
 		return mysqlNowUS
+	}
+	if d.isPostgres() {
+		return postgresNowUS
 	}
 	return sqliteNowUS
 }

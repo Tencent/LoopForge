@@ -96,11 +96,12 @@ func TestCommandNodeNormalizesToShellScript(t *testing.T) {
 }
 
 func TestOpenRequiresMySQLDSN(t *testing.T) {
+	t.Setenv("AGENTFLOW_DATABASE_URL", "")
 	t.Setenv("AGENTFLOW_MYSQL_DSN", "")
 	s, err := Open("")
 	if err == nil {
 		s.Close()
-		t.Fatal("Open without a DSN must fail: MySQL is where all state lives")
+		t.Fatal("Open without a DSN must fail: the database is where all state lives")
 	}
 }
 

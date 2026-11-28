@@ -90,7 +90,8 @@ func main() {
 	mcpToken := flag.String("mcp-token", "", "MCP gateway bearer token (or set AGENTFLOW_MCP_TOKEN env)")
 	tlsCert := flag.String("tls-cert", "", "optional TLS certificate path")
 	tlsKey := flag.String("tls-key", "", "optional TLS private key path")
-	mysqlDSN := flag.String("mysql-dsn", "", "MySQL DSN; overrides AGENTFLOW_MYSQL_DSN. MySQL is the only data source.")
+	databaseURL := flag.String("database-url", "", "Postgres URL (postgres://…) or MySQL DSN (user:pw@tcp(host:port)/db); overrides AGENTFLOW_DATABASE_URL and AGENTFLOW_MYSQL_DSN. The database is the only data source.")
+	mysqlDSN := flag.String("mysql-dsn", "", "Deprecated alias for -database-url; kept so existing MySQL deployments keep starting.")
 	roleFlag := flag.String("role", "", "process role: api, worker, or all (default all)")
 	cliAction := flag.String("cli-action", "", "local managed CLI administration: status, update, or rollback; exits without starting services")
 	cliProvider := flag.String("cli-provider", "", "managed CLI provider to roll back")
@@ -138,7 +139,13 @@ func main() {
 	if err := runtime.SetRepositoryCacheRoot(root); err != nil {
 		log.Printf("repository cache disabled: %v", err)
 	}
-	s, err := repo.Open(strings.TrimSpace(*mysqlDSN))
+	dsn, deprecated := resolveDatabaseURL(*databaseURL, *mysqlDSN)
+	if deprecated {
+		log.Printf("-mysql-dsn is deprecated; use -database-url or AGENTFLOW_DATABASE_URL")
+	} else if strings.TrimSpace(*mysqlDSN) != "" {
+		log.Printf("-mysql-dsn ignored: -database-url or AGENTFLOW_DATABASE_URL takes precedence")
+	}
+	s, err := repo.Open(dsn)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -399,6 +406,25 @@ func workerHandler(e *engine.Engine) http.Handler {
 	mux.HandleFunc("POST /internal/runs/promote", e.HandleQueuedRunPromotion)
 	mux.HandleFunc("POST /internal/workspace-checkpoint", e.HandleWorkspaceCheckpoint)
 	return mux
+}
+
+// resolveDatabaseURL picks the database DSN to open. The explicit
+// -database-url wins, then AGENTFLOW_DATABASE_URL, then the deprecated
+// -mysql-dsn alias, then the legacy AGENTFLOW_MYSQL_DSN. The deprecated alias
+// deliberately sits below AGENTFLOW_DATABASE_URL: a stale start script must
+// not silently keep a deployment on MySQL after the operator switched to
+// Postgres. The second return value reports whether the deprecated alias won.
+func resolveDatabaseURL(databaseURL, deprecatedMySQLDSN string) (string, bool) {
+	if dsn := strings.TrimSpace(databaseURL); dsn != "" {
+		return dsn, false
+	}
+	if dsn := strings.TrimSpace(os.Getenv("AGENTFLOW_DATABASE_URL")); dsn != "" {
+		return dsn, false
+	}
+	if dsn := strings.TrimSpace(deprecatedMySQLDSN); dsn != "" {
+		return dsn, true
+	}
+	return strings.TrimSpace(os.Getenv("AGENTFLOW_MYSQL_DSN")), false
 }
 
 func resolveRole(override string) (string, error) {

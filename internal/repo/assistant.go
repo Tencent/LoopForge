@@ -63,16 +63,29 @@ func (r *AssistantRepo) ListAssistantSessions(userID int64) []domain.AssistantSe
 // Remove transcripts in SQL so list and permission checks never transfer or
 // decode chat history. Retain all other metadata, including legacy fallbacks.
 func (r *AssistantRepo) assistantSessionSummaries() *gorm.DB {
-	summary := "json(" + r.assistantParticipantSummarySQL() + ")"
+	participantSummary := r.assistantParticipantSummarySQL()
+	summary := "json(" + participantSummary + ")"
 	if r.DB.Dialector.Name() != "sqlite" {
-		summary = "CAST((" + r.assistantParticipantSummarySQL() + ") AS JSON)"
+		summary = "CAST((" + participantSummary + ") AS JSON)"
 	}
-	return r.DB.Table("assistant_sessions").Select("id, user_id, project_id, title, model, source, task_id, created_at, updated_at, JSON_SET(JSON_REMOVE(payload, '$.messages'), '$.executionMessageCount', " + r.assistantExecutionMessageCountSQL() + ", '$.participantSummaryMessages', " + summary + ") AS payload")
+	outer := "JSON_SET(JSON_REMOVE(payload, '$.messages'), '$.executionMessageCount', " + r.assistantExecutionMessageCountSQL() + ", '$.participantSummaryMessages', " + summary + ") AS payload"
+	if r.isPostgres() {
+		// The participant summary is already a jsonb value, so it is merged
+		// as one instead of being cast back from its text form.
+		summary = "(" + participantSummary + ")"
+		outer = r.jsonRemoveLiteral("payload", "$.messages") + " || " + r.jsonBuildObject(
+			"'executionMessageCount'", r.assistantExecutionMessageCountSQL(),
+			"'participantSummaryMessages'", summary) + " AS payload"
+	}
+	return r.DB.Table("assistant_sessions").Select("id, user_id, project_id, title, model, source, task_id, created_at, updated_at, " + outer)
 }
 
 func (r *AssistantRepo) assistantExecutionMessageCountSQL() string {
 	if r.DB.Dialector.Name() == "sqlite" {
 		return "COALESCE(JSON_ARRAY_LENGTH(payload, '$.messages'), 0)"
+	}
+	if r.isPostgres() {
+		return r.jsonLengthLiteral("payload", "$.messages")
 	}
 	return "COALESCE(JSON_LENGTH(JSON_EXTRACT(payload, '$.messages')), 0)"
 }
@@ -107,7 +120,11 @@ func (r *AssistantRepo) findAssistantSessionSummaries(where string, args ...any)
 	var err error
 	fallback := func() ([]assistantSessionRow, error) {
 		var out []assistantSessionRow
-		err := r.DB.Table("assistant_sessions").Select("id, user_id, project_id, title, model, source, task_id, created_at, updated_at, JSON_SET(JSON_REMOVE(payload, '$.messages'), '$.executionMessageCount', "+r.assistantExecutionMessageCountSQL()+") AS payload").Where(where, args...).Find(&out).Error
+		columns := "id, user_id, project_id, title, model, source, task_id, created_at, updated_at, JSON_SET(JSON_REMOVE(payload, '$.messages'), '$.executionMessageCount', " + r.assistantExecutionMessageCountSQL() + ") AS payload"
+		if r.isPostgres() {
+			columns = "id, user_id, project_id, title, model, source, task_id, created_at, updated_at, " + r.jsonRemoveLiteral("payload", "$.messages") + " || " + r.jsonBuildObject("'executionMessageCount'", r.assistantExecutionMessageCountSQL()) + " AS payload"
+		}
+		err := r.DB.Table("assistant_sessions").Select(columns).Where(where, args...).Find(&out).Error
 		sortAssistantSessionRows(out)
 		return out, err
 	}
@@ -202,6 +219,9 @@ func (r *AssistantRepo) backfillAssistantParticipants(rows []assistantSessionRow
 	if r.DB.Dialector.Name() == "sqlite" {
 		jsonArg = "json(?)"
 	}
+	if r.isPostgres() {
+		jsonArg = "?::jsonb"
+	}
 	updated := 0
 	for start := 0; start < len(ids); start += 50 {
 		end := min(start+50, len(ids))
@@ -216,7 +236,16 @@ func (r *AssistantRepo) backfillAssistantParticipants(rows []assistantSessionRow
 			if item.UnknownParticipants {
 				unknown = "true"
 			}
-			res := r.DB.Exec("UPDATE assistant_sessions SET payload = JSON_SET(payload, '$.participants', "+jsonArg+", '$.participantsVersion', 1, '$.unknownParticipants', "+jsonArg+") WHERE id = ? AND updated_at = ?",
+			update := "UPDATE assistant_sessions SET payload = JSON_SET(payload, '$.participants', " + jsonArg + ", '$.participantsVersion', 1, '$.unknownParticipants', " + jsonArg + ") WHERE id = ? AND updated_at = ?"
+			if r.isPostgres() {
+				// jsonb_build_object stores the version as the JSON number 1,
+				// the way MySQL stores it.
+				update = "UPDATE assistant_sessions SET payload = payload::jsonb || " + r.jsonBuildObject(
+					"'participants'", jsonArg,
+					"'participantsVersion'", "1",
+					"'unknownParticipants'", jsonArg) + " WHERE id = ? AND updated_at = ?"
+			}
+			res := r.DB.Exec(update,
 				string(mustJSON(item.Participants)), unknown, row.ID, row.Updated)
 			if res.Error != nil {
 				log.Printf("assistant participant backfill write failed id=%s: %v", row.ID, res.Error)
@@ -305,7 +334,7 @@ func (r *AssistantRepo) SetAssistantSessionGeneratedTitle(userID int64, id, titl
 func (r *AssistantRepo) SetAssistantSessionTitle(userID int64, id, projectID, title string) error {
 	return r.DB.Transaction(func(tx *gorm.DB) error {
 		var row assistantSessionRow
-		err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Select(assistantSessionMetadataColumns).
+		err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Select(r.assistantSessionMetadataColumns()).
 			Where("id = ? AND user_id = ?", assistantRecordID(id), userID).Take(&row).Error
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return ErrAssistantSessionNotFound
@@ -325,6 +354,14 @@ func (r *AssistantRepo) SetAssistantSessionTitle(userID int64, id, projectID, ti
 			edited = "json('true')"
 		}
 		payload := "JSON_SET(JSON_REMOVE(payload, '$.titleGenerated'), '$.title', ?, '$.titleEdited', " + edited + ")"
+		if r.isPostgres() {
+			edited = "'true'::jsonb"
+			// The title is a text value, so the parameter is cast: Postgres
+			// cannot infer the type of a parameter inside jsonb_build_object.
+			payload = r.jsonRemoveLiteral("payload", "$.titleGenerated") + " || " + r.jsonBuildObject(
+				"'title'", "?::text",
+				"'titleEdited'", edited)
+		}
 		updates := map[string]any{
 			"title":   title,
 			"payload": gorm.Expr(payload, title),
@@ -333,7 +370,13 @@ func (r *AssistantRepo) SetAssistantSessionTitle(userID int64, id, projectID, ti
 		if session.Source == "" {
 			source := inferredAssistantSessionSource(session)
 			updates["source"] = source
-			updates["payload"] = gorm.Expr("JSON_SET("+payload+", '$.source', ?)", title, source)
+			if r.isPostgres() {
+				// Postgres merges the two objects instead of nesting a second
+				// JSON_SET, so the merge order stays visible.
+				updates["payload"] = gorm.Expr(payload+" || "+r.jsonBuildObject("'source'", "?::text"), title, source)
+			} else {
+				updates["payload"] = gorm.Expr("JSON_SET("+payload+", '$.source', ?)", title, source)
+			}
 		}
 		return tx.Model(&row).UpdateColumns(updates).Error
 	})

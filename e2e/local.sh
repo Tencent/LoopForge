@@ -85,7 +85,7 @@ AGENTFLOW_AUTH_REQUIRED=true \
 AGENTFLOW_LOCAL_LOGIN_USER=e2e-local \
 AGENTFLOW_RUNNER_BINARY="$WORK/agentflow-runner" \
 AGENTFLOW_PLATFORM_MCP_URL="http://${HOST_IP:-127.0.0.1}:$PORT" \
-  "$WORK/agentflow" -addr "0.0.0.0:$PORT" -workspaces "$WORK/workspaces" -mysql-dsn "$DSN" >"$WORK/platform.log" 2>&1 &
+  "$WORK/agentflow" -addr "0.0.0.0:$PORT" -workspaces "$WORK/workspaces" -database-url "$DSN" >"$WORK/platform.log" 2>&1 &
 PID=$!
 for _ in $(seq 60); do curl -sf "$BASE/api/health" >/dev/null && break; sleep 1; done
 if ! curl -sf "$BASE/api/health" >/dev/null || ! kill -0 "$PID" 2>/dev/null; then
