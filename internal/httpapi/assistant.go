@@ -1919,7 +1919,10 @@ func runAssistantCLI(ctx context.Context, req assistantCLIRequest, user domain.U
 		assistantDiagnosticsFrom(ctx).platform("protocol.result_text_recovered", "Claude Code 本轮成功但结果正文为空，采用已收到的回复", user)
 	}
 	out, err := decodeAssistantCLIResult(final, resultError, err, stderrTail)
-	if err != nil && errors.Is(err, errAssistantMissingResult) && lastAssistantText != "" {
+	// A model the account cannot use only shows up in that text block. Append it
+	// for classification; plain narration keeps the original error so the
+	// generic "interrupted, retry" reply and its tests are unchanged.
+	if err != nil && errors.Is(err, errAssistantMissingResult) && assistantProviderRejectionText(lastAssistantText) {
 		err = fmt.Errorf("%w; assistant=%s", err, truncateRunes(lastAssistantText, 500))
 	}
 	if err != nil && req.RunnerLogin && ctx.Err() == nil && !errors.Is(err, runtime.ErrConversationNotStarted) {

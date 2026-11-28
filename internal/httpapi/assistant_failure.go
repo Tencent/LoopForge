@@ -224,3 +224,12 @@ func classifyAssistantFailureText(f domain.AssistantFailure, err error, text str
 // that was missing is reported separately, and a finished install replaces
 // both that report and this generic text.
 const assistantGenerationFailedMessage = "AI 助手生成失败，请稍后重试"
+
+// assistantProviderRejectionText reports whether an assistant text block is a
+// provider rejection (e.g. `400 model [x] service info not found`) rather than
+// narration, so only those are carried into the missing-result error.
+func assistantProviderRejectionText(text string) bool {
+	text = strings.TrimSpace(text)
+	return strings.HasPrefix(text, "400 ") || strings.HasPrefix(text, "403 ") ||
+		assistantModelMissingRe.MatchString(text) || assistantAuthFailureText(text)
+}
