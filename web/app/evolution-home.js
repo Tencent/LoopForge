@@ -36,7 +36,7 @@ function evoHomeRowHTML(row){
   const problem=evoHomeProblem(row),rawProblem=p?.review?.problem||r?.title||p?.title||problem;
   const change=p?.review?.changes?.[0]?.title||(p?.status!=='drafting'&&p?.title!==rawProblem?p?.title:'')||'';
   const workflows=evoFindingWorkflows(r?.f);
-  const related=workflows.length===1?`SOP · ${workflows[0].name}`:workflows.length>1?`${workflows.length} 个 SOP`:asset.assetName||asset.assetId||'未知对象';
+  const related=workflows.length===1?`LOOP · ${workflows[0].name}`:workflows.length>1?`${workflows.length} 个 LOOP`:asset.assetName||asset.assetId||'未知对象';
   const glyph=r?.c?.kind==='user_feedback'?'user':'alert';
   const updated=evoHomeUpdated(row),date=updated?new Date(updated):null;
   const time=date&&!Number.isNaN(+date)?`<time datetime="${escapeHTML(updated)}" data-tooltip="${escapeHTML(date.toLocaleString())}">${escapeHTML(evoIssueDate(updated))}</time>`:'—';
@@ -114,7 +114,7 @@ function evoHomeListHTML(all){
   const empty=`<div class="evo-home-filter-empty">${filtered?'暂无匹配任务':evo.list.section==='released'?'暂无发布记录':evo.list.section==='rolled_back'?'暂无回滚记录':'暂无改进任务'}
     ${filtered?evoHomeButton('清除筛选','data-evo-list-reset'):''}</div>`;
   const pager=pages>1?`<footer class="evo-list-footer"><nav aria-label="改进分页"><button type="button" data-evo-unified-page="${evo.list.page-1}"${evo.list.page?'':' disabled'}>上一页</button><span>${evo.list.page+1}/${pages}</span><button type="button" data-evo-unified-page="${evo.list.page+1}"${evo.list.page+1<pages?'':' disabled'}>下一页</button></nav></footer>`:'';
-  const columns=rows?'<div class="evo-home-columns" aria-hidden="true"><span>问题 / 关联 SOP</span><span>改动摘要</span><span>当前阶段</span><span>更新</span></div>':'';
+  const columns=rows?'<div class="evo-home-columns" aria-hidden="true"><span>问题 / 关联 LOOP</span><span>改动摘要</span><span>当前阶段</span><span>更新</span></div>':'';
   return `<section id="evoUnifiedList" class="evo-home-list" aria-label="任务记录">${columns}${rows||empty}</section>${pager}`;
 }
 function evoHomeTasksHTML(all){
@@ -126,9 +126,9 @@ function evoHomeTasksHTML(all){
     <div class="evo-home-toolbar">
       ${section==='tasks'?`<select class="kb-input" data-evo-task-filter="status" data-evo-key="task-status" aria-label="任务状态">${EVO_TASK_STATUSES.map(([key,label])=>
         `<option value="${key}"${evo.list.status===key?' selected':''}>${label}</option>`).join('')}</select>`:''}
-      ${workflows.length?`<select class="kb-input" data-evo-task-filter="sop" data-evo-key="task-sop" aria-label="关联 SOP"><option value="">全部 SOP</option>${workflows.map(w=>
+      ${workflows.length?`<select class="kb-input" data-evo-task-filter="sop" data-evo-key="task-sop" aria-label="关联 LOOP"><option value="">全部 LOOP</option>${workflows.map(w=>
         `<option value="${escapeHTML(w.id)}"${evo.list.sop===w.id?' selected':''}>${escapeHTML(w.name)}</option>`).join('')}</select>`:''}
-      <label class="evo-home-search">${evoReviewIcon('search')}<input class="kb-input" type="search" data-evo-task-search data-evo-key="task-search" aria-label="搜索问题、SOP 或任务" placeholder="搜索问题、SOP 或任务" value="${escapeHTML(evo.list.q||'')}"></label>
+      <label class="evo-home-search">${evoReviewIcon('search')}<input class="kb-input" type="search" data-evo-task-search data-evo-key="task-search" aria-label="搜索问题、LOOP 或任务" placeholder="搜索问题、LOOP 或任务" value="${escapeHTML(evo.list.q||'')}"></label>
       ${section==='tasks'?`<select class="kb-input" data-evo-task-filter="sort" data-evo-key="task-sort" aria-label="改进任务排序">
         <option value="impact">按影响度</option><option value="recent"${evo.list.sort==='recent'?' selected':''}>最近更新</option></select>`:''}
     </div>
@@ -137,7 +137,7 @@ function evoHomeTasksHTML(all){
 function evoHomeHTML(){
   if(typeof evoSOPIsEnabledView==='function'&&evoSOPIsEnabledView())return evoSOPHomeHTML();
   const all=evoUnifiedRows();
-  const backToSOP=Array.isArray(evo.overview?.sops)?'<div class="evo-sop-mode-banner"><button type="button" class="kb-btn quiet small" data-evo-sop-mode="sop">‹ 返回 SOP 进化列表</button></div>':'';
+  const backToSOP=Array.isArray(evo.overview?.sops)?'<div class="evo-sop-mode-banner"><button type="button" class="kb-btn quiet small" data-evo-sop-mode="sop">‹ 返回 LOOP 进化列表</button></div>':'';
   return `<div class="evo-home">
     ${backToSOP}
     ${evoHomeStatusHTML()}
@@ -167,10 +167,10 @@ document.addEventListener('click',event=>{
 
 function evoSOPDetectionHTML(){
   const setting=evo.overview?.sopDetection;
-  return `<form id="evoSOPDetection" class="evo-sop-detection kb-panel" aria-label="SOP 自动检测设置">
+  return `<form id="evoSOPDetection" class="evo-sop-detection kb-panel" aria-label="LOOP 自动检测设置">
     <label class="evo-sop-setting">
-      <span><b>SOP 自动检测</b><small>新运行结束后检查重复步骤、工具反复使用和调用失败。</small></span>
-      <input type="checkbox" name="enabled" role="switch" aria-label="SOP 自动检测"${setting?.enabled?' checked':''}>
+      <span><b>LOOP 自动检测</b><small>新运行结束后检查重复步骤、工具反复使用和调用失败。</small></span>
+      <input type="checkbox" name="enabled" role="switch" aria-label="LOOP 自动检测"${setting?.enabled?' checked':''}>
     </label>
     <div class="evo-sop-setting">
       <span><b>检测模型</b><small>使用保存设置的账号配置。</small></span>

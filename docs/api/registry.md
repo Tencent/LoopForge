@@ -160,7 +160,7 @@ curl -u "$AGENTFLOW_USER:$AGENTFLOW_PASS" -X PUT \
 {"imported":2,"servers":[{"id":"gongfeng","name":"工蜂","transport":"http","url":"https://..."}]}
 ```
 
-无效 JSON/空列表/条目校验失败返回 `400`。
+无效 JSON/空列表/条目校验失败返回 `400`。同一次导入中出现重复的 `id`（忽略首尾空白、不区分大小写）也返回 `400`，整批都不保存。
 
 ```bash
 curl -u "$AGENTFLOW_USER:$AGENTFLOW_PASS" -X POST \

@@ -130,10 +130,14 @@ function obsStepPeriodKey(key,grain,delta){
   day.setUTCDate(day.getUTCDate()+delta);
   return day.toISOString().slice(0,10);
 }
+// 进行中（运行中 / 等待审批）的执行 finishedAt 是 Go 零值 0001-01-01，不算结束时间，
+// 按创建时间归入时段，和服务端趋势点的口径一致；否则日 / 周 / 月视图会漏掉它们的用量和费用。
 function obsTraceEventAt(t){
-  const raw=t?.finishedAt||t?.createdAt;
-  const at=raw?new Date(raw):null;
-  return at&&!Number.isNaN(at.getTime())?at:null;
+  for(const raw of [t?.finishedAt,t?.createdAt]){
+    const at=raw?new Date(raw):null;
+    if(at&&!Number.isNaN(at.getTime())&&at.getUTCFullYear()>1)return at;
+  }
+  return null;
 }
 function obsTraceInRange(t,range){
   if(!range)return true;
@@ -1487,12 +1491,20 @@ function obsDirectDeliveryText(it){
 }
 function obsDeliveryStatusText(it){return it.directDelivery?obsDirectDeliveryText(it):it.sopSucceeded?'LOOP 成功':(runStatus(it.runStatus)||it.runStatus||'—')}
 function obsDeliveryStatusHTML(it){return `<span class="status ${escapeHTML(it.directDelivery?'':(it.runStatus||''))}">${escapeHTML(obsDeliveryStatusText(it))}</span>`}
+// 单号：外部单据显示 #iid / TAPD ID；平台需求与需求列表同一规则显示「项目 Key-编号」，
+// 只有缺编号的旧数据才退回内部 ID。
+function obsDeliveryIssueKey(it){
+  if(Number(it?.externalIid)>0)return `#${it.externalIid}`;
+  if(it?.externalId)return String(it.externalId);
+  if(Number(it?.issueNumber)>0&&typeof issueKeyLabel==='function')return issueKeyLabel({source:'local',projectId:it.projectId,number:it.issueNumber});
+  return String(it?.issueId||'');
+}
 function obsDeliveryTableDef(all){
   const items=state.analytics?.deliveries||[];
   const filter=state.obsDeliveryFilter||'all';
   const visible=items.filter(it=>obsDeliveryMatches(it,filter));
   const rows=visible.map(it=>{
-    const issue=it.externalIid?`#${it.externalIid}`:(it.externalId||it.issueId);
+    const issue=obsDeliveryIssueKey(it);
     const mr=obsDeliveryMRHTML(it);
     const startedLanes=(it.lanes||[]).filter(l=>l.started);
     const sop=startedLanes.length?startedLanes.map(l=>`${l.label}${l.status==='succeeded'?'✓':''}`).join(' / '):(it.workflowName||it.workflowId);
@@ -1556,7 +1568,7 @@ function buildObsReportHTML(){
   const versionRows=(state.analytics?.workflowVersions||[]).map(v=>`<tr><td>${escapeHTML(v.name||v.workflowId)}</td><td>v${v.version}</td><td>${v.runs}</td><td>${percent(v.successRate)}</td><td>${formatTokens(v.tokens)}</td><td>${obsPlain(costLabel(v.costCny,!v.costUnknownRuns))}</td></tr>`).join('');
   const trendRows=obsTrendWindow(state.analytics?.trend||[]).slice().reverse().map(t=>`<tr><td>${escapeHTML(obsTrendLabel(t))}</td><td>${t.runs}</td><td>${t.issues||0}</td><td>${t.succeeded}</td><td>${t.failed||0}</td><td>${formatTokens(t.tokens)}</td><td>${obsPlain(costLabel(t.costCny,obsCostKnown(t)))}</td><td>${t.executionDurationMs?duration(t.executionDurationMs):'—'}</td></tr>`).join('');
   const projectRows=(state.obsCrossProject?.projectUsage||state.analytics?.projectUsage||[]).map(r=>`<tr><td>${escapeHTML(obsProjectName(r.projectId))}</td><td>${r.runs||0}</td><td>${r.uniqueIssues||0}</td><td>${formatTokens(r.tokens)}</td><td>${obsPlain(costLabel(r.costCny,r.costKnown))}</td></tr>`).join('');
-  const deliveryRows=(state.analytics?.deliveries||[]).slice(0,80).map(it=>`<tr><td>${obsSourceLabel(it.source)} ${escapeHTML(String(it.externalIid?('#'+it.externalIid):(it.externalId||it.issueId)))}</td><td>${escapeHTML(it.title||it.issueId)}</td><td>${escapeHTML(it.workflowName||it.workflowId)}</td><td>${escapeHTML(obsDeliveryStatusText(it))}</td><td>${escapeHTML(obsUserName(it.userId))}</td><td>${formatTokens(it.tokens)}</td><td>${obsPlain(costLabel(it.costCny,it.costKnown))}</td><td>${obsDeliveryMRHTML(it)}</td><td>${it.delivered?'已交付':'未交付'}</td></tr>`).join('');
+  const deliveryRows=(state.analytics?.deliveries||[]).slice(0,80).map(it=>`<tr><td>${obsSourceLabel(it.source)} ${escapeHTML(obsDeliveryIssueKey(it))}</td><td>${escapeHTML(it.title||it.issueId)}</td><td>${escapeHTML(it.workflowName||it.workflowId)}</td><td>${escapeHTML(obsDeliveryStatusText(it))}</td><td>${escapeHTML(obsUserName(it.userId))}</td><td>${formatTokens(it.tokens)}</td><td>${obsPlain(costLabel(it.costCny,it.costKnown))}</td><td>${obsDeliveryMRHTML(it)}</td><td>${it.delivered?'已交付':'未交付'}</td></tr>`).join('');
   const kpis=[
     ...(activity?[
       ['会话数',activity.sessions||0,'普通对话 · 按创建时间'],

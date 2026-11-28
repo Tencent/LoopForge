@@ -332,7 +332,7 @@ func TestProcessSandboxPathsProfilesAndCommands(t *testing.T) {
 	if strings.Join(env, ",") != "A=3,B=4" {
 		t.Fatalf("env=%v", env)
 	}
-	filtered := controlledBaseEnvironment([]string{"PATH=/bin", "OPENAI_API_KEY=x", "GIT_CONFIG_KEY_0=x"})
+	filtered := controlledBaseEnvironment([]string{"PATH=/bin", "OPENAI_API_KEY=x", "GIT_CONFIG_KEY_0=x", "GIT_AUTHOR_NAME=x", "GIT_AUTHOR_EMAIL=x", "GIT_COMMITTER_NAME=x", "GIT_COMMITTER_EMAIL=x"})
 	if len(filtered) != 1 {
 		t.Fatalf("filtered=%v", filtered)
 	}
