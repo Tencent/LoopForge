@@ -420,10 +420,13 @@ async function refreshObsCrossProject(){
 async function applyObsFilter(){return obsLoadAnalytics()}
 
 function obsUserName(id){
-  if(!id||id==='unassigned')return '未分配';
+  if(!id||id==='unassigned')return lfT('未分配','Unassigned');
   const user=userById(id);
   return user?userDisplay(user):String(id);
 }
+// 用户起的名字（需求标题、LOOP 名、项目名、人名）在英文界面原样显示：i18n.js 会按字典片段改写
+// 中文文本，「修复 X 的两个缺陷」会被改成「Fix X 的两个缺陷」，所以这些值不交给它翻译。
+function obsUserText(text){return `<span data-i18n-skip>${escapeHTML(text)}</span>`}
 function obsLinkedIssue(run){
   const task=(state.data.tasks||[]).find(t=>t.runId===run?.id);
   const issueId=task?.issueId||run?.executionContext?.issueId;
@@ -470,12 +473,14 @@ function obsFilterBar(){
   const originFilter=`<select id="obsOriginFilter" data-obs-select data-icon="run-live" aria-label="执行">${originChoices.map(([v,l])=>`<option value="${v}" ${(state.obsOriginFilter||'')===v?'selected':''}>${l}</option>`).join('')}</select>`;
   const sourceFilter=`<select id="obsSourceFilter" data-obs-select data-icon="connector" aria-label="需求来源">${sources}</select>`;
   const clear=(kind,title)=>`<button type="button" data-obs-clear-filter="${kind}" title="${title}" aria-label="${title}">${obsIcon('close',11)}</button>`;
+  // 项目名、责任人名是用户起的名字，英文界面不做片段翻译。
+  const pName=obsUserText(projectName),pLabel=obsUserText(label);
   const chips=[];
-  if(scope==='project')chips.push(`<span class="obs-chip">${lfT(`项目「${escapeHTML(projectName)}」全部成员`, `All members in "${escapeHTML(projectName)}"`)}</span>`);
-  else if(selected)chips.push(`<span class="obs-chip">${lfT(`「${escapeHTML(projectName)}」项目内 · ${escapeHTML(label)} 负责的执行`, `"${escapeHTML(projectName)}" · Runs owned by ${escapeHTML(label)}`)}${clear('user','清除责任人')}</span>`);
-  else chips.push(`<span class="obs-chip">${lfT(`「${escapeHTML(projectName)}」项目内 · 全部成员`, `"${escapeHTML(projectName)}" · All members`)}</span>`);
-  if(state.obsOriginFilter)chips.push(`<span class="obs-chip">${escapeHTML((originChoices.find(([v])=>v===state.obsOriginFilter)||[,state.obsOriginFilter])[1])}${clear('origin','清除执行来源')}</span>`);
-  if(state.obsSourceFilter)chips.push(`<span class="obs-chip">${escapeHTML(obsSourceLabel(state.obsSourceFilter))}需求${clear('source','清除需求来源')}</span>`);
+  if(scope==='project')chips.push(`<span class="obs-chip">${lfT(`项目「${pName}」全部成员`, `All members in "${pName}"`)}</span>`);
+  else if(selected)chips.push(`<span class="obs-chip">${lfT(`「${pName}」项目内 · ${pLabel} 负责的执行`, `"${pName}" · Runs owned by ${pLabel}`)}${clear('user',lfT('清除责任人','Clear owner'))}</span>`);
+  else chips.push(`<span class="obs-chip">${lfT(`「${pName}」项目内 · 全部成员`, `"${pName}" · All members`)}</span>`);
+  if(state.obsOriginFilter)chips.push(`<span class="obs-chip">${escapeHTML((originChoices.find(([v])=>v===state.obsOriginFilter)||[,state.obsOriginFilter])[1])}${clear('origin',lfT('清除执行来源','Clear run origin'))}</span>`);
+  if(state.obsSourceFilter)chips.push(`<span class="obs-chip">${escapeHTML(lfT(`${obsSourceLabel(state.obsSourceFilter)}需求`,`${obsSourceLabel(state.obsSourceFilter)} requirements`))}${clear('source',lfT('清除需求来源','Clear requirement source'))}</span>`);
   if(grain!=='all'){
     const range=obsPeriodRange(obsPeriodKey(),grain);
     chips.push(`<span class="obs-chip">${escapeHTML(range?range.label:obsRangeCaption())}${clear('period','回到全部')}</span>`);
@@ -670,7 +675,7 @@ function obsSeg(attr,items,active,small){
 }
 function obsCard(key,title,sub,tools,body,opts){
   opts=opts||{};
-  const expand=opts.expand?`<button type="button" class="obs-x-btn" data-obs-expand="${escapeHTML(key)}" title="放大" aria-label="放大查看">${OBS_EXPAND_ICON}</button>`:'';
+  const expand=opts.expand?`<button type="button" class="obs-x-btn" data-obs-expand="${escapeHTML(key)}" title="放大查看" aria-label="放大查看">${OBS_EXPAND_ICON}</button>`:'';
   return `<section class="obs-card2 ${opts.klass||''}" data-obs-card="${escapeHTML(key)}"><header class="obs-card-head"><div class="obs-card-heading"><h3>${title}</h3>${sub?`<p>${sub}</p>`:''}</div><div class="obs-card-tools">${tools||''}${expand}</div></header>${body}</section>`;
 }
 function obsSpark(values){
@@ -749,14 +754,18 @@ function obsInsights(view,kind){
     if(d.issues){
       const worst=funnel.worst>=0?funnel.stages[funnel.worst]:null;
       const prevName=worst?funnel.stages[funnel.worst-1]?.name:'';
-      items.push({text:`<b>${d.delivered||0} / ${d.issues}</b> 单已交付${worst?`，最大流失在「${escapeHTML(prevName)} → ${escapeHTML(worst.name)}」（${worst.lost} 单）`:''}`,action:`data-obs-funnel="${worst?.key||'all'}"`,label:'查看'});
+      const ratio=`<b>${d.delivered||0} / ${d.issues}</b>`;
+      items.push({text:lfT(`${ratio} 单已交付${worst?`，最大流失在「${escapeHTML(prevName)} → ${escapeHTML(worst.name)}」（${worst.lost} 单）`:''}`,
+        `${ratio} delivered${worst?`; the biggest drop is "${escapeHTML(prevName)} → ${escapeHTML(worst.name)}" (${worst.lost})`:''}`),action:`data-obs-funnel="${worst?.key||'all'}"`,label:lfT('查看','View')});
     }
     // 端到端按需求平均、执行按运行平均，分母不同，只能并列，不能写成「其中」
     if(d.averageDurationMs&&d.averageExecutionDurationMs){
-      items.push({text:`需求平均端到端 <b>${duration(d.averageDurationMs)}</b>，单次执行平均 ${duration(d.averageExecutionDurationMs)}`});
+      items.push({text:lfT(`需求平均端到端 <b>${duration(d.averageDurationMs)}</b>，单次执行平均 ${duration(d.averageExecutionDurationMs)}`,
+        `Requirements average <b>${duration(d.averageDurationMs)}</b> end to end; a single run averages ${duration(d.averageExecutionDurationMs)}`)});
     }
     if(summary.runsPerIssue!=null&&d.issues){
-      items.push({text:`每需求执行 <b>${Number(summary.runsPerIssue).toFixed(2)}</b> 次${summary.failuresPerIssue!=null?`，失败 ${Number(summary.failuresPerIssue).toFixed(2)} 次`:''}`});
+      const runs=`<b>${Number(summary.runsPerIssue).toFixed(2)}</b>`,fails=summary.failuresPerIssue!=null?Number(summary.failuresPerIssue).toFixed(2):null;
+      items.push({text:lfT(`每需求执行 ${runs} 次${fails!=null?`，失败 ${fails} 次`:''}`,`${runs} runs per requirement${fails!=null?`, ${fails} failed`:''}`)});
     }
     return obsInsightList(items);
   }
@@ -1003,7 +1012,7 @@ function obsCollapse(opts){
   const card=st.card;
   card.classList.remove('is-expanded');
   const btn=card.querySelector('[data-obs-expand]');
-  if(btn){btn.innerHTML=OBS_EXPAND_ICON;btn.title='放大';btn.setAttribute('aria-label','放大查看');obsHydrateIcons(btn)}
+  if(btn){btn.innerHTML=OBS_EXPAND_ICON;btn.title='放大查看';btn.setAttribute('aria-label','放大查看');obsHydrateIcons(btn)}
   if(st.holder.isConnected)st.holder.replaceWith(card);
   else{obsDisposeCharts(card);card.remove()}
   if(box)box.innerHTML='';
@@ -1038,7 +1047,7 @@ function obsCountUp(el){
   };
   requestAnimationFrame(step);
 }
-function obsSourceLabel(s){return s==='gongfeng'?'工蜂':s==='tapd'?'TAPD':s==='local'?'本地':s==='github'?'GitHub':s||'—'}
+function obsSourceLabel(s){return s==='gongfeng'?lfT('工蜂','Gongfeng'):s==='tapd'?'TAPD':s==='local'?lfT('本地','Local'):s==='github'?'GitHub':s||'—'}
 function obsCategoryLabel(k){return ({requirement:'需求开发',bugfix:'Bug 修复',refactor:'技术优化',other:'其他'}[k])||k||'未分类'}
 function obsTraceLabel(t){return [t.origin==='external'?'外部 · '+t.workflowName:obsSourceLabel(t.issueSource||'local'),t.externalId||t.issueId||t.runId].filter(Boolean).join(' ')}
 function obsOverview(){
@@ -1381,14 +1390,21 @@ function obsCrossProjectTable(){
     :`该责任人目前只在当前项目有执行记录，个人与项目切换不会把其他项目加进来。`;
   return {key:'projects',title:'该责任人在各项目',sub:note,tables:[{headers:['项目','运行','需求','Tokens','成本'],rows:rows.map(r=>obsRow([`<b>${escapeHTML(obsProjectName(r.projectId))}</b>${r.projectId===current?'<span class="obs-pill">当前</span>':''}`,String(r.runs||0),String(r.uniqueIssues||0),formatTokens(r.tokens),costLabel(r.costCny,r.costKnown)],'',r.projectId===current?'obs-current-project':''))}]};
 }
-const OBS_DELIVERY_FILTERS=[['all','全部'],['delivered','已交付'],['sop','LOOP 成功'],['direct','对话改代码'],['withmr','有 PR'],['mr','PR 已合入'],['baseline','已合入基线'],['github','GitHub'],['local','本地']];
+const OBS_DELIVERY_FILTERS=[['all','全部','All'],['delivered','已交付','Delivered'],['sop','LOOP 成功','LOOP succeeded'],['direct','对话改代码','Changed in chat'],['withmr','有 PR','With a PR'],['mr','PR 已合入','PR merged'],['baseline','已合入基线','Merged into baseline'],['github','GitHub','GitHub'],['local','本地','Local']];
 function obsDeliveryMRs(it){
   const list=it.mrs?.length?it.mrs:it.mrUrl?[{url:it.mrUrl,project:it.mrProject,iid:it.mrIid,state:it.mrState}]:[];
   const seen=new Map();
   for(const mr of list){const key=mr.project&&mr.iid?`${mr.project.toLowerCase()}#${mr.iid}`:String(mr.url||'').replace(/^http:/,'https:').replace('/-/merge_requests/','/merge_requests/');if(key&&!seen.has(key))seen.set(key,mr)}
   return [...seen.values()];
 }
-function obsDeliveryMRHTML(it){return obsDeliveryMRs(it).map(mr=>`<a href="${escapeHTML(safeURL(mr.url))}" target="_blank" rel="noopener noreferrer">${escapeHTML(`${mr.project?mr.project+' ':''}!${mr.iid||''}`)}</a> · ${obsMrLabel(mr.state)}`).join('<br>')||'—'}
+// GitHub 的合并请求是 PR，编号写 #4；工蜂 / GitLab 是 MR，写 !3。后端把 GitHub 仓库存成
+// github:owner/repo（domain.ParseGongfengMRs），给人看时去掉这个内部前缀。
+function obsMRIsPR(mr){return String(mr?.project||'').startsWith('github:')||/\/pull\/\d+(?:[/?#]|$)/.test(String(mr?.url||''))}
+function obsMRRefText(mr){
+  const repo=String(mr?.project||'').replace(/^github:/,''),iid=Number(mr?.iid)||0;
+  return [repo,iid?`${obsMRIsPR(mr)?'#':'!'}${iid}`:''].filter(Boolean).join(' ')||lfT('打开','Open');
+}
+function obsDeliveryMRHTML(it){return obsDeliveryMRs(it).map(mr=>`<a href="${escapeHTML(safeURL(mr.url))}" target="_blank" rel="noopener noreferrer">${escapeHTML(obsMRRefText(mr))}</a> · ${obsMrLabel(mr.state)}`).join('<br>')||'—'}
 function obsDeliveryMatches(it,filter){
   if(filter==='delivered')return it.delivered;
   if(filter==='sop')return it.sopSucceeded;
@@ -1403,7 +1419,8 @@ function obsDeliveryMatches(it,filter){
 }
 function obsDeliveryStages(){
   const d=state.analytics?.delivery||{};
-  return [{key:'all',name:'有执行的单',value:d.issues||0},{key:'done',name:d.directIssues?'LOOP 成功 / 对话已提 PR':'LOOP 成功',value:(d.sopSucceeded||0)+(d.directWithMr||0)},{key:'withmr',name:'有 PR 的单',value:d.withMr||0},{key:'mr',name:'有 PR 合入的单',value:d.issuesWithMergedMr??d.mrMerged??0},{key:'delivered',name:'已交付',value:d.delivered||0}];
+  // 名称也画在图表画布上，i18n.js 改写不到，所以这里直接按语言取。
+  return [{key:'all',name:lfT('有执行的单','With runs'),value:d.issues||0},{key:'done',name:d.directIssues?lfT('LOOP 成功 / 对话已提 PR','LOOP succeeded / PR from chat'):lfT('LOOP 成功','LOOP succeeded'),value:(d.sopSucceeded||0)+(d.directWithMr||0)},{key:'withmr',name:lfT('有 PR 的单','With a PR'),value:d.withMr||0},{key:'mr',name:lfT('有 PR 合入的单','With a merged PR'),value:d.issuesWithMergedMr??d.mrMerged??0},{key:'delivered',name:lfT('已交付','Delivered'),value:d.delivered||0}];
 }
 function obsSetDeliveryFilter(filter,scroll){
   state.obsDeliveryFilter=filter||'all';
@@ -1421,16 +1438,19 @@ function obsDelivery(){
   const d=state.analytics?.delivery||{};
   const summary=state.analytics?.summary||{};
   const kpis=obsKpiGroups([
-    obsKpiGroup('交付结果',[
-      {label:'已交付',value:String(d.delivered||0),meter:d.issues?d.delivered*100/d.issues:0,foot:`LOOP 成功或对话直接交付，且已在默认分支 · ${d.issues||0} 个有执行的单${d.directIssues?`（含 ${d.directIssues} 个只在对话里改）`:''}`,tip:['「已合入 / 已交付」只统计默认分支。','对话直接改代码的需求没有 LOOP，PR 合入默认分支即算交付。']},
-      {label:'执行过的需求 / Bug',value:`${d.requirementCount||0} / ${d.bugFixCount||0}`,foot:'按 LOOP 统计标签归类，需求去重'},
-      {label:'PR 已合入',value:String(d.mrMerged||0),meter:(d.totalMrs??d.withMr)?d.mrMerged*100/(d.totalMrs??d.withMr):0,foot:`按 PR 计数 · 默认分支；${d.mrIntegrated||0} 个已合入基线`},
-      ...(projectScope?[{label:'人均周吞吐',value:summary.weeklyActiveContributors?Number(summary.weeklyThroughputPerUser||0).toFixed(2):'—',foot:`近 7 天 ${summary.weeklyDeliveredIssues||0} 个交付 / ${summary.weeklyActiveContributors||0} 人`}]:[]),
+    obsKpiGroup(lfT('交付结果','Delivery results'),[
+      {label:lfT('已交付','Delivered'),value:String(d.delivered||0),meter:d.issues?d.delivered*100/d.issues:0,
+        foot:lfT(`LOOP 成功或对话直接交付，且已在默认分支 · ${d.issues||0} 个有执行的单${d.directIssues?`（含 ${d.directIssues} 个只在对话里改）`:''}`,
+          `LOOP succeeded or delivered from chat, and on the default branch · ${d.issues||0} with runs${d.directIssues?` (${d.directIssues} changed only in chat)`:''}`),
+        tip:[lfT('「已合入 / 已交付」只统计默认分支。','"Merged" and "Delivered" count the default branch only.'),lfT('对话直接改代码的需求没有 LOOP，PR 合入默认分支即算交付。','A requirement changed directly in chat has no LOOP; it counts as delivered once its PR merges into the default branch.')]},
+      {label:lfT('执行过的需求 / Bug','Requirements / bugs with runs'),value:`${d.requirementCount||0} / ${d.bugFixCount||0}`,foot:lfT('按 LOOP 统计标签归类，需求去重','Grouped by LOOP labels, requirements deduplicated')},
+      {label:lfT('PR 已合入','PRs merged'),value:String(d.mrMerged||0),meter:(d.totalMrs??d.withMr)?d.mrMerged*100/(d.totalMrs??d.withMr):0,foot:lfT(`按 PR 计数 · 默认分支；${d.mrIntegrated||0} 个已合入基线`,`Counted per PR · default branch; ${d.mrIntegrated||0} merged into baseline`)},
+      ...(projectScope?[{label:lfT('人均周吞吐','Weekly throughput per person'),value:summary.weeklyActiveContributors?Number(summary.weeklyThroughputPerUser||0).toFixed(2):'—',foot:lfT(`近 7 天 ${summary.weeklyDeliveredIssues||0} 个交付 / ${summary.weeklyActiveContributors||0} 人`,`Last 7 days: ${summary.weeklyDeliveredIssues||0} delivered / ${summary.weeklyActiveContributors||0} people`)}]:[]),
     ]),
-    obsKpiGroup('耗时与返工',[
-      {label:'平均执行耗时',value:d.averageExecutionDurationMs?duration(d.averageExecutionDurationMs):'—',foot:`P50 ${d.p50ExecutionDurationMs?duration(d.p50ExecutionDurationMs):'—'} · P95 ${d.p95ExecutionDurationMs?duration(d.p95ExecutionDurationMs):'—'}`,tip:['执行耗时 = 该需求全部执行按 LOOP 节点求和。']},
-      {label:'平均端到端耗时',value:d.averageDurationMs?duration(d.averageDurationMs):'—',foot:`累计 ${formatTokens(d.totalTokens||0)} tokens`,tip:['端到端 = 该需求最近一次执行的开始到结束，含等待。']},
-      {label:'每需求平均执行次数',value:summary.runsPerIssue!=null?Number(summary.runsPerIssue).toFixed(2):'—',foot:`失败 ${summary.failuresPerIssue!=null?Number(summary.failuresPerIssue).toFixed(2):'—'} 次/需求 · 进行中 ${summary.inProgressIssues||0} 个`},
+    obsKpiGroup(lfT('耗时与返工','Time and rework'),[
+      {label:lfT('平均执行耗时','Avg run time'),value:d.averageExecutionDurationMs?duration(d.averageExecutionDurationMs):'—',foot:`P50 ${d.p50ExecutionDurationMs?duration(d.p50ExecutionDurationMs):'—'} · P95 ${d.p95ExecutionDurationMs?duration(d.p95ExecutionDurationMs):'—'}`,tip:[lfT('执行耗时 = 该需求全部执行按 LOOP 节点求和。','Run time = the sum of every run of the requirement, node by node.')]},
+      {label:lfT('平均端到端耗时','Avg end-to-end time'),value:d.averageDurationMs?duration(d.averageDurationMs):'—',foot:lfT(`累计 ${formatTokens(d.totalTokens||0)} tokens`,`${formatTokens(d.totalTokens||0)} tokens in total`),tip:[lfT('端到端 = 该需求最近一次执行的开始到结束，含等待。','End to end = from start to finish of the latest run of the requirement, waiting included.')]},
+      {label:lfT('每需求平均执行次数','Avg runs per requirement'),value:summary.runsPerIssue!=null?Number(summary.runsPerIssue).toFixed(2):'—',foot:lfT(`失败 ${summary.failuresPerIssue!=null?Number(summary.failuresPerIssue).toFixed(2):'—'} 次/需求 · 进行中 ${summary.inProgressIssues||0} 个`,`${summary.failuresPerIssue!=null?Number(summary.failuresPerIssue).toFixed(2):'—'} failures per requirement · ${summary.inProgressIssues||0} in progress`)},
     ]),
   ]);
   return `${obsInsights(obsScopedView(),'delivery')}${kpis}${projectScope?`<div class="obs-grid2">${obsFunnelCard()}${obsOwnersCard()}</div>`:obsFunnelCard()}${obsDeliveriesCard()}`;
@@ -1441,12 +1461,12 @@ function obsFunnelCard(){
   const active=stages.findIndex(s=>s.key===filter);
   const empty=!stages[0].value;
   const chart=obsChartSlot('funnel',{
-    empty,emptyText:'还没有带需求上下文的运行',
+    empty,emptyText:lfT('还没有带需求上下文的运行','No runs with requirement context yet'),
     option:(theme,reduced)=>obsFunnelOption(stages,{...obsChartFormatters(theme,reduced),active}),
     fallback:()=>{const st=obsFunnelStats(stages);const max=Math.max(1,...st.stages.map(s=>s.value));return `<div class="obs-funnel-fallback">${st.stages.map(s=>`<button type="button" data-obs-funnel="${s.key}"><span>${escapeHTML(s.name)}</span>${obsMeter(s.value*100/max)}<b>${s.value}</b><em class="${s.worst?'bad':''}">${s.conv==null?'':`↓ ${Math.round(s.drop)}%`}</em></button>`).join('')}</div>`},
     on:{click:p=>obsSetDeliveryFilter(stages[p.dataIndex]?.key||'all',true)}
   },210);
-  return obsCard('funnel','交付漏斗','点一层筛选下方明细；红字为最大流失',filter!=='all'?`<button type="button" class="obs-btn ghost" data-obs-delivery="all">清除筛选</button>`:'',chart,{expand:true});
+  return obsCard('funnel',lfT('交付漏斗','Delivery funnel'),lfT('点一层筛选下方明细；红字为最大流失','Click a stage to filter the details below; red marks the biggest drop'),filter!=='all'?`<button type="button" class="obs-btn ghost" data-obs-delivery="all">${lfT('清除筛选','Clear filter')}</button>`:'',chart,{expand:true});
 }
 function obsOwnerRows(){
   const bag=new Map();
@@ -1471,25 +1491,26 @@ function obsOwnersCard(){
   const top=rows.slice(0,8);
   const filter=state.obsDeliveryFilter||'all';
   const chart=obsChartSlot('owners',{
-    empty:!rows.length,emptyText:'暂无负责人数据',
+    empty:!rows.length,emptyText:lfT('暂无负责人数据','No owner data yet'),
     option:(theme,reduced)=>obsOwnersOption(top,obsChartFormatters(theme,reduced)),
-    fallback:()=>`<div class="obs-bd-bars">${top.map(r=>`<div><span>${escapeHTML(r.name)}</span>${obsMeter(r.total?r.delivered*100/r.total:0)}<b>${r.delivered}/${r.total}</b></div>`).join('')}</div>`,
+    fallback:()=>`<div class="obs-bd-bars">${top.map(r=>`<div><span>${obsUserText(r.name)}</span>${obsMeter(r.total?r.delivered*100/r.total:0)}<b>${r.delivered}/${r.total}</b></div>`).join('')}</div>`,
     axisClick:idx=>{const r=top[idx];if(r)obsSetDeliveryFilter('user:'+r.id,true)}
   },Math.max(120,top.length*30+16));
-  const table=rows.length?`<div class="obs-tw"><table class="obs-table"><thead><tr><th>负责人</th><th>已交付</th><th>进行中</th><th>未交付</th><th>平均端到端</th><th>Tokens</th><th>成本</th></tr></thead><tbody>${rows.map(r=>`<tr class="run-row${filter==='user:'+r.id?' obs-row-hl':''}" data-obs-delivery="user:${escapeHTML(r.id)}"><td><b>${escapeHTML(r.name)}</b></td><td>${r.delivered}</td><td>${r.active}</td><td>${r.undelivered}</td><td>${r.durationLabel}</td><td>${formatTokens(r.tokens)}</td><td>${costLabel(r.costCny,r.costKnown)}</td></tr>`).join('')}</tbody></table></div>`:'';
-  return obsCard('owners','按负责人','已交付 / 进行中 / 未交付；点一人筛选明细','',`<div class="obs-legend"><span><i style="background:var(--c1)"></i>已交付</span><span><i style="background:var(--c3)"></i>进行中</span><span><i style="background:var(--c4)"></i>未交付</span></div>${chart}${table}`,{expand:true});
+  const table=rows.length?`<div class="obs-tw"><table class="obs-table"><thead><tr><th>${lfT('负责人','Owner')}</th><th>${lfT('已交付','Delivered')}</th><th>${lfT('进行中','In progress')}</th><th>${lfT('未交付','Not delivered')}</th><th>${lfT('平均端到端','Avg end to end')}</th><th>Tokens</th><th>${lfT('成本','Cost')}</th></tr></thead><tbody>${rows.map(r=>`<tr class="run-row${filter==='user:'+r.id?' obs-row-hl':''}" data-obs-delivery="user:${escapeHTML(r.id)}"><td><b>${obsUserText(r.name)}</b></td><td>${r.delivered}</td><td>${r.active}</td><td>${r.undelivered}</td><td>${r.durationLabel}</td><td>${formatTokens(r.tokens)}</td><td>${costLabel(r.costCny,r.costKnown)}</td></tr>`).join('')}</tbody></table></div>`:'';
+  const [delivered,active,undelivered]=[lfT('已交付','Delivered'),lfT('进行中','In progress'),lfT('未交付','Not delivered')];
+  return obsCard('owners',lfT('按负责人','By owner'),lfT('已交付 / 进行中 / 未交付；点一人筛选明细','Delivered / in progress / not delivered; click a person to filter the details'),'',`<div class="obs-legend"><span><i style="background:var(--c1)"></i>${delivered}</span><span><i style="background:var(--c3)"></i>${active}</span><span><i style="background:var(--c4)"></i>${undelivered}</span></div>${chart}${table}`,{expand:true});
 }
-function obsMrLabel(s){return s==='merged'?'<span class="obs-mr merged">已合入</span>':s==='integrated'?'<span class="obs-mr integrated">已合入基线</span>':({opened:'待合入',reopened:'重开',closed:'已关闭',none:'无 PR',unknown:'待查合入'}[s]||s||'—')}
+function obsMrLabel(s){return s==='merged'?`<span class="obs-mr merged">${lfT('已合入','Merged')}</span>`:s==='integrated'?`<span class="obs-mr integrated">${lfT('已合入基线','Merged into baseline')}</span>`:({opened:lfT('待合入','Pending merge'),reopened:lfT('重开','Reopened'),closed:lfT('已关闭','Closed'),none:lfT('无 PR','No PR'),unknown:lfT('待查合入','Merge pending check')}[s]||s||'—')}
 // A conversation requirement has no LOOP status: its state is its MRs'.
 function obsDirectDeliveryText(it){
-  if(it.delivered)return '对话直接交付';
+  if(it.delivered)return lfT('对话直接交付','Delivered from chat');
   const states=obsDeliveryMRs(it).map(mr=>mr.state);
-  if(!states.length)return '对话改代码中';
-  if(states.some(s=>s==='merged'||s==='integrated'))return '对话 · PR 已合入';
-  if(states.every(s=>s==='closed'))return '对话 · PR 已关闭';
-  return '对话 · PR 待合入';
+  if(!states.length)return lfT('对话改代码中','Changing code in chat');
+  if(states.some(s=>s==='merged'||s==='integrated'))return lfT('对话 · PR 已合入','Chat · PR merged');
+  if(states.every(s=>s==='closed'))return lfT('对话 · PR 已关闭','Chat · PR closed');
+  return lfT('对话 · PR 待合入','Chat · PR pending merge');
 }
-function obsDeliveryStatusText(it){return it.directDelivery?obsDirectDeliveryText(it):it.sopSucceeded?'LOOP 成功':(runStatus(it.runStatus)||it.runStatus||'—')}
+function obsDeliveryStatusText(it){return it.directDelivery?obsDirectDeliveryText(it):it.sopSucceeded?lfT('LOOP 成功','LOOP succeeded'):(runStatus(it.runStatus)||it.runStatus||'—')}
 function obsDeliveryStatusHTML(it){return `<span class="status ${escapeHTML(it.directDelivery?'':(it.runStatus||''))}">${escapeHTML(obsDeliveryStatusText(it))}</span>`}
 // 单号：外部单据显示 #iid / TAPD ID；平台需求与需求列表同一规则显示「项目 Key-编号」，
 // 只有缺编号的旧数据才退回内部 ID。
@@ -1507,18 +1528,19 @@ function obsDeliveryTableDef(all){
     const issue=obsDeliveryIssueKey(it);
     const mr=obsDeliveryMRHTML(it);
     const startedLanes=(it.lanes||[]).filter(l=>l.started);
-    const sop=startedLanes.length?startedLanes.map(l=>`${l.label}${l.status==='succeeded'?'✓':''}`).join(' / '):(it.workflowName||it.workflowId);
-    return obsRow([`${obsSourceLabel(it.source)} ${escapeHTML(issue)}`,`<b>${escapeHTML(it.title||it.issueId)}</b>`,escapeHTML(sop),obsDeliveryStatusHTML(it),duration(it.durationMs),it.executionDurationMs?duration(it.executionDurationMs):'—',it.cycleDurationMs?duration(it.cycleDurationMs):'—',it.directDelivery?'对话':`${it.runCount||0} 次`,escapeHTML(obsUserName(it.userId)||'—'),formatTokens(it.tokens),costLabel(it.costCny,it.costKnown),mr,it.delivered?'已交付':'未交付'],`data-edit-issue="${escapeHTML(it.issueId)}"`,'run-row');
+    const sop=startedLanes.length?startedLanes.map(l=>`${obsUserText(l.label)}${l.status==='succeeded'?'✓':''}`).join(' / '):obsUserText(it.workflowName||it.workflowId||'');
+    const runs=Number(it.runCount)||0;
+    return obsRow([`${obsSourceLabel(it.source)} ${escapeHTML(issue)}`,`<b>${obsUserText(it.title||it.issueId)}</b>`,sop,obsDeliveryStatusHTML(it),duration(it.durationMs),it.executionDurationMs?duration(it.executionDurationMs):'—',it.cycleDurationMs?duration(it.cycleDurationMs):'—',it.directDelivery?lfT('对话','Chat'):lfT(`${runs} 次`,`${runs} ${runs===1?'run':'runs'}`),it.userId&&it.userId!=='unassigned'?obsUserText(obsUserName(it.userId)):escapeHTML(obsUserName(it.userId)),formatTokens(it.tokens),costLabel(it.costCny,it.costKnown),mr,it.delivered?lfT('已交付','Delivered'):lfT('未交付','Not delivered')],`data-edit-issue="${escapeHTML(it.issueId)}"`,'run-row');
   });
-  return {key:'deliveries',title:'需求交付明细',tables:[{headers:['单号','标题','LOOP','流程','端到端','执行耗时','周期','执行次数','负责人','Tokens','成本','PR','交付'],rows,pageKey:all?'':'obs-deliveries',empty:'还没有带需求上下文的运行'}],items,filter};
+  return {key:'deliveries',title:lfT('需求交付明细','Requirement delivery details'),tables:[{headers:[lfT('单号','ID'),lfT('标题','Title'),'LOOP',lfT('流程','Flow'),lfT('端到端','End to end'),lfT('执行耗时','Run time'),lfT('周期','Cycle'),lfT('执行次数','Runs'),lfT('负责人','Owner'),'Tokens',lfT('成本','Cost'),'PR',lfT('交付','Delivery')],rows,pageKey:all?'':'obs-deliveries',empty:lfT('还没有带需求上下文的运行','No runs with requirement context yet')}],items,filter};
 }
 function obsDeliveriesCard(){
   const def=obsDeliveryTableDef();
   const {items,filter}=def;
   const userFilter=filter.startsWith('user:')?filter:'';
-  const chips=OBS_DELIVERY_FILTERS.map(([id,label])=>`<button type="button" data-obs-delivery="${id}" class="${filter===id?'active':''}">${label}<i>${items.filter(it=>obsDeliveryMatches(it,id)).length} 单</i></button>`).join('')+(userFilter?`<button type="button" class="active" data-obs-delivery="all" title="清除负责人筛选">${escapeHTML(obsUserName(userFilter.slice(5)))} ×</button>`:'');
+  const chips=OBS_DELIVERY_FILTERS.map(([id,zh,en])=>{const n=items.filter(it=>obsDeliveryMatches(it,id)).length;return `<button type="button" data-obs-delivery="${id}" class="${filter===id?'active':''}">${lfT(zh,en)}<i>${lfT(`${n} 单`,String(n))}</i></button>`}).join('')+(userFilter?`<button type="button" class="active" data-obs-delivery="all" title="${lfT('清除负责人筛选','Clear owner filter')}">${obsUserText(obsUserName(userFilter.slice(5)))} ×</button>`:'');
   const body=`<div class="obs-chips">${chips}</div>${obsDetailTable(def.tables[0],'','')}`;
-  return obsCard('deliveries','需求交付明细','耗时为该需求最近一次执行的端到端时间；执行耗时 = 该需求全部执行按 LOOP 节点求和；周期为首次执行到最后一次执行。「已合入 / 已交付」只统计默认分支。',`<button type="button" class="obs-btn" data-obs-export-csv="deliveries">${obsIcon('download')}CSV</button>`,body,{klass:'obs-deliveries'});
+  return obsCard('deliveries',def.title,lfT('耗时为该需求最近一次执行的端到端时间；执行耗时 = 该需求全部执行按 LOOP 节点求和；周期为首次执行到最后一次执行。「已合入 / 已交付」只统计默认分支。','Duration is the end-to-end time of the latest run. Run time = sum of LOOP step time across all runs. Cycle = first run to last run. "Merged" and "Delivered" count the default branch only.'),`<button type="button" class="obs-btn" data-obs-export-csv="deliveries">${obsIcon('download')}CSV</button>`,body,{klass:'obs-deliveries'});
 }
 function obsPlain(v){return String(v==null?'':v).replace(/<[^>]+>/g,'')}
 function obsReportScope(){

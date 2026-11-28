@@ -162,6 +162,8 @@ function makeContext({ echarts, reduced } = {}) {
     toast() {}, userById() { return null; }, userDisplay: u => String(u?.id || ''),
     paginateList: (key, items) => ({ items, total: items.length, size: 20, page: 1, pages: 1, start: 0, end: items.length }),
     pagerHTML: () => '', bindPager() {}, resetListPage() {}, resetListPages() {}, listPageSize: () => 20,
+    // i18n.js loads before the app and defines lfT; Chinese mode returns the Chinese copy.
+    lfT: zh => zh,
   };
   ctx.window = ctx;
   if (echarts) ctx.echarts = echarts;

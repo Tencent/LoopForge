@@ -1432,3 +1432,10 @@ window.LF_I18N_INLINE_EN = {
   "；": "; ",
   "走 LOOP 在「请求批准」下先征求同意，「帮我批准」下由 AI 审查直接裁决，「完全权限」下直接启动。": 'for LOOPs it asks first under "Ask for approval", decides directly under "Approve for me", and starts at once under "Full access".',
 };
+// 统计页：分类标签与放大弹层（交付页的文案在 observability.js 里按语言直接取，CSV 与画布也能用上）。
+Object.assign(window.LF_I18N_EN, {
+  "总览": "Overview",
+  "统计分类": "Statistics sections",
+  "放大查看": "Expand view",
+  "关闭放大窗口": "Close expanded view",
+});
