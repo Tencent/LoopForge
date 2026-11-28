@@ -52,7 +52,7 @@ func (h *evolutionHandlers) sopDetail(c *gin.Context) {
 	days := evoWindowDays(c.Query("days"))
 	detail, ok := h.buildSOPDetail(projectID, workflowID, days)
 	if !ok {
-		c.JSON(http.StatusNotFound, gin.H{"error": "SOP 不存在"})
+		c.JSON(http.StatusNotFound, gin.H{"error": "LOOP 不存在"})
 		return
 	}
 	c.JSON(http.StatusOK, detail)
@@ -87,7 +87,7 @@ func (h *evolutionHandlers) putSOPPolicy(c *gin.Context) {
 		wf, exists = h.resolveSOPWorkflow(req.ProjectID, workflowID, runs)
 	}
 	if !exists {
-		c.JSON(http.StatusNotFound, gin.H{"error": "SOP 不存在或不属于当前项目"})
+		c.JSON(http.StatusNotFound, gin.H{"error": "LOOP 不存在或不属于当前项目"})
 		return
 	}
 	cur := h.repo.EvoSOPPolicy(req.ProjectID, wf.ID)
@@ -398,15 +398,27 @@ func (h *evolutionHandlers) resolveSOPActorUser(policy domain.EvoSOPPolicy, wf d
 	return h.applySOPModelCredentials(context.Background(), user, reqModel, wf)
 }
 
+// hasSOPPreferenceNote reports whether a finding summary already carries the
+// optimization-priority note. Proposals written before the LOOP rename hold
+// the SOP wording, so both prefixes count.
+func hasSOPPreferenceNote(summary string) bool {
+	for _, prefix := range []string{"LOOP 优化优先级", "LOOP 优化偏好", "SOP 优化优先级", "SOP 优化偏好"} {
+		if strings.Contains(summary, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
 func (h *evolutionHandlers) startSOPOptimization(ctx context.Context, projectID, workflowID, requestedModel string, user domain.User) (domain.EvoProposal, *domain.EvoQueueItem, bool, error) {
 	runs := h.loadWindowRuns(projectID, evoDefaultWindowDays, evoSOPWindowLimit)
 	wf, ok := h.resolveSOPWorkflow(projectID, workflowID, runs)
 	if !ok {
-		return domain.EvoProposal{}, nil, false, &evoError{status: http.StatusNotFound, msg: "SOP 不存在"}
+		return domain.EvoProposal{}, nil, false, &evoError{status: http.StatusNotFound, msg: "LOOP 不存在"}
 	}
 	policy := h.repo.EvoSOPPolicy(projectID, workflowID)
 	if !policy.Enabled {
-		return domain.EvoProposal{}, nil, false, evoConflict("该 SOP 已关闭自动进化，请先开启进化开关")
+		return domain.EvoProposal{}, nil, false, evoConflict("该 LOOP 已关闭自动进化，请先开启进化开关")
 	}
 	policy.Preferences = evolution.NormalizeSOPPreferences(policy.Preferences)
 	policy.BatchSize = evolution.NormalizeSOPBatchSize(policy.BatchSize)
@@ -536,14 +548,14 @@ func (h *evolutionHandlers) startSOPOptimization(ctx context.Context, projectID,
 	}
 
 	if targetAsset.ID == "" {
-		return domain.EvoProposal{}, nil, false, evoConflict("当前 SOP 暂无可自动优化的私有角色（共享/平台角色请先复制为项目私有角色）")
+		return domain.EvoProposal{}, nil, false, evoConflict("当前 LOOP 暂无可自动优化的私有角色（共享/平台角色请先复制为项目私有角色）")
 	}
 
 	// Build or enrich finding with the user's prioritized SOP optimization preferences & batch runs
 	// so Token/Tools/Duration/Clean optimization strictly follows P1 > P2 > ... order.
 	if targetFinding.ID == "" {
 		if len(batchRuns) == 0 {
-			return domain.EvoProposal{}, nil, false, evoConflict("当前 SOP 尚无已完成的业务运行样本，至少完成 1 次运行后再优化")
+			return domain.EvoProposal{}, nil, false, evoConflict("当前 LOOP 尚无已完成的业务运行样本，至少完成 1 次运行后再优化")
 		}
 		f := evolution.BuildSOPPreferenceFinding(projectID, wf, targetAsset.Kind, targetAsset.ID, targetAsset.Name, targetNodeID, policy, batchRuns, batchMetrics)
 		f.ID = "evf-" + randomID()
@@ -555,9 +567,9 @@ func (h *evolutionHandlers) startSOPOptimization(ctx context.Context, projectID,
 		prefFinding := evolution.BuildSOPPreferenceFinding(projectID, wf, targetAsset.Kind, targetAsset.ID, targetAsset.Name, targetNodeID, policy, batchRuns, batchMetrics)
 		priorityText := evolution.SOPPreferencePriorityText(policy.Preferences)
 		guidance := evolution.SOPPreferencePromptGuidance(policy.Preferences)
-		prefNote := fmt.Sprintf("【SOP 优化优先级：%s】近 %d 次运行平均 Token %d、平均工具调用 %.1f 次、平均耗时 %.1fs、一次成功率 %.0f%%。%s",
+		prefNote := fmt.Sprintf("【LOOP 优化优先级：%s】近 %d 次运行平均 Token %d、平均工具调用 %.1f 次、平均耗时 %.1fs、一次成功率 %.0f%%。%s",
 			priorityText, batchMetrics.Runs, batchMetrics.AvgTokens, batchMetrics.AvgTools, batchMetrics.AvgDuration, batchMetrics.CleanRate*100, guidance)
-		if !strings.Contains(targetFinding.Summary, "SOP 优化优先级") && !strings.Contains(targetFinding.Summary, "SOP 优化偏好") {
+		if !hasSOPPreferenceNote(targetFinding.Summary) {
 			if targetFinding.Summary != "" {
 				targetFinding.Summary = prefNote + "\n" + targetFinding.Summary
 			} else {
@@ -596,7 +608,7 @@ func (h *evolutionHandlers) startSOPOptimization(ctx context.Context, projectID,
 		AssetKind:   targetAsset.Kind,
 		AssetID:     targetAsset.ID,
 		AssetName:   targetAsset.Name,
-		Title:       "正在根据偏好生成 SOP 优化提案…",
+		Title:       "正在根据偏好生成 LOOP 优化提案…",
 		BaseContent: targetAsset.Content,
 		BaseHash:    domain.ContentHash(targetAsset.Content),
 		Status:      domain.EvoProposalDrafting,

@@ -213,6 +213,9 @@ function afNextDialog(){
   if(rerunFields)rerunFields.hidden=true;
   const okBtn=$('#confirmOkBtn'),cancelBtn=$('#confirmCancelBtn');
   cancelBtn.hidden=false;
+  // afConfirm({messageData}) marks the shared message node for one dialog; clear it first so afPrompt,
+  // afAlert and other setups that write #confirmMessage directly translate normally.
+  $('#confirmMessage')?.removeAttribute('data-i18n-data');
   let opened;
   try{opened=job.setup(modal)||{}}catch(err){job.resolve(null);console.error(err);return afNextDialog()}
   window.HuiPopover?.closeAll?.();
@@ -280,7 +283,10 @@ function afConfirm(options){
   return afOpenDialog(()=>{
     const danger=!!opt.danger;
     $('#confirmTitle').textContent=opt.title||(danger?'危险操作确认':'操作确认');
-    $('#confirmMessage').textContent=opt.message||'确定要继续吗？';
+    // messageData: the message quotes user data (a name), so English mode only takes whole-message dictionary hits.
+    const message=$('#confirmMessage');
+    if(opt.messageData)message.setAttribute('data-i18n-data','');
+    message.textContent=opt.message||'确定要继续吗？';
     const okBtn=$('#confirmOkBtn');
     okBtn.textContent=opt.confirmText||(danger?'确定执行':'确定');
     okBtn.className=`button ${danger?'danger-btn':'primary'}`;
@@ -963,6 +969,17 @@ async function boot(){
   if(isGuest&&state.authRequired){location.replace('/login.html');return}
   renderUserBadge();
 
+  // Home opens the chatbot while the rest of the shell catalog is still loading.
+  if(restoredView()==='collaboration'){
+    const earlyProject=urlParams.get('projectId')||localStorage.getItem('agentflow.activeProject')||'';
+    if(earlyProject)state.projectFilter=earlyProject;
+    document.body.classList.add('chat-next-active');
+    $$('.view').forEach(view=>view.classList.remove('active'));
+    $('#collaborationView')?.classList.add('active');
+    state.currentView='collaboration';
+    mountNativeChat();
+  }
+
   const shell = await api('/api/bootstrap', {silent: restoredView()==='runs'});
   state.data = Object.assign(state.data, shell);
   const savedProject=urlParams.get('projectId')||localStorage.getItem('agentflow.activeProject');
@@ -1035,6 +1052,7 @@ function finishBootLoader(){
   setTimeout(remove,250);
 }
 function settleBootLoader(){
+  if(!document.body.classList.contains('booting'))return;
   if(!document.body.classList.contains('chat-next-active')||nativeChatReady){finishBootLoader();return}
   clearTimeout(bootLoaderTimer);
   bootLoaderTimer=setTimeout(finishBootLoader,BOOT_LOADER_CHAT_TIMEOUT_MS);
@@ -1558,7 +1576,7 @@ function nativeChatProjectId(){
   return chosen?($('#projectSwitcher')?.value||state.projectFilter||''):'';
 }
 function postNativeChatProject(frame){
-  frame.contentWindow?.postMessage({type:'agentflow-project-context',projectId:nativeChatProjectId()},location.origin);
+  frame.contentWindow?.postMessage({type:'agentflow-project-context',projectId:nativeChatProjectId(),initial:true},location.origin);
   frame.contentWindow?.postMessage({type:'agentflow-environments-changed'},location.origin);
 }
 // A requirement handed to the chat opens a new conversation with the
@@ -1629,6 +1647,20 @@ function openIssueInChat(issue,opts){
 function reloadShellProjects(){
   return api('/api/bootstrap',{silent:true}).then(shell=>{Object.assign(state.data,shell);renderAll();return state.data.projects||[]});
 }
+// Adopting a built-in template copies its roles, rules, skills and default MCPs
+// into the project on the server. Reload the catalog lists the designer and the
+// role editor read from: otherwise every node of the new SOP shows an
+// unavailable role, and saving one of the new roles drops the project rules it
+// cannot see. The adopted SOP is kept even if the reload fails.
+async function reloadCatalogAfterAdoption(adopted){
+  try{
+    const shell=await api('/api/bootstrap',{silent:true});
+    for(const key of ['workflows','agents','rules','skills','mcpServers'])if(Array.isArray(shell?.[key]))state.data[key]=shell[key];
+  }catch{}
+  const workflows=state.data.workflows||(state.data.workflows=[]);
+  const index=workflows.findIndex(w=>w.id===adopted?.id);
+  if(index>=0)workflows[index]=adopted;else if(adopted?.id)workflows.unshift(adopted);
+}
 function mountNativeChat(){
   const frame=$('#chatNextFrame');
   if(!frame)return;
@@ -1638,12 +1670,17 @@ function mountNativeChat(){
     window.addEventListener('message',event=>{
       if(event.origin!==location.origin||event.source!==frame.contentWindow)return;
       const message=event.data||{};
+      if(message.type==='agentflow-chat-visible'&&document.body.classList.contains('chat-next-active'))finishBootLoader();
       if(message.type==='agentflow-chat-ready'){
         nativeChatReady=true;
         postPendingChatIssueMention(frame);
         postNativeChatProject(frame);
         postQuickAccessReturn(frame);
         finishBootLoader();
+      }
+      if(message.type==='agentflow-chat-layout'){
+        const view=$('#collaborationView');
+        if(view)view.dataset.chatLayout=message.layout==='home'?'home':'conversation';
       }
       if(message.type==='agentflow-chat-session'){
         const id=message.sessionId||'';
@@ -1727,8 +1764,8 @@ function mountNativeChat(){
     nativeChatReady=false;
     const topParams=new URL(location.href).searchParams;
     const projectId=nativeChatProjectId();
-    const sessionId=topParams.get('chatSession')||(routePart(0)==='collaboration'?routePart(1):'');
     const issueId=topParams.get('chatIssue')||'';
+    const sessionId=topParams.get('chatSession')||(issueId?'':collaborationRouteId());
     const quickAccess=topParams.get('quickAccess')==='1';
     if(quickAccess||topParams.get('gongfeng')==='ok'){
       // renderPersonalSettings still owes the OAuth return toast after the URL is cleaned.
@@ -1965,6 +2002,7 @@ function routePart(index){
 function runRouteId(){
   return routePart(0)==='runs'?routePart(1):'';
 }
+function collaborationRouteId(){return routePart(0)==='collaboration'?routePart(1):''}
 function flowRouteId(){
   return routePart(0)==='flow'?routePart(1):'';
 }
@@ -2059,10 +2097,7 @@ function persistView(name,push=false){
   if(isProjectSharedAsset(name)&&routePart(0)===name&&assetRouteId())next=`#/${name}/${encodeURIComponent(assetRouteId())}`;
   if(name==='projects')next=projectAdminHash(state.projectAdminDetailId||'',state.projectAdminTab);
   if(name==='collaboration'){
-    const current=(location.hash||'').replace(/^#\/?/,'').split('?')[0].split('/').filter(Boolean);
-    let fromHash=current[0]==='collaboration'?current[1]||'':'';
-    try{fromHash=decodeURIComponent(fromHash)}catch{}
-    const id=new URL(location.href).searchParams.get('chatSession')||fromHash;
+    const id=new URL(location.href).searchParams.get('chatSession')||collaborationRouteId();
     if(id)next='#/collaboration/'+encodeURIComponent(id);
   }
   if(location.hash===next)return;

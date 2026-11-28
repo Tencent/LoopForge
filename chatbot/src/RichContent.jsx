@@ -14,7 +14,7 @@ import DOMPurify from "dompurify";
 import HarnessIcon from "./HarnessIcon";
 import KnowledgeSources from "./KnowledgeSources";
 import SlidingTabs from "./SlidingTabs";
-import { attachmentURL, visibleText } from "./api";
+import { attachmentURL, attachmentThumbnailURL, visibleText } from "./api";
 import { definitionTarget } from "./platform.js";
 import {
   AgentBrowserLinks,
@@ -549,7 +549,7 @@ export function ImageLightbox({ src, alt, onClose }) {
   );
 }
 
-export function ZoomableImage({ src, alt, className }) {
+export function ZoomableImage({ src, fullSrc = src, alt, className }) {
   const [zoom, setZoom] = useState(false);
   return (
     <>
@@ -561,13 +561,13 @@ export function ZoomableImage({ src, alt, className }) {
         onDoubleClick={() => setZoom(true)}
       />
       {zoom ? (
-        <ImageLightbox src={src} alt={alt} onClose={() => setZoom(false)} />
+        <ImageLightbox src={fullSrc} alt={alt} onClose={() => setZoom(false)} />
       ) : null}
     </>
   );
 }
 
-export function Attachment({ attachment, sessionId, onOpen }) {
+export function Attachment({ attachment, sessionId, onOpen, localPreviewURL }) {
   const image = attachment.mimeType?.startsWith("image/");
   const [zoom, setZoom] = useState(false);
   const [status, setStatus] = useState("loading");
@@ -575,7 +575,9 @@ export function Attachment({ attachment, sessionId, onOpen }) {
   const img = useRef(null);
   const retriedAt = useRef(-Infinity);
   const url = attachmentURL(attachment, sessionId);
-  const src = retryImageURL(url, attempt);
+  const [failedLocalURL, setFailedLocalURL] = useState(null);
+  const local = localPreviewURL && localPreviewURL !== failedLocalURL ? localPreviewURL : null;
+  const src = local || retryImageURL(attachmentThumbnailURL(url, attachment.mimeType), attempt);
   // While a silent reload is pending the failure notice stays hidden, so the
   // first fetch of a just-sent message never flashes an error.
   const retrying = image && shouldAutoRetryImage(status, attempt);
@@ -642,7 +644,14 @@ export function Attachment({ attachment, sessionId, onOpen }) {
               src={src}
               alt={attachment.name}
               onLoad={() => setStatus("loaded")}
-              onError={() => setStatus("error")}
+              onError={() => {
+                if (local) {
+                  setFailedLocalURL(local);
+                  setStatus("loading");
+                } else {
+                  setStatus("error");
+                }
+              }}
             />
             {shown === "loading" ? (
               <span className="message-image-placeholder">
@@ -680,7 +689,7 @@ export function Attachment({ attachment, sessionId, onOpen }) {
       </button>
       {zoom ? (
         <ImageLightbox
-          src={url}
+          src={local || url}
           alt={attachment.name}
           onClose={() => setZoom(false)}
         />
@@ -904,7 +913,8 @@ export function ArtifactPreview({ artifact, knowledgeReads = [], attempt }) {
         ) : artifact.mimeType?.startsWith("image/") && artifact.url ? (
           <ZoomableImage
             className="artifact-image"
-            src={artifact.url}
+            src={attachmentThumbnailURL(artifact.url, artifact.mimeType)}
+            fullSrc={artifact.url}
             alt={artifact.name}
           />
         ) : oversized ? (

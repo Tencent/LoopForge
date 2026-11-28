@@ -12,7 +12,7 @@ const EVO_CANARY_PERCENTS=[10,25,50];
 const EVO_CANARY_MIN_RUNS=[5,10,20];
 const EVO_GROUPS={diagnosis:['诊断样本','改进器看过的失败运行'],holdout:['留出样本','改进器没看过的失败运行'],regression:['回归样本','近期一次成功的运行'],pinned:['钉选样本','人工钉住的运行']};
 const EVO_OUTCOMES={fixed:['已修复','ok'],regressed:['退化','err'],unchanged:['无变化',''],changed:['结论改变','info'],blocked:['阻塞','warn']};
-const EVO_SIGNALS={node_failed:'节点失败',rework:'打回返工',eval_low:'评测低分',sop_detection:'SOP 自动检测',user_feedback:'用户反馈'};
+const EVO_SIGNALS={node_failed:'节点失败',rework:'打回返工',eval_low:'评测低分',sop_detection:'LOOP 自动检测',user_feedback:'用户反馈'};
 const EVO_VERDICTS={fix:['需修复','err'],watch:['观察中','warn'],noise:['可能偶发','']};
 const EVO_SNOOZE_DAYS=7;
 const EVO_SOURCES={baseline:'基线',manual:'手动修改',chatbot:'Chatbot 修改',evolution:'进化发布',rollback:'回滚'};
@@ -1260,7 +1260,7 @@ async function evoOpenAsset(kind,id,selected=0){
     }).join('');
     const drift=v.drifted?'<div class="kb-note">当前正文不在版本记录里（在进化流程外被修改过）；下次发布或回滚前会先补记为「手动修改」版本。</div>':'';
     const sopAssets=typeof evoSOPState!=='undefined'&&evoSOPState.view?.detail?.assets?.length>1?evoSOPState.view.detail.assets:null;
-    const switcher=sopAssets?`<div class="evo-sop-seg" role="tablist" aria-label="切换 SOP 关联角色或规则" style="margin-bottom:10px">${sopAssets.map(a=>`<button type="button" role="tab" data-evo-asset="${escapeHTML(a.kind)}" data-id="${escapeHTML(a.id)}" aria-pressed="${a.kind===kind&&a.id===id}">${escapeHTML(a.name||a.id)}${a.currentVersion?` v${a.currentVersion}`:''}</button>`).join('')}</div>`:'';
+    const switcher=sopAssets?`<div class="evo-sop-seg" role="tablist" aria-label="切换 LOOP 关联角色或规则" style="margin-bottom:10px">${sopAssets.map(a=>`<button type="button" role="tab" data-evo-asset="${escapeHTML(a.kind)}" data-id="${escapeHTML(a.id)}" aria-pressed="${a.kind===kind&&a.id===id}">${escapeHTML(a.name||a.id)}${a.currentVersion?` v${a.currentVersion}`:''}</button>`).join('')}</div>`:'';
     const compare=pick?`${kbCaption(`v${pick.version} → 当前正文`)}${evoDiffHTML(pick.content,v.liveContent)}`:`${kbCaption('当前正文')}<pre class="kb-pre evo-content">${escapeHTML(v.liveContent||'')}</pre>`;
     const level=(EVO_LEVELS.find(([l])=>l===v.level)||[])[1]||'';
     const body=`${switcher}${drift}${kbCaption(`版本 · ${versions.length}${level?` · 自治级别 ${escapeHTML(level)}`:''}`)}${rows||'<div class="kb-line-note">还没有版本记录；首次发布或回滚时会把当前正文记为基线 v1。</div>'}${compare}`;
