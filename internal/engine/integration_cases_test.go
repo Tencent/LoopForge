@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"agentflow/internal/domain"
 )
@@ -45,9 +46,6 @@ func TestRunnerIntegrateAndConversationPushCanceled(t *testing.T) {
 	if _, err := e.PushConversationWorkspace(context.Background(), "missing", 0, "", "", "", ""); err == nil {
 		t.Fatal("missing run pushed")
 	}
-	if _, err := e.PushConversationWorkspace(context.Background(), run.ID, 0, "", "", "", ""); err == nil {
-		t.Fatal("missing token pushed")
-	}
 	noRepos := run
 	noRepos.ID = "push-no-repos"
 	noRepos.Repositories = nil
@@ -63,6 +61,24 @@ func TestRunnerIntegrateAndConversationPushCanceled(t *testing.T) {
 	}
 	if truncateCommitMessage("short") != "short" {
 		t.Fatal("short commit changed")
+	}
+}
+
+func TestPushConversationWorkspaceReportsRunnerAuthFailure(t *testing.T) {
+	const authFailure = "remote: Authentication failed"
+	e, runner := cvETerminalEngine(t, domain.RunnerTaskFailed, "", authFailure, nil)
+	run := cvERunnerRun("push-without-credentials", runner.ID)
+	run.Repositories = []domain.RepositoryContext{{
+		RepositoryID: "repo", CloneURL: "https://example.test/repo.git", WorkspaceDir: "repo", WorkBranch: "work",
+	}}
+	if err := e.repo.PutRun(run); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	_, err := e.PushConversationWorkspace(ctx, run.ID, 0, "", "", "", "")
+	if err == nil || !strings.Contains(err.Error(), authFailure) {
+		t.Fatalf("push error = %v, want runner's %q", err, authFailure)
 	}
 }
 
