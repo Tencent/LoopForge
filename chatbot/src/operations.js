@@ -111,7 +111,11 @@ export function operationSummary(
       "项目",
       project ? projects.find((p) => p.id === project)?.name || project : "",
     ],
-    ["名称", body.name || body.title],
+    // Requirements are saved by title; a stray `name` in the body is ignored.
+    [
+      "名称",
+      draft.tool === "issues_save" ? body.title : body.name || body.title,
+    ],
     ["目标", draft.path?.id || body.id],
     ["TAPD 链接", body.url],
     [

@@ -3846,6 +3846,9 @@ func TestRecordHumanContextPersistsForRetryAndPrompt(t *testing.T) {
 	if !strings.Contains(prompt, "人工补充上下文") || !strings.Contains(prompt, "TestCanonicalPayloadMarshal") {
 		t.Fatalf("prompt missing human context: %s", prompt)
 	}
+	if got := strings.Count(prompt, "TestCanonicalPayloadMarshal"); got != 1 || !strings.Contains(prompt, "人工确认重试本节点") {
+		t.Fatalf("prompt must carry the reason and the human context exactly once, got %d copies: %s", got, prompt)
+	}
 	if err := writeHumanContextFile(dir, current.HumanContext); err != nil {
 		t.Fatal(err)
 	}

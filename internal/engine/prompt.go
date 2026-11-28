@@ -80,8 +80,11 @@ func applyPromptPlaceholders(st *repo.Store, wf domain.WorkflowDefinition, node 
 	if current := run.Nodes[node.ID]; current != nil {
 		feedback = current.Feedback
 	}
-	prompt = strings.ReplaceAll(prompt, "{{feedback}}", feedback)
 	humanNote := strings.TrimSpace(run.HumanContext)
+	// The 人工补充上下文 section below carries every note; keep only the retry
+	// reason in the feedback line.
+	feedback = feedbackWithoutHumanContext(feedback, humanNote)
+	prompt = strings.ReplaceAll(prompt, "{{feedback}}", feedback)
 	prompt = strings.ReplaceAll(prompt, "{{humanContext}}", humanNote)
 	if humanNote != "" {
 		prompt += "\n\n## 人工补充上下文\n\n操作员在审核或重试时补充了以下信息，请优先采信并据此行动：\n\n" + humanNote + "\n"

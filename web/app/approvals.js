@@ -8,11 +8,12 @@ function readHumanContext(fromEl){
   const root=fromEl?.closest?.('[data-human-context-root], .approval-callout, .ap-card, .issue-outcome, .node-inspector, .human-decision');
   return String(root?.querySelector?.('[data-human-context]')?.value||'').trim();
 }
+// The server composes reason + context into the node feedback (and caps the
+// context); sending them pre-merged would repeat the context in the prompt.
 function withHumanContext(payload){
   const context=String(payload?.context||'').trim();
   if(!context)return payload;
-  const reason=String(payload.reason||'').trim();
-  return {...payload, context, reason:reason?`${reason}\n\n人工补充上下文：\n${context}`:context};
+  return {...payload, context};
 }
 function reworkTarget(node,nodes){
   const id=String(node?.rejectTo||'').trim();

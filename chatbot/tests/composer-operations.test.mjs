@@ -191,3 +191,32 @@ test("a requirement saved without a LOOP says so instead of naming the LOOP it d
   assert.equal(sopOf({ workflowId: "wf" }), "后端交付 LOOP");
   assert.equal(sopOf({}), undefined);
 });
+test("a requirement draft is shown by the title it will be saved with", () => {
+  // issues_save persists `title`; models sometimes add an ignored `name`
+  // (often the requirement ID), which the card must not present as its name.
+  const summary = operationSummary(
+    {
+      tool: "issues_save",
+      body: {
+        id: "ledger-summary",
+        name: "ledger-summary",
+        title: "按分类汇总支出并校验 CSV 导入",
+        projectId: "ledger",
+      },
+    },
+    { projects: [{ id: "ledger", name: "家庭账本" }] },
+  );
+  assert.deepEqual(summary.fields.slice(0, 3), [
+    ["项目", "家庭账本"],
+    ["名称", "按分类汇总支出并校验 CSV 导入"],
+    ["目标", "ledger-summary"],
+  ]);
+  // Other resources keep their name.
+  assert.deepEqual(
+    operationSummary({
+      tool: "agents_save",
+      body: { id: "rev", name: "独立评审", title: "x" },
+    }).fields[0],
+    ["名称", "独立评审"],
+  );
+});
