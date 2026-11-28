@@ -127,7 +127,7 @@ func (e *Engine) requireRunnerRepositoryCapabilities(runnerID string, repositori
 
 func runnerRepositoryCapabilityError(runner domain.Runner, repositories []domain.RepositoryContext) error {
 	for _, repository := range repositories {
-		if repository.Provider == domain.RepositoryProviderSSH && !runner.SupportsGitSSH() {
+		if domain.RepositoryUsesSSH(repository.Provider) && !runner.SupportsGitSSH() {
 			return fmt.Errorf("Git SSH 仓库需要执行机器升级至 %s 或更新版本，请先更新 Runner", domain.RunnerVersionGitSSH)
 		}
 		if repository.Provider == domain.RepositoryProviderHTTP && !runner.SupportsGitPlainHTTP() {

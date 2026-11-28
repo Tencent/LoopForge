@@ -553,7 +553,7 @@ function issueFromForm(){
 // repoDisplayPath shows host/path for a parsed repository, e.g. github.com/owner/name.
 function repoDisplayPath(info,fallback=''){return info?.provider==='ssh'?(info.project||info.cloneUrl||fallback):info?.webUrl?String(info.webUrl).replace(/^https?:\/\//,''):String(fallback||'')}
 function repoProviderLabel(info){
-  const labels={ssh:'Git SSH',http:'Git HTTP',https:'Git HTTPS',github:'GitHub',gongfeng:'工蜂'};
+  const labels={ssh:'Git SSH',forgejo:'Forgejo',http:'Git HTTP',https:'Git HTTPS',github:'GitHub',gongfeng:'工蜂'};
   return labels[info?.provider]||'Git';
 }
 function parseGongfengRepoURL(raw){

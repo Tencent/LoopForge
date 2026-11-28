@@ -16,7 +16,7 @@ import (
 func (r mrDeliveryStateRow) toDomain() domain.MRDeliveryState {
 	item := domain.MRDeliveryState{
 		MRProject: r.MRProject, MRIID: r.MRIID, MRURL: r.MRURL, State: r.State,
-		TargetBranch: r.TargetBranch, IssueID: r.IssueID,
+		TargetBranch: r.TargetBranch, IssueID: r.IssueID, ForgeUserID: r.ForgeUserID,
 	}
 	if r.RegisteredBy != nil {
 		item.RegisteredBy = *r.RegisteredBy
@@ -41,7 +41,7 @@ func mrDeliveryRowValues(item domain.MRDeliveryState, now time.Time) map[string]
 	return map[string]any{
 		"mr_project": item.MRProject, "mr_iid": item.MRIID, "mr_url": item.MRURL,
 		"state": item.State, "target_branch": domain.NormalizeBranchName(item.TargetBranch),
-		"issue_id": item.IssueID, "merged_at": timePtr(item.MergedAt), "checked_at": checked,
+		"issue_id": item.IssueID, "forge_user_id": item.ForgeUserID, "merged_at": timePtr(item.MergedAt), "checked_at": checked,
 		"created_at": timePtr(item.CreatedAt), "updated_at": timePtr(now),
 	}
 }
@@ -62,6 +62,14 @@ func mrDeliveryStateDB(db *gorm.DB, project string, iid int) (domain.MRDeliveryS
 // issue. The baseline-promote marker issue is protected from being overwritten
 // by regular work items.
 func (r *DeliveryRepo) EnsureMRDeliveryState(project string, iid int, url, issueID string) error {
+	return r.ensureMRDeliveryState(project, iid, url, issueID, 0)
+}
+
+func (r *DeliveryRepo) EnsureForgeDeliveryState(ref domain.ForgeRepository, number int, issueID string, userID int64) error {
+	return r.ensureMRDeliveryState(ref.Project(), number, ref.PullURL(number), issueID, userID)
+}
+
+func (r *DeliveryRepo) ensureMRDeliveryState(project string, iid int, url, issueID string, forgeUserID int64) error {
 	if project == "" || iid <= 0 {
 		return nil
 	}
@@ -72,11 +80,11 @@ func (r *DeliveryRepo) EnsureMRDeliveryState(project string, iid int, url, issue
 		existing, ok := mrDeliveryStateDB(tx, project, iid)
 		if !ok {
 			_, err := insertIgnore(tx, "mr_delivery_states", mrDeliveryRowValues(domain.MRDeliveryState{
-				MRProject: project, MRIID: iid, MRURL: url, State: "unknown", IssueID: issueID,
+				MRProject: project, MRIID: iid, MRURL: url, State: "unknown", IssueID: issueID, ForgeUserID: forgeUserID,
 			}, now))
 			return err
 		}
-		originalURL, originalIssueID := existing.MRURL, existing.IssueID
+		originalURL, originalIssueID, originalUserID := existing.MRURL, existing.IssueID, existing.ForgeUserID
 		if url != "" {
 			existing.MRURL = url
 		}
@@ -87,7 +95,10 @@ func (r *DeliveryRepo) EnsureMRDeliveryState(project string, iid int, url, issue
 		} else if issueID != "" {
 			existing.IssueID = issueID
 		}
-		if existing.MRURL == originalURL && existing.IssueID == originalIssueID {
+		if forgeUserID > 0 {
+			existing.ForgeUserID = forgeUserID
+		}
+		if existing.MRURL == originalURL && existing.IssueID == originalIssueID && existing.ForgeUserID == originalUserID {
 			return nil
 		}
 		return upsert(tx, "mr_delivery_states", mrDeliveryRowValues(existing, now))
@@ -204,7 +215,7 @@ func (r *DeliveryRepo) registerDeliveryMR(issueID string, mr domain.DeliveryMR, 
 	if project == "" || iid <= 0 {
 		return "unknown"
 	}
-	_ = r.EnsureMRDeliveryState(project, iid, mr.URL, issueID)
+	_ = r.ensureMRDeliveryState(project, iid, mr.URL, issueID, mr.ForgeUserID)
 	if st := strings.TrimSpace(mr.GongfengState); st != "" {
 		_ = r.recordMRState(project, iid, st, mr.TargetBranch, time.Time{}, at)
 	}

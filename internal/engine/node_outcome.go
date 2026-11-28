@@ -367,7 +367,7 @@ func (e *Engine) stalePipelineFailure(id, status, msg string) bool {
 	return !hasFailed(workflowForRun(e.repo, current), current)
 }
 
-func (e *Engine) finishAt(id string, generation int, status, msg string) {
+func (e *Engine) finishAt(id string, generation int, status, msg string, deliveries ...domain.DeliveryMR) {
 	if e.stalePipelineFailure(id, status, msg) {
 		return
 	}
@@ -411,7 +411,7 @@ func (e *Engine) finishAt(id string, generation int, status, msg string) {
 	}
 	// Resolving MRs calls Gongfeng, so it runs outside the run state lock.
 	if delivered != nil {
-		_ = e.repo.MarkIssueDeliveredFromSOPMRs(delivered.ExecutionContext.IssueID, e.deliveryMRsFromRun(*delivered), deliveredAt)
+		_ = e.repo.MarkIssueDeliveredFromSOPMRs(delivered.ExecutionContext.IssueID, e.deliveryMRsFromRun(*delivered, deliveries...), deliveredAt)
 	}
 	// Failed runs can be retried in the same workspace. Successful and
 	// cancelled runs release their workspace immediately to keep control-plane

@@ -58,6 +58,7 @@ services:
       AGENTFLOW_TAPD_HOST: ${AGENTFLOW_TAPD_HOST:-}
       AGENTFLOW_MCP_TOKEN: ${AGENTFLOW_MCP_TOKEN:-}
       AGENTFLOW_GIT_SSH_KNOWN_HOSTS: ${AGENTFLOW_GIT_SSH_KNOWN_HOSTS:-}
+      AGENTFLOW_FORGE_INSTANCES: ${AGENTFLOW_FORGE_INSTANCES:-}
       # Chat Bots: keys sealing Bot secrets (scripts/configure.sh adds one),
       # the address users open from chat links, the maintenance switch and
       # the retention of chat text and records in days (0 keeps forever).

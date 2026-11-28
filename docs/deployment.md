@@ -203,6 +203,25 @@ Repositories automatically use the current user's key for their SSH host and por
 
 SSH handles clone, fetch and push. A conversation delivery returns the branch and commit SHA. You can optionally add a repository web URL to open the host and create a PR/MR manually. Issue import and PR/MR automation need a hosting API credential. To automate those actions, add a hosting-specific MCP in **Settings → Assets → MCP**, give it its own scoped token, and attach it to the relevant agent or workflow. [CNB does not support Git SSH](https://docs.cnb.cool/en/guide/git-access.html); it uses HTTPS with a CNB access token, which is outside this integration.
 
+### Forgejo repositories
+
+Forgejo uses Git SSH for checkout, fetch and push, and the Forgejo API v1 for pull requests. The integration has been exercised with Forgejo 17.0.1.
+
+1. Configure the [Git SSH host keys and personal keys](#git-repositories-over-ssh). Runner **0.9.3** or later supports this transport. Runner **0.11.1** or later can receive the platform's trusted host keys.
+2. On the platform and any workers that finalize LOOP delivery, set `AGENTFLOW_FORGE_INSTANCES` to a comma-separated list of trusted HTTPS instance roots, for example `https://forge.example.org,https://code.example.org/forge`. Include any nondefault HTTPS port or installation path. This deployment list authorizes connections to the Forgejo API. LoopForge uses each instance's DNS addresses, requires a TLS certificate trusted by the platform and workers, and stops at redirects.
+3. In **Project settings → Code repositories** or **Quick access**, select **Forgejo**. Enter the repository's SSH clone address and HTTPS web address, for example `ssh://git@forge.example.org:2222/team/app.git` and `https://forge.example.org/team/app`. Enter the existing default branch. If an existing Git SSH binding should also support automatic PRs, edit it and select Forgejo.
+4. In Forgejo **Settings → Applications**, generate a personal access token with `read:user` for identity verification and `write:repository` for PRs. In LoopForge, open **Personal settings → Add Git configuration → Forgejo**, select the matching instance and save the token. Saved instances appear as separate rows in Personal settings. The check confirms identity. Repository and merge permissions depend on the user's access in Forgejo. See [Forgejo's token scopes](https://forgejo.org/docs/latest/user/authentication/token-scope/).
+
+A conversation uses native Git commands with the requesting user's SSH key. After committing and pushing, the agent calls `workbench_forgejo_pr_submit` with the repository ID, source branch, pushed commit SHA and PR title. The platform checks the workspace checkout and remote branch, then opens or updates a same-repository PR with the user's saved Forgejo token. This MCP write follows the conversation's approval mode. Its response contains `mrUrl`; a failed PR request includes the source branch, SHA and comparison link so the agent can retry.
+
+LOOP agents whose roles have an MR verification gate receive a scoped `agentflow-forgejo` MCP with `forgejo_pr_submit`. The node commits and pushes through Git, then calls this tool to open or update its PR. The platform fixes the source and target to the run's frozen repository context and verifies the pushed SHA. Node capabilities expire when the node ends, is retried or the run is stopped. Forgejo tokens remain on the platform; API instances and workers must share `AGENTFLOW_SESSION_SECRET`. MR gates check that a PR into the run's target contains the pushed tip, including when an earlier PR from that work branch has already merged.
+
+A scheduled LOOP uses the responsible user's token to align its integration branch with the repository's default branch through a PR before dispatch. If the integration branch already contains the default branch tip, dispatch proceeds without an alignment PR. If Forgejo blocks the merge for approval, checks or a conflict, the schedule waits with a link to the open PR. After the LOOP finishes, LoopForge pushes the work branch over SSH and submits a PR if the integration branch does not already contain the pushed commit. Keep the configured default branch in sync with Forgejo and set a different branch as the integration target.
+
+LoopForge refreshes delivery PR state with the delivery user's saved token. Replacing a token in Personal settings also updates subsequent refreshes. Issue import and automatic tracking of promotion from the integration branch to the default branch are outside this integration.
+
+The server adds the token table and delivery actor column through its existing incremental schema setup. Deployments that apply schema SQL manually can use [050_forge_credentials.sql](../migrations/050_forge_credentials.sql) and [051_forge_delivery_actor.sql](../migrations/051_forge_delivery_actor.sql). Runners use their existing HTTP MCP transport for scoped LOOP delivery.
+
 ## Chat Bots (WeCom, Feishu, DingTalk)
 
 Chat Bots are configured per project on the Bot page. The deployment provides:

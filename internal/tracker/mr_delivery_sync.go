@@ -119,6 +119,14 @@ func (s *Service) syncMRDeliveryStates(store MRDeliveryStore) {
 	now := time.Now().UTC()
 	updated := 0
 	for _, row := range pending {
+		if domain.HasForgeProjectPrefix(row.MRProject) {
+			if err := s.refreshForgeDelivery(store, row); err != nil {
+				log.Printf("Forgejo delivery refresh: %v", err)
+			} else {
+				updated++
+			}
+			continue
+		}
 		if strings.HasPrefix(row.MRProject, "github:") {
 			if ok, err := s.refreshExternalDelivery(store, row); ok || err != nil {
 				if err != nil {
@@ -173,7 +181,7 @@ func (s *Service) discoverPromoteMRs(store MRDeliveryStore) {
 	now := time.Now().UTC()
 	for _, repo := range store.Repositories() {
 		project := strings.TrimSpace(repo.GongfengProjectID)
-		if strings.HasPrefix(project, "github:") {
+		if strings.HasPrefix(project, "github:") || domain.HasForgeProjectPrefix(project) {
 			continue
 		}
 		def := strings.TrimSpace(repo.DefaultBranch)
@@ -236,7 +244,7 @@ func (s *Service) syncWorkCommitsOnDefaultBranch(store MRDeliveryStore) {
 	}
 	for _, repo := range store.Repositories() {
 		project := strings.TrimSpace(repo.GongfengProjectID)
-		if strings.HasPrefix(project, "github:") {
+		if strings.HasPrefix(project, "github:") || domain.HasForgeProjectPrefix(project) {
 			continue
 		}
 		def := strings.TrimSpace(repo.DefaultBranch)

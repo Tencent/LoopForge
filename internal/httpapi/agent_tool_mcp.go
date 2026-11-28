@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -529,21 +530,13 @@ func (h *agentToolGateway) dispatch(ctx context.Context, session *AgentToolSessi
 	}
 	if session.Mode == AgentToolAssistant && mcpCallMayWrite(kind, call) {
 		name := mcpCallName(kind, call)
-		if session.ExecMode.ReadOnly {
-			return "", fmt.Errorf("只读模式拒绝可能写入外部系统的 MCP 调用 %s，请到平台页面操作", name)
+		if !session.ExecMode.ReadOnly && !session.ExecMode.AutoWrite {
+			if _, ok := h.lookupServer(session, call.Server); !ok {
+				return "", errors.New("当前会话没有可调用的外部 MCP 服务")
+			}
 		}
-		if !session.ExecMode.AutoWrite {
-			if err := h.waitForMCPWriteApproval(ctx, session, name, call); err != nil {
-				return "", err
-			}
-			if !h.nativeToolTurnActive(ctx, session) {
-				return "", errMCPApprovalExpired
-			}
-		} else if session.ExecMode.ReviewWrites {
-			review := reviewAssistantAction(withApprovalActionSource(ctx, approvalSourceExternalMCP), name, mcpServerName(h, session, call.Server)+" MCP 写入外部系统", map[string]any{"server": call.Server, "tool": call.Tool, "arguments": call.Arguments})
-			if !review.allows() {
-				return "", assistantReviewRefusal(name, review)
-			}
+		if err := h.authorizeMCPWrite(ctx, session, name, mcpServerName(h, session, call.Server), call); err != nil {
+			return "", err
 		}
 	} else if session.Mode != AgentToolScheduled && clarifyMCPCallWrite(kind, call) {
 		name := strings.TrimSpace(call.Tool)

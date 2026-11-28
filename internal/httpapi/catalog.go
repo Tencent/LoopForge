@@ -122,6 +122,11 @@ func (h *catalogHandlers) repositories(c *gin.Context) {
 	if primary == "" {
 		primary = strings.TrimSpace(body.URL)
 	}
+	v.Provider = strings.ToLower(strings.TrimSpace(v.Provider))
+	if domain.IsForgeRepositoryProvider(v.Provider) {
+		h.saveForgeRepository(c, v, primary, strings.TrimSpace(body.URL))
+		return
+	}
 	sshReference := primary
 	if sshReference == "" {
 		sshReference = v.CloneURL

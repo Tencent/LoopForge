@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/gitwork"
 )
 
 func TestRunnerIntegrateAndConversationPushCanceled(t *testing.T) {
@@ -25,10 +26,10 @@ func TestRunnerIntegrateAndConversationPushCanceled(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := e.integrateOnRunner(ctx, runner, run, domain.RepositoryContext{RepositoryID: "missing"}, false); err == nil {
+	if _, _, err := e.integrateOnRunner(ctx, runner, run, domain.RepositoryContext{RepositoryID: "missing"}, false); err == nil {
 		t.Fatal("missing integration repository accepted")
 	}
-	if _, err := e.integrateOnRunner(ctx, runner, run, run.Repositories[0], false); !errors.Is(err, context.Canceled) {
+	if _, _, err := e.integrateOnRunner(ctx, runner, run, run.Repositories[0], false); !errors.Is(err, context.Canceled) {
 		t.Fatalf("integrate cancel = %v", err)
 	}
 	if _, err := e.pushConversationOnRunner(ctx, runner.ID, run, run.Repositories, 0, "name", "mail", "message", ""); !errors.Is(err, context.Canceled) {
@@ -45,8 +46,13 @@ func TestRunnerIntegrateAndConversationPushCanceled(t *testing.T) {
 	if _, err := e.PushConversationWorkspace(context.Background(), "missing", 0, "", "", "", ""); err == nil {
 		t.Fatal("missing run pushed")
 	}
-	if _, err := e.PushConversationWorkspace(context.Background(), run.ID, 0, "", "", "", ""); err == nil {
-		t.Fatal("missing token pushed")
+	run.Repositories[0].Provider = domain.RepositoryProviderForgejo
+	run.Repositories[0].CloneURL = "ssh://git@forge.example.org/team/repo.git"
+	if err := st.PutRun(run); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.PushConversationWorkspace(ctx, run.ID, 0, "", "", "", ""); !errors.Is(err, gitwork.ErrSSHKeyRequired) {
+		t.Fatalf("Forgejo push without SSH key: %v", err)
 	}
 	noRepos := run
 	noRepos.ID = "push-no-repos"

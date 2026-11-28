@@ -1055,7 +1055,13 @@
         <div class="pa-fs">
           <h5>仓库地址</h5>
           <div data-github-repositories></div>
-          <label class="pa-field"><span class="pa-field-l">Git 仓库地址</span>
+          <label class="pa-field"><span class="pa-field-l">托管方式</span>
+            <select class="pa-input" name="provider">
+              <option value="">Git HTTP(S) 或 Git SSH</option>
+              <option value="forgejo">Forgejo</option>
+            </select>
+          </label>
+          <label class="pa-field"><span class="pa-field-l" data-repo-address-label>Git 仓库地址</span>
             <input class="pa-input mono" name="repoUrl" spellcheck="false" placeholder="https://github.com/owner/repo">
             <span class="pa-fmt"><code>https://github.com/owner/repo</code><code>git@gitlab.com:group/repo.git</code><code>git clone http://git.example.org/team/repo.git</code></span>
             <span class="pa-field-e" id="repoDrawerUrlError" hidden>请输入有效的 Git HTTP(S) 地址或 Git SSH 克隆地址。</span>
@@ -1063,7 +1069,8 @@
           <div class="pa-detect" id="repoDrawerDetect" hidden><span class="pa-detect-ok"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12 5 5 9-10"/></svg></span><div class="pa-detect-m"><b id="repoDrawerDetectName"></b><code id="repoDrawerDetectPath"></code></div><button type="button" class="button ghost small" id="repoDrawerRename">改名</button></div>
           <label class="pa-field" id="repoDrawerNameField" hidden><span class="pa-field-l">仓库名称</span><input class="pa-input mono" name="name" placeholder="留空则自动取项目路径末段"></label>
           <div id="repoDrawerSSH" hidden>
-            <label class="pa-field"><span class="pa-field-l">仓库网页地址 <i>可选</i></span><input class="pa-input mono" name="webUrl" placeholder="https://gitlab.com/group/repo" autocomplete="off"></label>
+            <label class="pa-field"><span class="pa-field-l">仓库网页地址 <i data-optional-web-url>可选</i></span><input class="pa-input mono" name="webUrl" placeholder="https://gitlab.com/group/repo" autocomplete="off"></label>
+            <p id="repoDrawerForgejoHint" class="pa-fs-hint" hidden>Forgejo 使用个人 SSH 密钥检出和推送。要自动创建 PR，请在个人配置中添加此实例的 Forgejo 令牌。</p>
             <p id="repoDrawerSSHMissing" class="git-ssh-missing" role="alert" hidden></p>
           </div>
         </div>
@@ -1460,6 +1467,7 @@
   <script src="/app/workbench.js?v=20261121settingsrows"></script>
   <script src="/app/git-ssh-keys.js?v=20261121settings"></script>
   <script src="/app/git-http-credentials.js?v=20261121settings"></script>
+  <script src="/app/forge-tokens.js"></script>
   <script src="/app/approvals.js"></script>
   <script src="/app/obs-charts.js"></script>
   <script src="/app/observability.js"></script>

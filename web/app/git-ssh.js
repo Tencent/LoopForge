@@ -38,6 +38,29 @@ globalThis.LoopForgeGitSSH = function parseSSHRepository(raw) {
   return { provider: 'ssh', host: endpoint, project: `${host.toLowerCase()}${port === '22' ? '' : ':' + port}/${segments.join('/')}`, name, cloneUrl, webUrl: '' };
 };
 
+// Forgejo uses SSH for Git and a separate HTTPS address for opening PRs.
+globalThis.LoopForgeForgejoRepository = function parseForgejoRepository(cloneURL, webURL) {
+  const ssh = globalThis.LoopForgeGitSSH(cloneURL);
+  const raw = String(webURL || '').trim().replace(/\/+$/, '').replace(/\.git$/, '');
+  if (!ssh || /[\s%?#\\]/.test(raw)) return null;
+  const match = /^https:\/\/([^/]+)\/(.+)$/.exec(raw);
+  if (!match) return null;
+  const parts = match[2].split('/');
+  if (parts.length < 2 || parts.some(part => !/^[a-z0-9_][a-z0-9_.-]*$/i.test(part))) return null;
+  try {
+    const url = new URL(raw);
+    if (url.username || url.password || url.hostname !== ssh.host.replace(/:\d+$/, '')) return null;
+    const path = parts.slice(-2).join('/').toLowerCase();
+    const sshPath = ssh.project.slice(ssh.project.indexOf('/') + 1).replace(/\.git$/, '').toLowerCase();
+    if (path !== sshPath) return null;
+    const base = parts.slice(0, -2).join('/');
+    const webUrl = url.origin + '/' + (base ? base + '/' : '') + path;
+    return {...ssh, provider:'forgejo', project:'forge:'+webUrl, webUrl};
+  } catch {
+    return null;
+  }
+};
+
 // Use the URL parser to compress IPv6 and omit the HTTPS default port.
 globalThis.LoopForgeGitHTTPSHost = function normalizeHTTPSHost(raw) {
   const input = String(raw || '').trim().toLowerCase();
@@ -68,7 +91,7 @@ globalThis.LoopForgeExplicitHTTPClone = function isHTTPCloneCommand(raw) {
 // Keep the stored transport when displaying a repository in an editable field.
 globalThis.LoopForgeGitRepositoryReference = function gitRepositoryReference(repository) {
   if (repository?.provider === 'http' && repository.cloneUrl) return `git clone ${repository.cloneUrl}`;
-  if (repository?.provider === 'ssh') return repository.cloneUrl || '';
+  if (['ssh', 'forgejo'].includes(repository?.provider)) return repository.cloneUrl || '';
   return repository?.webUrl || repository?.cloneUrl || repository?.gongfengProjectId || '';
 };
 

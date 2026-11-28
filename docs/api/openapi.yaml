@@ -1317,6 +1317,59 @@ paths:
                 $ref: "#/components/schemas/User"
         "403":
           $ref: "#/components/responses/Unauthorized"
+  /api/users/{id}/forge-tokens:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: integer, format: int64}}
+    get:
+      tags: [Users]
+      operationId: listOwnForgeTokens
+      summary: List enabled Forgejo instances and the authenticated user's saved token metadata
+      responses:
+        "200":
+          description: Instance roots and saved token metadata. Token values are never returned.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ForgeTokenSettings"}
+        "400": {description: Invalid user ID}
+        "403": {$ref: "#/components/responses/Forbidden"}
+    put:
+      tags: [Users]
+      operationId: saveOwnForgeToken
+      summary: Verify and store the authenticated user's token for an enabled Forgejo instance
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [instance, token]
+              properties:
+                instance: {type: string, format: uri, description: Exact enabled HTTPS root including its port and installation path}
+                token: {type: string, writeOnly: true, minLength: 1, maxLength: 512}
+      responses:
+        "200":
+          description: Updated token metadata
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ForgeTokenSettings"}
+        "400": {description: "Invalid user ID, disabled instance or failed token verification"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+  /api/users/{id}/forge-tokens/{tokenID}:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: integer, format: int64}}
+      - {name: tokenID, in: path, required: true, schema: {type: string}}
+    delete:
+      tags: [Users]
+      operationId: deleteOwnForgeToken
+      summary: Remove one of the authenticated user's Forgejo tokens
+      responses:
+        "200":
+          description: Remaining token metadata
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ForgeTokenSettings"}
+        "400": {description: Invalid user ID}
+        "403": {$ref: "#/components/responses/Forbidden"}
   /api/platform/accounts:
     get:
       tags: [Users]
@@ -5521,6 +5574,7 @@ components:
         deptName: {type: string}
         avatarUrl: {type: string}
         gitHubCredentialConfigured: {type: boolean, readOnly: true}
+        forgeTokenConfigured: {type: boolean, readOnly: true}
         codeBuddyApiKeyConfigured: {type: boolean, readOnly: true}
         codeBuddyBaseUrl: {type: string}
         codexApiKeyConfigured: {type: boolean, readOnly: true}
@@ -5528,6 +5582,21 @@ components:
         claudeCodeApiKeyConfigured: {type: boolean, readOnly: true}
         claudeCodeBaseUrl: {type: string}
         codeBuddyInternetEnvironment: {type: string}
+    ForgeTokenSettings:
+      type: object
+      required: [instances, tokens]
+      properties:
+        instances:
+          type: array
+          items: {type: string, format: uri}
+        tokens:
+          type: array
+          items:
+            type: object
+            required: [id, instance]
+            properties:
+              id: {type: string}
+              instance: {type: string, format: uri}
     RepositoryInput:
       type: object
       required: [projectId]
@@ -5541,14 +5610,14 @@ components:
         id: {type: string}
         projectId: {type: string}
         name: {type: string}
-        repoUrl: {type: string, description: GitHub web/SSH/clone URL; derives name and repository identity}
+        repoUrl: {type: string, description: Git web or clone address used to derive the repository identity}
         url: {type: string, description: Alias of repoUrl}
         webUrl: {type: string}
         cloneUrl: {type: string}
         gongfengProjectId: {type: string, description: Legacy wire field for repository identity; GitHub uses github:owner/repo. Prefer repoUrl.}
         defaultBranch: {type: string}
         integrateBranch: {type: string}
-        provider: {type: string, description: GitHub is inferred from repoUrl; legacy provider values remain compatible, example: github}
+        provider: {type: string, description: "Usually inferred from repoUrl. Select forgejo explicitly and supply the repository's SSH clone and HTTPS web addresses.", example: github}
         pipelineProjectId: {type: integer}
         pipelineDefId: {type: integer}
     Repository:
@@ -5561,7 +5630,7 @@ components:
           type: string
         provider:
           type: string
-          description: "Inferred from the repository URL: github, gongfeng, https, or ssh. Unknown HTTPS hosts use Git transport without a hosting API adapter."
+          description: "Inferred from the repository URL: github, gongfeng, http, https, or ssh. Select forgejo explicitly to enable its PR adapter. Generic HTTP(S) repositories use Git transport."
           example: github
         name:
           type: string

@@ -48,7 +48,7 @@ func PrepareClarifyWorkspaceAtBranch(ctx context.Context, cacheDir string, repo 
 		baseBranch = "master"
 	}
 
-	if repo.Provider == domain.RepositoryProviderSSH {
+	if domain.RepositoryUsesSSH(repo.Provider) {
 		ctx = gitwork.WithSSHRemote(ctx, cloneURL)
 	}
 	ctx = withRunGitCredentials(ctx, credentials)

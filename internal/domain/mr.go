@@ -78,6 +78,9 @@ func ExternalMRProject(project string) (platform, host, path string, ok bool) {
 // does not search free text, so a link merely quoted in an artifact never
 // names an MR on another host.
 func ParseDeliveryMRURL(text string) (project string, iid int, url string, ok bool) {
+	if ref, number, isForge := ParseForgePullURL(text); isForge {
+		return ref.Project(), number, ref.PullURL(number), true
+	}
 	if project, iid, url, ok = ParseGongfengMR(text); ok {
 		return project, iid, url, true
 	}

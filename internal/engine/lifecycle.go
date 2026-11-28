@@ -164,7 +164,7 @@ func orphanSettleStatus(reason string) string {
 
 // deliveryMRsFromRun resolves one delivery MR per run repository: Gongfeng
 // lookup by work branch first, MR-bearing artifacts of the same project next.
-func (e *Engine) deliveryMRsFromRun(run domain.Run) []domain.DeliveryMR {
+func (e *Engine) deliveryMRsFromRun(run domain.Run, deliveries ...domain.DeliveryMR) []domain.DeliveryMR {
 	run.Artifacts = append([]domain.Artifact(nil), run.Artifacts...)
 	for i, artifact := range run.Artifacts {
 		if artifact.Content != "" || domain.MRArtifactPriority(artifact.Name, artifact.Path, artifact.NodeID) <= 0 {
@@ -174,9 +174,16 @@ func (e *Engine) deliveryMRsFromRun(run domain.Run) []domain.DeliveryMR {
 			run.Artifacts[i] = stored
 		}
 	}
-	var byBranch func(domain.RepositoryContext) (domain.DeliveryMR, bool)
-	if e.FindBranchMR != nil {
-		byBranch = func(rc domain.RepositoryContext) (domain.DeliveryMR, bool) {
+	byBranch := func(rc domain.RepositoryContext) (domain.DeliveryMR, bool) {
+		for _, mr := range deliveries {
+			if mr.RepositoryID == rc.RepositoryID && mr.Project == rc.GongfengProjectID {
+				return mr, true
+			}
+		}
+		if domain.IsForgeRepositoryProvider(rc.Provider) {
+			return e.findForgeDelivery(run, rc)
+		}
+		if e.FindBranchMR != nil {
 			mr, ok, err := e.FindBranchMR(rc.GongfengProjectID, rc.WorkBranch)
 			if err != nil {
 				log.Printf("resolve delivery MR run=%s project=%s branch=%s: %v", run.ID, rc.GongfengProjectID, rc.WorkBranch, err)
@@ -184,6 +191,7 @@ func (e *Engine) deliveryMRsFromRun(run domain.Run) []domain.DeliveryMR {
 			}
 			return mr, ok
 		}
+		return domain.DeliveryMR{}, false
 	}
 	return domain.ResolveRunDeliveryMRs(run, byBranch)
 }

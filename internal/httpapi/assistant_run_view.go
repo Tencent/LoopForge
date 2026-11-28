@@ -122,6 +122,10 @@ var assistantCredentialRules = []struct {
 		"到 LoopForge「个人配置 → Git SSH 密钥」为该主机添加无口令私钥，同一主机的仓库自动共用",
 		"请管理员信任仓库的 SSH 主机，然后重试",
 	}},
+	{"forgeToken", "Forgejo 访问令牌", regexp.MustCompile(`Forgejo[^。\n]*(令牌|HTTP 40[13])`), "", []string{
+		"在 Forgejo「设置 → 应用」为当前实例生成有 read:user 和 write:repository 权限的访问令牌",
+		"到 LoopForge「个人配置 → 新增 Git 配置 → Forgejo」添加令牌。替换令牌时，打开对应实例的配置",
+	}},
 	{"gitToken", "GitHub Git Token", regexp.MustCompile(`(?i)Git Token|工蜂[^。\n]{0,12}令牌|could not read Username|Authentication failed|HTTP Basic: Access denied|terminal prompts disabled|requested URL returned error: 40[13]`), "https://github.com/settings/tokens", []string{
 		"打开 GitHub「Settings → Developer settings → Personal access tokens」新建令牌",
 		"为目标仓库授予 Contents 和 Pull requests 的读写权限，创建后立即复制 token",

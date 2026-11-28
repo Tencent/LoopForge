@@ -111,13 +111,13 @@ func TestRunnerIntegrateAndConversationTerminalResults(t *testing.T) {
 
 	integrationJSON := `[{"repositoryId":"repo","name":"Repo","workBranch":"work","integrateBranch":"integration","head":"abc","conflicts":["one.go"],"pushedIntegrate":true}]`
 	e, runner := cvETerminalEngine(t, domain.RunnerTaskSuccess, integrationJSON, "", nil)
-	conflicts, err := e.integrateOnRunner(context.Background(), runner, run, rc, true)
+	conflicts, _, err := e.integrateOnRunner(context.Background(), runner, run, rc, true)
 	if err != nil || len(conflicts) != 1 || conflicts[0] != "one.go" {
 		t.Fatalf("conflicts=%v err=%v", conflicts, err)
 	}
 
 	e, runner = cvETerminalEngine(t, domain.RunnerTaskSuccess, "{", "", nil)
-	if _, err := e.integrateOnRunner(context.Background(), runner, run, rc, false); err == nil || !strings.Contains(err.Error(), "decode") {
+	if _, _, err := e.integrateOnRunner(context.Background(), runner, run, rc, false); err == nil || !strings.Contains(err.Error(), "decode") {
 		t.Fatalf("invalid integrate result err=%v", err)
 	}
 	for _, tc := range []struct{ status, errText, want string }{
@@ -126,7 +126,7 @@ func TestRunnerIntegrateAndConversationTerminalResults(t *testing.T) {
 		{domain.RunnerTaskFailed, "integration broke", "integration broke"},
 	} {
 		e, runner = cvETerminalEngine(t, tc.status, "", tc.errText, nil)
-		if _, err := e.integrateOnRunner(context.Background(), runner, run, rc, false); err == nil || !strings.Contains(err.Error(), tc.want) {
+		if _, _, err := e.integrateOnRunner(context.Background(), runner, run, rc, false); err == nil || !strings.Contains(err.Error(), tc.want) {
 			t.Fatalf("integrate status=%s err=%v", tc.status, err)
 		}
 	}

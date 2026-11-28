@@ -59,12 +59,18 @@ func (e *Engine) verifyRunMRs(run domain.Run, gitToken string, pending func(doma
 			continue
 		}
 		project := strings.TrimSpace(rc.GongfengProjectID)
-		if e.FindBranchMRsInto == nil || project == "" {
+		isForge := domain.IsForgeRepositoryProvider(rc.Provider)
+		if !isForge && (e.FindBranchMRsInto == nil || project == "") {
 			problems = append(problems, fmt.Sprintf("%s：托管平台不支持自动核验 MR，请人工确认已创建 %s → %s 的 MR", label, work, base))
 			unverifiable = true
 			continue
 		}
-		mrs, err := e.FindBranchMRsInto(domain.BranchMRQuery{ProjectID: run.ExecutionContext.ProjectID, RemoteProject: project, SourceBranch: work, TargetBranch: base, GitToken: gitToken, ResponsibleUserID: run.ExecutionContext.ResponsibleUserID})
+		var mrs []domain.DeliveryMR
+		if isForge {
+			mrs, err = e.forgeBranchDelivery(run, rc, work, base)
+		} else {
+			mrs, err = e.FindBranchMRsInto(domain.BranchMRQuery{ProjectID: run.ExecutionContext.ProjectID, RemoteProject: project, SourceBranch: work, TargetBranch: base, GitToken: gitToken, ResponsibleUserID: run.ExecutionContext.ResponsibleUserID})
+		}
 		if err != nil {
 			problems = append(problems, fmt.Sprintf("%s：查询 %s → %s 的 MR 失败：%v", label, work, base, err))
 			unverifiable = true

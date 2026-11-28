@@ -273,6 +273,9 @@ func tapdInnerToolAllowed(mode AgentToolMode, name string) bool {
 func (h *agentToolGateway) buildCatalog(ctx context.Context, session *AgentToolSession) []agentToolDescriptor {
 	if session != nil && session.RuntimeMode == domain.AssistantModeWorkspace {
 		out := append(workspaceIntegrationCatalog(session), h.knowledgeReferenceCatalog(ctx, session)...)
+		if session.Mode == AgentToolAssistant && h.workspaceHasForgejo(session.ProjectID) {
+			out = append(out, workspaceForgejoPRDescriptor())
+		}
 		for i, tool := range out {
 			if tool.Name == "workbench_workspace_open" {
 				out[i] = h.workspaceOpenDescriptorFor(session)

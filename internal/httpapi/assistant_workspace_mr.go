@@ -49,6 +49,7 @@ type deliveredMR struct {
 	Repository   string
 	URL          string
 	TargetBranch string
+	ForgeUserID  int64
 	RegisteredBy int64
 }
 

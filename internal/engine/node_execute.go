@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -142,7 +143,7 @@ func (e *Engine) execute(ctx context.Context, runID string) {
 		}
 		if len(ready) == 0 {
 			if allSucceeded(wf, r) {
-				rework, err := e.integrateScheduledRun(runID)
+				rework, deliveries, err := e.integrateScheduledRun(runID)
 				if err != nil {
 					e.finishAt(runID, generation, "failed", "合入 integration 失败："+err.Error())
 					return
@@ -150,7 +151,7 @@ func (e *Engine) execute(ctx context.Context, runID string) {
 				if rework {
 					continue
 				}
-				e.finishAt(runID, generation, "succeeded", "流水线执行完成")
+				e.finishAt(runID, generation, "succeeded", "流水线执行完成", deliveries...)
 				return
 			}
 			if hasWaiting(wf, r) {
@@ -882,6 +883,17 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 			}
 			assets := e.resolveNodeAssets(ctx, agent, current, wf.ID, effectiveNode)
 			applyReplayAssets(e.repo, &assets, current)
+			if slices.ContainsFunc(gates, func(g verificationRun) bool { return strings.EqualFold(g.gate.Mode, domain.VerificationModeMR) }) &&
+				slices.ContainsFunc(current.RepositoryContexts(), func(rc domain.RepositoryContext) bool {
+					return !rc.ReadOnly && domain.IsForgeRepositoryProvider(rc.Provider)
+				}) {
+				server, err := e.forgeNodeMCP(current, node.ID)
+				if err != nil {
+					return "", err
+				}
+				assets.MCPServers = append(assets.MCPServers, server)
+				prompt += "\n\nForgejo 仓库使用已注入的 Forgejo PR MCP。提交并推送工作分支后，调用 forgejo_pr_submit，传 repositoryId、完整 commit SHA、title 和 description。源分支和目标分支由平台按本次运行确定；令牌由平台读取。把返回的 mrUrl 写入交付文档。"
+			}
 			warnMCPSkipped := func(message string) {
 				sink(domain.TelemetryEvent{Category: "mcp", Name: "mcp.skipped", Phase: "start", Level: "warn", Message: message})
 			}

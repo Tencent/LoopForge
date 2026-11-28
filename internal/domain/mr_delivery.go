@@ -12,6 +12,7 @@ type MRDeliveryState struct {
 	State        string `json:"state"` // Gongfeng raw: merged, opened, closed, reopened, unknown
 	TargetBranch string `json:"targetBranch,omitempty"`
 	IssueID      string `json:"issueId,omitempty"`
+	ForgeUserID  int64  `json:"-"`
 	// RegisteredBy is the user whose workspace turn registered the MR; their
 	// Git credential for the MR's host is used to poll it.
 	RegisteredBy int64 `json:"-"`

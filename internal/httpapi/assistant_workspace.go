@@ -144,6 +144,8 @@ func (h *agentToolGateway) callMainBotWorkspace(ctx context.Context, s *AgentToo
 	ctx = context.WithValue(ctx, requestUserContextKey{}, domainUserToAuth(s.User))
 	ctx = context.WithValue(ctx, mainBotWorkspaceKey{}, runID)
 	switch name {
+	case workspaceForgejoPRTool:
+		return h.submitWorkspaceForgejoPR(ctx, s, run, args)
 	case workspacePreviewServiceToolName:
 		return h.callWorkspacePreviewService(ctx, s, run, args)
 	case "workbench_workspace_tree":
