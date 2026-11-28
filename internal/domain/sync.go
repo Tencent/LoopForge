@@ -119,8 +119,11 @@ type ScheduleJob struct {
 	// LastTraceID identifies the latest execution (ScheduleJobExecution.TraceID).
 	LastTraceID string `json:"lastTraceId,omitempty"`
 	// LastSessionID is the Studio conversation of the latest AI execution.
-	LastSessionID string               `json:"lastSessionId,omitempty"`
-	Blockers      []ScheduleJobBlocker `json:"blockers,omitempty"`
+	LastSessionID string `json:"lastSessionId,omitempty"`
+	// LastSessionGone is computed on read (never stored) when LastSessionID
+	// has been deleted or pruned by retention.
+	LastSessionGone bool                 `json:"lastSessionGone,omitempty"`
+	Blockers        []ScheduleJobBlocker `json:"blockers,omitempty"`
 	CreatedAt     time.Time            `json:"createdAt"`
 	UpdatedAt     time.Time            `json:"updatedAt"`
 }

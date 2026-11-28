@@ -392,6 +392,34 @@ func TestConversationProcessRetriesBusyRunner(t *testing.T) {
 	}
 }
 
+func TestConversationDispatchAllowsUnsharedRunnerOnlyForOwnersChat(t *testing.T) {
+	h, owner := workbenchFixture(t)
+	h.runnerControls = quietRunnerHub()
+	runner := domain.Runner{ID: "owner-runner", OwnerUserID: owner.ID,
+		Status: domain.RunnerStatusOnline, RunnerVersion: domain.RunnerVersionCLISettings}
+	if err := h.repo.PutRunner(runner); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	for _, tc := range []struct {
+		name         string
+		ctx          context.Context
+		requireShare bool
+		want         error
+	}{
+		{name: "chat", ctx: ctx},
+		{name: "scheduled", ctx: withAssistantSessionOrigin(ctx, domain.AssistantSourceScheduled, "task"), want: errAssistantRunnerAccessRevoked},
+		{name: "LOOP helper", ctx: ctx, requireShare: true, want: errAssistantRunnerAccessRevoked},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			session := &AgentToolSession{UserID: owner.ID, ProjectID: "workbench", ExecutionRunnerID: runner.ID, requireRunnerShare: tc.requireShare}
+			if got, err := h.conversationRunner(tc.ctx, session, true); !errors.Is(err, tc.want) || (err == nil && got.ID != runner.ID) {
+				t.Fatalf("got runner %q and error %v, want error %v", got.ID, err, tc.want)
+			}
+		})
+	}
+}
+
 func TestConversationDispatchRechecksRunnerShareBeforeStarting(t *testing.T) {
 	h, owner := workbenchFixture(t)
 	project, _ := h.repo.Project("workbench")

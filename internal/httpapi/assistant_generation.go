@@ -534,7 +534,9 @@ func (h *assistantHandlers) steerGeneration(c *gin.Context) {
 		return
 	}
 	target := session.Execution()
-	if !h.canUseBoundExecutionTarget(target, session.ProjectID, stored.ID) {
+	// The follow-up to a scheduled turn inherits the schedule's access policy.
+	requireShare := session.Source == domain.AssistantSourceScheduled
+	if !h.canUseBoundExecutionTarget(target, session.ProjectID, stored.ID, requireShare) {
 		c.JSON(403, gin.H{"error": errAssistantRunnerAccessRevoked.Error()})
 		return
 	}

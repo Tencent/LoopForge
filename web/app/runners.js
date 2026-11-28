@@ -1,4 +1,32 @@
-function openRunModal(workflowId){const select=$('#runWorkflowChoice'),workflows=runnableWorkflowOptions();select.innerHTML=workflows.map(w=>`<option value="${escapeHTML(w.id)}" ${w.id===workflowId?'selected':''}>${escapeHTML(w.name)}</option>`).join('')||'<option value="">暂无可运行 LOOP</option>';$('#confirmRun').disabled=!workflows.length;$('#runModal').classList.add('open');setTimeout(()=>$('#runInput').focus(),0)}
+function syncRunModalKnowledgeSummary(){
+  const summary=$('#runKnowledgeRefsSummary'),reset=$('#runKnowledgeRefsResetBtn');
+  const override=state.runModalKnowledgeRefs;
+  if(summary){
+    if(override===null||override===undefined)summary.textContent='默认按节点或角色配置';
+    else if(override.length)summary.textContent=`本次覆盖：已选 ${override.length} 个连接器`;
+    else summary.textContent='本次覆盖：不挂载知识库';
+  }
+  if(reset)reset.hidden=override===null||override===undefined;
+}
+function openRunModal(workflowId){
+  const select=$('#runWorkflowChoice'),workflows=runnableWorkflowOptions();
+  select.innerHTML=workflows.map(w=>`<option value="${escapeHTML(w.id)}" ${w.id===workflowId?'selected':''}>${escapeHTML(w.name)}</option>`).join('')||'<option value="">暂无可运行 LOOP</option>';
+  state.runModalKnowledgeRefs=null;
+  syncRunModalKnowledgeSummary();
+  const refBtn=$('#runKnowledgeRefsBtn');
+  if(refBtn)refBtn.onclick=()=>{
+    if(typeof window.editKnowledgeRefs!=='function')return toast('知识库选择器尚未加载');
+    window.editKnowledgeRefs(currentProject()?.id||state.projectFilter||'',state.runModalKnowledgeRefs||[],refs=>{
+      state.runModalKnowledgeRefs=refs;
+      syncRunModalKnowledgeSummary();
+    });
+  };
+  const resetBtn=$('#runKnowledgeRefsResetBtn');
+  if(resetBtn)resetBtn.onclick=()=>{state.runModalKnowledgeRefs=null;syncRunModalKnowledgeSummary()};
+  $('#confirmRun').disabled=!workflows.length;
+  $('#runModal').classList.add('open');
+  setTimeout(()=>$('#runInput').focus(),0);
+}
 
 // ---------- 执行机器 ----------
 let runnerRefreshTimer=null;
@@ -6,6 +34,7 @@ let runnerRefreshRequest=0;
 const runnerRuntimeTests=new Set();
 const runnerAuthChanges=new Map();
 const runnerMaintenancePending=new Set();
+const runnerPrivilegedSandboxPending=new Map();
 let runnerRuntimeMenu=null,runnerRuntimeTrigger=null;
 async function refreshRunners(silent){
   const request=++runnerRefreshRequest;
@@ -28,6 +57,7 @@ async function refreshRunners(silent){
     state.platformRunner=def?.platformRunner||null;
     state.cloudPool=def?.cloudPool||null;
     state.minRunnerVersion=def?.minRunnerVersion||'';
+    state.minPrivilegedSandboxRunnerVersion=def?.minPrivilegedSandboxRunnerVersion||'';
     renderRunnersView();
   }catch(e){if(!silent)toast(e.message)}
 }
@@ -71,6 +101,41 @@ async function saveRunnerRunLimit(runnerId,raw,platform=false){
     toast(value>0?`已设置：最多同时运行 ${value} 条`:'已设为不限','ok');renderRunnersView();
     void refreshRunners(true);
   }catch(err){toast(err.message);refreshRunners(true)}
+}
+function runnerPrivilegedSandboxHTML(runner,canEdit,platform=false){
+  const allowed=runner.allowPrivilegedSandbox;
+  if(typeof allowed!=='boolean')return '';
+  const target=platform?'platform':runner.id;
+  const minVersion=state.minPrivilegedSandboxRunnerVersion;
+  const supported=platform||minVersion&&runnerVersionAtLeast(runner.runnerVersion,minVersion);
+  const pending=runnerPrivilegedSandboxPending.get(target);
+  const editable=canEdit&&supported;
+  const status=supported?(allowed?lfT('已允许','Allowed'):lfT('已关闭','Off')):lfT('需升级 Runner','Runner upgrade required');
+  const help=lfT('只影响后续启动的特权容器。特权容器可以访问宿主机设备。','Applies to future starts. Privileged containers can access host devices.');
+  const toggle=editable?`<input type="checkbox" role="switch" data-runner-privileged-sandbox="${escapeHTML(target)}" ${(pending??allowed)?'checked':''} ${pending!==undefined?'disabled':''}>`:'';
+  const label=toggle?`<label>${toggle}<span>${lfT('允许特权 Docker 沙箱','Allow privileged Docker sandboxes')}</span></label>`:`<span>${lfT('特权 Docker 沙箱','Privileged Docker sandboxes')}</span>`;
+  return `<div class="runner-privileged-sandbox">
+    ${label}
+    ${editable?'':`<span class="runner-privileged-state">${status}</span>`}
+    <span class="runner-tip" tabindex="0" role="note" aria-label="${help}" data-tip="${help}">?</span>
+  </div>`;
+}
+async function saveRunnerPrivilegedSandbox(target,allowed){
+  if(runnerPrivilegedSandboxPending.has(target))return;
+  runnerPrivilegedSandboxPending.set(target,allowed);
+  renderRunnersView();
+  try{
+    await api(`/api/runners/${encodeURIComponent(target)}/privileged-sandbox`,{method:'PUT',body:JSON.stringify({allowed}),silent:true});
+    const runner=target==='platform'?state.platformRunner:(state.runners||[]).find(r=>r.id===target);
+    if(runner)runner.allowPrivilegedSandbox=allowed;
+    toast(lfT('特权 Docker 沙箱设置已保存','Privileged Docker sandbox setting saved'),'ok');
+    await refreshRunners(true);
+  }catch(err){
+    toast(err.message,'err');
+  }finally{
+    runnerPrivilegedSandboxPending.delete(target);
+    renderRunnersView();
+  }
 }
 function runnerLoadHTML(runner){
   const parts=[];
@@ -177,6 +242,7 @@ function platformRunnerCardHTML(runner,isDefault,canSetDefault){
       ${runnerStatusLabel(runner.status)}
       <span class="runner-platform-sep" aria-hidden="true"></span>
       ${limit}
+      ${runnerPrivilegedSandboxHTML(runner,runner.canEditLimit,true)}
       ${canSetDefault?`<button type="button" class="button small ${isDefault?'ghost runner-text-button':'hui-btn-soft'}" data-runner-platform-default>${isDefault?'清除项目默认':'设为项目默认'}</button>`:''}
     </div>
   </article>`;
@@ -264,6 +330,7 @@ function renderRunnersView(){
   const focusedMenu=document.activeElement?.dataset.runnerRuntimeMenu;
   const focusedUpdate=document.activeElement?.dataset.runnerCheckUpdate;
   const focusedShare=document.activeElement?.dataset.runnerShare;
+  const focusedPrivilege=document.activeElement?.dataset.runnerPrivilegedSandbox;
   const focusedPlatform=document.activeElement?.hasAttribute('data-runner-platform-default');
   closeRunnerRuntimeMenu();
   const platformSection=$('#platformRunnerSection');
@@ -300,6 +367,7 @@ function renderRunnersView(){
       </div>
       <div class="runner-card-action">
         ${shared?`<span class="runner-limit-label">${runnerConcurrencyLabel(r)}</span>`:runnerRunLimitHTML(r)}
+        ${runnerPrivilegedSandboxHTML(r,!shared)}
         <span class="runner-card-spacer"></span>
         ${shared?'':`<button class="button ghost small runner-text-button" type="button" data-runner-share="${escapeHTML(r.id)}" aria-haspopup="dialog">共享项目${r.sharedProjectIds?.length?`（${r.sharedProjectIds.length}）`:''}</button>`}
         ${isPersonalDefault?'<button class="button ghost small runner-text-button" type="button" data-set-default="">清除个人默认</button>':''}
@@ -337,6 +405,10 @@ function renderRunnersView(){
     scope?.querySelectorAll('[data-runner-run-limit],[data-platform-run-limit]').forEach(input=>{
       input.onchange=()=>saveRunnerRunLimit(input.dataset.runnerRunLimit,input.value,input.hasAttribute('data-platform-run-limit'));
       input.onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();input.blur()}};
+    });
+    scope?.querySelectorAll('[data-runner-privileged-sandbox]').forEach(input=>{
+      input.onchange=()=>saveRunnerPrivilegedSandbox(input.dataset.runnerPrivilegedSandbox,input.checked);
+      if(input.dataset.runnerPrivilegedSandbox===focusedPrivilege&&!input.disabled)input.focus({preventScroll:true});
     });
   }
   list.querySelectorAll('[data-runner-auth]').forEach(select=>select.onchange=()=>{

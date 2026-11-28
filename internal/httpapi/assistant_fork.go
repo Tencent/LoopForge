@@ -102,7 +102,11 @@ func (h *assistantHandlers) forkSession(c *gin.Context) {
 	if executor == "" && source.Model != "" {
 		executor, _ = assistantModelEngine(source.Model)
 	}
-	branch := domain.AssistantSession{ID: newAssistantSessionID(), UserID: user.ID, ProjectID: source.ProjectID, IssueID: source.IssueID, Model: source.Model, Effort: source.Effort, Executor: executor, Messages: append(prefix, edited), Shared: source.Shared, RunID: source.RunID, ParentSessionID: source.ID, RootSessionID: source.RootSessionID, ForkMessageIndex: index, Title: "分支 · " + truncateRunes(edited.Content, 28)}
+	var branchKnowledgeRefs []domain.KnowledgeRef
+	if owner == user.ID {
+		branchKnowledgeRefs = append([]domain.KnowledgeRef(nil), source.KnowledgeRefs...)
+	}
+	branch := domain.AssistantSession{ID: newAssistantSessionID(), UserID: user.ID, ProjectID: source.ProjectID, IssueID: source.IssueID, Model: source.Model, Effort: source.Effort, Executor: executor, Messages: append(prefix, edited), Shared: source.Shared, RunID: source.RunID, ParentSessionID: source.ID, RootSessionID: source.RootSessionID, ForkMessageIndex: index, KnowledgeRefs: branchKnowledgeRefs, KnowledgeRestricted: source.KnowledgeRestricted || len(source.KnowledgeRefs) > 0, Title: "分支 · " + truncateRunes(edited.Content, 28)}
 	if branch.RootSessionID == "" {
 		branch.RootSessionID = source.ID
 	}
@@ -298,5 +302,5 @@ func (h *assistantHandlers) editSession(c *gin.Context) {
 	}
 	saved, _ := h.repo.AssistantSession(resultOwner, resultID)
 	saved.Executor = h.forkExecutor(c, saved, user.ID)
-	c.JSON(200, saved)
+	c.JSON(200, sanitizeAssistantSessionForViewer(saved, user.ID))
 }
