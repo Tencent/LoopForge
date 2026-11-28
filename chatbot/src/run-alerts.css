@@ -6,40 +6,125 @@
   display: flex;
   flex-direction: column;
   gap: 10px;
-  margin: 4px 0 16px;
+  margin: 0 0 18px;
 }
 
 .run-review-link {
+  --rr-tone: var(--hui-warn);
   display: flex;
   align-items: center;
-  gap: 8px;
-  align-self: flex-start;
-  max-width: 100%;
-  min-height: 36px;
-  border: 1px solid color-mix(in srgb, var(--hui-warn) 28%, var(--hui-border));
-  border-radius: 10px;
-  padding: 6px 11px;
-  background: color-mix(in srgb, var(--hui-warn) 6%, var(--hui-surface));
-  color: var(--hui-warn);
-  font-size: 12.5px;
-  font-weight: 500;
-  white-space: nowrap;
+  gap: 12px;
+  width: 100%;
+  border: 1px solid color-mix(in srgb, var(--rr-tone) 26%, var(--hui-border));
+  border-radius: 13px;
+  padding: 11px 13px;
+  background: color-mix(in srgb, var(--rr-tone) 4.5%, var(--hui-surface));
+  color: var(--hui-text);
+  font-size: 13px;
+  line-height: 1.45;
   text-align: left;
+  cursor: pointer;
+  box-shadow: var(--hui-ind-shadow);
   transition:
-    background-color 150ms ease,
-    border-color 150ms ease;
+    background-color 160ms var(--hui-ease-flow),
+    border-color 160ms var(--hui-ease-flow),
+    box-shadow 160ms var(--hui-ease-flow),
+    transform 120ms var(--hui-ease-flow);
+}
+.run-review-link.is-paused {
+  --rr-tone: var(--hui-info, #4f6ef7);
 }
 .run-review-link:hover {
-  border-color: color-mix(in srgb, var(--hui-warn) 48%, var(--hui-border));
-  background: color-mix(in srgb, var(--hui-warn) 11%, var(--hui-surface));
+  border-color: color-mix(in srgb, var(--rr-tone) 44%, var(--hui-border));
+  background: color-mix(in srgb, var(--rr-tone) 8%, var(--hui-surface));
+}
+.run-review-link:active {
+  transform: scale(0.995);
+}
+.run-review-link:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--hui-accent) 55%, transparent);
+  outline-offset: 2px;
 }
 .run-review-link svg {
   flex: none;
 }
+.run-review-link-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
+  flex: none;
+  background: color-mix(in srgb, var(--rr-tone) 14%, var(--hui-surface));
+  color: var(--rr-tone);
+}
+.run-review-link-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.run-review-link-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px;
+  min-width: 0;
+}
 .run-review-link-node {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
-  color: var(--muted);
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--hui-text);
+}
+.run-review-link-tag {
+  display: inline-flex;
+  align-items: center;
+  height: 19px;
+  padding: 0 7px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--rr-tone) 13%, var(--hui-surface));
+  color: var(--rr-tone);
+  font: 500 11px/1 var(--hui-sans);
+  white-space: nowrap;
+}
+.run-review-link-desc {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--hui-muted);
+}
+.run-review-link-cta {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--rr-tone) 30%, var(--hui-border));
+  background: var(--hui-surface);
+  color: var(--hui-text);
+  font: 500 12px/1 var(--hui-sans);
+  white-space: nowrap;
+  transition:
+    background-color 150ms ease,
+    border-color 150ms ease;
+}
+.run-review-link:hover .run-review-link-cta {
+  border-color: color-mix(in srgb, var(--rr-tone) 50%, var(--hui-border));
+  background: var(--hui-soft);
+}
+@media (max-width: 520px) {
+  .run-review-link-desc {
+    white-space: normal;
+  }
 }
 
 /* The shell collapses on dismiss so the cards below glide up. */

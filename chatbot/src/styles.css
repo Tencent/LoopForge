@@ -684,6 +684,13 @@ small {
   margin: 0 0 35px;
   line-height: 1.75;
 }
+.message:has(+ .run-alerts) {
+  margin-bottom: 10px;
+}
+.message:has(+ .run-alerts) .message-actions {
+  margin-top: 4px;
+  min-height: 20px;
+}
 .message.user {
   text-align: right;
   display: flex;

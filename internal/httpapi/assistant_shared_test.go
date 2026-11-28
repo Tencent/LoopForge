@@ -131,8 +131,10 @@ func TestRunNodeDiscussionReusesAttemptContextWithProjectPermissions(t *testing.
 	}
 	listContext, listResponse := workbenchContext(peer, "GET", "/", bytes.NewBuffer(nil))
 	h.listSessions(listContext)
-	if listResponse.Code != http.StatusOK || strings.Contains(listResponse.Body.String(), id) {
-		t.Fatalf("node conversation should only appear inside the run: %d: %s", listResponse.Code, listResponse.Body)
+	if listResponse.Code != http.StatusOK ||
+		strings.Contains(listResponse.Body.String(), id) ||
+		strings.Contains(listResponse.Body.String(), repo.RunAssistantSessionID(run.ID)) {
+		t.Fatalf("node conversation should not leak branch or empty run root into session list: %d: %s", listResponse.Code, listResponse.Body)
 	}
 	h.generate = func(_ context.Context, prompt string, actor domain.User) (string, error) {
 		if actor.ID != peer.ID || !strings.Contains(prompt, "第二次检查结果") {

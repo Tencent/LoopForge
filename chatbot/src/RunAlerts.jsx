@@ -99,15 +99,35 @@ export default function RunAlerts({
         if (item.kind !== "failed") {
           const actionable = !readOnly && !item.run.pauseRequested && item.run.reviewAccess?.canOperate !== false;
           const runName = runs.length > 1 ? item.run.workflowSnapshot?.name : "";
+          const paused = !!item.run.pauseRequested;
+          const nodeTitle = runName ? `${runName} · ${item.nodeName}` : item.nodeName;
+          const description = paused
+            ? "运行已暂停，点击打开节点继续处理或查看当前进度"
+            : actionable
+              ? "等待你确认节点产物并决定通过或打回"
+              : "点击打开节点查看当前产物与执行详情";
           return (
-            <button type="button" className="run-review-link" key={item.key}
-              aria-label={actionable ? "去审核" : "查看节点"} onClick={() => onOpenNode(item.run, item.nodeId)}>
-              <HarnessIcon name={item.run.pauseRequested ? "pause" : "user-hold"} size={16} />
-              <span>{item.run.pauseRequested ? "已暂停" : "待审核"}</span>
-              <span className="run-review-link-node">
-                {runName ? `${runName} · ${item.nodeName}` : item.nodeName}
+            <button
+              type="button"
+              className={`run-review-link${paused ? " is-paused" : ""}`}
+              key={item.key}
+              aria-label={actionable ? "去审核" : "查看节点"}
+              onClick={() => onOpenNode(item.run, item.nodeId)}
+            >
+              <span className="run-review-link-icon" aria-hidden="true">
+                <HarnessIcon name={paused ? "pause" : "user-hold"} size={16} />
               </span>
-              <HarnessIcon name="chevron-right" size={14} />
+              <span className="run-review-link-body">
+                <span className="run-review-link-head">
+                  <strong className="run-review-link-node">{nodeTitle}</strong>
+                  <span className="run-review-link-tag">{paused ? "已暂停" : "待审核"}</span>
+                </span>
+                <span className="run-review-link-desc">{description}</span>
+              </span>
+              <span className="run-review-link-cta" aria-hidden="true">
+                <span>{actionable ? "去审核" : "查看节点"}</span>
+                <HarnessIcon name="chevron-right" size={14} />
+              </span>
             </button>
           );
         }

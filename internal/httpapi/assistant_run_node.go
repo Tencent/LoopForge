@@ -70,20 +70,40 @@ func (h *assistantHandlers) runNodeConversation(c *gin.Context) {
 			}
 			return
 		}
-		root, err := h.ensureRunConversation(run, user.ID)
+		root := h.runNodeConversationRoot(run)
+		title := "节点讨论 · " + nonEmptyNodeName(definition)
+		session, err := h.repo.EnsureRunNodeAssistantSession(root, ref, title, user.ID, runNodeConversationHistory(run, index, node))
 		if err == nil {
-			title := "节点讨论 · " + nonEmptyNodeName(definition)
-			var session domain.AssistantSession
-			session, err = h.repo.EnsureRunNodeAssistantSession(root, ref, title, user.ID, runNodeConversationHistory(run, index, node))
-			if err == nil {
-				c.JSON(http.StatusOK, gin.H{"id": session.ID, "projectId": session.ProjectID})
-				return
-			}
+			c.JSON(http.StatusOK, gin.H{"id": session.ID, "projectId": session.ProjectID})
+			return
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "打开节点对话失败"})
 		return
 	}
 	c.JSON(http.StatusNotFound, gin.H{"error": "运行中没有该节点"})
+}
+
+// runNodeConversationRoot supplies the run's shared root metadata for a node
+// branch without creating an empty run-level session in the chat sidebar.
+func (h *assistantHandlers) runNodeConversationRoot(r domain.Run) domain.AssistantSession {
+	rootID := repo.RunAssistantSessionID(r.ID)
+	if existing, ok := h.repo.SharedAssistantSession(rootID); ok {
+		if existing.IssueID == "" {
+			existing.IssueID = r.ExecutionContext.IssueID
+		}
+		return existing
+	}
+	target := domain.AssistantExecutionTarget{Pool: r.ExecutionContext.ExecutionMode, RunnerID: r.ExecutionContext.ExecutionRunnerID}
+	if target.Pool != domain.ExecutionModeRunner {
+		target.Pool = domain.ExecutionModeCloud
+	}
+	return domain.AssistantSession{
+		ID:              rootID,
+		RunID:           r.ID,
+		ProjectID:       r.ExecutionContext.ProjectID,
+		IssueID:         r.ExecutionContext.IssueID,
+		ExecutionTarget: &target,
+	}
 }
 
 func reviewableNodeStatus(status string) bool {
