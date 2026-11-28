@@ -93,6 +93,10 @@
   // rewrites, so a sentence typed by a person is not turned into mixed prose.
   const DATA_SEL = '[data-i18n-data],.ai-user-bubble,.ai-think-body,.collab-process-body,.collab-list-item,.issue-title-cell b,#issueDetailTitle,.detail-desc,.comment-row p';
   const ATTRS = ['placeholder', 'title', 'aria-label', 'data-tip', 'data-tooltip'];
+  // data-i18n-data-attrs="aria-label title" marks only those attributes as
+  // user data, for an element whose own copy must still be translated (a card
+  // labelled with the asset name it shows).
+  const dataAttr = (el, name) => !!el.closest(DATA_SEL) || (el.getAttribute('data-i18n-data-attrs') || '').split(/\s+/).includes(name);
   const escape = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const fragments = Object.keys(dict).filter(k => k.length > 1).sort((a, b) => b.length - a.length);
   const fragmentRE = fragments.length ? new RegExp('(?<![\\u3400-\\u9fff])(?:' + fragments.map(escape).join('|') + ')(?![\\u3400-\\u9fff])', 'g') : null;
@@ -214,7 +218,7 @@
     for (const name of ATTRS) {
       const value = el.getAttribute && el.getAttribute(name);
       if (value && HAN.test(value)) {
-        const next = el.closest(DATA_SEL) ? translateExact(value) : translate(value);
+        const next = dataAttr(el, name) ? translateExact(value) : translate(value);
         if (next !== value) el.setAttribute(name, next);
       }
     }

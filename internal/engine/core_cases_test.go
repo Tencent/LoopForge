@@ -511,3 +511,21 @@ func TestObservationIngressWorkspaceStatusAndStateTransitions(t *testing.T) {
 		t.Fatalf("cancelled node = %+v", cancelled.Nodes["script"])
 	}
 }
+
+func TestAgentLoopMessagesDescribeExecutorFailures(t *testing.T) {
+	if got := agentLoopSkipMessage(""); strings.Contains(got, "策略为 ，") || !strings.Contains(got, "不是门禁未通过") {
+		t.Fatalf("executor failure skip message = %q", got)
+	}
+	if got := agentLoopSkipMessage("human"); got != "门禁失败策略为 human，跳过自修正" {
+		t.Fatalf("gate policy skip message = %q", got)
+	}
+	if got := agentLoopHumanMessage(1, 3, ""); strings.Contains(got, "耗尽") || !strings.Contains(got, "第 1 轮执行失败") {
+		t.Fatalf("early hand-off message = %q", got)
+	}
+	if got := agentLoopHumanMessage(1, 3, "fail"); strings.Contains(got, "执行失败") || !strings.Contains(got, "第 1 轮门禁未通过（失败策略为 fail）") {
+		t.Fatalf("early gate hand-off message = %q", got)
+	}
+	if got := agentLoopHumanMessage(3, 3, "loop"); got != "Agent 自修正次数已耗尽，转人工判断：" {
+		t.Fatalf("exhausted message = %q", got)
+	}
+}

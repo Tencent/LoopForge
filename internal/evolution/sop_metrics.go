@@ -154,7 +154,7 @@ func BuildSOPPreferenceFinding(
 			CreatedAt: r.CreatedAt,
 		})
 	}
-	summary := fmt.Sprintf("SOP「%s」近 %d 次运行统计：平均 Token %d、平均工具调用 %.1f 次、平均耗时 %.1fs、一次成功率 %.0f%%。%s",
+	summary := fmt.Sprintf("LOOP「%s」近 %d 次运行统计：平均 Token %d、平均工具调用 %.1f 次、平均耗时 %.1fs、一次成功率 %.0f%%。%s",
 		firstText(wf.Name, wf.ID), metrics.Runs, metrics.AvgTokens, metrics.AvgTools, metrics.AvgDuration, metrics.CleanRate*100, guidance)
 	now := time.Now().UTC()
 	return domain.EvoFinding{
@@ -1038,7 +1038,7 @@ func sopSignalPrefKey(kind, primaryPref string) string {
 func sopSignalLabel(kind string) string {
 	switch kind {
 	case SignalSOPDetection:
-		return "SOP 轨迹效率异常"
+		return "LOOP 轨迹效率异常"
 	case SignalRework:
 		return "节点打回返工"
 	case SignalNodeFailed:
@@ -1061,7 +1061,7 @@ func LastRunSummaryNote(run *domain.Run, signals []domain.EvoSignal, sopDetectio
 		if s := strings.TrimSpace(sopDetection.Result.Summary); s != "" {
 			return "最近 1 次 · " + domain.TrimEvoText(s, 48)
 		}
-		return "最近 1 次 · SOP 检测发现效率问题"
+		return "最近 1 次 · LOOP 检测发现效率问题"
 	}
 	seen := map[string]bool{}
 	var labels []string

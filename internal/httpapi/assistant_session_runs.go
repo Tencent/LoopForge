@@ -24,6 +24,11 @@ type runSessionView struct {
 	// MessageCount is omitted when it could not be read, so a failed count
 	// never makes a discussed run look untouched and hide it.
 	MessageCount *int `json:"messageCount,omitempty"`
+	// MessagesPartial is set when this response holds only the tail of a long
+	// transcript. The full conversation is loaded separately.
+	MessagesPartial bool `json:"messagesPartial,omitempty"`
+	// MessagesOffset is the stored index of the first message in that tail.
+	MessagesOffset int `json:"messagesOffset,omitempty"`
 }
 
 // rootRunConversation reports whether the session is the shared conversation of

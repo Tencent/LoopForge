@@ -121,9 +121,11 @@ func (h *assistantHandlers) botClarifyMessage(ctx context.Context, bot domain.No
 }
 
 // botIssueLabel is the requirement key shown in chats (like the platform
-// list: TAPD ID, 工蜂 #iid, or <project key>-<number>).
+// list: TAPD ID, 工蜂 / GitHub #iid, or <project key>-<number>). Tracker
+// issues keep the tracker number in issue.Number, so they must not use the
+// <project key>-<number> form that platform requirements own.
 func (h *assistantHandlers) botIssueLabel(issue domain.Issue) string {
-	if issue.Source == "gongfeng" && issue.ExternalRef != nil && issue.ExternalRef.ExternalIID > 0 {
+	if (issue.Source == "gongfeng" || issue.Source == "github") && issue.ExternalRef != nil && issue.ExternalRef.ExternalIID > 0 {
 		return "#" + strconv.Itoa(issue.ExternalRef.ExternalIID)
 	}
 	if issue.Source == "tapd" && issue.ExternalRef != nil && issue.ExternalRef.ExternalID != "" {
@@ -185,7 +187,10 @@ func (h *assistantHandlers) findBotClarifyIssue(bot domain.NotificationBot, conv
 		return issue, ""
 	}
 	project, _ := h.repo.Project(bot.ProjectID)
-	var matches []domain.Issue
+	// The displayed key is authoritative: a platform requirement LOOP-1 and a
+	// synced GitHub issue #1 share issue.Number, and either key names exactly
+	// one of them. Looser number or title matches apply only when no key does.
+	var exact, matches []domain.Issue
 	for _, issue := range h.repo.Issues() {
 		if issue.ProjectID != bot.ProjectID {
 			continue
@@ -193,6 +198,7 @@ func (h *assistantHandlers) findBotClarifyIssue(bot domain.NotificationBot, conv
 		label := h.botIssueLabel(issue)
 		switch {
 		case strings.EqualFold(label, ref):
+			exact = append(exact, issue)
 		case botIssueKeyPattern.MatchString(ref) && strings.EqualFold(ref, strings.TrimSpace(project.Key)+"-"+strconv.Itoa(issue.Number)):
 		case botIssueNumPattern.MatchString(ref) && botIssueNumPattern.FindStringSubmatch(ref)[1] == strconv.Itoa(issue.Number):
 		case strings.TrimSpace(issue.Title) == ref:
@@ -200,6 +206,9 @@ func (h *assistantHandlers) findBotClarifyIssue(bot domain.NotificationBot, conv
 			continue
 		}
 		matches = append(matches, issue)
+	}
+	if len(exact) == 1 {
+		return exact[0], ""
 	}
 	if len(matches) == 1 {
 		return matches[0], ""

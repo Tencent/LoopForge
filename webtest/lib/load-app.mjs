@@ -194,7 +194,7 @@ class ObserverStub {
   takeRecords() { return []; }
 }
 
-export async function loadApp({ routes = [], hash = '', dispatchReady = true, origin = 'http://127.0.0.1' } = {}) {
+export async function loadApp({ routes = [], hash = '', dispatchReady = true, origin = 'http://127.0.0.1', lang = '' } = {}) {
   const html = await readFile(path.join(WEB_ROOT, 'index.html'), 'utf8');
   const dom = new JSDOM(html, {
     runScripts: 'outside-only',
@@ -202,6 +202,8 @@ export async function loadApp({ routes = [], hash = '', dispatchReady = true, or
     url: `${origin}/${hash ? `#${hash.replace(/^#/, '')}` : ''}`,
   });
   const { window } = dom;
+  // boot.js reads the saved language before the app scripts run.
+  if (lang) window.localStorage.setItem('loopforge.lang', lang);
   const router = createFetchRouter(routes);
 
   window.fetch = router.fetch;

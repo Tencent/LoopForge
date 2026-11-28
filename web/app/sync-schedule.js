@@ -340,7 +340,17 @@ function bindScheduleModelPicker(){
     if(next)paintScheduleModel(next);
   };
   document.addEventListener('click',e=>{if(!host.contains(e.target))closeScheduleModelMenu()});
-  document.addEventListener('keydown',e=>{if(e.key==='Escape')closeScheduleModelMenu()});
+  // Esc closes only the open menu. Capture runs before the page-level Esc
+  // handler that would otherwise close the whole editor and drop the draft.
+  // A confirm dialog or the command palette above the editor keeps its Esc:
+  // the confirm binds its capture handler lazily, so it may run after this one.
+  document.addEventListener('keydown',e=>{
+    if(e.key!=='Escape'||menu.hidden||e.defaultPrevented)return;
+    if($('#confirmModal')?.classList.contains('open')||$('#commandPalette')?.hidden===false)return;
+    e.preventDefault();e.stopImmediatePropagation();
+    closeScheduleModelMenu();
+    toggle.focus({preventScroll:true});
+  },true);
   // A fixed menu would drift from its toggle; close it when anything else scrolls.
   document.addEventListener('scroll',e=>{if(!menu.contains(e.target))closeScheduleModelMenu()},true);
   window.addEventListener('resize',closeScheduleModelMenu);
@@ -488,6 +498,8 @@ function closeScheduleJobModal(){
   scheduleModalVersion++;
   const modal=$('#scheduleModal');
   if(!modal.classList.contains('open'))return;
+  // A menu left open behind a closed editor would swallow the next Esc.
+  closeScheduleModelMenu();
   modal.classList.remove('open');
   schedulePromptEditor?.destroy();schedulePromptEditor=null;
   const editId=scheduleModalOpener?.dataset?.editSchedule;

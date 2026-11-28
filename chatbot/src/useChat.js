@@ -3,6 +3,7 @@ import {
   api,
   write,
   sessionPath,
+  messageOffset,
   newId,
   mergeEvents,
   projectChange,
@@ -56,6 +57,7 @@ function effortPreference(executor, model) {
 }
 
 const runnerLoginExecutors = ["codex", "claude-code", "agy"];
+const historyPendingMessage = "正在补齐更早的对话，请稍候再操作。";
 
 function usesRunnerLogin(machine, executor) {
   return runnerLoginExecutors.includes(executor) &&
@@ -205,10 +207,31 @@ export function useChat() {
       ? withSessionTitle(stored, renamed)
       : stored;
   }, []);
-  const readSession = useCallback(async (id) => {
+  const readSession = useCallback(async (id, { recent = false, view = "" } = {}) => {
     const titlesAtRequest = renamedTitles.current;
-    return mergeRenamedTitle(await api(sessionPath(id)), titlesAtRequest);
+    const mode = recent ? "recent" : view;
+    const path = sessionPath(id) + (mode ? `?view=${mode}` : "");
+    return mergeRenamedTitle(await api(path), titlesAtRequest);
   }, [mergeRenamedTitle]);
+  const activityRequests = useRef(new Map());
+  const loadActivity = useCallback((id, index, ref) => {
+    const path = sessionPath(id) + `?view=activity&index=${index}&ref=${encodeURIComponent(ref)}`;
+    const pending = activityRequests.current.get(path);
+    if (pending) return pending;
+    const request = api(path).then((activity) => {
+      if (currentId.current !== id) return;
+      setSession((current) => {
+        if (current?.id !== id) return current;
+        const offset = index - messageOffset(current);
+        if (current.messages[offset]?.activityRef !== ref) return current;
+        const messages = current.messages.slice();
+        messages[offset] = { ...messages[offset], activity, activityRef: undefined };
+        return { ...current, messages };
+      });
+    }).finally(() => activityRequests.current.delete(path));
+    activityRequests.current.set(path, request);
+    return request;
+  }, []);
   const refreshSessions = useCallback(async () => {
     const titlesAtRequest = renamedTitles.current;
     const rows = (await api("/api/assistant/sessions") || [])
@@ -285,10 +308,20 @@ export function useChat() {
     });
     return choice;
   }
+  // History can arrive before the model catalog. Use the current catalog even
+  // for a read that started during boot, and restore older unprefixed models
+  // once the catalog becomes available.
+  const restoreReceivedModel = useRef(null);
+  restoreReceivedModel.current = ready ? restoreConversationModel : null;
+  useEffect(() => {
+    if (ready && sessionRef.current) restoreReceivedModel.current(sessionRef.current);
+  }, [ready]);
   function receiveSession(stored, running = false) {
     if (!stored || currentId.current !== stored.id) return;
+    // A tail that arrives after the full transcript must not hide earlier turns.
+    if (sessionRef.current?.id === stored.id && !sessionRef.current.messagesPartial && stored.messagesPartial) return;
     const opening = sessionRef.current?.id !== stored.id;
-    restoreConversationModel(stored, { running, preserveChoice: !opening });
+    restoreReceivedModel.current?.(stored, { running, preserveChoice: !opening });
     if (opening) {
       changeURL(stored.id);
       setProjectId(stored.projectId || "");
@@ -342,25 +375,28 @@ export function useChat() {
       connectionError = "";
     async function load() {
       try {
-        const [auth, projectRows, catalog, users, sandboxRows] = await Promise.all([
-          api("/api/auth/current"),
+        const [, projectRows, catalog, users, sandboxRows] = await Promise.all([
+          api("/api/auth/current").then((auth) => {
+            if (current) setIdentity(auth.user);
+          }),
           api("/api/projects"),
           api("/api/assistant/models"),
           api("/api/users"),
           api("/api/sandboxes"),
         ]);
         if (!current) return;
-        setIdentity(auth.user);
         setUsers(users || []);
         setProjects(projectRows || []);
         setSandboxes(sandboxRows || []);
         applyModelCatalog(catalog);
         if (catalog.cursorModelsPending) requestModelCatalogRefresh((revision) => revision + 1);
-        await refreshSessions();
         if (!current) return;
         const recovered = connectionError;
         setError((old) => (old === recovered ? "" : old));
         setReady(true);
+        // The history list fills the sidebar. It must not sit in front of the
+        // open conversation or the signal that the workbench can be shown.
+        void refreshSessions().catch(() => {});
       } catch (e) {
         if (!current) return;
         const retry = !e.status || e.status >= 500;
@@ -375,8 +411,9 @@ export function useChat() {
       clearTimeout(timer);
     };
   }, [applyModelCatalog, refreshSessions]);
+  const identityKnown = !!identity;
   useEffect(() => {
-    if (!ready || !activeId) return;
+    if (!identityKnown || !activeId) return;
     // send/edit already supplied this session. Reloading it here can return an
     // older empty snapshot and erase the optimistic message during generation.
     if (sessionRef.current?.id === activeId) return;
@@ -385,14 +422,39 @@ export function useChat() {
       connectionError = "";
     async function load() {
       try {
-        const stored = await readSession(activeId);
-        if (!current || currentId.current !== activeId || sessionRef.current?.id === activeId) return;
+        if (sessionRef.current?.id !== activeId) {
+          const preview = await readSession(activeId, { recent: true });
+          if (!current || currentId.current !== activeId) return;
+          if (sessionRef.current?.id !== activeId) {
+            receiveSession(preview);
+            const recovered = connectionError;
+            setError((old) => (old === recovered ? "" : old));
+          }
+        }
+        if (!current || currentId.current !== activeId || !sessionRef.current?.messagesPartial) return;
+        const stored = await readSession(activeId, { view: "transcript" });
+        if (!current || currentId.current !== activeId) return;
+        // This read only completes the tail. A write made meanwhile (binding a
+        // project, sandbox, knowledge, linked issue) already replaced the tail
+        // with the complete conversation it saved; the server may have served
+        // this read before that write, so it must not undo it.
+        if (sessionRef.current?.id === activeId && !sessionRef.current.messagesPartial) return;
         receiveSession(stored);
         const recovered = connectionError;
         setError((old) => (old === recovered ? "" : old));
       } catch (e) {
-        if (!current || currentId.current !== activeId || sessionRef.current?.id === activeId) return;
+        if (!current || currentId.current !== activeId) return;
+        // The tail is already on screen. A failed full read still has to retry,
+        // otherwise the composer stays blocked on messagesPartial.
+        if (sessionRef.current?.id === activeId && !sessionRef.current.messagesPartial) return;
         const retry = !e.status || e.status >= 500;
+        if (!retry && sessionRef.current?.id === activeId) {
+          // The server refused the full transcript (deleted, access revoked).
+          // Drop the tail too: it cannot be completed, so it must not stay on
+          // screen as a conversation that only waits for its history.
+          sessionRef.current = null;
+          setSession(null);
+        }
         connectionError = retry ? "连接暂时中断，正在重连…" : e.message;
         setError(connectionError);
         if (retry) timer = setTimeout(load, 2000);
@@ -403,7 +465,7 @@ export function useChat() {
       current = false;
       clearTimeout(timer);
     };
-  }, [activeId, ready, readSession, syncProject]);
+  }, [activeId, identityKnown, readSession, syncProject]);
   useEffect(() => {
     if (!ready) return;
     const timer = setInterval(
@@ -419,7 +481,7 @@ export function useChat() {
     let cancelled = false;
     const timer = setInterval(async () => {
       try {
-        const stored = await readSession(session.id);
+        const stored = await readSession(session.id, { view: "title" });
         if (cancelled || currentId.current !== session.id || !stored?.title) return;
         if (stored.title === sessionRef.current?.title && !stored.titleGenerated && !stored.titleEdited) return;
         setSession((prev) =>
@@ -445,8 +507,9 @@ export function useChat() {
       clearTimeout(stop);
     };
   }, [readSession, ready, session?.id, session?.title, session?.titleEdited, session?.titleGenerated, titlePrompt]);
+  const openedId = session?.id;
   useEffect(() => {
-    if (!ready || !activeId) return;
+    if (!ready || !activeId || openedId !== activeId) return;
     let cancelled = false,
       timer,
       source,
@@ -470,7 +533,10 @@ export function useChat() {
         setError((current) => (current === recovered ? "" : current));
       }
       const running = g.status === "running";
-      const needsTranscript = running ? genId !== g.id : loaded !== g.id;
+      const staleTranscript = !!g.sessionUpdatedAt && sessionRef.current?.updatedAt !== g.sessionUpdatedAt;
+      const needsTranscript = running ? genId !== g.id : loaded !== g.id || staleTranscript;
+      const sameTranscript = !running && !!g.sessionUpdatedAt && !staleTranscript &&
+        sessionRef.current?.messages?.at(-1)?.generationId === g.id;
       if (needsTranscript) {
         // Pause sends until the transcript and CLI for this turn are loaded.
         // A new turn can come from steering or from another member.
@@ -479,9 +545,11 @@ export function useChat() {
           source?.close();
           source = null;
         }
-        const stored = await readSession(activeId);
-        if (!isCurrent(revision)) return;
-        receiveSession(stored, running);
+        if (!sameTranscript) {
+          const stored = await readSession(activeId, { view: "transcript" });
+          if (!isCurrent(revision)) return;
+          receiveSession(stored, running);
+        }
         if (!running) {
           loaded = g.id;
           setSettledId(g.id);
@@ -514,7 +582,7 @@ export function useChat() {
         });
       }
       if (!running && needsTranscript) {
-        await refreshSessions();
+        if (!sameTranscript) await refreshSessions();
         if (isCurrent(revision) && g.error && !["canceled", "cancelled"].includes(g.status))
           setError(g.error);
       }
@@ -566,8 +634,14 @@ export function useChat() {
           schedulePoll(500);
           return;
         }
+        // Older replies may have their only surviving trace in /generation.
+        // Ask for just the status when this exact reply already owns a trace.
+        const reply = sessionRef.current?.messages?.at(-1);
+        const saved = reply?.role === "assistant" && (reply.activityRef || reply.activity?.length)
+          ? reply.generationId : "";
+        const condition = saved ? "&savedReply=" + encodeURIComponent(saved) : "";
         const g = await api(
-          `${sessionPath(activeId)}/generation?after=${cursor}`,
+          `${sessionPath(activeId)}/generation?after=${cursor}${condition}`,
         );
         if (!isCurrent(revision)) return schedulePoll(200);
         generationFound = true;
@@ -592,7 +666,7 @@ export function useChat() {
       clearTimeout(timer);
       source?.close();
     };
-  }, [activeId, readSession, ready, refreshSessions, setGenerationKnown]);
+  }, [activeId, openedId, readSession, ready, refreshSessions, setGenerationKnown]);
   const selectProject = useCallback(
     async (id, { external = false } = {}) => {
       const current = sessionRef.current;
@@ -607,12 +681,17 @@ export function useChat() {
           const saved = await write(
             sessionPath(current.id),
             // Another device may have renamed the session since this one read it.
+            // Binding changes metadata only. Without messages the server keeps
+            // the stored transcript, so a recent-only view or a copy that missed
+            // newer turns cannot overwrite it.
             {
               ...current, projectId: id,
               title: undefined, titleEdited: undefined, titleGenerated: undefined,
+              messages: undefined, messagesPartial: undefined, messagesOffset: undefined,
             },
             "PUT",
           );
+          if (currentId.current === current.id) sessionRef.current = saved;
           setSession(saved);
           setProjectId(id);
           syncProject(id);
@@ -687,6 +766,8 @@ export function useChat() {
         return;
       }
       if (e.data?.type !== "agentflow-project-context") return;
+      // A restored shell default is only a default for a new conversation.
+      if (e.data.initial && currentId.current) return;
       const id = e.data.projectId || "";
       if (id === globalProject.current) return;
       globalProject.current = id;
@@ -701,6 +782,12 @@ export function useChat() {
         );
     return () => window.removeEventListener("message", listener);
   }, [ready]);
+  // The composer can restore this user's draft once their identity is known.
+  // The chat already renders its own loading state for a pending transcript.
+  useEffect(() => {
+    if (identityKnown && window.parent !== window)
+      window.parent.postMessage({ type: "agentflow-chat-visible" }, location.origin);
+  }, [identityKnown]);
   const missingKey = !!user && !user.codeBuddyApiKeyConfigured;
   // Without their own key users chat on the platform's shared key, limited to
   // the models the administrator allowed (the first is the default).
@@ -873,6 +960,12 @@ export function useChat() {
   }
   function sessionLoading() {
     return !!currentId.current && sessionRef.current?.id !== currentId.current;
+  }
+  // A recent view holds only the tail of the transcript. Its message indices
+  // are not transcript indices, and writing it back would drop earlier turns,
+  // so every index-based or whole-transcript write waits for the full read.
+  function historyPending() {
+    return !!sessionRef.current?.messagesPartial && sessionRef.current.id === currentId.current;
   }
   function replyStatePending() {
     const id = currentId.current;
@@ -1127,6 +1220,10 @@ export function useChat() {
       setError("会话仍在加载，请稍候再发送。");
       return false;
     }
+    if (historyPending()) {
+      setError("正在补齐更早的对话，请稍候再发送。");
+      return false;
+    }
     if (!executor || missingServerCLI) return false;
     const currentProjectId = sessionRef.current?.projectId || "";
     const approval = fromQueue
@@ -1278,7 +1375,7 @@ export function useChat() {
         setGeneration(g);
         setGenerationKnown(s.id);
       }
-      await refreshSessions().catch(() => {});
+      void refreshSessions().catch(() => {});
       return true;
     } catch (e) {
       if (clientRequestId) {
@@ -1354,6 +1451,10 @@ export function useChat() {
     }
   }
   async function edit(index, content, fork = false) {
+    if (historyPending()) {
+      setError(historyPendingMessage);
+      return null;
+    }
     try {
       const stored = await write(
         `${sessionPath(activeId)}/${fork ? "fork" : "edit"}`,
@@ -1408,6 +1509,7 @@ export function useChat() {
     }
   }
   async function applyDraft(messageIndex, draftIndex, review = {}) {
+    if (historyPending()) throw Error(historyPendingMessage);
     const id = activeId;
     const key = `${id}:${messageIndex}:${draftIndex}`;
     if (applyingRef.current.has(key)) throw Error("这项操作正在执行，请稍候。");
@@ -1521,6 +1623,7 @@ export function useChat() {
   // Answers an assistant proposal card. Declining work the assistant had not
   // started continues with the turn the server returns.
   async function decideProposal(messageIndex, draftIndex, decision, approvalMode = "confirm") {
+    if (historyPending()) throw Error(historyPendingMessage);
     const id = activeId;
     if (generation?.status === "running")
       throw Error("请等待回复结束后再处理建议。");
@@ -1673,6 +1776,7 @@ export function useChat() {
   }, []);
   return {
     user,
+    loadActivity,
     defaultApproval: accountDefaults?.approval,
     refreshCredentials,
     users,

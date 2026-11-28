@@ -226,3 +226,18 @@ test('the gate preview translates its yes and no values without a dictionary ent
   assert.equal(required(), 'No');
   assert.equal(app.window.LF_I18N_EN['否'], undefined); // A typed 「否」 must not be rewritten.
 });
+
+test('a LOOP trace detection record is titled with the LOOP wording', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  app.evaluate(`state.runEval = ${JSON.stringify({
+    id: 'sopdet-run-eval', runId: run.id, status: 'succeeded', sopDetection: true,
+    result: { summary: '发现 1 处重复调用', findings: [{ message: '重复读取同一文件', evidence: 'read README.md ×3' }] },
+  })}`);
+  const pane = mount(app);
+  const panel = pane.querySelector('.run-eval-panel');
+  assert.equal(panel.querySelector('h4').textContent.trim(), 'LOOP 自动检测');
+  assert.doesNotMatch(panel.textContent, /SOP/);
+  assert.match(panel.textContent, /发现 1 处重复调用/);
+  assert.match(panel.querySelector('li b').textContent, /重复读取同一文件/);
+});
