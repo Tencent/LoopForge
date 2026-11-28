@@ -140,7 +140,7 @@ test('CLI model editor keeps machine account and personal API Key catalogs indep
   app.router.post('/api/runners/runner-cb/models/probe', {
     source:'runner', models:[{id:'codex/account-model',name:'Account model'}],
   });
-  app.router.post('/api/users/1/cli-models/probe', {
+  app.router.post('/api/users/1/cli-models/probe', ({body}) => body.connectOnly ? {source:'official', connected:true} : {
     source:'official', models:[model,{id:'another-model',name:'Another model'}],
   });
   app.router.put('/api/runners/runner-cb/models', ({body}) => {
@@ -181,8 +181,14 @@ test('CLI model editor keeps machine account and personal API Key catalogs indep
   assert.deepEqual(modelIDs(), [model.id]);
   picker('probe').click();
   await settle();
-  assert.match(app.document.querySelector('.runner-model-editor').textContent, /来自官方服务/);
+  assert.match(app.document.querySelector('.runner-model-editor').textContent, /来自 CodeBuddy CLI/);
   assert.deepEqual(app.router.calls.find(c => c.path.endsWith('/cli-models/probe')).body, {engine:'codebuddy',apiKey:''});
+  picker('connection').click();
+  await settle();
+  assert.match(app.document.querySelector('.runner-model-editor [data-catalog-probe]').textContent, /连接成功/);
+  assert.deepEqual(app.router.calls.filter(c => c.path.endsWith('/cli-models/probe')).at(-1).body, {
+    engine:'codebuddy', apiKey:'', connectOnly:true, model:model.id,
+  });
   app.document.querySelector('#confirmCancelBtn').click();
 });
 
