@@ -545,7 +545,7 @@ describe("App", () => {
     const previous = { ...chat };
     const originalFetch = globalThis.fetch;
     const issues = {
-      i1: { id: "i1", title: "个人主页徽章", projectId: "p1" },
+      i1: { id: "i1", title: "个人主页徽章", projectId: "p1", workflowId: "delivery" },
       i2: { id: "i2", title: "导出报表", projectId: "p1" },
     };
     globalThis.fetch = vi.fn(async (path) => ({
@@ -554,12 +554,13 @@ describe("App", () => {
       json: async () => ({ issue: issues[decodeURIComponent(String(path).split("/").pop())] }),
     }));
     Object.assign(chat, { projectId: "p1", startProjectDraft: vi.fn() });
-    history.replaceState({}, "", "/?projectId=p1&mentionIssue=i1");
+    history.replaceState({}, "", "/?projectId=p1&mentionIssue=i1&mentionBoundSop=1");
     let view;
     try {
       view = render(<App />);
       const box = screen.getByRole("textbox");
-      await waitFor(() => expect(box.value).toBe("@个人主页徽章 "));
+      await waitFor(() => expect(box.value).toBe("@个人主页徽章 @delivery "));
+      expect(screen.getByLabelText("移除引用 delivery")).toBeInTheDocument();
       expect(screen.getByLabelText("移除引用 个人主页徽章")).toBeInTheDocument();
       expect(globalThis.fetch).toHaveBeenCalledWith("/api/issues/i1", expect.anything());
       expect(new URLSearchParams(location.search).has("mentionIssue")).toBe(false);

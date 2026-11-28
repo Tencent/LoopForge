@@ -252,7 +252,7 @@ function renderReqFooter(){
   }
   if(chat){
     chat.disabled=creating||!!reason;
-    chat.title=reason||'建单后打开 AI 工作台，新对话里已 @ 这个需求';
+    chat.title=reason||(reqUsesSOP()?'建单后打开 AI 工作台，在新对话里引用需求和所选 SOP':'建单后打开 AI 工作台，新对话里已 @ 这个需求');
     chat.innerHTML=creating==='chat'?'<span class="req-spin" aria-hidden="true"></span>正在创建…':`${reqIcon('chat')}创建并去对话澄清`;
   }
   const note=$('#reqComposerHint');
@@ -496,7 +496,7 @@ async function createIssueFromChat(target,mode){
     if(syncError)toast('已在平台建单，TAPD 同步失败：'+syncError,'err');
     else if(target==='tapd')toast(`已创建需求并同步 TAPD ${issue.externalRef?.externalId||''}`,'ok');
     else toast(toChat?'已创建需求，在对话里继续澄清':(useSOP?'已在平台创建需求，可在详情里触发 LOOP':'已创建需求（不使用 LOOP）'),'ok');
-    if(toChat)openIssueInChat(issue,{intent:'clarify'});
+    if(toChat)openIssueInChat(issue,{intent:'clarify',mentionBoundSop:useSOP});
     else openIssueDetail(issue.id);
   }catch(err){toast(err.message,'err')}
   finally{state.reqCreating='';renderReqFooter()}

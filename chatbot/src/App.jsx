@@ -388,7 +388,7 @@ function readIssueMention() {
   const params = new URLSearchParams(location.search);
   const issueId = params.get("mentionIssue") || "";
   const intent = params.get("mentionIntent") || "";
-  return issueId ? { issueId, projectId: params.get("projectId") || "", ...(intent ? { intent } : {}) } : null;
+  return issueId ? { issueId, projectId: params.get("projectId") || "", ...(intent ? { intent } : {}), mentionBoundSop: params.get("mentionBoundSop") === "1" } : null;
 }
 
 function RenameSessionDialog({ session, rename, onClose }) {
@@ -810,7 +810,7 @@ export default function App() {
       if (!issueId || !projectId) return;
       chat.startProjectDraft(projectId);
       setIssueDraft({ issueId, projectId });
-      setIssueMention({ issueId, projectId, ...(intent ? { intent } : {}) });
+      setIssueMention({ issueId, projectId, ...(intent ? { intent } : {}), mentionBoundSop: event.data.mentionBoundSop === true });
     };
     window.addEventListener("message", listener);
     return () => window.removeEventListener("message", listener);
@@ -837,13 +837,20 @@ export default function App() {
           name: issue.title || issue.id,
           projectId: issue.projectId,
         };
-        const value = insertMention("", { start: 0, end: 0 }, ref);
+        const refs = [ref];
+        if (issueMention.mentionBoundSop && issue.workflowId && issue.sopMode !== "none") {
+          refs.push({ type: "sop", id: issue.workflowId, name: issue.workflowName || issue.workflowId, projectId: issue.projectId });
+        }
+        let value = { text: "", caret: 0 };
+        for (const reference of refs) {
+          value = insertMention(value.text, { start: value.caret, end: value.caret }, reference);
+        }
         const initialText = issueMention.intent === "clarify"
           ? `${value.text}帮我澄清这个需求`
           : value.text;
         const initialCaret = initialText.length;
         setText(initialText);
-        setReferences([ref]);
+        setReferences(refs);
         setMention(null);
         const editor = input.current;
         requestAnimationFrame(() => {
@@ -861,6 +868,7 @@ export default function App() {
         const url = new URL(location.href);
         url.searchParams.delete("mentionIssue");
         url.searchParams.delete("mentionIntent");
+        url.searchParams.delete("mentionBoundSop");
         history.replaceState({}, "", url);
       });
     return () => {

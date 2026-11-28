@@ -190,6 +190,7 @@ test('Ctrl+Enter hands the requirement to the chat and TAPD sync failures are re
   await settle(4);
   assert.ok(app.router.calls.some((c) => c.path === '/api/issues' && c.body.description === 'Keyboard request'));
   assert.equal(app.evaluate(`pendingChatIssueMention?.issueId`), 'issue-key');
+  assert.equal(app.evaluate(`pendingChatIssueMention?.mentionBoundSop`), true);
 
   app.evaluate(`
     Object.assign(currentProject(),{tapdWorkspaceId:'ws',tapdIterationId:'it'});

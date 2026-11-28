@@ -592,7 +592,7 @@ function parseInlineMarkdown(text, allowImages=false){
   // Inline code is literal: hold each span aside so emphasis syntax inside it
   // (snake_case identifiers such as `todo_id`) is not rewritten.
   const codeSpans=[];
-  let s=escapeHTML(text).replace(/`([^`]+)`/g,(match,code)=>{codeSpans.push(code);return `\u0000${codeSpans.length-1}\u0000`});
+  let s=escapeHTML(text).replace(/`([^`]+)`/g,(match,code)=>{codeSpans.push(code);return `^@${codeSpans.length-1}^@`});
   s=s.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
   // Emphasis underscores must sit on word boundaries; intraword `_` is literal.
   s=s.replace(/(^|[^A-Za-z0-9_])__([^_\n]+?)__(?![\w])/g, '$1<strong>$2</strong>');
@@ -603,7 +603,7 @@ function parseInlineMarkdown(text, allowImages=false){
     const cleanUrl=safeURL(url.trim());
     return `<a href="${escapeHTML(cleanUrl)}" target="_blank" rel="noopener noreferrer">${label}</a>`;
   });
-  return s.replace(/\u0000(\d+)\u0000/g,(match,i)=>`<code>${codeSpans[Number(i)]}</code>`);
+  return s.replace(/^@(\d+)^@/g,(match,i)=>`<code>${codeSpans[Number(i)]}</code>`);
 }
 
 function isMarkdownArtifact(artifact, content){
@@ -715,7 +715,7 @@ function resourceIdProblem(id){
   const value=String(id||'');
   if(!value)return '标识不能为空';
   if([...value].length>64)return '标识不能超过 64 个字符';
-  if(/[\s\/\\?#%\u0000-\u001f\u007f]/.test(value))return '标识不能包含空格或 / \\ ? # % 字符';
+  if(/[\s\/\\?#%^@-^_\u007f]/.test(value))return '标识不能包含空格或 / \\ ? # % 字符';
   return '';
 }
 function uid(prefix){return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,6)}`}
@@ -1625,7 +1625,7 @@ function openChatSessionInWorkbench(sessionId,projectId){
 function openIssueInChat(issue,opts){
   if(!issue?.id||!issue.projectId)return;
   const intent=String(opts?.intent||'').trim();
-  pendingChatIssueMention={issueId:issue.id,projectId:issue.projectId,...(intent?{intent}:{})};
+  pendingChatIssueMention={issueId:issue.id,projectId:issue.projectId,...(intent?{intent}:{}),...(opts?.mentionBoundSop?{mentionBoundSop:true}:{})};
   localStorage.setItem('agentflow.activeProject',issue.projectId);
   const url=new URL(location.href);
   ['chatSession','chatIssue'].forEach(key=>url.searchParams.delete(key));
@@ -1771,7 +1771,7 @@ function mountNativeChat(){
     const mention=pendingChatIssueMention;
     pendingChatIssueMention=null;
     frame.src=mention
-      ?'/chatbot/?projectId='+encodeURIComponent(mention.projectId)+'&mentionIssue='+encodeURIComponent(mention.issueId)+(mention.intent?'&mentionIntent='+encodeURIComponent(mention.intent):'')
+      ?'/chatbot/?projectId='+encodeURIComponent(mention.projectId)+'&mentionIssue='+encodeURIComponent(mention.issueId)+(mention.intent?'&mentionIntent='+encodeURIComponent(mention.intent):'')+(mention.mentionBoundSop?'&mentionBoundSop=1':'')
       :'/chatbot/?projectId='+encodeURIComponent(projectId)+(sessionId?'&session='+encodeURIComponent(sessionId):issueId?'&issueId='+encodeURIComponent(issueId):'')+(quickAccess?'&quickAccess=1':'');
   }
   postNativeChatProject(frame);
