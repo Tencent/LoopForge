@@ -267,8 +267,14 @@ export async function loadApp({ routes = [], hash = '', dispatchReady = true, or
   window.WebSocket = WebSocketStub;
 
   const scriptElements = [...window.document.querySelectorAll('script[src]')];
-  const files = scriptElements.map((element) => {
-    const src = new URL(element.getAttribute('src'), window.location.href);
+  // jsdom runs scripts outside the document, so mirror the English-only
+  // dictionary import that normally uses document.currentScript.
+  const scripts = scriptElements.flatMap(element =>
+    lang === 'en' && element.dataset.dictionarySrc
+      ? [element.dataset.dictionarySrc, element.getAttribute('src')]
+      : [element.getAttribute('src')]);
+  const files = scripts.map((url) => {
+    const src = new URL(url, window.location.href);
     return path.join(WEB_ROOT, decodeURIComponent(src.pathname).replace(/^\/+/, ''));
   });
   const context = dom.getInternalVMContext();

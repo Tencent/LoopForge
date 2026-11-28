@@ -8,12 +8,13 @@ test('loads every index script in document order using absolute filenames', asyn
   t.after(app.close);
   assert.equal(app.files.length, app.document.querySelectorAll('script[src]').length);
   assert.ok(app.files.every((file) => path.isAbsolute(file) && file.startsWith(WEB_ROOT + path.sep)));
-  assert.deepEqual(app.files.slice(0, 5), ['boot-theme.js', 'boot.js', 'i18n-en.js', 'i18n.js', 'app.js'].map((file) => path.join(WEB_ROOT, file)));
+  assert.deepEqual(app.files.slice(0, 4), ['boot-theme.js', 'boot.js', 'i18n.js', 'app.js'].map((file) => path.join(WEB_ROOT, file)));
+  assert.equal(app.files.includes(path.join(WEB_ROOT, 'i18n-en.js')), false);
   // The shared model catalog must load right after app.js and before every picker
   // script (flows, agents, bots, sync-schedule, composer, runs) that reads
   // window.AgentFlowAssistantModels; otherwise those pickers silently stop binding.
-  assert.equal(app.files[5], path.join(WEB_ROOT, 'app', 'assistant-models.js'));
-  assert.equal(app.files.at(-1), path.join(WEB_ROOT, 'orchestrate.js'));
+  assert.equal(app.files[4], path.join(WEB_ROOT, 'app', 'assistant-models.js'));
+  assert.deepEqual(app.files.slice(-2), [path.join(WEB_ROOT, 'orchestrate.js'), path.join(WEB_ROOT, 'app', 'start.js')]);
   assert.equal(typeof app.evaluate('api'), 'function');
   assert.equal(typeof app.window.AgentFlowHarnessIcons.render, 'function');
 });

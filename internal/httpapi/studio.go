@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -11,6 +12,7 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"time"
 )
 
 var studioReleaseVersion = regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$`)
@@ -19,6 +21,8 @@ var studioAssetRef = regexp.MustCompile(`((?:href|src)=")(/[^"]+\.(?:js|css))(\?
 
 // Vite emits content-hashed files in assets/ using eight-character URL-safe hashes.
 var studioHashedChatAsset = regexp.MustCompile(`^assets/[^/]+-[A-Za-z0-9_-]{8}\.[A-Za-z0-9]+$`)
+var studioChatSessionID = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
+var studioViewStylesheet = regexp.MustCompile(`rel="stylesheet" (href="[^"]+" data-studio-view)`)
 
 func stampStudioIndex(static fs.FS, raw []byte) []byte {
 	html := string(raw)
@@ -111,6 +115,13 @@ func studioFileServer(static fs.FS) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if name, ok := strings.CutPrefix(r.URL.Path, chatPath); ok {
 			w.Header().Set("Cache-Control", "no-store")
+			if name == "" {
+				if id := r.URL.Query().Get("session"); studioChatSessionID.MatchString(id) {
+					// Start the same authenticated read the chat consumes, before its
+					// scripts and background catalogs compete for browser connections.
+					w.Header().Add("Link", "</api/assistant/sessions/"+id+"?view=recent>; rel=preload; as=fetch; crossorigin=anonymous; fetchpriority=high")
+				}
+			}
 			if studioHashedChatAsset.MatchString(name) {
 				info, err := fs.Stat(native, name)
 				if errors.Is(err, fs.ErrNotExist) {
@@ -151,9 +162,18 @@ func studioFileServer(static fs.FS) http.Handler {
 			}
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 			w.Header().Set("Cache-Control", "no-cache")
-			// 显式写状态码：gin 的 NoRoute 预设 404，隐式 WriteHeader 会沿用。
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write(stampStudioIndex(static, raw))
+			body := stampStudioIndex(static, raw)
+			if name == "index.html" && studioChatSessionID.MatchString(r.URL.Query().Get("chatSession")) {
+				// Template contents stay out of the browser's speculative preload
+				// scanner. The studio loads these scripts in order after the chat opens.
+				body = bytes.Replace(body, []byte("<!-- studio modules -->"), []byte(`<template id="studioModules">`), 1)
+				body = bytes.Replace(body, []byte("<!-- end studio modules -->"), []byte("</template>"), 1)
+				body = studioViewStylesheet.ReplaceAll(body, []byte("$1"))
+			}
+			// Revalidate the final HTML, including asset hashes and deployment metadata.
+			// The same weak tag applies to the gzip and identity representations.
+			w.Header().Set("ETag", fmt.Sprintf(`W/"%x"`, sha256.Sum256(body)))
+			http.ServeContent(w, r, name, time.Time{}, bytes.NewReader(body))
 			return
 		}
 		if strings.HasPrefix(r.URL.Path, "/extensions/agentflow-workspace/") ||

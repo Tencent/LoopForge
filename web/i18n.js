@@ -1,7 +1,7 @@
 // Runtime UI translation. The app renders Chinese copy directly; in English
 // mode this layer rewrites text nodes and a few attributes as they appear,
 // using the zh→en dictionary in i18n-en.js. Chinese mode is a no-op.
-(() => {
+(async () => {
   const root = document.documentElement;
   const lang = root.dataset.lang === 'en' ? 'en' : 'zh';
   window.lfLang = () => lang;
@@ -85,6 +85,10 @@
 
   if (lang !== 'en') return;
 
+  const dictionaryURL = document.currentScript?.dataset.dictionarySrc;
+  if (!window.LF_I18N_EN && dictionaryURL) {
+    try { await import(dictionaryURL); } catch { /* Explicit bilingual labels still work. */ }
+  }
   const dict = window.LF_I18N_EN || {};
   const HAN = /[\u3400-\u9fff\u300c\u300d\uff0c\u3002\uff1a\uff08\uff09\u3001\uff1b\uff01\uff1f]/;
   const SKIP = new Set(['SCRIPT', 'STYLE', 'TEXTAREA', 'CODE', 'PRE', 'NOSCRIPT']);

@@ -144,6 +144,31 @@ describe("conversation hooks", () => {
     }
   });
 
+  test("starts catalogs after the initial preview settles, including a denied conversation", async () => {
+    const original = apiMock.getMockImplementation();
+    let rejectPreview;
+    const preview = new Promise((_, reject) => { rejectPreview = reject; });
+    const path = "/api/assistant/sessions/denied?view=recent";
+    const reads = [];
+    apiMock.mockImplementation((url, options) => {
+      reads.push(url);
+      return url === path ? preview : original(url, options);
+    });
+    try {
+      history.replaceState({}, "", "/?session=denied");
+      const { result } = renderHook(useChat);
+      await waitFor(() => expect(reads).toContain(path));
+      expect(reads).not.toContain("/api/projects");
+      await act(async () => rejectPreview(Object.assign(Error("无权读取会话"), { status: 403 })));
+      await waitFor(() => expect(result.current.ready).toBe(true));
+      expect(reads.filter(url => url === path)).toHaveLength(1);
+      expect(result.current.session).toBeNull();
+      expect(result.current.error).toBe("无权读取会话");
+    } finally {
+      apiMock.mockImplementation(original);
+    }
+  });
+
   test.each([false, true])("checks a saved reply against its session revision (changed: %s)", async (changed) => {
     const original = apiMock.getMockImplementation();
     const base = "/api/assistant/sessions/compact";

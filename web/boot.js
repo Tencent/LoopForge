@@ -9,6 +9,17 @@ window.lfT = window.lfT || ((zh) => zh);
   } catch (_) { /* Restricted storage still permits the default interface. */ }
   root.dataset.lang = lang;
   root.lang = lang === 'en' ? 'en' : 'zh-CN';
+  // The console requests this identity after its scripts load. Begin that
+  // same read while the HTML is arriving. SSO callbacks exchange a code first.
+  if ((location.pathname === '/' || location.pathname === '/index.html') &&
+      !new URLSearchParams(location.search).has('code')) {
+    const auth = document.createElement('link');
+    auth.rel = 'preload';
+    auth.as = 'fetch';
+    auth.crossOrigin = 'anonymous';
+    auth.href = '/api/auth/current?return_url=' + encodeURIComponent(location.href);
+    document.head.append(auth);
+  }
   try {
     if (sessionStorage.getItem('loopforge.lang.motion') === 'in') {
       if (matchMedia('(prefers-reduced-motion: reduce)').matches) sessionStorage.removeItem('loopforge.lang.motion');

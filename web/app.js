@@ -903,9 +903,43 @@ function shouldAutoSSORedirect({isGuest, hostname, bypassAutoAuth, authErr, logi
   return !!(isGuest && isOAHost(hostname) && !bypassAutoAuth && !authErr && loginUrl);
 }
 
+// The native chat reads its own data. Give its first screen the connection
+// before fetching the console catalogs. Navigating away releases the wait.
+function waitForInitialChat(frame){
+  if(!frame)return Promise.resolve();
+  return new Promise(resolve=>{
+    const listeners=new AbortController();
+    const options={signal:listeners.signal};
+    let timer;
+    const finish=()=>{clearTimeout(timer);listeners.abort();resolve()};
+    const armFallback=()=>{
+      clearTimeout(timer);
+      timer=setTimeout(finish,BOOT_LOADER_CHAT_TIMEOUT_MS);
+    };
+    // A first visit can spend longer than the fallback downloading the chat
+    // itself. Start the deadline once the frame loads or signals progress.
+    frame.addEventListener('load',armFallback,options);
+    frame.addEventListener('error',finish,options);
+    window.addEventListener('message',event=>{
+      if(event.origin!==location.origin||event.source!==frame.contentWindow)return;
+      const msg=event.data;
+      if(msg?.type==='agentflow-chat-visible')armFallback();
+      if(msg?.type==='agentflow-chat-open-view'||msg?.type==='agentflow-chat-preview-settled')finish();
+    },options);
+    window.addEventListener('hashchange',finish,options);
+    document.addEventListener('pointerdown',finish,options);
+    document.addEventListener('keydown',finish,options);
+  });
+}
+let initialShellCatalog=null,deferShellActions=false;
 async function boot(){
   state.data = {runs:[],issues:[],tasks:[],workflowMetrics:[],syncLogs:[],agents:[],workflows:[],projects:[],repositories:[],users:[],rules:[],skills:[],mcpServers:[],executors:[],sandboxes:[]};
-  bind(); renderProjectSwitcher(); updateApprovalBadge();
+  const modules=document.getElementById('studioModules')?.content;
+  deferShellActions=!!modules&&restoredView()==='collaboration';
+  if(!deferShellActions){
+    if(modules)await loadStudioModules(modules);
+    bindStudioControls();
+  }
 
   // 1. 检查 URL 中是否有 SSO 回调的 code
   const urlParams = new URLSearchParams(window.location.search);
@@ -967,9 +1001,9 @@ async function boot(){
     }
   }
   if(isGuest&&state.authRequired){location.replace('/login.html');return}
-  renderUserBadge();
+  if(!deferShellActions)renderUserBadge();
 
-  // Home opens the chatbot while the rest of the shell catalog is still loading.
+  let chatContent;
   if(restoredView()==='collaboration'){
     const earlyProject=urlParams.get('projectId')||localStorage.getItem('agentflow.activeProject')||'';
     if(earlyProject)state.projectFilter=earlyProject;
@@ -977,10 +1011,20 @@ async function boot(){
     $$('.view').forEach(view=>view.classList.remove('active'));
     $('#collaborationView')?.classList.add('active');
     state.currentView='collaboration';
+    if(urlParams.get('chatSession')||(!urlParams.get('chatIssue')&&collaborationRouteId()))
+      chatContent=waitForInitialChat($('#chatNextFrame'));
+    if(deferShellActions)retainStudioRailClick();
     mountNativeChat();
   }
 
-  const shell = await api('/api/bootstrap', {silent: restoredView()==='runs'});
+  initialShellCatalog=Promise.resolve(chatContent).then(()=>api('/api/bootstrap', {silent: restoredView()==='runs'}));
+  const controls=deferShellActions&&Promise.resolve(chatContent).then(async()=>{
+    await loadStudioModules(modules);
+    bindStudioControls();
+    renderUserBadge();
+  });
+  const [shell]=await Promise.all([initialShellCatalog,controls]);
+  initialShellCatalog=null;
   state.data = Object.assign(state.data, shell);
   const savedProject=urlParams.get('projectId')||localStorage.getItem('agentflow.activeProject');
   state.projectFilter=(state.data.projects||[]).some(p=>p.id===savedProject)?savedProject:defaultProjectId(state.data.projects,state.currentUser?.id);
@@ -1036,6 +1080,7 @@ async function boot(){
   settleBootLoader();
   if(!['approvals','issues','runs','sops'].includes(state.currentView))preloadApprovalBadge();
   restoreRequirementComposer();
+  deferShellActions=false;
 }
 const BOOT_LOADER_CHAT_TIMEOUT_MS=8000;
 let nativeChatReady=false,bootLoaderTimer=0;
@@ -1556,7 +1601,6 @@ function nativeChatProjectId(){
 }
 function postNativeChatProject(frame){
   frame.contentWindow?.postMessage({type:'agentflow-project-context',projectId:nativeChatProjectId(),initial:true},location.origin);
-  frame.contentWindow?.postMessage({type:'agentflow-environments-changed'},location.origin);
 }
 // A requirement handed to the chat opens a new conversation with the
 // requirement already @-mentioned. It waits here until the chat frame can
@@ -1646,9 +1690,13 @@ function mountNativeChat(){
   if(!frame.dataset.nativeBridge){
     frame.dataset.nativeBridge='1';
     frame.addEventListener('load',()=>postNativeChatProject(frame));
-    window.addEventListener('message',event=>{
+    window.addEventListener('message',async event=>{
       if(event.origin!==location.origin||event.source!==frame.contentWindow)return;
       const message=event.data||{};
+      if(deferShellActions&&!['agentflow-chat-visible','agentflow-chat-ready','agentflow-chat-layout','agentflow-chat-session','agentflow-chat-preview-settled'].includes(message.type)){
+        try{await studioBoot}catch{return}
+        if(event.source!==frame.contentWindow)return;
+      }
       if(message.type==='agentflow-chat-visible'&&document.body.classList.contains('chat-next-active'))finishBootLoader();
       if(message.type==='agentflow-chat-ready'){
         nativeChatReady=true;
@@ -1683,7 +1731,9 @@ function mountNativeChat(){
           select.dispatchEvent(new Event('change',{bubbles:true}));
         };
         if(known())follow();
-        else reloadShellProjects().then(follow).catch(()=>{});
+        // Boot installs the first catalog and renders the switcher after the
+        // request resolves. Apply an early project change once both are ready.
+        else (initialShellCatalog?studioBoot:reloadShellProjects()).then(follow).catch(()=>{});
       }
       if(message.type==='agentflow-projects-changed')reloadShellProjects().catch(()=>{});
       if(message.type==='agentflow-credentials-changed'){
@@ -2211,7 +2261,12 @@ function switchView(name){
   const noSidebarViews = ['issues', 'approvals', 'observability'];
   document.body.classList.toggle('no-sidebar', noSidebarViews.includes(name));
   document.body.classList.toggle('chat-next-active', name==='collaboration');
-  if(name==='collaboration'||isPureManagement)mountNativeChat();
+  if(name==='collaboration'||isPureManagement){
+    const frame=$('#chatNextFrame');
+    const returning=name==='collaboration'&&previous&&previous!==name&&frame?.dataset.src==='native';
+    mountNativeChat();
+    if(returning)frame.contentWindow?.postMessage({type:'agentflow-environments-changed'},location.origin);
+  }
   showDirectRunButton(name==='flow');
   closeIssueDrawer();
   if(name!=='sops'&&typeof hideSOPCardMenu==='function')hideSOPCardMenu();

@@ -207,6 +207,18 @@ export function useChat() {
       ? withSessionTitle(stored, renamed)
       : stored;
   }, []);
+  // On a deep link, give the initial transcript and its image elements a
+  // chance to reach the DOM before the catalogs start using the same sockets.
+  const [initialPreview] = useState(() => {
+    if (!activeId) return null;
+    let finish;
+    const settled = new Promise(resolve => { finish = resolve; });
+    return { id: activeId, settled, finish };
+  });
+  useEffect(() => {
+    if (initialPreview && (activeId !== initialPreview.id || session?.id === initialPreview.id))
+      initialPreview.finish();
+  }, [activeId, session?.id, initialPreview]);
   const readSession = useCallback(async (id, { recent = false, view = "" } = {}) => {
     const titlesAtRequest = renamedTitles.current;
     const mode = recent ? "recent" : view;
@@ -375,14 +387,26 @@ export function useChat() {
       connectionError = "";
     async function load() {
       try {
+        const identityRead = api("/api/auth/current").then((auth) => {
+          if (current) setIdentity(auth.user);
+          if (!auth.user) initialPreview?.finish();
+        });
+        if (initialPreview) {
+          await identityRead;
+          await initialPreview.settled;
+          if (!current) return;
+          if (window.parent !== window) {
+            // Keep console downloads behind the initial image transfers too.
+            // The chat's pickers can load while these thumbnails finish.
+            const thumbnails = Array.from(document.querySelectorAll(".message-image img"));
+            void Promise.allSettled(thumbnails.map(image => image.decode?.())).then(() => {
+              if (current) window.parent.postMessage({ type: "agentflow-chat-preview-settled" }, location.origin);
+            });
+          }
+        }
         const [, projectRows, catalog, users, sandboxRows] = await Promise.all([
-          api("/api/auth/current").then((auth) => {
-            if (current) setIdentity(auth.user);
-          }),
-          api("/api/projects"),
-          api("/api/assistant/models"),
-          api("/api/users"),
-          api("/api/sandboxes"),
+          identityRead, api("/api/projects"), api("/api/assistant/models"),
+          api("/api/users"), api("/api/sandboxes"),
         ]);
         if (!current) return;
         setUsers(users || []);
@@ -410,7 +434,7 @@ export function useChat() {
       current = false;
       clearTimeout(timer);
     };
-  }, [applyModelCatalog, refreshSessions]);
+  }, [applyModelCatalog, refreshSessions, initialPreview]);
   const identityKnown = !!identity;
   useEffect(() => {
     if (!identityKnown || !activeId) return;
@@ -444,6 +468,7 @@ export function useChat() {
         setError((old) => (old === recovered ? "" : old));
       } catch (e) {
         if (!current || currentId.current !== activeId) return;
+        if (initialPreview?.id === activeId) initialPreview.finish();
         // The tail is already on screen. A failed full read still has to retry,
         // otherwise the composer stays blocked on messagesPartial.
         if (sessionRef.current?.id === activeId && !sessionRef.current.messagesPartial) return;
@@ -465,7 +490,7 @@ export function useChat() {
       current = false;
       clearTimeout(timer);
     };
-  }, [activeId, identityKnown, readSession, syncProject]);
+  }, [activeId, identityKnown, readSession, syncProject, initialPreview]);
   useEffect(() => {
     if (!ready) return;
     const timer = setInterval(
