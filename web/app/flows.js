@@ -199,6 +199,19 @@ async function switchFlowWorkflow(id){
   markWorkflowClean();flowHistory.clear();rememberOpenWorkflow();renderAll();refreshGenericWorkflowRoles();
   return true;
 }
+// Every path that opens a LOOP in the designer (catalog card, command
+// palette, write-back link) goes through here so unsaved edits are confirmed
+// and dirty/saved state belongs to the LOOP that is actually shown.
+async function openWorkflowInDesigner(id,missing='LOOP 不存在或已删除'){
+  const next=(state.data?.workflows||[]).find(w=>w.id===id);
+  if(!next){toast(missing);return false}
+  if(id===state.workflow?.id){
+    // Same LOOP: keep unsaved edits; otherwise pick up the stored version.
+    if(!state.workflowDirty){state.workflow=clone(next);state.selectedNode=null;markWorkflowClean();flowHistory.clear()}
+  }else if(!(await switchFlowWorkflow(id)))return false;
+  switchView('flow');renderAll();
+  return true;
+}
 function sopWorkflowChoices(exceptId){
   return catalogWorkflows().filter(w=>w.id&&w.id!==exceptId);
 }

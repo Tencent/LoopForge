@@ -60,6 +60,15 @@ test('repository controls stay in sync and Escape closes the popover before the 
   assert.equal(app.evaluate(`selectedReqWorkflowId()`), '');
   app.evaluate(`setReqDelivery('sop')`);
   assert.equal(app.evaluate(`reqUsesSOP()`), false);
+  // A description has been typed, so Escape asks before discarding it.
+  app.document.dispatchEvent(new app.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  await settle(2);
+  assert.ok($('#requirementModal').classList.contains('open'), 'Escape does not discard a typed description silently');
+  $('#confirmOkBtn').click();
+  await settle(2);
+  assert.equal($('#requirementModal').classList.contains('open'), false);
+  // An empty composer still closes on Escape right away.
+  app.evaluate(`openRequirementWizard();$('#chatInput').value=''`);
   app.document.dispatchEvent(new app.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
   await settle(2);
   assert.equal($('#requirementModal').classList.contains('open'), false);

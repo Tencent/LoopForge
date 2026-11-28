@@ -854,8 +854,9 @@ function preferredWorkflow(){
   const usable=catalogWorkflows(), mine=usable.filter(w=>catalogOwned(w.projectId));
   return mine.find(w=>w.id==='issue-fix-production')||mine[0]||usable.find(w=>w.id==='issue-fix-production')||usable[0]||null;
 }
+function workflowKeptForProject(){return !!(state.workflow&&!catalogGeneric(state.workflow)&&catalogVisible(state.workflow.projectId,state.workflow.shared))}
 function syncWorkflowToProject(){
-  if(state.workflow&&!catalogGeneric(state.workflow)&&catalogVisible(state.workflow.projectId,state.workflow.shared))return;
+  if(workflowKeptForProject())return;
   state.workflow=clone(preferredWorkflow());
   state.workflowSaved=clone(state.workflow);
   state.workflowDirty=false;
@@ -1393,7 +1394,7 @@ function bind(){
       if(state.drawerOpen)return closeIssueDrawer();
       if($('#requirementModal')?.classList.contains('open')){
         if(!$('#reqRepoPopover')?.hidden){toggleReqRepoPopover(false);return}
-        closeRequirementComposer();return
+        closeRequirementComposer({confirmDiscard:true});return
       }
       const open=[...$$('.modal.open')].pop();
       if(open?.id==='scheduleModal')return closeScheduleJobModal();
@@ -1441,6 +1442,12 @@ function bind(){
   $$('[data-close-drawer]').forEach(el=>el.onclick=closeIssueDrawer);
   $('#projectSwitcher').onchange=async e=>{
     if(!await confirmAssetLeave()){e.target.value=state.projectFilter||'';return}
+    // syncWorkflowToProject replaces the open LOOP when it is not visible in
+    // the new project, so confirm before throwing its unsaved edits away.
+    const previous=state.projectFilter;state.projectFilter=e.target.value;
+    const replacesWorkflow=state.workflowDirty&&!workflowKeptForProject();
+    state.projectFilter=previous;
+    if(replacesWorkflow&&!await afConfirm({title:'放弃修改并切换项目？',message:'当前流程有未保存修改，切换项目后将丢弃这些修改。',danger:true,confirmText:'放弃修改并切换',cancelText:'继续编辑'})){e.target.value=previous||'';return}
     const frame=$('#chatNextFrame');
     if(frame?.contentWindow)frame.contentWindow.postMessage({type:'agentflow-project-context',projectId:e.target.value},location.origin);
     closeScheduleJobModal();

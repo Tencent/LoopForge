@@ -373,9 +373,7 @@ function restoreSOPCatalogFocus(root,focus){
 }
 function liveSOPCards(root){return [...root.querySelectorAll('.sop-card:not(.is-leaving)')]}
 function openSOPDesigner(id,missing='LOOP 不存在或已删除'){
-  const wf=(state.data.workflows||[]).find(x=>x.id===id);
-  if(!wf)return toast(missing);
-  state.workflow=clone(wf);state.selectedNode=null;renderWorkflowMeta();renderCanvas();renderProperties();switchView('flow');
+  return openWorkflowInDesigner(id,missing);
 }
 function activateSOPCard(card){
   if(card.dataset.genericId)openGenericTemplateModal(card.dataset.genericId);

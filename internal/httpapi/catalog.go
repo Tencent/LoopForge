@@ -345,12 +345,22 @@ func (h *catalogHandlers) agents(c *gin.Context) {
 		var v domain.AgentDefinition
 		if decode(c, &v) && v.ID != "" {
 			v.ID, v.ProjectID = strings.TrimSpace(v.ID), strings.TrimSpace(v.ProjectID)
+			platformRole := false
 			if existing, ok := h.repo.Agent(v.ID); ok {
 				// A role without a project is platform-wide: every project can
 				// use it, so only administrators may change it, as for rules
-				// and skills (assetWriteGuard).
-				if strings.TrimSpace(existing.ProjectID) == "" && !h.requirePlatformAdmin(c) {
-					return
+				// and skills (assetWriteGuard). It stays platform-wide: moving
+				// it into one project would silently take it away from every
+				// other project that references it.
+				if strings.TrimSpace(existing.ProjectID) == "" {
+					if !h.requirePlatformAdmin(c) {
+						return
+					}
+					if v.ProjectID != "" {
+						c.JSON(http.StatusConflict, map[string]string{"error": "平台角色不能移入单个项目，请复制到项目后再修改"})
+						return
+					}
+					platformRole = true
 				}
 				if v.ProjectID == "" {
 					v.ProjectID = strings.TrimSpace(existing.ProjectID)
@@ -363,16 +373,18 @@ func (h *catalogHandlers) agents(c *gin.Context) {
 				c.JSON(http.StatusBadRequest, map[string]string{"error": "角色" + err.Error()})
 				return
 			}
-			if v.ProjectID == "" {
-				c.JSON(http.StatusBadRequest, map[string]string{"error": "角色需要 projectId"})
-				return
-			}
-			if _, ok := h.repo.Project(v.ProjectID); !ok {
-				c.JSON(http.StatusNotFound, map[string]string{"error": "project not found"})
-				return
-			}
-			if !h.requireProjectWriter(c, v.ProjectID) {
-				return
+			if !platformRole {
+				if v.ProjectID == "" {
+					c.JSON(http.StatusBadRequest, map[string]string{"error": "角色需要 projectId"})
+					return
+				}
+				if _, ok := h.repo.Project(v.ProjectID); !ok {
+					c.JSON(http.StatusNotFound, map[string]string{"error": "project not found"})
+					return
+				}
+				if !h.requireProjectWriter(c, v.ProjectID) {
+					return
+				}
 			}
 			if err := validateCatalogAgentExecutor(&v); err != nil {
 				c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
@@ -1406,9 +1418,14 @@ func (h *catalogHandlers) validateWorkflowProjectCredentials(c *gin.Context, wf 
 		c.JSON(http.StatusBadRequest, gin.H{"error": "请复制通用模板到当前项目后绑定项目凭据"})
 		return false
 	}
+	// requestUser returns (nil, false) without a usable identity; check it
+	// before reading user.ID so the request gets a 403 instead of a panic.
 	user, ok := h.requestUser(c.Request, true)
-	use, _ := h.projectCredentialAccess(c.Request, wf.ProjectID, user.ID)
-	if !ok || !use {
+	if !ok || user == nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "无权在该 LOOP 中绑定项目凭据"})
+		return false
+	}
+	if use, _ := h.projectCredentialAccess(c.Request, wf.ProjectID, user.ID); !use {
 		c.JSON(http.StatusForbidden, gin.H{"error": "无权在该 LOOP 中绑定项目凭据"})
 		return false
 	}

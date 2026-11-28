@@ -315,7 +315,11 @@ function renderRunFilterCounts(base){
   });
 }
 function renderRuns(){
-  renderRunOverview();const workflows=catalogWorkflows();$('#runWorkflowFilter').innerHTML='<option value="">全部 LOOP</option>'+workflows.map(w=>`<option value="${escapeHTML(w.id)}" ${state.runWorkflowFilter===w.id?'selected':''}>${escapeHTML(w.name)}</option>`).join('');
+  renderRunOverview();const workflows=catalogWorkflows();
+  // The selected LOOP can drop out of the list (project switch, deletion); a
+  // filter the dropdown can no longer show must not keep hiding every run.
+  if(state.runWorkflowFilter&&!workflows.some(w=>w.id===state.runWorkflowFilter))state.runWorkflowFilter='';
+  $('#runWorkflowFilter').innerHTML='<option value="">全部 LOOP</option>'+workflows.map(w=>`<option value="${escapeHTML(w.id)}" ${state.runWorkflowFilter===w.id?'selected':''}>${escapeHTML(w.name)}</option>`).join('');
   let base=sortRunsDescending(scopedRuns(sopRuns(state.data.runs)));
   if(state.runWorkflowFilter)base=base.filter(r=>r.workflowId===state.runWorkflowFilter);
   if(state.runQuery)base=base.filter(r=>{const ctx=runContext(r);return `${r.id} ${r.input} ${r.workflowSnapshot?.name||''} ${ctx.issue?.title||''}`.toLowerCase().includes(state.runQuery)});
@@ -2419,12 +2423,7 @@ function openRunEvalTarget(target,id){
     if(typeof openAgentWizard==='function')openAgentWizard(agent);
     return;
   }
-  const workflow=(state.data.workflows||[]).find(workflow=>workflow.id===id);
-  if(!workflow)return toast('暂时无法打开回写后的 LOOP，请刷新后再试。','err');
-  state.workflow=clone(workflow);
-  state.selectedNode=null;
-  switchView('flow');
-  renderAll();
+  return openWorkflowInDesigner(id,'暂时无法打开回写后的 LOOP，请刷新后再试。');
 }
 
 let artifactPreviewRequest;

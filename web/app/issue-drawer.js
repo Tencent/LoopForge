@@ -14,9 +14,14 @@ function closeIssueDrawer(){
   const d=$('#issueDetailDrawer');if(d){d.classList.remove('open');d.setAttribute('aria-hidden','true')}
   if(running)toast('澄清继续在后台进行');
 }
+// Bumped on every open so a slower response for an earlier issue cannot
+// overwrite the drawer after the user has moved on to another one.
+let issueDetailRequestSeq=0;
 async function openIssueDetail(id,tab){
   if(!id)return;
   const issueId=String(id);
+  const seq=++issueDetailRequestSeq;
+  const stale=()=>seq!==issueDetailRequestSeq||!state.drawerOpen||state.selectedIssue!==issueId;
   state.drawerOpen=true;state.selectedIssue=issueId;state.issueDetailData=null;
   const drawer=$('#issueDetailDrawer');
   if(drawer&&drawer.parentElement!==document.body)document.body.appendChild(drawer);
@@ -24,7 +29,7 @@ async function openIssueDetail(id,tab){
   drawer.setAttribute('aria-hidden','false');
   $('#issueDetailBody').innerHTML='<div class="detail-empty">正在加载需求详情…</div>';
   try{
-    const detail=await api(`/api/issues/${encodeURIComponent(issueId)}`);const issue=detail.issue;const comments=detail.comments||[];
+    const detail=await api(`/api/issues/${encodeURIComponent(issueId)}`);if(stale())return;const issue=detail.issue;const comments=detail.comments||[];
     const localIssue=(state.data.issues||[]).find(i=>i.id===issueId);
     // Keep local view state, but deletion feedback must come from this fresh detail response.
     const permissions={deletionAllowed:issue.deletionAllowed,deletionRequiresForce:issue.deletionRequiresForce,deletionBlock:issue.deletionBlock,closureAllowed:issue.closureAllowed};
@@ -49,6 +54,7 @@ async function openIssueDetail(id,tab){
       try{deletionTask=await api(`/api/tasks/${encodeURIComponent(issue.deletionBlock.taskId)}`,{silent:true})}catch(e){}
       if(deletionTask?.issueId!==issueId)deletionTask=null;
     }
+    if(stale())return;
     state.issueDetailData={issue,comments,run,task,requirement,deletionTask,images:detail.images||[]};
     const health=issueRunHealth(issue),stage=issueCurrentStage(issue),needsConfirm=clarificationNeedsConfirm(issue);
     state.issueDetailTab=tab||(issueClarifying(issueId)||needsConfirm?'clarify':((health==='attention'||health==='active'||stage.key==='waiting')?'sop':'overview'));
@@ -58,7 +64,7 @@ async function openIssueDetail(id,tab){
       restoreIssueClarifyThinking(issueId);
       attachIssueClarifyStream(issueId);
     }
-  }catch(e){$('#issueDetailBody').innerHTML=`<div class="detail-empty">加载失败：${escapeHTML(e.message)}</div>`}
+  }catch(e){if(!stale())$('#issueDetailBody').innerHTML=`<div class="detail-empty">加载失败：${escapeHTML(e.message)}</div>`}
 }
 function issueClarifyViewKey(issue,project){
   const c=issue?.clarification||{};
@@ -111,8 +117,11 @@ function clarifySubmittedHTML(reply){
 function clarifyQuestionCardsHTML(questions,saved){
   return (questions||[]).map((q,i)=>{
     const picked=saved?.questions?.[i];
-    const options=clarifyQuestionOptions(q).map((opt,j)=>`<button type="button" class="issue-clarify-option${picked?.selected?.[j]?' selected':''}" data-multi="${!!q.multiSelect}">${escapeHTML(opt)}</button>`).join('');
-    return `<div class="issue-clarify-question"><b>${i+1}. ${escapeHTML(q.question)}</b><div class="issue-clarify-options">${options}</div><input class="issue-clarify-other" data-question="${i}" placeholder="其他：自己填写" value="${escapeHTML(picked?.other||'')}"></div>`;
+    // AI-written questions and options are data: data-i18n-skip keeps English
+    // mode from rewriting them, so collectIssueClarifyReply sends back exactly
+    // the text the agent offered and the user picked.
+    const options=clarifyQuestionOptions(q).map((opt,j)=>`<button type="button" class="issue-clarify-option${picked?.selected?.[j]?' selected':''}" data-multi="${!!q.multiSelect}" data-i18n-skip>${escapeHTML(opt)}</button>`).join('');
+    return `<div class="issue-clarify-question"><b data-i18n-skip>${i+1}. ${escapeHTML(q.question)}</b><div class="issue-clarify-options">${options}</div><input class="issue-clarify-other" data-question="${i}" placeholder="其他：自己填写" value="${escapeHTML(picked?.other||'')}"></div>`;
   }).join('');
 }
 function captureIssueClarifyDraft(host){
