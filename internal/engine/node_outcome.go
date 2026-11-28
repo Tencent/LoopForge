@@ -9,6 +9,7 @@ import (
 
 	"agentflow/internal/domain"
 	"agentflow/internal/managedagent"
+	"agentflow/internal/opensandbox"
 	"agentflow/internal/repo"
 	"agentflow/internal/runtime"
 
@@ -139,6 +140,13 @@ func shouldRetryFailedAttempt(node domain.WorkflowNode, attempt int, err error) 
 		return false
 	}
 	if err != nil && (isMaxTurnsErr(err) || strings.Contains(err.Error(), "verification ") || runtime.IsCwdMountFailure(err)) {
+		return false
+	}
+	// A provider that refused a create with a definitive 4xx (and had no
+	// sandbox to find) will refuse the identical request again; retrying only
+	// repeats the POST. Unknown outcomes (timeout, 5xx) are not this type.
+	var rejected *opensandbox.RejectedError
+	if errors.As(err, &rejected) {
 		return false
 	}
 	return attempt < max(1, node.MaxAttempts)

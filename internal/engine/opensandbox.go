@@ -175,12 +175,29 @@ func (e *Engine) provisionOpenSandbox(ctx context.Context, client *opensandbox.C
 		sandbox, err = client.Create(ctx, owner.ID)
 		var rejected *opensandbox.RejectedError
 		if errors.As(err, &rejected) {
-			// The provider refused the request, so nothing was created. Clear
-			// the create intent, otherwise every further attempt reads the
-			// pending flag as an unknown outcome and the run can never recover
-			// from an invalid image or resource request. Only a definitive 4xx
-			// is handled here; a timeout or 5xx keeps the flag for lookup-only
-			// recovery.
+			// A provider can answer a duplicate create with 409 although the
+			// sandbox exists. Look it up before dropping the intent: a run
+			// deleted before the next attempt would otherwise lose its only
+			// handle and leak the sandbox until the provider TTL.
+			if found, findErr := client.Find(ctx, owner.ID); findErr == nil {
+				sandbox, err = found, nil
+			} else if !errors.Is(findErr, opensandbox.ErrNotFound) {
+				// The lookup failed for another reason, so this attempt's
+				// outcome is unknown. Keep the pending flag for the next one.
+				return "", findErr
+			}
+		}
+		if err != nil && !errors.As(err, &rejected) {
+			// A timeout or 5xx leaves the outcome unknown: keep the pending flag
+			// for lookup-only recovery on the next attempt.
+			return "", err
+		}
+		if err != nil {
+			// The provider refused the request and the lookup found nothing, so
+			// nothing was created. Clear the create intent, otherwise every
+			// further attempt reads the pending flag as an unknown outcome and
+			// the run can never recover from an invalid image or resource
+			// request.
 			clearErr := e.updateRunErr(owner.ID, func(current *domain.Run) {
 				ec := &current.ExecutionContext
 				if e.ownsRun(*current) && isLiveStatus(current.Status) && ec.ExecutionResourcePending && ec.ExecutionResourceID == "" {
@@ -240,10 +257,15 @@ func (e *Engine) releaseOpenSandbox(run domain.Run) error {
 	if err := client.Release(ctx, run.ID, id); err != nil {
 		return err
 	}
-	if ec.ExecutionRunnerID != "" {
-		if err := e.repo.DeregisterRunner(ec.ExecutionRunnerID, time.Now().UTC()); err != nil && !errors.Is(err, repo.ErrRunnerNotFound) {
-			return err
-		}
+	// Deregister the runner even when the run never recorded its ID: the run
+	// start path registers it under the derived name, and leaving the record
+	// online would keep listing a Runner whose sandbox is gone.
+	runnerID := ec.ExecutionRunnerID
+	if runnerID == "" {
+		runnerID = domain.OpenSandboxRunnerID(run.ID)
+	}
+	if err := e.repo.DeregisterRunner(runnerID, time.Now().UTC()); err != nil && !errors.Is(err, repo.ErrRunnerNotFound) {
+		return err
 	}
 	return nil
 }
