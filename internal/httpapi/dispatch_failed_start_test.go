@@ -98,3 +98,26 @@ func TestDispatchStartFailureReleasesReservation(t *testing.T) {
 		t.Fatalf("reservation kept after a failed start: %+v", f.s.Tasks())
 	}
 }
+
+func TestFailedDispatchPreservesConcurrentIssueEdits(t *testing.T) {
+	f := cvBNewHTTPFixture(t)
+	d := &deps{repo: f.s}
+	for _, tc := range []struct{ name, status, task, wantTask string }{
+		{"user closed while start was pending", "closed", "reservation", "previous"},
+		{"another dispatch started", "in_progress", "newer", "newer"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			issue := domain.Issue{ID: "dispatch-rollback", ProjectID: "platform", Title: "Updated", Status: tc.status, LatestTaskID: tc.task}
+			if err := f.s.PutIssue(issue); err != nil {
+				t.Fatal(err)
+			}
+			if err := restoreIssueAfterFailedDispatch(d, issue.ID, "reservation", "todo", "previous"); err != nil {
+				t.Fatal(err)
+			}
+			got, ok := f.s.Issue(issue.ID)
+			if !ok || got.Status != tc.status || got.LatestTaskID != tc.wantTask || got.Title != issue.Title {
+				t.Fatalf("after rollback: status=%q, task=%q, title=%q", got.Status, got.LatestTaskID, got.Title)
+			}
+		})
+	}
+}

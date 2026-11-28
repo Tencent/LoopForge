@@ -367,7 +367,9 @@ func restoreIssueAfterFailedDispatch(d *deps, issueID, taskID, status, latestTas
 			return nil
 		}
 		current.LatestTaskID = latestTaskID
-		current.Status = status
+		if current.Status == "in_progress" {
+			current.Status = status
+		}
 		return nil
 	})
 	if errors.Is(err, repo.ErrIssueNotFound) {
