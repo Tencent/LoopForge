@@ -283,6 +283,10 @@ func (d deps) allowStoredAsset(c *gin.Context, kind, id string) bool {
 }
 
 // peekJSON decodes the request body without consuming it for the handler.
+// It must read the body exactly as decode() does: handlers stop after the
+// first JSON value, so json.Unmarshal (which rejects trailing data and leaves
+// v empty) would let `{"projectId":"other"} {}` skip the guard while the
+// handler still writes to "other".
 func peekJSON(c *gin.Context, v any) {
 	if c.Request.Body == nil {
 		return
@@ -290,6 +294,6 @@ func peekJSON(c *gin.Context, v any) {
 	raw, err := io.ReadAll(c.Request.Body)
 	c.Request.Body = io.NopCloser(bytes.NewReader(raw))
 	if err == nil {
-		_ = json.Unmarshal(raw, v)
+		_ = json.NewDecoder(bytes.NewReader(raw)).Decode(v)
 	}
 }

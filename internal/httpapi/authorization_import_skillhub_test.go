@@ -167,3 +167,54 @@ func TestSkillHubUpdatePlatformSkillRequiresAdmin(t *testing.T) {
 		t.Fatalf("admin skillhub/update of platform skill was forbidden but should be allowed")
 	}
 }
+
+// authedRawStatus is authedStatus with a verbatim request body.
+func authedRawStatus(t *testing.T, h http.Handler, user domain.User, method, path, raw string) int {
+	t.Helper()
+	req := httptest.NewRequest(method, path, bytes.NewReader([]byte(raw)))
+	req.Header.Set("Content-Type", "application/json")
+	token, err := auth.NewClientFromEnv().SignUser(&auth.User{ID: user.ID, LoginName: user.LoginName, AuthTime: time.Now().UTC()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.AddCookie(&http.Cookie{Name: authCookieName, Value: token})
+	req.Header.Set("Origin", "http://"+req.Host)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	return rec.Code
+}
+
+// Handlers decode only the first JSON value of the body, so trailing data
+// must not blank out the fields the write guard checks.
+func TestWriteGuardsIgnoreTrailingBodyData(t *testing.T) {
+	s, h := authorizationTestServer(t)
+	for _, skill := range []domain.SkillDefinition{
+		{ID: "hub-skill", Name: "Hub Skill", ProjectID: "auth-p", Source: &domain.SkillSource{Provider: domain.SkillSourceSkillHub, Namespace: "ns", Slug: "demo-skill", Version: "1.0.0"}},
+		{ID: "platform-hub-skill", Name: "Platform Hub Skill", Source: &domain.SkillSource{Provider: domain.SkillSourceSkillHub, Namespace: "ns", Slug: "demo-skill", Version: "1.0.0"}},
+	} {
+		if err := s.PutSkill(skill); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.PutIssue(domain.Issue{ID: "auth-issue", ProjectID: "auth-p", Title: "需求", Status: "todo"}); err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct{ path, body string }{
+		{"/api/skillhub/install", `{"slug":"demo-skill","namespace":"ns","version":"1.0.0","projectId":"auth-p"}`},
+		{"/api/skillhub/update", `{"skillId":"hub-skill","version":"6.6.6"}`},
+		{"/api/skillhub/update", `{"skillId":"platform-hub-skill","version":"6.6.6"}`},
+		{"/api/schedule-jobs", `{"name":"夜间任务","projectId":"auth-p","cron":"0 2 * * *"}`},
+		{"/api/knowledge/submissions", `{"projectId":"auth-p","title":"知识","content":"x"}`},
+		{"/api/sync/create", `{"issueId":"auth-issue"}`},
+	}
+	viewer, outsider := syncUser(t, s, "auth-viewer"), syncUser(t, s, "auth-outsider")
+	for _, tc := range cases {
+		for _, suffix := range []string{"", " {}", "\n{\"projectId\":\"\"}", " garbage"} {
+			for _, user := range []domain.User{viewer, outsider} {
+				if status := authedRawStatus(t, h, user, http.MethodPost, tc.path, tc.body+suffix); status != http.StatusForbidden {
+					t.Errorf("%s POST %s with trailing %q: status=%d, want 403", user.LoginName, tc.path, suffix, status)
+				}
+			}
+		}
+	}
+}
