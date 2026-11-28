@@ -51,14 +51,48 @@ func newFeishuChannel() *feishuChannel {
 
 func (f *feishuChannel) Kind() string { return ChannelFeishu }
 
-func (f *feishuChannel) client(bot domain.NotificationBot, cred Credential) *lark.Client {
-	return lark.NewClient(bot.BotID, cred.Secret,
+func (f *feishuChannel) client(bot domain.NotificationBot, cred Credential, extra ...lark.ClientOptionFunc) *lark.Client {
+	return lark.NewClient(bot.BotID, cred.Secret, append([]lark.ClientOptionFunc{
 		lark.WithOpenBaseUrl(f.base),
 		lark.WithHttpClient(f.http),
 		lark.WithReqTimeout(sendTimeout),
 		lark.WithEnableTokenCache(true),
 		lark.WithLogLevel(larkcore.LogLevelError),
-	)
+	}, extra...)...)
+}
+
+// feishuTokenCache is a client-scoped token cache. The SDK's default cache is
+// process-global, so rebuilding a client alone would keep reusing a stale
+// token; giving the new client its own cache makes the rebuild effective.
+type feishuTokenCache struct {
+	mu     sync.Mutex
+	tokens map[string]feishuTokenValue
+}
+
+type feishuTokenValue struct {
+	value   string
+	expires time.Time
+}
+
+func newFeishuTokenCache() *feishuTokenCache {
+	return &feishuTokenCache{tokens: make(map[string]feishuTokenValue)}
+}
+
+func (c *feishuTokenCache) Get(_ context.Context, key string) (string, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	value, ok := c.tokens[key]
+	if !ok || !value.expires.After(time.Now()) {
+		return "", nil
+	}
+	return value.value, nil
+}
+
+func (c *feishuTokenCache) Set(_ context.Context, key, token string, ttl time.Duration) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.tokens[key] = feishuTokenValue{value: token, expires: time.Now().Add(ttl)}
+	return nil
 }
 
 // Verify obtains a tenant access token, which proves the App ID and Secret.
@@ -90,7 +124,8 @@ func (f *feishuChannel) Verify(ctx context.Context, bot domain.NotificationBot, 
 // ready. The SDK's own reconnect loop is disabled: the service reconnects
 // with backoff and re-reads the credential each time.
 func (f *feishuChannel) Connect(ctx context.Context, bot domain.NotificationBot, cred Credential, sink InboundSink) (Conn, error) {
-	conn := &feishuConn{channel: f, bot: bot, api: f.client(bot, cred), done: make(chan struct{})}
+	conn := &feishuConn{channel: f, bot: bot, cred: cred, done: make(chan struct{})}
+	conn.api = conn.freshAPI()
 	handler := dispatcher.NewEventDispatcher("", "").OnP2MessageReceiveV1(func(evCtx context.Context, ev *larkim.P2MessageReceiveV1) error {
 		inbound, ok := feishuEvent(ev)
 		if !ok {
@@ -330,12 +365,32 @@ func deref(s *string) string {
 type feishuConn struct {
 	channel   *feishuChannel
 	bot       domain.NotificationBot
+	cred      Credential
+	mu        sync.Mutex // guards api
 	api       *lark.Client
 	ws        *larkws.Client
 	cancel    context.CancelFunc
 	done      chan struct{}
 	err       error
 	closeOnce sync.Once
+}
+
+// freshAPI builds a client with an empty token cache, forcing the next
+// request to obtain a new tenant access token.
+func (c *feishuConn) freshAPI() *lark.Client {
+	return c.channel.client(c.bot, c.cred, lark.WithTokenCache(newFeishuTokenCache()))
+}
+
+func (c *feishuConn) apiClient() *lark.Client {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.api
+}
+
+func (c *feishuConn) resetAPI() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.api = c.freshAPI()
 }
 
 func (c *feishuConn) Done() <-chan struct{} { return c.done }
@@ -368,11 +423,14 @@ func (c *feishuConn) Reply(ctx context.Context, msg OutboundMessage) SendResult 
 		body = body.Uuid(msg.SendKey)
 	}
 	req := larkim.NewReplyMessageReqBuilder().MessageId(msg.Route.MessageID).Body(body.Build()).Build()
-	resp, err := c.api.Im.V1.Message.Reply(ctx, req)
+	resp, err := c.apiClient().Im.V1.Message.Reply(ctx, req)
 	if err != nil {
 		return classifyFeishuTransport(err)
 	}
 	if !resp.Success() {
+		if feishuTokenInvalid[resp.Code] {
+			c.resetAPI()
+		}
 		return classifyFeishuCode(resp.Code)
 	}
 	out := SendResult{Outcome: Delivered}
@@ -402,6 +460,15 @@ var feishuRetryable = map[int]bool{
 	99991663: true, // invalid tenant access token
 	99991664: true, // invalid app access token
 	99991668: true, // invalid user access token
+}
+
+// feishuTokenInvalid codes mean the cached token is stale. Rate limiting
+// (99991400) is deliberately excluded: there is nothing to refresh there.
+var feishuTokenInvalid = map[int]bool{
+	99991661: true,
+	99991663: true,
+	99991664: true,
+	99991668: true,
 }
 
 func classifyFeishuCode(code int) SendResult {
