@@ -125,6 +125,9 @@ func TestCodexAppServerTurn(t *testing.T) {
 	if start.Method != "thread/start" || start.Params["model"] != "gpt-5.5" || start.Params["developerInstructions"] != "你是平台助手" || start.Params["sandbox"] != "read-only" || start.Params["approvalPolicy"] != "never" {
 		t.Fatalf("thread/start: %+v", start)
 	}
+	if _, ok := start.Params["excludeTurns"]; ok {
+		t.Fatalf("thread/start received a resume-only parameter: %+v", start)
+	}
 	if config, _ := start.Params["config"].(map[string]any); config["bypass_hook_trust"] != true {
 		t.Fatalf("platform denial hook not trusted by thread: %+v", start)
 	}
@@ -257,6 +260,37 @@ func TestCodexAppServerResume(t *testing.T) {
 	}
 	if inv, err := prepareAssistantCodexInvocation(assistantEngineInvocationOpts{Root: root, Config: config, SessionID: "s2", Resume: true}); err != nil || !inv.resumeMissing || inv.command.Stdin != nil {
 		t.Fatalf("unrecorded thread: %v %+v", err, inv)
+	}
+}
+
+func TestCodexAppServerResumeWithoutHistory(t *testing.T) {
+	inv, stdin, root := codexTestTurn(t, true)
+	readCodexTestRPC(t, stdin)
+	inv.translate(`{"id":1,"result":{}}`)
+	readCodexTestRPC(t, stdin)
+	resume := readCodexTestRPC(t, stdin)
+	// A full-history response can exceed the conversation process output quota.
+	// Resume the same thread while asking Codex to omit its historical turns.
+	if resume.Method != "thread/resume" || resume.Params["threadId"] != "019a-old" || resume.Params["excludeTurns"] != true {
+		t.Fatalf("resume must omit historical turns: %+v", resume)
+	}
+	out := inv.translate(`{"id":2,"result":{"thread":{"id":"019a-old","turns":[]}}}`)
+	if len(out) != 1 || !strings.Contains(out[0], `"session_id":"019a-old"`) {
+		t.Fatalf("metadata-only resume: %v", out)
+	}
+	turn := readCodexTestRPC(t, stdin)
+	input, _ := turn.Params["input"].([]any)
+	if turn.Method != "turn/start" || turn.Params["threadId"] != "019a-old" || len(input) != 1 || input[0].(map[string]any)["text"] != "暗号是什么？" {
+		t.Fatalf("turn after resume: %+v", turn)
+	}
+	if got := readCodexThread(root, "s1"); got != "019a-old" {
+		t.Fatalf("resume replaced the saved thread: %q", got)
+	}
+	inv.translate(`{"id":3,"result":{"turn":{"id":"t2","status":"inProgress"}}}`)
+	inv.translate(`{"method":"item/agentMessage/delta","params":{"itemId":"a2","delta":"42"}}`)
+	out = inv.translate(`{"method":"turn/completed","params":{"turn":{"id":"t2","status":"completed","items":[]}}}`)
+	if got := codexLineTypes(t, out); !slices.Equal(got, []string{"stream_event:content_block_stop", "result"}) {
+		t.Fatalf("resumed turn completion: %v", out)
 	}
 }
 

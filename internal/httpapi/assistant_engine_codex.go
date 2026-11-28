@@ -203,6 +203,9 @@ func (s *codexAppServer) response(message codexRPCMessage) []string {
 		}
 		if s.resume != "" {
 			params["threadId"] = s.resume
+			// Only the thread ID is needed below. Returning the full history can
+			// overflow the conversation process output buffer on long threads.
+			params["excludeTurns"] = true
 			s.request("thread/resume", params)
 		} else {
 			s.request("thread/start", params)
