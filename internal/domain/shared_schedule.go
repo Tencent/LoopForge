@@ -46,6 +46,23 @@ type SharedScheduleAsset struct {
 	ProjectID string `json:"projectId,omitempty"`
 }
 
+// SharedScheduleBlockedRef reports a direct reference that publishing cannot
+// share right now, together with the underlying validation failure.
+type SharedScheduleBlockedRef struct {
+	Type   string `json:"type"`
+	ID     string `json:"id"`
+	Name   string `json:"name,omitempty"`
+	Reason string `json:"reason"`
+}
+
+// SharedSchedulePublishPreview is the read-only result of a publish dry-run:
+// the references publishing would newly share (including the rules and skills
+// a newly shared agent carries) and the references that cannot be shared.
+type SharedSchedulePublishPreview struct {
+	WillShare []AssistantReference       `json:"willShare,omitempty"`
+	Blocked   []SharedScheduleBlockedRef `json:"blocked,omitempty"`
+}
+
 func (v SharedScheduleVersion) HasAsset(typ, id string) bool {
 	for _, asset := range v.Assets {
 		if asset.Type == typ && asset.ID == id {

@@ -187,6 +187,38 @@ func (h *scheduleHandlers) publishSharedSchedule(c *gin.Context) {
 	c.JSON(201, published)
 }
 
+// previewSharedSchedulePublish is the read-only dry-run of the publish
+// endpoint: it reports the assets publishing would newly share and the
+// references that cannot be shared, without touching any state.
+func (h *scheduleHandlers) previewSharedSchedulePublish(c *gin.Context) {
+	job, ok := h.repo.ScheduleJob(c.Param("id"))
+	if !ok {
+		c.JSON(404, gin.H{"error": "定时任务不存在"})
+		return
+	}
+	if _, exists := h.repo.Project(job.ProjectID); !exists {
+		c.JSON(http.StatusForbidden, gin.H{"error": "没有该项目的定时任务访问权限"})
+		return
+	}
+	if !h.requireScheduleProject(c, job.ProjectID, true) {
+		return
+	}
+	if !job.SkipDispatch || job.SharedTaskID != "" {
+		c.JSON(400, gin.H{"error": "仅独立 AI 定时任务可以发布共享版本"})
+		return
+	}
+	preview, err := h.repo.PreviewSharedSchedulePublish(job.ID, job.ProjectID)
+	if errors.Is(err, repo.ErrSharedScheduleReferences) {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+	if err != nil {
+		respond(c, err)
+		return
+	}
+	c.JSON(200, preview)
+}
+
 // Validate the binding at save time; the scheduler resolves this same immutable
 // version again at run time instead of trusting a client-supplied prompt copy.
 func (h *scheduleHandlers) bindSharedSchedule(c *gin.Context, job *domain.ScheduleJob, prior domain.ScheduleJob) bool {

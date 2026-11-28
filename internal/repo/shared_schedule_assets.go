@@ -1,6 +1,7 @@
 package repo
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -105,6 +106,96 @@ func (r *CatalogRepo) sharedScheduleReference(ref domain.AssistantReference) (do
 	default:
 		return ref, false, false
 	}
+}
+
+// PreviewSharedSchedulePublish is the read-only dry-run of PublishSharedSchedule:
+// it reports the direct references publishing would newly share (including the
+// rules and skills a newly shared agent carries) and the references that
+// cannot be shared, without writing anything. It reuses the same resolution
+// and validation paths as the publish transaction so the two cannot drift.
+func (r *CatalogRepo) PreviewSharedSchedulePublish(jobID, projectID string) (domain.SharedSchedulePublishPreview, error) {
+	preview := domain.SharedSchedulePublishPreview{WillShare: []domain.AssistantReference{}, Blocked: []domain.SharedScheduleBlockedRef{}}
+	var source scheduleJobRow
+	if err := r.DB.Where("id = ?", jobID).First(&source).Error; err != nil {
+		return preview, err
+	}
+	var job domain.ScheduleJob
+	if err := json.Unmarshal(source.Payload, &job); err != nil {
+		return preview, err
+	}
+	if !job.SkipDispatch || job.SharedTaskID != "" || job.ProjectID != projectID {
+		return preview, fmt.Errorf("只能从当前项目的独立 AI 定时任务发布共享版本")
+	}
+	refs, err := r.directScheduleReferences(job.References)
+	if err != nil {
+		return preview, err
+	}
+	seen := map[string]bool{}
+	for _, ref := range refs {
+		canonical, shared, _ := r.sharedScheduleReference(ref)
+		if shared {
+			continue
+		}
+		if canonical.ProjectID != projectID {
+			preview.Blocked = append(preview.Blocked, domain.SharedScheduleBlockedRef{Type: ref.Type, ID: ref.ID, Name: canonical.Name, Reason: fmt.Sprintf("%s/%s 不属于当前项目且尚未共享", ref.Type, ref.ID)})
+			continue
+		}
+		// A blocked reference fails the publish transaction, so it must not
+		// appear as newly shared.
+		if ref.Type == "sop" {
+			workflow, _ := r.Workflow(ref.ID)
+			workflow.Shared = true
+			if err := r.ValidateWorkflowAgentScopes(workflow); err != nil {
+				preview.Blocked = append(preview.Blocked, domain.SharedScheduleBlockedRef{Type: ref.Type, ID: ref.ID, Name: canonical.Name, Reason: err.Error()})
+				continue
+			}
+			if err := r.ValidateWorkflowSharing(workflow); err != nil {
+				preview.Blocked = append(preview.Blocked, domain.SharedScheduleBlockedRef{Type: ref.Type, ID: ref.ID, Name: canonical.Name, Reason: err.Error()})
+				continue
+			}
+		}
+		if !seen[ref.Type+"/"+ref.ID] {
+			seen[ref.Type+"/"+ref.ID] = true
+			preview.WillShare = append(preview.WillShare, canonical)
+		}
+		if ref.Type == "agent" {
+			r.previewAgentCascade(ref.ID, &preview)
+		}
+	}
+	return preview, nil
+}
+
+// previewAgentCascade mirrors ShareAgentAssets: a newly shared agent shares
+// its project-private rules and skills in the same save path.
+func (r *CatalogRepo) previewAgentCascade(agentID string, preview *domain.SharedSchedulePublishPreview) {
+	agent, _ := r.Agent(agentID)
+	for _, id := range agent.Rules {
+		item, ok := r.Rule(id)
+		if !ok || item.Shared || (item.ProjectID != "" && item.ProjectID != agent.ProjectID) {
+			continue
+		}
+		if !seenPreviewAsset(preview, "rule", id) {
+			preview.WillShare = append(preview.WillShare, domain.AssistantReference{Type: "rule", ID: id, Name: item.Name, ProjectID: item.ProjectID})
+		}
+	}
+	for _, id := range agent.Skills {
+		item, ok := r.Skill(id)
+		if !ok || item.Shared || (item.ProjectID != "" && item.ProjectID != agent.ProjectID) {
+			continue
+		}
+		if !seenPreviewAsset(preview, "skill", id) {
+			preview.WillShare = append(preview.WillShare, domain.AssistantReference{Type: "skill", ID: id, Name: item.Name, ProjectID: item.ProjectID})
+		}
+	}
+}
+
+func seenPreviewAsset(preview *domain.SharedSchedulePublishPreview, typ, id string) bool {
+	for _, a := range preview.WillShare {
+		if a.Type == typ && a.ID == id {
+			return true
+		}
+	}
+	return false
 }
 
 // ValidateSharedScheduleAssets rechecks current permissions against the
