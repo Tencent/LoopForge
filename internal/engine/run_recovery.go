@@ -44,7 +44,13 @@ func (e *Engine) workspaceBlocked(r domain.Run) bool {
 	if host == e.workspaceHost || e.repo.WorkspaceHostAlive(host) {
 		return true
 	}
-	return e.defaultExecutionRunner(r) != "" && (r.WorkspaceCleanedAt.IsZero() || !e.hasSavedWorkspaceCheckpoint(r.ID))
+	// A runner-owned checkout lives on its execution runner. The platform host
+	// recorded here only describes the disposable staging workspace, and a
+	// recreated control plane (new hostname, same mounts) must not block the run
+	// forever. The runner itself stays the owner: dispatch refuses to move a run
+	// to another machine once nodes changed code (validateExecutionReconnect,
+	// bindPoolRunner), so no unpushed change can be lost by continuing here.
+	return false
 }
 
 // workspaceLost reports a foreign bind to a host that is gone while the
@@ -52,7 +58,10 @@ func (e *Engine) workspaceBlocked(r domain.Run) bool {
 // those changes went with the host: continuing elsewhere would silently drop
 // them. Runs without a repository may still be taken over.
 func (e *Engine) workspaceLost(r domain.Run) bool {
-	return e.foreignWorkspaceBind(r) && !e.workspaceBlocked(r) && hasCodeWorkspace(r) &&
+	// Only a platform-owned checkout dies with the platform host. A runner
+	// keeps its checkout across a control-plane restart.
+	return e.defaultExecutionRunner(r) == "" &&
+		e.foreignWorkspaceBind(r) && !e.workspaceBlocked(r) && hasCodeWorkspace(r) &&
 		(r.WorkspaceCleanedAt.IsZero() || !e.hasSavedWorkspaceCheckpoint(r.ID))
 }
 
