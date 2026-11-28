@@ -298,7 +298,10 @@ function highlightCommandSelection(){
 }
 function renderCommandResults(){
   const q=$('#commandSearch').value.trim().toLowerCase();
-  commandMatches=commandCatalog().filter(x=>!q||`${x.kind} ${x.title} ${x.meta}`.toLowerCase().includes(q)).slice(0,12);
+  const matched=commandCatalog().filter(x=>!q||`${x.kind} ${x.title} ${x.meta}`.toLowerCase().includes(q));
+  // 搜索时每类最多取前 4 条，避免页面/需求等先命中的类型把 LOOP、Agent 等后面的类型挤出结果。
+  const perKind=new Map();
+  commandMatches=(q?matched.filter(x=>{const n=(perKind.get(x.kind)||0)+1;perKind.set(x.kind,n);return n<=4}):matched).slice(0,q?20:12);
   commandSelectedIndex=0;
   $('#commandResults').innerHTML=commandMatches.length
     ?commandMatches.map((x,i)=>`<button data-command-index="${i}" class="${i===0?'selected':''}"><span class="command-kind">${escapeHTML(x.kind)}</span><span><b>${escapeHTML(x.title)}</b><small>${escapeHTML(x.meta||'')}</small></span><em>↵</em></button>`).join('')

@@ -191,3 +191,21 @@ test('rerun-from-node dialog returns the selected node and human context', async
   await app.evaluate(`reopenDeliveredIssueSilent('issue-1')`);
   assert.equal(app.router.calls.find(c => c.path.endsWith('/reopen')).method, 'POST');
 });
+
+test('issue table separates requirement status from the execution stage', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  const html = await app.evaluate(`(() => {
+    state.data.issues = [{ id: 'a', projectId: 'project-1', number: 1, title: 'Waiting', source: 'local', status: 'backlog', priority: 'medium' }];
+    state.projectFilter = 'project-1';
+    state.issueStatusFilter = '';
+    state.issueView = 'table';
+    renderIssues();
+    const head = document.querySelector('.issue-table-head').textContent;
+    const cell = document.querySelector('.issue-table-row[data-id="a"] .issue-stage-cell').textContent;
+    return { head, cell };
+  })()`);
+  assert.match(html.head, /执行环节 \/ 需求状态/);
+  assert.match(html.cell, /需求状态：待规划/);
+  assert.equal(app.document.querySelector('#issueStatusFilter option[value="todo"]').textContent, '待处理');
+});

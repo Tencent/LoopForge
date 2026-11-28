@@ -249,3 +249,17 @@ test('boot selects a project the signed-in user belongs to before an unrelated f
   await settle(6);
   assert.equal(app.evaluate('state.projectFilter'), 'joined');
 });
+
+test('command palette keeps LOOP results when earlier kinds match the same query', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  const kinds = await app.evaluate(`(() => {
+    state.data.issues = Array.from({ length: 30 }, (_, i) => ({ id: 'i' + i, projectId: 'project-1', title: 'LOOP requirement ' + i, status: 'todo', priority: 'medium' }));
+    state.data.workflows = [{ id: 'wf-1', name: 'Delivery flow', status: 'published', nodes: [] }];
+    $('#commandSearch').value = 'loop';
+    renderCommandResults();
+    return commandMatches.map(x => x.kind + ':' + x.title);
+  })()`);
+  assert.ok(kinds.some((k) => k.startsWith('LOOP:')), JSON.stringify(kinds));
+  assert.ok(kinds.filter((k) => k.startsWith('需求:')).length <= 4);
+});
