@@ -52,6 +52,17 @@ function latestIssueTask(i){
   }
   return (state.data.tasks||[]).find(x=>x.id===i.latestTaskId)||null;
 }
+// 「重新运行」是按 LOOP 判定的：只有目标 LOOP 自己跑过，才谈得上重跑；
+// 同一条需求跑过的其他 LOOP（失败或成功）不能替它做这个决定。
+// 没有绑定 LOOP 时退回最新任务，保持原有行为。
+function issueTaskForWorkflow(i, workflowId){
+  const want=String(workflowId||'').trim();
+  if(!want)return latestIssueTask(i);
+  const tasks=(state.data.tasks||[]).filter(t=>t.issueId===i.id&&String(t.workflowId||'').trim()===want);
+  if(!tasks.length)return null;
+  tasks.sort((a,b)=>new Date(b.createdAt||0)-new Date(a.createdAt||0)||String(b.id).localeCompare(String(a.id)));
+  return tasks[0];
+}
 function latestIssueRun(i, task){
   const runs=state.data.runs||[];
   if(task){
