@@ -37,7 +37,7 @@ func (h *catalogHandlers) adoptGenericWorkflow(template domain.WorkflowDefinitio
 	// shared built-in catalog.
 	adopted.Nodes = append([]domain.WorkflowNode(nil), template.Nodes...)
 	adopted.Edges = append([]domain.WorkflowEdge(nil), template.Edges...)
-	adopted.Tags = append(append([]string(nil), template.Tags...), "generic-source:"+template.ID)
+	adopted.Tags = append(append([]string(nil), template.Tags...), domain.GenericSourceTagPrefix+template.ID)
 	adopted.Requirements = append([]domain.WorkflowRequirement(nil), template.Requirements...)
 	adopted.ID, adopted.Name, adopted.Owner = id, name, owner
 	adopted.ProjectID = projectID

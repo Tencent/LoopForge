@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -808,5 +809,49 @@ func TestProductAndFrontendGenericTemplatesAreListed(t *testing.T) {
 		if !detail.Generic || detail.ID != id || len(detail.Nodes) == 0 {
 			t.Fatalf("template %q = %+v", id, detail)
 		}
+	}
+}
+
+// Editors replace the free-form tag list (the 新建 LOOP wizard with custom tags,
+// the designer's tag field). The adoption marker must survive those saves, or
+// the copied template roles stop following the responsible user's default CLI.
+func TestAdoptedCopyKeepsGenericSourceWhenTagsAreEdited(t *testing.T) {
+	h, _ := newGenericTemplateServer(t)
+	marker := "generic-source:" + repo.GenericBackendDeliveryWorkflowID
+	adopted := requestJSON[domain.WorkflowDefinition](t, h, http.MethodPost,
+		"/api/workflows/"+repo.GenericBackendDeliveryWorkflowID+"/clone",
+		map[string]any{"id": "alpha-tagged", "name": "带标签副本", "projectId": "alpha"},
+		http.StatusCreated)
+	if !slices.Contains(adopted.Tags, marker) {
+		t.Fatalf("adoption must record its template: %v", adopted.Tags)
+	}
+	edited := adopted
+	edited.Tags = []string{"走查", "后端"}
+	saved := requestJSON[domain.WorkflowDefinition](t, h, http.MethodPut, "/api/workflows", edited, http.StatusOK)
+	if !slices.Contains(saved.Tags, marker) {
+		t.Fatalf("user tags dropped the adoption marker: %v", saved.Tags)
+	}
+	want := []string{"走查", "后端", marker}
+	if len(saved.Tags) != len(want) {
+		t.Fatalf("tags = %v, want %v", saved.Tags, want)
+	}
+	for i := range want {
+		if saved.Tags[i] != want[i] {
+			t.Fatalf("tags = %v, want %v", saved.Tags, want)
+		}
+	}
+	// Clearing every tag keeps only the marker; a LOOP that was never adopted gets none.
+	saved.Tags = nil
+	cleared := requestJSON[domain.WorkflowDefinition](t, h, http.MethodPut, "/api/workflows", saved, http.StatusOK)
+	if len(cleared.Tags) != 1 || cleared.Tags[0] != marker {
+		t.Fatalf("cleared tags = %v", cleared.Tags)
+	}
+	plain := requestJSON[domain.WorkflowDefinition](t, h, http.MethodPut, "/api/workflows", domain.WorkflowDefinition{
+		ID: "alpha-plain", Name: "plain", ProjectID: "alpha", SandboxProfileID: "test-native", Tags: []string{"x"},
+	}, http.StatusOK)
+	plain.Tags = []string{"y"}
+	plain = requestJSON[domain.WorkflowDefinition](t, h, http.MethodPut, "/api/workflows", plain, http.StatusOK)
+	if len(plain.Tags) != 1 || plain.Tags[0] != "y" {
+		t.Fatalf("plain LOOP tags = %v", plain.Tags)
 	}
 }

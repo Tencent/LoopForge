@@ -180,7 +180,7 @@ function renderWorkflowMeta(){
   normalizeWorkflowNotifications(wf);
  const notificationHost=$('#workflowNotificationEditor');if(notificationHost)mountNotificationEditor(notificationHost,wf.notifications,{sourceType:'run',kind:'sop',projectId:wf.projectId||state.projectFilter},()=>dirty());
  $('#workflowName').value=wf.name;$('#workflowDescription').value=wf.description||'';
-  $('#workflowOwner').value=wf.owner||'';$('#workflowStatus').value=wf.status||'draft';$('#workflowTags').value=(wf.tags||[]).join(', ');$('#workflowMetricCategory').value=wf.metricCategory||'';$('#workflowSOPLane').value=wf.sopLane||'';
+  $('#workflowOwner').value=wf.owner||'';$('#workflowStatus').value=wf.status||'draft';$('#workflowTags').value=workflowUserTags(wf.tags).join(', ');$('#workflowMetricCategory').value=wf.metricCategory||'';$('#workflowSOPLane').value=wf.sopLane||'';
   const previewOn=!!wf.preview?.enabled, hasPreviewNode=(wf.nodes||[]).some(n=>isPreviewBuildNode(n.id));
   if(previewOn!==hasPreviewNode)syncPreviewBuildGraph();
   const sandboxSelect=$('#workflowSandbox');
@@ -1018,7 +1018,7 @@ function agentBindCard(n){
   if(!agent)return `<div class="fd-field"><label>这个步骤用哪个角色</label><select class="select" data-p="agentId">${opts}</select><p class="prop-hint">${hint}</p><p class="prop-hint">先选一个已定义的角色。画布只编排顺序和打回，不改编排角色内部的任务。</p></div>`;
   const arts=effectiveNodeArtifacts(n,agent),gates=roleGates(agent);
   const duty=String(agent.description||'').trim(),taskHint=duty?(duty.length>48?`${duty.slice(0,48)}…`:duty):'还没写职责，可在角色定义里补';
-  const source=(state.workflow?.tags||[]).find(tag=>tag.startsWith('generic-source:'))?.slice('generic-source:'.length);
+  const source=workflowGenericSource(state.workflow);
   const template=(state.data.workflows||[]).find(w=>w.id===source&&catalogGeneric(w));
   const fromTemplate=generic||template?.nodes?.some(node=>node.agentId&&(node.agentId===agent.id||`${node.agentId}-${projectId}`===agent.id));
   const legacyTemplate=fromTemplate&&(agent.projectId||'')===(state.workflow?.projectId||'')&&agent.executorId==='codebuddy';
@@ -1303,7 +1303,7 @@ async function createSOPFromWizard(e){
       const request={id:uid('sop'),name,owner,projectId:state.projectFilter};
       setSOPSandboxChoice(request,sandboxId);
       saved=await api(`/api/workflows/${encodeURIComponent(template.id)}/clone`,{method:'POST',body:JSON.stringify(request)});
-      if(description||owner||tags.length)saved=await api('/api/workflows',{method:'PUT',body:JSON.stringify({...saved,name,description:description||saved.description,owner:owner||saved.owner,tags:tags.length?tags:saved.tags})});
+      if(description||owner||tags.length)saved=await api('/api/workflows',{method:'PUT',body:JSON.stringify({...saved,name,description:description||saved.description,owner:owner||saved.owner,tags:tags.length?withGenericSourceTags(tags,saved.tags):saved.tags})});
     }else{
       const workflow=template?clone(template):{nodes:[],edges:[]};
       Object.assign(workflow,{id:uid('sop'),name,description,owner,tags,status:'draft',version:1,revision:0,projectId:state.projectFilter||'',shared:false});

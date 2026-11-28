@@ -1,3 +1,11 @@
+// generic-source:<template id> is provenance the server writes when a generic template is
+// adopted (domain.GenericSourceTagPrefix), not a user label: editors only show and replace
+// the user's tags and always carry the marker along.
+const GENERIC_SOURCE_TAG='generic-source:';
+function isGenericSourceTag(tag){return String(tag||'').startsWith(GENERIC_SOURCE_TAG)}
+function workflowGenericSource(w){const tag=(w?.tags||[]).find(isGenericSourceTag);return tag?String(tag).slice(GENERIC_SOURCE_TAG.length):''}
+function workflowUserTags(tags){return (tags||[]).filter(tag=>!isGenericSourceTag(tag))}
+function withGenericSourceTags(userTags,current){return [...workflowUserTags(userTags),...(current||[]).filter(isGenericSourceTag)]}
 function renderCatalogScopes(){
   const workflows=state.data?.workflows||[],agents=state.data?.agents||[];
   const sopProject=workflows.filter(w=>!catalogGeneric(w)&&catalogOwned(w.projectId)).length;
@@ -89,7 +97,7 @@ function genericRequirementChips(w){
 function sopResourceRequirements(w){
   const project=(state.data?.projects||[]).find(p=>p.id===(w?.projectId||state.projectFilter))||(state.data?.projects||[]).find(p=>p.id===state.projectFilter);
   const driver=((state.data?.sandboxes||[]).find(sb=>sb.id===w?.sandboxProfileId)||{}).driver||(/docker/i.test(w?.sandboxProfileId||'')?'docker':'');
-  const usesRepo=(catalogGeneric(w)||(w?.tags||[]).some(t=>String(t).startsWith('generic-source:')))&&!!project?.defaultRepositoryId;
+  const usesRepo=(catalogGeneric(w)||!!workflowGenericSource(w))&&!!project?.defaultRepositoryId;
   const rows=[];
   if(usesRepo)rows.push({key:'run-repo',label:'GitHub 仓库（已绑定）',ok:true,hint:'使用项目已绑定的仓库。访问私有仓库或推送代码时需要在个人配置中配置 GitHub Token；未绑定仓库时可在任务工作区直接运行。'});
   if(w?.autoSelectSandbox)rows.push({key:'run-sandbox',label:'由 Agent 选择沙箱',ok:true,hint:'启动时按项目和任务选择运行沙箱。'});
@@ -99,7 +107,7 @@ function sopResourceRequirements(w){
 function sopRunRequirements(w){
   const nodes=w?.nodes||[],user=userById(state.currentUser?.id)||{};
   const resources=sopResourceRequirements(w);
-  if(catalogGeneric(w)||(w?.tags||[]).some(tag=>tag.startsWith('generic-source:')))return resources;
+  if(catalogGeneric(w)||workflowGenericSource(w))return resources;
   const rows=[];
   const executorIds=nodes.filter(n=>n.type==='agent'&&!isPreviewBuildNode(n.id)).map(node=>{
     const role=(state.data?.agents||[]).find(a=>a.id===node.agentId);
@@ -165,14 +173,14 @@ function sharedSOPCard(w,m={},liveCount=0){
   const meta=[w.owner,workflowVersionLabel(w)].filter(Boolean).join(' · ');
   return `<article class="sop-card" data-sop="${escapeHTML(w.id)}" tabindex="0" role="button" aria-label="打开流程设计器：${escapeHTML(w.name)}">${sopRunCardBody(w,m,liveCount)}<div class="sop-card-foot"><span class="sop-card-meta" title="${escapeHTML([from,meta].filter(Boolean).join(' · '))}"><span class="sop-card-tag">${escapeHTML(from)}</span>${escapeHTML(meta)}</span>${sopCardPrimary('data-clone-workflow',w.id,'复制到本项目','copy')}</div></article>`;
 }
-function genericProjectCopy(w){return (state.data?.workflows||[]).find(x=>!catalogGeneric(x)&&x.projectId===state.projectFilter&&(x.tags||[]).includes(`generic-source:${w.id}`))}
+function genericProjectCopy(w){return (state.data?.workflows||[]).find(x=>!catalogGeneric(x)&&x.projectId===state.projectFilter&&workflowGenericSource(x)===w.id)}
 function genericSOPCard(w){
   const nodes=w.nodes||[],agentCount=nodes.filter(n=>n.type==='agent').length,gates=nodes.filter(n=>n.type==='approval').length;
   const copy=genericProjectCopy(w);
   const primary=copy
     ?sopCardPrimary('data-open-sop',copy.id,'查看项目副本','eye')
     :sopCardPrimary('data-adopt-generic',w.id,'复制到本项目','copy','复制后归本项目所有、可自由修改，不再跟随平台更新');
-  const tags=(w.tags||[]).filter(t=>!t.startsWith('generic-source:')).join(' · ')||'通用模板';
+  const tags=workflowUserTags(w.tags).join(' · ')||'通用模板';
   return `<article class="sop-card generic" data-generic-id="${escapeHTML(w.id)}" tabindex="0" role="button" aria-label="使用通用模板：${escapeHTML(w.name)}">${sopCardHead(sopStatusBadge(w),'平台维护 · 与项目无关',sopBadge(`v${w.version||1}`,'neutral',''))}${sopCardTitle(w)}<p>${escapeHTML(w.description||'平台提供的通用流程模板')}</p>${sopRunRequirementChips(w)}${genericRequirementChips(w)}<div class="sop-kpis"><span><b>${nodes.length}</b>节点</span><span><b>${agentCount}</b>角色节点</span><span><b>${gates}</b>人工门禁</span><span><b>v${w.version||1}</b>版本</span></div><div class="sop-card-foot"><span class="sop-card-meta" title="${escapeHTML(`${w.owner||'平台'} · ${tags}`)}"><span class="sop-card-tag">${escapeHTML(w.owner||'平台')}</span>${escapeHTML(tags)}</span>${primary}${sopCardMoreButton(w)}</div></article>`;
 }
 function sopCatalogCard(w,metrics,live){
