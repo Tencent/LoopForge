@@ -527,3 +527,29 @@ func TestAssistantVisibleReplyMatchesPhasesDespiteLayoutWhitespace(t *testing.T)
 		t.Fatalf("layout-only repeat kept: %q", got)
 	}
 }
+
+func TestAssistantVisibleReplyKeepsIndentationInsideFences(t *testing.T) {
+	const block = "```go\nfunc main() {\n\n\tfmt.Println(\"a b\")\n}\n```"
+	for _, tc := range []struct{ name, streamed, final, want string }{
+		{"removed indentation", block, strings.Replace(block, "\tfmt", "fmt", 1), block},
+		{"corrected literal", block, strings.Replace(block, "a b", "ab", 1), strings.Replace(block, "a b", "ab", 1)},
+		{"corrected inline code", "Use `read only`.", "Use `readonly`.", "Use `readonly`."},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			events := []domain.AssistantActivityEvent{{Kind: "text", Text: "Earlier."}, {Kind: "tool", ID: "read"}, {Kind: "text", Text: tc.streamed}}
+			if got := assistantVisibleReply(tc.final, events); got != "Earlier.\n\n"+tc.want {
+				t.Fatalf("got %q, want final phase %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestAssistantVisibleReplyAcceptsSpaceBetweenPhaseParagraphs(t *testing.T) {
+	const expected = "先看代码。\n\n改好了。\n\n测试通过。\n\n下一步合入。"
+	events := []domain.AssistantActivityEvent{{Kind: "text", Text: "先看代码。"}, {Kind: "tool", ID: "read"}, {Kind: "text", Text: "改好了。\n\n测试通过。"}}
+	for _, sep := range []string{" ", "\u3000"} {
+		if got := assistantVisibleReply("改好了。"+sep+"测试通过。\n\n下一步合入。", events); got != expected {
+			t.Errorf("separator %q: got %q", sep, got)
+		}
+	}
+}

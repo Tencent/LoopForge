@@ -202,7 +202,8 @@ func replyCompact(text string) string {
 
 // When only whitespace differs, keep richer Markdown layout. A change to a
 // word boundary or a quoted value is an actual correction from the final reply.
-var replyContentTokens = regexp.MustCompile(`"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|` + "`[^`]*`" + `|[\pL\pN_]+`)
+// A fence marker delimits a block. Compare the words and literals inside it individually.
+var replyContentTokens = regexp.MustCompile(`(?m:^[ \t]{0,3}` + "`{3,}" + `)|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|` + "`[^`]*`" + `|[\pL\pN_]+`)
 
 func replyRicher(streamed, final string) string {
 	if len(final) >= len(streamed) || !replySameContent(streamed, final) {
