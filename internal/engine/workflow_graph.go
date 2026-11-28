@@ -152,6 +152,11 @@ func hasFailed(wf domain.WorkflowDefinition, r domain.Run) bool {
 	return ok
 }
 
+// ValidateWorkflowGraph applies the runtime graph checks to a portable definition.
+func ValidateWorkflowGraph(wf domain.WorkflowDefinition) error {
+	return validate(wf)
+}
+
 func validate(wf domain.WorkflowDefinition) error {
 	if err := domain.ValidateWorkflowKnowledge(wf); err != nil {
 		return err
