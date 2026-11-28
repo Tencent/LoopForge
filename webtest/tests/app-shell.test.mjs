@@ -246,6 +246,14 @@ test('boot follows a LOOP link to its project unless the URL names a project', a
   // The LOOP exists in another project; the pinned project wins, and the
   // message says so instead of claiming the LOOP does not exist.
   assert.match(pinned.document.querySelector('#toastContainer').textContent, /属于另一个项目/);
+
+  // A second link in the same tab must honor the same project pin as boot.
+  assert.equal(pinned.window.location.hash, '#/flow/flow-1');
+  pinned.window.location.hash = '#/flow/flow-2';
+  await settle(6);
+  assert.equal(pinned.evaluate('state.projectFilter'), 'project-1');
+  assert.equal(pinned.evaluate('state.workflow.id'), 'flow-1');
+  assert.equal(pinned.window.location.hash, '#/flow/flow-1');
 });
 
 test('a LOOP link to a platform template opens the template without switching projects', async (t) => {

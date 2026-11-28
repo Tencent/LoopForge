@@ -1997,6 +1997,8 @@ function linkedWorkflowRoute(id){
   const wf=(state.data?.workflows||[]).find(w=>w.id===id);
   if(!wf)return null;
   if(catalogGeneric(wf))return {workflow:wf,project:''};
+  const pinned=pinnedProjectId();
+  if(pinned&&wf.projectId!==pinned)return null;
   return wf.projectId&&(state.data?.projects||[]).some(p=>p.id===wf.projectId)?{workflow:wf,project:wf.projectId}:null;
 }
 function linkedWorkflowProjectId(id){return linkedWorkflowRoute(id)?.project||''}
@@ -2023,8 +2025,8 @@ function restoreOpenWorkflow(){
   const id=flowRouteId();
   // An explicit ?projectId pins the project, so only a LOOP visible there is
   // restored; otherwise the link may follow a template or another project.
-  const route=id&&!pinnedProjectId()?linkedWorkflowRoute(id):null;
-  return route?.workflow||openableWorkflow(id)||openableWorkflow(localStorage.getItem('agentflow.activeWorkflow')||'')||preferredWorkflow();
+  const route=linkedWorkflowRoute(id);
+  return route?.workflow||openableWorkflow(localStorage.getItem('agentflow.activeWorkflow')||'')||preferredWorkflow();
 }
 function rememberOpenWorkflow(){
   const id=savedWorkflowId();
