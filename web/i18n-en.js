@@ -970,6 +970,14 @@ Object.assign(window.LF_I18N_EN, {
 });
 
 Object.assign(window.LF_I18N_EN, {
+  "共享模型 Key": "Shared model keys",
+  "成员没配自己的 API Key 时，对话和 LOOP 会用这里对应 CLI 的共享 Key，并且只能用下面勾选的模型。成员配了自己的 Key 就用自己的，不受限制。": "Members without their own API key chat and run LOOPs on the shared key of the matching CLI, limited to the models checked below. Members with their own key keep using it without limits.",
+  "获取可用模型": "Fetch models",
+  "还没有读到模型，可以点「获取可用模型」或直接填模型 ID。": "No models read yet; fetch them or type model IDs below.",
+  "共享 Key 对应的 CLI": "CLI of the shared key",
+});
+
+Object.assign(window.LF_I18N_EN, {
   "凭据管理": "Credentials",
   "项目凭据": "Project credentials",
   "选中的凭据会作为环境变量注入本 LOOP 的沙箱进程。": "Selected credentials are injected as environment variables into this LOOP's sandbox processes.",
@@ -1164,14 +1172,6 @@ Object.assign(window.LF_I18N_EN, {
   "在对话里澄清和改代码": "Clarify and change code in chat",
   "这条需求不使用 LOOP，在对话里澄清需求、直接改代码；定时任务不会自动认领它。": "This requirement uses no LOOP: clarify and change code in chat; scheduled jobs won't pick it up.",
 });
-Object.assign(window.LF_I18N_EN, {
-  "共享模型 Key": "Shared model keys",
-  "成员没配自己的 API Key 时，对话和 LOOP 会用这里对应 CLI 的共享 Key，并且只能用下面勾选的模型。成员配了自己的 Key 就用自己的，不受限制。": "Members without their own API key chat and run LOOPs on the shared key of the matching CLI, limited to the models checked below. Members with their own key keep using it without limits.",
-  "获取可用模型": "Fetch models",
-  "还没有读到模型，可以点「获取可用模型」或直接填模型 ID。": "No models read yet; fetch them or type model IDs below.",
-  "共享 Key 对应的 CLI": "CLI of the shared key",
-});
-
 // 执行机器 page: static copy in index.html. runners.js renders its dynamic copy with lfT.
 Object.assign(window.LF_I18N_EN, {
   "连接电脑或 CVM，可将机器共享给多个项目。": "Connect a computer or CVM and share it with multiple projects.",
