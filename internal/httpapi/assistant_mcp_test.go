@@ -76,6 +76,74 @@ func TestAssistantMCPStaysInProjectAndRejectsStdio(t *testing.T) {
 	}
 }
 
+func TestAssistantPersonalMCPWorksWithoutProject(t *testing.T) {
+	st, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(st.Close)
+	owner, ok := st.UserByLoginName("demo-owner")
+	if !ok {
+		t.Fatal("seed user")
+	}
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var req struct {
+			Method string `json:"method"`
+		}
+		_ = json.Unmarshal(body, &req)
+		w.Header().Set("Content-Type", "application/json")
+		switch req.Method {
+		case "tools/list":
+			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":2,"result":{"tools":[{"name":"list_connections","description":"list connections"}]}}`))
+		case "tools/call":
+			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":3,"result":{"content":[{"type":"text","text":"conn-1"}]}}`))
+		default:
+			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{}}`))
+		}
+	}))
+	t.Cleanup(gateway.Close)
+	personal := domain.MCPServerDefinition{ID: "dbx-personal", Name: "dbx", Scope: "personal", OwnerUserID: owner.ID, Transport: "http", URL: gateway.URL}
+	if err := st.PutMCPServer(personal); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.PutMCPServer(domain.MCPServerDefinition{ID: "tapd-p", Name: "TAPD", ProjectID: "platform", Scope: "project", Transport: "http", URL: gateway.URL}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.PutMCPServer(domain.MCPServerDefinition{ID: "global-http", Name: "Global", Transport: "http", URL: gateway.URL}); err != nil {
+		t.Fatal(err)
+	}
+
+	ids := func(items []domain.MCPServerDefinition) []string {
+		out := []string{}
+		for _, item := range items {
+			out = append(out, item.ID)
+		}
+		return out
+	}
+	if got := ids(assistantOutboundMCPServers(st.MCPServers(), "", owner.ID)); len(got) != 1 || got[0] != "dbx-personal" {
+		t.Fatalf("a conversation without a project should only offer the owner's personal MCP, got %v", got)
+	}
+	if got := assistantOutboundMCPServers(st.MCPServers(), "", owner.ID+1000); len(got) != 0 {
+		t.Fatalf("another user's personal MCP must stay hidden, got %v", ids(got))
+	}
+
+	h := &assistantHandlers{deps: &deps{repo: st}}
+	if got := ids(h.assistantHTTPMCPs("", owner.ID)); len(got) != 1 || got[0] != "dbx-personal" {
+		t.Fatalf("assistant tool session without a project should load the personal MCP, got %v", got)
+	}
+	called, err := h.callAssistantMCP(owner, "", assistantMCPCall{Server: "dbx-personal", Tool: "list_connections"})
+	if err != nil || !strings.Contains(called, "conn-1") {
+		t.Fatalf("personal MCP call without a project: %s %v", called, err)
+	}
+	if _, err := h.callAssistantMCP(owner, "", assistantMCPCall{Server: "tapd-p", Tool: "stories_list"}); err == nil || !strings.Contains(err.Error(), "选择项目") {
+		t.Fatalf("project MCP without a project should ask for a project: %v", err)
+	}
+	if _, err := h.callAssistantMCP(owner, "", assistantMCPCall{Server: "global-http", Tool: "x"}); err == nil {
+		t.Fatal("platform MCP without a project must not be called")
+	}
+}
+
 func TestAssistantChatRecoversWithoutJSONFollowup(t *testing.T) {
 	st, err := repo.OpenTest()
 	if err != nil {
