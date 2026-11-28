@@ -439,10 +439,12 @@ func runnerWorkspacePayload(value any) domain.RunnerWorkspaceResponse {
 
 func runnerWorkspaceError(err error) domain.RunnerWorkspaceResponse {
 	status := http.StatusBadRequest
+	code := ""
 	if errors.Is(err, os.ErrNotExist) {
 		status = http.StatusNotFound
+		code = domain.WorkspaceErrorMissing
 	}
-	return domain.RunnerWorkspaceResponse{Error: err.Error(), Status: status}
+	return domain.RunnerWorkspaceResponse{Error: err.Error(), Status: status, Code: code}
 }
 
 func runnerResolveWorkspacePath(root, raw string, wantDir bool) (string, string, error) {
