@@ -240,7 +240,7 @@ func resolveNodeExecutor(st *repo.Store, node domain.WorkflowNode, agent domain.
 
 func workflowSandboxRequirements(st *repo.Store, wf domain.WorkflowDefinition) (runtime.SandboxRequirements, error) {
 	var requirements []runtime.SandboxRequirements
-	for _, node := range wf.Nodes {
+	for _, node := range wf.ExecutionRoles() {
 		if node.Type == "script" || node.Type == "command" || node.Type == "approval" || node.Type == "sop" {
 			continue
 		}
@@ -350,7 +350,7 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 	started := false
 	e.updateRun(runID, func(r *domain.Run) {
 		nr := r.Nodes[node.ID]
-		if nr.Status != "pending" {
+		if nr == nil || nr.Status != "pending" {
 			return
 		}
 		if nr.Error != "" && runtime.IsCwdMountFailure(errors.New(nr.Error)) {
@@ -871,6 +871,7 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 				prompt = runtime.GitPreparationFallbackPrompt(current.RepositoryContexts(), repositoryFallback) + prompt
 			}
 			prompt += projectCredentialNote
+			prompt += squadTurnPrompt(current, node)
 			if current.ExecutionContext.SharedScheduleID != "" {
 				version, assetErr := e.repo.SharedScheduleVersion(current.ExecutionContext.SharedScheduleID, current.ExecutionContext.SharedScheduleVersion)
 				if assetErr != nil {
@@ -1259,12 +1260,20 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 		if !shouldCommitNodeOutcome(*r, nr, executionGeneration, executionAttempt, true) {
 			return
 		}
+		// A superseded speaker must not select the next member for a replay.
+		if r.WorkflowSnapshot.Squad != nil && nr.Attempt != executionAttempt {
+			return
+		}
 		outcomeNode = nr
 		r.Artifacts = append(r.Artifacts, artifacts...)
 		nr.Output = output
 		nr.Error = ""
 		markKnowledgeReadsCited(nr.KnowledgeReads, executionAttempt, output, artifacts)
-		if manualGateName != "" {
+		if routeErr := e.commitSquadDecision(r, node, output); routeErr != nil {
+			nr.Status, nr.Error = "failed", routeErr.Error()
+			nr.FinishedAt = time.Now().UTC()
+			e.event(r, node.ID, "node.failed", nr.Error)
+		} else if manualGateName != "" {
 			nr.Status = "waiting_approval"
 			nr.FinishedAt = time.Now().UTC()
 			e.event(r, node.ID, "gate.waiting", "等待人工验证："+manualGateName)

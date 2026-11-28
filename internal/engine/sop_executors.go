@@ -237,7 +237,7 @@ func (e *Engine) planSOPExecutors(wf domain.WorkflowDefinition, ec domain.Teleme
 	selected := make(map[string]domain.AssistantDefaults)
 	requirements := make([]SOPExecutorRequirement, 0)
 	seen := make(map[string]bool)
-	for _, node := range wf.Nodes {
+	for _, node := range wf.ExecutionRoles() {
 		if node.Type != "agent" {
 			continue
 		}
@@ -315,7 +315,7 @@ func (e *Engine) SOPExecutorRequirements(wf domain.WorkflowDefinition, userID in
 }
 
 func workflowNodeExecutor(st *repo.Store, wf domain.WorkflowDefinition, node domain.WorkflowNode, role domain.AgentDefinition) (domain.ExecutorDefinition, error) {
-	if defaults, ok := wf.ExecutorDefaults[node.ID]; ok && followsSOPExecutorDefault(node, role) {
+	if defaults, ok := wf.ExecutorDefaults[wf.ExecutorDefaultKey(node)]; ok && followsSOPExecutorDefault(node, role) {
 		if defaults.Executor == "" {
 			return domain.ExecutorDefinition{}, errSOPExecutorUnconfigured
 		}
@@ -327,7 +327,7 @@ func workflowNodeExecutor(st *repo.Store, wf domain.WorkflowDefinition, node dom
 // Runs can be queued before their responsible user has configured an executor.
 // Resolve the deferred default on the bound machine before the first role runs.
 func (e *Engine) resolveDeferredSOPExecutor(run domain.Run, node domain.WorkflowNode) (domain.Run, error) {
-	defaults, pending := run.WorkflowSnapshot.ExecutorDefaults[node.ID]
+	defaults, pending := run.WorkflowSnapshot.ExecutorDefaults[run.WorkflowSnapshot.ExecutorDefaultKey(node)]
 	if !pending || defaults.Executor != "" {
 		return run, nil
 	}

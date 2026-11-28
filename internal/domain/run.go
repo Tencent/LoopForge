@@ -155,6 +155,7 @@ func (r *Run) UnmarshalJSON(raw []byte) error {
 }
 
 type NodeRun struct {
+	SquadDecision   *SquadDecision  `json:"squadDecision,omitempty"`
 	KnowledgeReads  []KnowledgeRead `json:"knowledgeReads,omitempty"`
 	NodeID          string          `json:"nodeId"`
 	Status          string          `json:"status"`

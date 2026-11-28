@@ -108,6 +108,25 @@ curl -u "$AGENTFLOW_USER:$AGENTFLOW_PASS" -X POST \
 
 该接口只启动长任务，不等待完成。保存为 Issue 的工作优先使用 Issue dispatch，以建立 task/issue 关联。
 
+#### 发起 Agent 协作小队
+
+在「运行记录 → 发起协作小队」选择项目、成员和首位成员，填写交付目标。需要项目写权限。小队使用项目默认仓库（如有），每个角色沿用自己的执行器、模型、门禁与产物契约。
+
+```json
+{
+  "projectId": "my-project",
+  "input": "核对发票金额，交付一份由另一位成员独立复核的报告",
+  "squad": {
+    "memberIds": ["billing", "auditor", "editor"],
+    "maxTurns": 6
+  }
+}
+```
+
+`memberIds` 包含 2–12 个当前项目可使用的不同角色 ID。第一位先执行，之后每一轮由当前成员决定交接、完成或报告阻碍。成员可以跳过或再次出场。`maxTurns` 为 1–16，默认 6。`squad.sandboxProfileId` 留空时自动选沙箱。每次请求选择 `squad` 或 `workflowId` 其中一项。
+
+运行详情的 `workflowSnapshot.squad` 保存成员名单与轮次上限，`nodes` 和 `edges` 记录实际走过的路线。`nodes[turnId].squadDecision` 记录决策和交接摘要。阻塞、无效交接和用尽预算都会留下失败原因，支持补充信息后重试。从较早轮次重跑时保留此前的交接，从所选轮次重新决定后续路线。
+
 ### `GET /api/runs/{runId}`
 
 成功 `200` 返回 run 详情；不存在 `404`。详情：

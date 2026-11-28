@@ -1185,3 +1185,16 @@ Object.assign(window.LF_I18N_EN, {
   "自动分配 · 平台云端": "Auto-assign · platform cloud",
   "自动分配失败": "Auto-assign failed",
 });
+
+Object.assign(window.LF_I18N_EN, {
+  "发起协作小队": "Start agent squad",
+  "小队成员": "Squad members",
+  "首位成员": "Opening member",
+  "最多轮次": "Turn limit",
+  "开始协作": "Start collaboration",
+  "描述要交付的结果和验收条件": "Describe the deliverable and how to verify it",
+  "请选择 2 至 12 位成员。": "Select 2 to 12 members.",
+  "请先在角色定义中创建或共享至少两个项目角色。": "Create or share at least two project roles in Role definitions.",
+  "每轮由当前成员选择下一位成员，目标达成即可结束。": "Each member can hand off to a teammate or finish when the goal is met.",
+  "请填写小队目标。": "Enter a goal for the squad."
+});

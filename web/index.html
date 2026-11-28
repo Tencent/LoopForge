@@ -363,6 +363,7 @@
         <h1>运行记录<span class="info-tip" tabindex="0" role="note" aria-label="平台执行机器默认同时运行 10 条顶层 LOOP，所有项目共用，平台管理员可调整。"><span class="run-hint-icon" data-run-icon="info" aria-hidden="true"><svg width="15" height="15"></svg></span><span class="info-tip-panel" role="tooltip"><b>并发规则</b><span><strong>平台所有项目共用执行名额</strong>，默认 10 条顶层 LOOP，平台管理员可在「执行机器」调整。个人和共享机器按各自上限计数。</span><span>超出名额后按排队顺序启动。开启自动分配的 LOOP 等待兼容的执行机器，子 LOOP 共用父流程名额。</span><span>失败、暂停、待确认的 LOOP 空闲 1 小时后自动归档工作区并释放名额，继续或重试时自动恢复。已开始的 LOOP 取消后，工作区清理完成即释放名额。</span></span></span></h1>
         <span id="runsLiveState" class="run-live" role="status"><span class="run-lamp" aria-hidden="true"><i></i></span><span data-live-text>实时更新中</span></span>
         <div id="runOverview" class="run-kpis" aria-label="运行指标"></div>
+        <button id="openAgentSquad" class="button primary" type="button">发起协作小队</button>
         <button id="refreshRuns" class="run-icon-btn" type="button" aria-label="刷新" title="刷新"><span data-run-icon="refresh" aria-hidden="true"><svg width="15" height="15"></svg></span></button>
       </div>
       <section class="run-panel" aria-label="运行列表">
@@ -1039,6 +1040,25 @@
 
   <div id="importTAPDModal" class="modal"><form id="importTAPDForm" class="modal-card"><button type="button" class="modal-close import-tapd-close">×</button><p class="eyebrow">外部需求</p><h2>导入 TAPD 工作项</h2><p class="modal-hint">支持 TAPD 需求、缺陷或任务链接，也可以粘贴「标题 + 链接」。导入时将读取 TAPD 最新标题和描述并写入当前项目。</p><label for="importTAPDURL">TAPD 链接或分享文本</label><textarea id="importTAPDURL" class="input" required rows="3" placeholder="【工作项标题】&#10;https://www.tapd.cn/tapd_fe/…/story/detail/…"></textarea><label>LOOP 流程</label><select id="importTAPDWorkflow" class="select"></select><label>代码仓库（可多选）</label><div id="importTAPDRepository" class="repo-picker"></div><p class="modal-hint">从下拉框添加仓库，点击标签可移除。导入前必须至少选择一个仓库。</p><label for="importTAPDBaseBranch">继续开发分支（可选）</label><input id="importTAPDBaseBranch" class="input" placeholder="留空从配置主分支新建工作分支" aria-describedby="importTAPDBaseBranchHint" autocomplete="off"><div id="importTAPDRepositoryBranches" class="repository-branches" hidden></div><p id="importTAPDBaseBranchHint" class="modal-hint">留空从配置主分支新建工作分支；填写时直接继续该已有分支，不新建。</p><div class="modal-actions"><button type="button" class="button ghost import-tapd-close">取消</button><button id="confirmImportTAPD" type="submit" class="button primary">导入</button></div></form></div>
 
+  <div id="squadModal" class="modal">
+    <form id="squadForm" class="modal-card" role="dialog" aria-modal="true" aria-labelledby="squadTitle">
+      <button type="button" class="modal-close" aria-label="关闭">×</button>
+      <h2 id="squadTitle">发起协作小队</h2>
+      <label class="modal-label" for="squadProject">项目</label>
+      <select id="squadProject" class="select" required></select>
+      <label class="modal-label" for="squadGoal">任务目标</label>
+      <textarea id="squadGoal" class="textarea" rows="3" required placeholder="描述要交付的结果和验收条件"></textarea>
+      <fieldset class="squad-roster"><legend>小队成员</legend><div id="squadMembers"></div></fieldset>
+      <div class="wizard-grid">
+        <label>首位成员<select id="squadFirst" class="select" required></select></label>
+        <label>最多轮次<input id="squadLimit" type="number" min="1" max="16" value="6" required></label>
+      </div>
+      <label class="modal-label" for="squadSandbox">运行沙箱</label>
+      <select id="squadSandbox" class="select"></select>
+      <p id="squadHint" role="status"></p>
+      <div class="modal-actions"><button id="startAgentSquad" class="button primary" type="submit">开始协作</button></div>
+    </form>
+  </div>
   <div id="runModal" class="modal"><div class="modal-card"><button class="modal-close">×</button><p class="eyebrow">手动运行</p><h2>发起流程运行</h2><p>选择 LOOP 并提供任务输入，内容会注入使用 <code>{{input}}</code> 的 Agent 节点。</p><label class="modal-label" for="runWorkflowChoice">LOOP 流程</label><select id="runWorkflowChoice" class="select"></select><label class="modal-label" for="runInput">任务输入</label><textarea id="runInput" placeholder="例如：实现用户登录接口，并补充单元测试"></textarea><div class="modal-knowledge-row"><button id="runKnowledgeRefsBtn" type="button" class="button ghost small">关联我的知识库</button><button id="runKnowledgeRefsResetBtn" type="button" class="button ghost small" hidden>恢复默认</button><span id="runKnowledgeRefsSummary" class="modal-hint">默认按节点或角色配置</span></div><div class="modal-actions"><button class="button ghost modal-close">取消</button><button id="confirmRun" class="button primary">开始运行</button></div></div></div>
 
   <div id="genericTemplateModal" class="modal"><div class="modal-card generic-template-card"><button class="modal-close generic-template-close">×</button><p class="eyebrow">内置 LOOP</p><h2 id="genericTemplateTitle">使用通用模板</h2><p id="genericTemplateIntro" class="modal-hint"></p><div id="genericTemplateStructure" class="generic-structure"></div><div class="generic-requirement-head"><b>运行依赖</b><span>复制不检查依赖；未配置时对应节点会在运行中降级或失败。凭证按任务责任人注入。</span></div><div id="genericTemplateRequirements" class="generic-requirements"></div><div class="modal-actions"><button type="button" class="button ghost generic-template-close">取消</button><button id="runGenericTemplateDirect" type="button" class="button ghost">直接运行</button><button id="confirmGenericTemplate" type="button" class="button primary">复制到本项目</button></div></div></div>

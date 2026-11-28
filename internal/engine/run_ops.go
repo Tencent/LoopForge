@@ -169,9 +169,20 @@ func (e *Engine) Approve(runID, nodeID, humanContext string, expected ...NodeExp
 	if n == nil || n.Status != "waiting_approval" {
 		return fmt.Errorf("node is not waiting for approval")
 	}
-	n.Status = "succeeded"
-	n.FinishedAt = time.Now().UTC()
 	note := recordHumanContext(&r, nodeID, "人工批准继续", humanContext)
+	if r.WorkflowSnapshot.Squad != nil && n.SquadDecision == nil {
+		// A member can ask for human input before choosing a successor.
+		// Continue that turn so approval alone cannot complete the squad.
+		n.Status = "pending"
+		n.Feedback = note
+		n.ResumeSessionID = n.SessionID
+		n.GateResult = nil
+		n.Error, n.Activity = "", ""
+		n.FinishedAt = time.Time{}
+	} else {
+		n.Status = "succeeded"
+		n.FinishedAt = time.Now().UTC()
+	}
 	decision := "# Approval\n\nApproved by a human gate.\n"
 	if note != "" {
 		decision += "\n" + note + "\n"
@@ -315,6 +326,13 @@ func (e *Engine) Reject(runID string, req domain.RejectRequest, expected ...Node
 		if n.ID == req.NodeID && n.MaxReworks > 0 && r.Nodes[target].ReworkCount >= n.MaxReworks {
 			return fmt.Errorf("rework limit reached")
 		}
+	}
+	if wf.Squad != nil {
+		if n := r.Nodes[req.NodeID]; n == nil || n.Status != "waiting_approval" || r.HasActiveNode() || (target != req.NodeID && !ancestors(wf, req.NodeID)[target]) {
+			return fmt.Errorf("请在小队等待审批时选择当前轮或之前的轮次返工")
+		}
+		rewindSquad(&r, target)
+		wf = r.WorkflowSnapshot
 	}
 	reset := descendants(wf, target)
 	reset[target] = true
@@ -542,6 +560,7 @@ func (e *Engine) retryContext(ctx context.Context, runID, nodeID, reason, humanC
 			reason = "从中断处继续"
 		}
 	}
+	rewindSquad(&r, nodeID)
 	reset := descendants(r.WorkflowSnapshot, nodeID)
 	reset[nodeID] = true
 	if e.executes() && !deferRestore && len(reset) >= len(r.WorkflowSnapshot.Nodes) {
@@ -843,6 +862,9 @@ func (e *Engine) RefreshRunSOP(runID string) error {
 	if !ok {
 		return fmt.Errorf("run not found")
 	}
+	if r.WorkflowSnapshot.Squad != nil {
+		return fmt.Errorf("小队采用本次运行的成员名单")
+	}
 	if r.Status == "running" || r.HasActiveNode() || (r.Status != "waiting" && !domain.TerminalRunStatus(r.Status)) {
 		return fmt.Errorf("only a stopped run can update its LOOP")
 	}
@@ -983,7 +1005,7 @@ func (e *Engine) DeclineRetry(runID, nodeID string, expected ...NodeExpectation)
 }
 
 func overlayLatestNodeBindings(st *repo.Store, r *domain.Run, nodeIDs map[string]bool) {
-	if st == nil || r == nil || len(nodeIDs) == 0 {
+	if st == nil || r == nil || r.WorkflowSnapshot.Squad != nil || len(nodeIDs) == 0 {
 		return
 	}
 	latest, ok := latestWorkflowDefinition(st, r.WorkflowID)

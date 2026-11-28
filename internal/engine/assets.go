@@ -348,6 +348,10 @@ func ruleTargetsWorkflow(rule domain.RuleDefinition, workflowID string) bool {
 }
 
 func workflowAgent(st *repo.Store, wf domain.WorkflowDefinition, id string) (domain.AgentDefinition, bool) {
+	if wf.Squad != nil {
+		role, ok := st.Agent(id)
+		return role, ok && squadRoleAvailable(role, wf.ProjectID)
+	}
 	if domain.IsPreviewBuildAgent(id) {
 		return domain.PreviewBuildAgent(wf.Preview), true
 	}

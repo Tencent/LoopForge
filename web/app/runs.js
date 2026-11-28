@@ -1,3 +1,79 @@
+function bindSquadForm(){
+  const modal=$('#squadModal'),form=$('#squadForm'),project=$('#squadProject'),roster=$('#squadMembers');
+  const first=$('#squadFirst'),submit=$('#startAgentSquad'),hint=$('#squadHint');
+  const options=items=>items.map(item=>new Option(item.name||item.id,item.id));
+  const selected=()=>Array.from(roster.querySelectorAll('input:checked'),input=>({id:input.value,name:input.parentElement.textContent}));
+  function updateMembers(){
+    const members=selected(),previous=first.value;
+    first.replaceChildren(...options(members));
+    if(members.some(m=>m.id===previous))first.value=previous;
+    submit.disabled=members.length<2||members.length>12;
+    hint.textContent=submit.disabled?'请选择 2 至 12 位成员。':'每轮由当前成员选择下一位成员，目标达成即可结束。';
+  }
+  function updateProject(){
+    const visible=item=>item.projectId===project.value||item.shared;
+    const roles=(state.data.agents||[]).filter(role=>role.projectId&&visible(role));
+    roster.replaceChildren(...roles.map(role=>{
+      const label=document.createElement('label'),input=document.createElement('input');
+      input.type='checkbox';input.value=role.id;
+      label.append(input,document.createTextNode(role.name||role.id));
+      return label;
+    }));
+    const sandboxes=(state.data.sandboxes||[]).filter(box=>!box.projectId||visible(box));
+    $('#squadSandbox').replaceChildren(new Option('自动选择',''),...options(sandboxes));
+    updateMembers();
+    if(roles.length<2)hint.textContent='请先在角色定义中创建或共享至少两个项目角色。';
+  }
+  $('#openAgentSquad').onclick=()=>{
+    form.reset();
+    project.replaceChildren(...options(state.data.projects||[]));
+    if(state.projectFilter)project.value=state.projectFilter;
+    updateProject();
+    modal.classList.add('open');
+    $('#squadGoal').focus();
+  };
+  function close(){modal.classList.remove('open');$('#openAgentSquad').focus()}
+  modal.querySelector('.modal-close').onclick=close;
+  modal.addEventListener('keydown',event=>{if(event.key==='Escape')close()});
+  project.onchange=updateProject;
+  roster.onchange=updateMembers;
+  form.onsubmit=async event=>{
+    event.preventDefault();
+    if(submit.disabled||form.getAttribute('aria-busy')==='true')return;
+    const opening=first.value;
+    const memberIds=[opening,...selected().map(member=>member.id).filter(id=>id!==opening)];
+    const payload={projectId:project.value,input:$('#squadGoal').value.trim(),squad:{memberIds,maxTurns:Number($('#squadLimit').value),sandboxProfileId:$('#squadSandbox').value}};
+    if(!payload.input){hint.textContent='请填写小队目标。';return}
+    form.setAttribute('aria-busy','true');submit.disabled=true;
+    try{
+      const run=await api('/api/runs',{method:'POST',body:JSON.stringify(payload)});
+      close();
+      state.data.runs=sortRunsDescending([run,...(state.data.runs||[]).filter(item=>item.id!==run.id)]);
+      showRunDetail(run.id);
+    }catch(err){hint.textContent=err.message}
+    finally{form.removeAttribute('aria-busy');submit.disabled=selected().length<2||selected().length>12}
+  };
+}
+
+function squadHistorySignature(run){
+  return run.workflowSnapshot.nodes.map(node=>{
+    const turn=run.nodes?.[node.id];
+    return [node.id,turn?.attempt,turn?.status,turn?.squadDecision?.action].join('/');
+  }).join('|');
+}
+
+function squadHistoryHTML(run){
+  const wf=run.workflowSnapshot;
+  if(!wf?.squad)return '';
+  const rows=(wf.nodes||[]).map(node=>{
+    const turn=run.nodes?.[node.id],decision=turn?.squadDecision;
+    const next=wf.squad.members.find(m=>m.id===decision?.to);
+    const action=next?lfT('交给 ','Handoff to ')+next.name:({finish:lfT('提交交付结果','Submitted result'),blocked:lfT('受阻','Blocked')})[decision?.action]||statusText(turn?.status);
+    return `<li><strong>${escapeHTML(node.name)}</strong> · ${escapeHTML(action||'待执行')}${decision?.summary?`<p>${escapeHTML(decision.summary)}</p>`:''}</li>`;
+  });
+  return `<section class="squad-history"><h3>${lfT('小队交接','Squad handoffs')} · ${wf.nodes.length}/${wf.squad.maxTurns} ${lfT('轮','turns')}</h3><ol>${rows.join('')}</ol></section>`;
+}
+
 async function startRun(){
   const button=$('#confirmRun');
   const workflowId=$('#runWorkflowChoice').value||state.workflow?.id,projectId=currentProject()?.id||'';
@@ -62,12 +138,14 @@ function mergeLiveRun(id,incoming,payload){
     }
   }
   const telemetry=[...byId.values()].sort((a,b)=>a.sequence-b.sequence);
-  const nodes={...(old?.nodes||{})};
+  const squad=incoming.workflowSnapshot?.squad;
+  const nodes=squad?{}:{...(old?.nodes||{})};
   for(const [k,n] of Object.entries(incoming.nodes||{})){
-    const prev=nodes[k]||{};
+    const prev=old?.nodes?.[k]||{};
+    if(squad){nodes[k]=n;continue}
     nodes[k]={...prev,...n,output:n.output||prev.output,error:n.error||prev.error,feedback:n.feedback||prev.feedback};
   }
-  return {...(old||{}),...incoming,pauseRequested:Boolean(incoming.pauseRequested),cancelRequested:Boolean(incoming.cancelRequested),workflowSnapshot:(old?.workflowSnapshot?.id?old.workflowSnapshot:incoming.workflowSnapshot),telemetry,nodes};
+  return {...(old||{}),...incoming,pauseRequested:Boolean(incoming.pauseRequested),cancelRequested:Boolean(incoming.cancelRequested),workflowSnapshot:(squad?incoming.workflowSnapshot:old?.workflowSnapshot?.id?old.workflowSnapshot:incoming.workflowSnapshot),telemetry,nodes};
 }
 function applyRunPayload(run,{list=true}={}){
   if(state.selectedRun&&run?.id!==state.selectedRun)return;
@@ -1292,6 +1370,7 @@ function shouldPatchRunLive(run){
   const host=$('#runDetail');
   if(!host||host.dataset.runId!==run?.id)return false;
   if(host.dataset.controlSignature!==runControlSignature(run))return false;
+  if(run.workflowSnapshot?.squad&&host.dataset.squadHistory!==squadHistorySignature(run))return false;
   // 列表摘要没有节点。先画了空拓扑之后，完整运行到达时必须整页重画，不能只补状态。
   const want=(run?.workflowSnapshot?.nodes||[]).length;
   if(want>0&&host.querySelectorAll('[data-run-node]').length!==want)return false;
@@ -1839,6 +1918,7 @@ function renderRunDetail(r){
   workspacePane.insertAdjacentHTML('afterend',`${previewEnabled?`<div class="run-pane" data-run-pane="preview" ${runDetailTab==='preview'?'':'hidden'}>${previewPaneHTML(r)}</div>`:''}<div class="run-pane" data-run-pane="eval" ${runDetailTab==='eval'?'':'hidden'}>${runEvalPaneHTML(r)}</div>`);
   if(keepPreview){const fresh=host.querySelector('iframe[data-preview-frame]');if(fresh)fresh.replaceWith(existingPreviewFrame);}
   const headerActions=host.querySelector('.run-header-actions');if(r.status==='running'&&headerActions)headerActions.querySelector('[data-cancel-run]')?.insertAdjacentHTML('beforebegin','<button class="button ghost small" data-pause-run>暂停运行</button>');
+  if(wf.squad)host.querySelectorAll('[data-open-flow],[data-refresh-run-sop]').forEach(el=>el.remove());
   const nonSOP=r.kind==='workspace'||runIsGroupMode(r);
   if(nonSOP){
     host.querySelectorAll('[data-open-flow],[data-pause-run],[data-resume-run],[data-refresh-run-sop],[data-rerun-from-here],[data-pass-node],[data-approve],[data-reject],[data-retry-node],[data-decline-retry]').forEach(el=>el.remove());
@@ -1866,6 +1946,10 @@ function renderRunDetail(r){
   }
   const childCallout=r.status==='queued'?'':childSOPCalloutHTML(r);if(childCallout)host.querySelector('.run-detail-header')?.insertAdjacentHTML('afterend',childCallout);
   if(pg.child){const note=`<p class="child-sop-trace-note">这是 LOOP 节点，下面显示的是子 LOOP 运行 <code>${escapeHTML(pg.runId.slice(-12))}</code> 全部节点的内容。</p>`;host.querySelectorAll('.trace-section>.section-heading,.worker-log-section>.section-heading').forEach(h=>h.insertAdjacentHTML('afterend',note))}
+  if(wf.squad){
+    host.dataset.squadHistory=squadHistorySignature(r);
+    host.querySelector('.run-detail-header')?.insertAdjacentHTML('afterend',squadHistoryHTML(r));
+  }
   const runMeta=host.querySelector('.run-header-meta');
   const sandbox=runSandboxDetails(r);
   if(runMeta)runMeta.insertAdjacentHTML('beforeend',`${taskTriggerBadge(ctx.task)}<span class="run-meta-chip" data-run-sandbox title="${escapeHTML(sandbox.title)}">Sandbox <code>${escapeHTML(sandbox.id)}</code></span>`);

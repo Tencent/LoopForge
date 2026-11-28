@@ -55,7 +55,7 @@ func (e *Engine) assignEvolutionCanaries(runID string, wf domain.WorkflowDefinit
 // agent node runs the stored role, a rule when such a role carries it or it
 // is a global rule targeting the workflow.
 func workflowUsesEvoAsset(st *repo.Store, wf domain.WorkflowDefinition, projectID, kind, id string) bool {
-	for _, node := range wf.Nodes {
+	for _, node := range wf.ExecutionRoles() {
 		if strings.TrimSpace(node.AgentID) == "" || node.Type == "script" || node.Type == "command" || node.Type == "approval" || node.Type == "sop" {
 			continue
 		}

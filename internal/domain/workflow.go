@@ -145,6 +145,7 @@ type GroupSOPHandoff struct {
 }
 
 type WorkflowDefinition struct {
+	Squad             *AgentSquad           `json:"squad,omitempty"` // run-only roster and turn budget
 	GroupSOPHandoff   *GroupSOPHandoff      `json:"groupSopHandoff,omitempty"`
 	GroupCompletion   *GroupCompletion      `json:"groupCompletion,omitempty"`
 	GroupMembers      []string              `json:"groupMembers,omitempty"`

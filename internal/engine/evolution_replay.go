@@ -271,7 +271,7 @@ func (e *Engine) recordRunAssetPins(run domain.Run) {
 		}
 		return rule.Content
 	}
-	for _, node := range wf.Nodes {
+	for _, node := range wf.ExecutionRoles() {
 		if strings.TrimSpace(node.AgentID) == "" || node.Type == "script" || node.Type == "command" || node.Type == "approval" || node.Type == "sop" {
 			continue
 		}

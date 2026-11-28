@@ -676,6 +676,9 @@ func (r *CatalogRepo) publishStoredWorkflow(id string) (domain.WorkflowDefinitio
 }
 
 func (r *CatalogRepo) putWorkflow(v domain.WorkflowDefinition, publishing bool) error {
+	if v.Squad != nil {
+		return errors.New("小队配置仅用于发起协作运行")
+	}
 	if strings.TrimSpace(v.ID) == "" || strings.TrimSpace(v.Name) == "" {
 		return errors.New("workflow id and name are required")
 	}

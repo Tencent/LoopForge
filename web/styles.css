@@ -270,3 +270,14 @@ input::placeholder,textarea::placeholder{color:var(--muted-2)}
 @media (prefers-reduced-motion:reduce){
   *,*:before,*:after{scroll-behavior:auto!important;animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}
 }
+
+.squad-roster{margin:var(--sp-3) 0;padding:var(--sp-2);border:1px solid var(--line);border-radius:8px}
+.squad-roster legend{font-size:var(--fs-sm);font-weight:700}
+#squadMembers{display:flex;flex-wrap:wrap;gap:8px 16px;max-height:140px;overflow:auto}
+#squadMembers label{display:inline-flex;align-items:center;gap:6px}
+#squadHint{min-height:1.4em;color:var(--muted);font-size:var(--fs-sm)}
+.squad-history{padding:var(--sp-3) var(--sp-4);background:var(--panel);border:1px solid var(--line);border-radius:12px}
+.squad-history h3,.squad-history p{margin:0}
+.squad-history ol{list-style:none;padding:0;margin:.5em 0 0}
+.squad-history li+li{margin-top:.5em}
+.squad-history p{color:var(--muted);white-space:pre-wrap;overflow-wrap:anywhere}
