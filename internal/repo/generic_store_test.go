@@ -177,3 +177,37 @@ func TestPublishGenericWorkflow(t *testing.T) {
 		t.Fatalf("publish = %+v", published)
 	}
 }
+
+func TestWorkflowNamesUsingAgentSkipsGenericTemplateShadows(t *testing.T) {
+	s := testStoreWithGenericTemplates(t)
+	template, ok := s.GenericWorkflowByID(GenericBackendDeliveryWorkflowID)
+	if !ok || len(template.Nodes) == 0 {
+		t.Fatal("backend template has no node")
+	}
+	roleID := template.Nodes[0].AgentID
+	if _, ok := s.GenericAgentByID(roleID); !ok {
+		t.Fatalf("template role %q missing", roleID)
+	}
+	// Adopting a template clones its roles into a project and often keeps the
+	// original id. Generic templates and other projects' LOOPs run the built-in
+	// role, so they are not references to the project clone.
+	projectRole := domain.AgentDefinition{ID: roleID, Name: "本项目角色", ProjectID: "project-1", ExecutorID: "codebuddy"}
+	if err := s.PutAgent(projectRole); err != nil {
+		t.Fatal(err)
+	}
+	if names := s.WorkflowNamesUsingAgent(projectRole); len(names) != 0 {
+		t.Fatalf("shadowed project role reported as referenced: %v", names)
+	}
+	own := domain.WorkflowDefinition{ID: "project-flow", Name: "本项目交付", ProjectID: "project-1", Status: "published",
+		Nodes: []domain.WorkflowNode{{ID: "work", AgentID: roleID}}}
+	if err := s.PutWorkflow(own); err != nil {
+		t.Fatal(err)
+	}
+	if names := s.WorkflowNamesUsingAgent(projectRole); len(names) != 1 || names[0] != "本项目交付" {
+		t.Fatalf("own-project reference missing: %v", names)
+	}
+	// A platform role with the same id resolves in every LOOP.
+	if names := s.WorkflowNamesUsingAgent(domain.AgentDefinition{ID: roleID, Name: "平台角色"}); len(names) < 2 {
+		t.Fatalf("platform role lost template references: %v", names)
+	}
+}

@@ -462,6 +462,42 @@ test('adding an artifact keeps unsaved loop and review settings of the role', as
   assert.equal(saved.artifactOutputs[0].path, 'plan.md');
 });
 
+test('generic LOOP templates do not count as references to project roles', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  app.evaluate(`
+    state.projectFilter='project-1';
+    state.agentScope='project';
+    state.data.agents=[{id:'agent-1',projectId:'project-1',shared:false,name:'Developer',description:'Implements changes',executorId:'runner-1'}];
+    state.data.workflows=[{id:'generic-backend',name:'Common backend delivery',generic:true,projectId:'',nodes:[
+      {id:'n1',agentId:'agent-1'},{id:'n2',agentId:'agent-1'}]}];
+    switchView('agents');renderAgents();
+  `);
+  assert.match(app.document.querySelector('#agentList .agent-row-uses').textContent, /未使用/);
+  assert.equal(app.evaluate(`agentDeleteBlockReason(state.data.agents[0])`), '');
+
+  app.evaluate(`
+    state.data.workflows.push({id:'flow-1',name:'Delivery Flow',projectId:'project-1',nodes:[{id:'n3',agentId:'agent-1'}]});
+    renderAgents();
+  `);
+  assert.match(app.document.querySelector('#agentList .agent-row-uses').textContent, /1 个节点/);
+  assert.equal(app.evaluate(`agentDeleteBlockReason(state.data.agents[0])`), '角色仍被流程引用，请先解除引用');
+});
+
+test('agent usage matches the server shadow rule for shared roles and foreign projects', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  const count = (agent, workflows) => app.evaluate(`agentUsageCounts(${JSON.stringify(workflows)},[${JSON.stringify(agent)}]).get('agent-1')`);
+  const template = {id:'generic-backend',name:'Common backend delivery',generic:true,projectId:'',nodes:[{agentId:'agent-1'}]};
+  const foreign = {id:'foreign-flow',name:'Other project flow',projectId:'project-2',nodes:[{agentId:'agent-1'}]};
+  const own = {id:'own-flow',name:'Own flow',projectId:'project-1',nodes:[{agentId:'agent-1'}]};
+  const projectRole = {id:'agent-1',projectId:'project-1',shared:false};
+  assert.equal(count(projectRole, [template, foreign, own]), 1, 'a shadowed project role only counts its own LOOPs');
+  assert.equal(count({...projectRole, projectId:''}, [template, foreign, own]), 3, 'platform roles resolve in every LOOP');
+  assert.equal(count({...projectRole, shared:true}, [template, foreign, own]), 3, 'shared roles resolve in every LOOP');
+  assert.equal(count(projectRole, [foreign, own]), 2, 'roles without a template twin still count foreign LOOPs');
+});
+
 test('platform roles are read-only for project members and can be copied', async (t) => {
   const app = await loadApp();
   t.after(app.close);
