@@ -180,6 +180,26 @@ test("Escape stays dismissed through selection events until the caret or draft c
   expect(input).toHaveAttribute("aria-expanded", "true");
 });
 
+test("toolbar-opened picker survives editor selection events until an asset is chosen", async () => {
+  mockReferences();
+  render(<ConversationInput />);
+  const input = screen.getByRole("textbox", { name: "消息" });
+  act(() => input.focus());
+  fireEvent.click(screen.getByRole("button", { name: "引用项目资产" }));
+  expect(screen.getByRole("option", { name: /技能/ })).toBeInTheDocument();
+  // Browsers emit select on the editor while moving to and pressing an option.
+  fireEvent.select(input);
+  fireEvent.click(input);
+  expect(input).toHaveAttribute("aria-expanded", "true");
+  fireEvent.click(screen.getByRole("option", { name: /技能/ }));
+  fireEvent.select(input);
+  await screen.findByRole("option", { name: /测试流程/ });
+  fireEvent.select(input);
+  fireEvent.click(screen.getByRole("option", { name: /测试流程/ }));
+  expect(input.value).toContain("@测试流程");
+  expect(input).toHaveAttribute("aria-expanded", "false");
+});
+
 test("native scheduled editor mounts the shared picker, restores assets and clears stale state on reopening", async () => {
   mockReferences();
   const host = document.createElement("div");
