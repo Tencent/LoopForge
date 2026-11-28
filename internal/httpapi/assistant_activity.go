@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 	"unicode"
+	"unicode/utf8"
 )
 
 // Coalesce token deltas while retaining the order of thinking, tools and status.
@@ -204,10 +205,18 @@ func replyCompact(text string) string {
 var replyContentTokens = regexp.MustCompile(`"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|` + "`[^`]*`" + `|[\pL\pN_]+`)
 
 func replyRicher(streamed, final string) string {
-	if len(final) >= len(streamed) || !slices.Equal(replyContentTokens.FindAllString(streamed, -1), replyContentTokens.FindAllString(final, -1)) {
+	if len(final) >= len(streamed) || !replySameContent(streamed, final) {
 		return final
 	}
 	return streamed
+}
+
+// replySameContent reports whether two texts differ only in layout
+// whitespace: the same words in the same order, and identical quoted or
+// code literals.
+func replySameContent(a, b string) bool {
+	return a == b || (replyCompact(a) == replyCompact(b) &&
+		slices.Equal(replyContentTokens.FindAllString(a, -1), replyContentTokens.FindAllString(b, -1)))
 }
 
 func replyParagraphs(text string) []string {
@@ -225,12 +234,12 @@ func replyParagraphs(text string) []string {
 func dropRepeatedReply(text string) string {
 	parts := replyParagraphs(text)
 	originalCount := len(parts)
-	for len(parts) >= 2 && parts[len(parts)-1] == parts[len(parts)-2] {
+	for len(parts) >= 2 && replySameContent(parts[len(parts)-1], parts[len(parts)-2]) {
 		parts = parts[:len(parts)-1]
 	}
 	if len(parts) >= 2 && len(parts)%2 == 0 {
 		mid := len(parts) / 2
-		if strings.Join(parts[:mid], "\n\n") == strings.Join(parts[mid:], "\n\n") {
+		if replySameContent(strings.Join(parts[:mid], "\n\n"), strings.Join(parts[mid:], "\n\n")) {
 			parts = parts[:mid]
 		}
 	}
@@ -266,9 +275,6 @@ func assistantVisibleReply(final string, events []domain.AssistantActivityEvent)
 		return joined
 	}
 	if compactFinal == compactJoined {
-		if rest, ok := cutReplyPhase(final, parts); ok && rest == "" {
-			return joined
-		}
 		return replyRicher(joined, final)
 	}
 	if strings.Contains(final, joined) || strings.HasPrefix(compactFinal, compactJoined) {
@@ -283,9 +289,6 @@ func assistantVisibleReply(final string, events []domain.AssistantActivityEvent)
 	// paragraph and append just the new tail.
 	last := parts[len(parts)-1]
 	if replyCompact(final) == replyCompact(last) {
-		if rest, ok := cutReplyPhase(final, []string{last}); ok && rest == "" {
-			return joined
-		}
 		return strings.TrimSuffix(joined, last) + replyRicher(last, final)
 	}
 	if strings.HasPrefix(final, last) {
@@ -314,24 +317,51 @@ func assistantVisibleReply(final string, events []domain.AssistantActivityEvent)
 	return dropRepeatedReply(joined + "\n\n" + final)
 }
 
-// A CLI may glue paragraphs together at a phase boundary. Within a
-// paragraph, whitespace is part of the reply (including literals and code).
+// A CLI may glue paragraphs together at a phase boundary, and its result can
+// differ from the streamed text in layout whitespace (a trailing space, a
+// doubled space between words). Such a paragraph is the same paragraph; a
+// changed word boundary or literal is not (see replySameContent).
 func cutReplyPhase(text string, parts []string) (string, bool) {
 	matched := false
 	for _, part := range parts {
 		for _, paragraph := range replyParagraphs(part) {
-			if matched {
-				text = strings.TrimLeft(text, "\r\n")
-			}
 			var ok bool
-			text, ok = strings.CutPrefix(text, paragraph)
-			if !ok {
+			if text, ok = cutReplyParagraph(text, paragraph); !ok {
 				return "", false
 			}
 			matched = true
 		}
 	}
 	return text, matched
+}
+
+// cutReplyParagraph removes paragraph from the start of text, skipping
+// whitespace in text, and returns what follows when the consumed prefix has
+// the same content as paragraph.
+func cutReplyParagraph(text, paragraph string) (string, bool) {
+	want := replyCompact(paragraph)
+	if want == "" {
+		return "", false
+	}
+	end := len(text)
+	for i, r := range text {
+		if want == "" {
+			end = i
+			break
+		}
+		if unicode.IsSpace(r) {
+			continue
+		}
+		head, size := utf8.DecodeRuneInString(want)
+		if head != r {
+			return "", false
+		}
+		want = want[size:]
+	}
+	if want != "" || !replySameContent(text[:end], paragraph) {
+		return "", false
+	}
+	return text[end:], true
 }
 
 // stripAssistantCLINotices drops the CLI's "Tool ... does not exist" lines

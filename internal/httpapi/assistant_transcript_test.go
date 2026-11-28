@@ -482,3 +482,48 @@ func TestAssistantVisibleReplyPreservesRicherMarkdownAndFinalLiterals(t *testing
 		}
 	}
 }
+
+// The CLI result of a multi-phase turn may differ from the streamed paragraphs
+// in layout whitespace only. That is the same paragraph and is stored once;
+// a changed literal is still a correction.
+func TestAssistantVisibleReplyMatchesPhasesDespiteLayoutWhitespace(t *testing.T) {
+	two := []domain.AssistantActivityEvent{
+		{Kind: "text", Text: "先看代码。"},
+		{Kind: "tool", ID: "read"},
+		{Kind: "text", Text: "已修复。 "},
+	}
+	if got := assistantVisibleReply("已修复。\n\n总结：改了 1 个文件。", two); got != "先看代码。\n\n已修复。 \n\n总结：改了 1 个文件。" {
+		t.Fatalf("trailing space: %q", got)
+	}
+	for name, second := range map[string]string{"trailing space": "第二阶段完成。 ", "double space": "第二阶段  完成。", "tab": "第二阶段\t完成。"} {
+		three := []domain.AssistantActivityEvent{
+			{Kind: "text", Text: "第一阶段。"},
+			{Kind: "tool", ID: "a"},
+			{Kind: "text", Text: second},
+			{Kind: "tool", ID: "b"},
+			{Kind: "text", Text: "第三阶段。"},
+		}
+		final := strings.ReplaceAll(strings.TrimSpace(second), "  ", " ")
+		final = strings.ReplaceAll(final, "\t", " ") + "\n\n第三阶段。\n\n总结。"
+		want := "第一阶段。\n\n" + strings.Trim(second, "\r\n") + "\n\n第三阶段。\n\n总结。"
+		if got := assistantVisibleReply(final, three); got != want {
+			t.Errorf("%s: got %q, want %q", name, got, want)
+		}
+	}
+	// A literal that changed in the result is not the streamed paragraph.
+	literal := []domain.AssistantActivityEvent{
+		{Kind: "text", Text: "先看配置。"},
+		{Kind: "tool", ID: "read"},
+		{Kind: "text", Text: "值是 \"read only\"。"},
+		{Kind: "tool", ID: "check"},
+		{Kind: "text", Text: "完成。"},
+	}
+	final := "值是 \"readonly\"。\n\n完成。"
+	if got := assistantVisibleReply(final, literal); !strings.HasSuffix(got, "\n\n"+final) {
+		t.Fatalf("literal correction lost: %q", got)
+	}
+	// A repeated final copy that differs only in layout is dropped once.
+	if got := dropRepeatedReply("完成 了。\n\n完成  了。"); got != "完成 了。" {
+		t.Fatalf("layout-only repeat kept: %q", got)
+	}
+}
