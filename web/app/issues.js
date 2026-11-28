@@ -101,6 +101,18 @@ function normalizeIssueTitleSearch(value){
   return String(value||'').normalize('NFKC').toLocaleLowerCase().replace(/[\s\p{P}\p{S}]+/gu,'');
 }
 
+// issueKeyFor is the requirement key shown everywhere (list, drawer, runs,
+// approvals, search): 工蜂 and GitHub issues keep their tracker #iid, TAPD
+// stories their TAPD ID, platform requirements <project key>-<number>.
+// Tracker-synced issues store the tracker number in issue.number, so the
+// project-key form would collide with platform requirements of the same number.
+function issueKeyFor(issue,project){
+  const ref=issue?.externalRef;
+  if((issue?.source==='gongfeng'||issue?.source==='github')&&ref?.externalIid)return `#${ref.externalIid}`;
+  if(issue?.source==='tapd'&&ref?.externalId)return String(ref.externalId);
+  return `${project?.key||'ISS'}-${issue?.number||''}`;
+}
+
 function issueMatchesQuery(issue,project,query){
   const raw=String(query||'').trim().toLocaleLowerCase();
   if(!raw)return true;
@@ -108,7 +120,7 @@ function issueMatchesQuery(issue,project,query){
   const titleTokens=raw.split(/[\s\p{P}\p{S}]+/u).map(normalizeIssueTitleSearch).filter(Boolean);
   if(normalizedQuery&&normalizedTitle.includes(normalizedQuery))return true;
   if(titleTokens.length&&titleTokens.every(token=>normalizedTitle.includes(token)))return true;
-  const key=`${project?.key||'ISS'}-${issue?.number||''}`,external=issue?.externalRef?.externalId||issue?.externalRef?.externalIid||'';
+  const key=issueKeyFor(issue,project),external=issue?.externalRef?.externalId||issue?.externalRef?.externalIid||'';
   return `${key} ${title} ${issue?.description||''} ${external}`.toLocaleLowerCase().includes(raw);
 }
 
@@ -184,7 +196,7 @@ function issueKanbanCard(i){
   const cardTone=needsConfirm?' needs-confirm':(isFailed?' needs-attention':'');
   return `<article class="kanban-card${cardTone}" draggable="true" data-id="${escapeHTML(i.id)}">
     <div class="kanban-card-top"><b>${escapeHTML(key)}</b>${issueSelectionCheckbox(i)}</div>
-    <h4 title="${escapeHTML(i.title)}">${issueTitleMarkup(i.title)}</h4>
+    <h4 title="${escapeHTML(i.title)}" data-i18n-data>${issueTitleMarkup(i.title)}</h4>
     <div class="kanban-card-meta">
       ${issuePriorityMarkup(i.priority)}
       <span class="kanban-stage ${stage.key}" title="${escapeHTML(stage.hint||'')}">${issueStageBadge(stage)}</span>
@@ -330,10 +342,7 @@ function issueMatchesStatusFilter(issue,filter){
 function issuePriorityLabel(value){return ({urgent:'紧急',high:'高',medium:'中',low:'低'}[value]||value||'—')}
 function taskStatusLabel(value){return ({queued:'排队中',dispatched:'已调度',running:'运行中',completed:'已完成',failed:'失败',cancelled:'已取消'}[value]||value||'—')}
 function issueKeyLabel(i){
-  if(i.source==='gongfeng'&&i.externalRef?.externalIid) return `#${i.externalRef.externalIid}`;
-  if(i.source==='tapd'&&i.externalRef?.externalId) return String(i.externalRef.externalId);
-  const p=(state.data.projects||[]).find(x=>x.id===i.projectId);
-  return `${p?.key||'ISS'}-${i.number||''}`;
+  return issueKeyFor(i,(state.data.projects||[]).find(x=>x.id===i?.projectId));
 }
 function issueKeyMarkup(i){
   const raw=String(issueKeyLabel(i)||'');
@@ -497,7 +506,7 @@ function openIssue(issue=null){
   renderIssueRepositoryBranchInputs(f.elements.baseBranch,$('#issueBaseBranchHint'),$('#issueRepositoryBranches'),selectedIssueRepositoryIds(),v.repositoryBranches||{[v.repositoryId]:storedIssueWorkBranch(v)});
   f.elements.projectId.onchange=()=>{fillIssueRepositories(f.elements.projectId.value);fillIssueAssignees(f.elements.projectId.value,'');renderIssueRepositoryBranchInputs(f.elements.baseBranch,$('#issueBaseBranchHint'),$('#issueRepositoryBranches'),selectedIssueRepositoryIds(),{})};
   $('#issueRepoChecks').onchange=refreshIssueBaseBranchInput;
-  $('#issueModalTitle').textContent=issue?`${(projects.find(p=>p.id===v.projectId)?.key||'ISS')}-${v.number} ${v.title}`:'新建工作项';
+  $('#issueModalTitle').textContent=issue?`${issueKeyFor(v,projects.find(p=>p.id===v.projectId))} ${v.title}`:'新建工作项';
   const task=(state.data.tasks||[]).find(t=>t.id===v.latestTaskId);
   let stateHtml=task?`最近任务 ${escapeHTML(task.id)} · ${taskStatusLabel(task.status)} · Run ${escapeHTML(task.runId)}`:'';
   if(v.automationState==='ignored')stateHtml+=`${stateHtml?'<br>':''}定时 LOOP：<b>已忽略</b>`;

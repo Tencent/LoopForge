@@ -19,6 +19,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"agentflow/internal/domain"
@@ -1137,10 +1138,13 @@ func stripWorkbuddyLinks(message string) string {
 	return strings.TrimSpace(strings.Join(lines, "\n"))
 }
 
-func materializeWorkspaceImages(ownerID int64, conv *assistantConversation) bool {
+func materializeWorkspaceImages(ownerID int64, conv *assistantConversation, canImport func() bool) bool {
 	if conv == nil {
 		return false
 	}
+	// Most conversations have no legacy media. Only look up the generation
+	// once an attachment actually needs recovery.
+	idle := sync.OnceValue(canImport)
 	seen := map[string]bool{}
 	changed := false
 	for i := range conv.Messages {
@@ -1156,17 +1160,20 @@ func materializeWorkspaceImages(ownerID int64, conv *assistantConversation) bool
 			continue
 		}
 		if hasImage {
-			if cleaned := stripMediaPathsInContent(message.Content); cleaned != message.Content {
+			if cleaned := stripMediaPathsInContent(message.Content); cleaned != message.Content && idle() {
 				message.Content = cleaned
 				changed = true
 			}
 			continue
 		}
-		if attachWorkspaceDeck(ownerID, message, seen) {
+		if attachWorkspaceDeck(ownerID, message, seen, idle) {
 			changed = true
 		}
 		if !strings.Contains(message.Content, "generated-images") && !strings.Contains(message.Content, ".png") && !strings.Contains(message.Content, ".jpg") && !strings.Contains(message.Content, ".webp") {
 			continue
+		}
+		if !idle() {
+			return false
 		}
 		since := message.CreatedAt.Add(-3 * time.Minute)
 		if message.StartedAt != nil && !message.StartedAt.IsZero() {
@@ -1191,7 +1198,7 @@ func materializeWorkspaceImages(ownerID int64, conv *assistantConversation) bool
 	return changed
 }
 
-func attachWorkspaceDeck(ownerID int64, message *assistantMessage, seen map[string]bool) bool {
+func attachWorkspaceDeck(ownerID int64, message *assistantMessage, seen map[string]bool, idle func() bool) bool {
 	if message == nil || strings.Contains(message.Content, "```slides") || strings.Contains(message.Content, "```ppt") {
 		return false
 	}
@@ -1211,6 +1218,9 @@ func attachWorkspaceDeck(ownerID int64, message *assistantMessage, seen map[stri
 	since := message.CreatedAt.Add(-3 * time.Minute)
 	if message.StartedAt != nil && !message.StartedAt.IsZero() {
 		since = message.StartedAt.Add(-3 * time.Second)
+	}
+	if !idle() {
+		return false
 	}
 	deck := workspaceDecks(ownerID, since, message.CreatedAt.Add(2*time.Minute))
 	if deck.Slides == "" && len(deck.Files) == 0 {
@@ -1467,9 +1477,38 @@ func (h *assistantHandlers) downloadAttachment(c *gin.Context) {
 		c.JSON(404, gin.H{"error": "附件不存在"})
 		return
 	}
-	c.Header("Content-Type", record.MimeType)
 	c.Header("X-Content-Type-Options", "nosniff")
-	c.Header("Cache-Control", "private, no-store")
+	if assistantImageMIME(record.MimeType) {
+		// IDs are immutable. Revalidate access before permitting a browser to reuse either representation.
+		id := c.Param("id")
+		c.Header("Cache-Control", "private, no-cache")
+		c.Header("ETag", strconv.Quote(id))
+		if c.Query("view") == "thumbnail" && thumbnailImageType(record.MimeType) {
+			thumbTag := strconv.Quote(id + "-thumbnail-v1")
+			// The preview tag is only issued after a preview was built, and the original never
+			// changes, so a matching validator can be answered without decoding the image again.
+			if attachmentETagMatches(c.Request.Header.Values("If-None-Match"), thumbTag) {
+				c.Header("ETag", thumbTag)
+				// ServeContent reads only the first If-None-Match line. Pass the matched tag
+				// so it checks higher-priority preconditions without reading the image.
+				req := c.Request.Clone(c.Request.Context())
+				req.Header.Set("If-None-Match", thumbTag)
+				http.ServeContent(c.Writer, req, "", info.ModTime(), bytes.NewReader(nil))
+				return
+			}
+			thumb := h.attachmentThumbnail(ownerID, id, file, info.Size())
+			if len(thumb) != 0 {
+				c.Header("ETag", thumbTag)
+				c.Header("Content-Type", http.DetectContentType(thumb))
+				c.Header("Content-Disposition", "inline")
+				http.ServeContent(c.Writer, c.Request, "", info.ModTime(), bytes.NewReader(thumb))
+				return
+			}
+		}
+	} else {
+		c.Header("Cache-Control", "private, no-store")
+	}
+	c.Header("Content-Type", record.MimeType)
 	c.Header("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": record.Name}))
 	http.ServeContent(c.Writer, c.Request, record.Name, info.ModTime(), file)
 }

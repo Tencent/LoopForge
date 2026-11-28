@@ -341,7 +341,7 @@ func (b *assetBucket) finding(in DiagnoseInput, baseline float64) domain.EvoFind
 		parts = append(parts, fmt.Sprintf("%d 次被打回", b.reworks))
 	}
 	if b.detections > 0 {
-		parts = append(parts, fmt.Sprintf("%d 条 SOP 自动检测问题", b.detections))
+		parts = append(parts, fmt.Sprintf("%d 条 LOOP 自动检测问题", b.detections))
 	}
 	other := len(b.signals) - b.failures - b.reworks - b.detections
 	if other > 0 {

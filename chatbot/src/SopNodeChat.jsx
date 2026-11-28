@@ -3,6 +3,7 @@ import {
   api,
   isProposalTimeout,
   confirmationCaption,
+  messageOffset,
   sessionPath,
 } from "./api";
 import { activityForReply, generationStored } from "./activity";
@@ -218,6 +219,9 @@ function NodeComposer({
     (message) => message.role === "user" && message.authorId,
   );
   const messages = firstQuestion < 0 ? [] : saved.slice(firstQuestion);
+  // A compressed reply keeps its full trace on the server; expanding it has to
+  // name the stored message index, not the position inside this node view.
+  const storedBase = messageOffset(chat.session) + Math.max(0, firstQuestion);
   const loading =
     !chat.ready || (!!chat.activeId && !chat.session) || chat.replyStatePending;
   // The failed reply already explains this error and offers its fix.
@@ -339,6 +343,16 @@ function NodeComposer({
               <>
                 <AssistantTurn
                   message={message}
+                  deferredActivity={
+                    message.activityRef
+                      ? {
+                          sessionId: chat.session?.id,
+                          index: storedBase + index,
+                          activityRef: message.activityRef,
+                          loadActivity: chat.loadActivity,
+                        }
+                      : null
+                  }
                   steps={steps}
                   projectId={projectId}
                   sessionId={chat.session?.id}

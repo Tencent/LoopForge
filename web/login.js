@@ -8,6 +8,14 @@ const $ = id => document.getElementById(id);
 const t = window.lfT || ((zh) => zh);
 let mode = 'login', signup = false;
 
+// The password endpoints answer a wrong password and the rate limit in English
+// only; show them in the page language like every other message here.
+function authErrorMessage(status, payload, creating) {
+  if (status === 429) return t('尝试次数过多，请一分钟后再试', 'Too many attempts. Try again in a minute.');
+  if (!creating && status === 401) return t('用户名或密码错误', 'Invalid username or password');
+  return payload?.error || t('操作失败', 'Request failed');
+}
+
 function render() {
   const creating = mode !== 'login';
   $('loginSubtitle').textContent = mode === 'setup' ? t('创建管理员账号', 'Create the administrator account') : creating ? t('创建你的账号', 'Create your account') : t('登录你的交付工作台', 'Sign in to your delivery workspace');
@@ -55,8 +63,8 @@ $('loginForm').onsubmit = async event => {
       method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({login: form.elements.login.value.trim(), password: form.elements.password.value}),
     });
-    const payload = await response.json();
-    if (!response.ok) throw new Error(payload.error || t('操作失败', 'Request failed'));
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(authErrorMessage(response.status, payload, creating));
     location.replace('/');
   } catch (err) { error.textContent = err.message; button.disabled = false; }
 };

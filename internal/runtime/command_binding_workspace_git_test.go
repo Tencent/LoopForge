@@ -289,3 +289,41 @@ func TestWorkspaceGitIdentityEscapesConfig(t *testing.T) {
 		t.Fatalf("identity = %q", got)
 	}
 }
+
+// The control plane may run with a commit identity exported for its own
+// process (a container or CI image). Agent commits in the workspace must
+// carry the requester's identity instead, and the agent can still override it.
+func TestBindGitWorkspaceIgnoresInheritedCommitIdentity(t *testing.T) {
+	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
+	for _, key := range []string{"GIT_AUTHOR_NAME", "GIT_COMMITTER_NAME"} {
+		t.Setenv(key, "leaked")
+	}
+	for _, key := range []string{"GIT_AUTHOR_EMAIL", "GIT_COMMITTER_EMAIL"} {
+		t.Setenv(key, "leaked@example.invalid")
+	}
+	workspace := t.TempDir()
+	script := strings.Join([]string{
+		`git init -q repo && cd repo`,
+		`echo one > a.txt && git add a.txt && git commit -q -m one`,
+		`git log -1 --format='first=%an <%ae> | %cn <%ce>'`,
+		`git config user.name bob && git config user.email bob@example.invalid`,
+		`echo two > a.txt && git commit -q -am two`,
+		`git log -1 --format='second=%an <%ae> | %cn <%ce>'`,
+	}, " && ")
+	command := CommandSpec{Argv: []string{"sh", "-c", script}, CredentialBindings: []CredentialBinding{BindGitWorkspace}}
+	out, err := ExecuteLocalCommand(context.Background(), workspace, command, RunCredentials{GitUserName: "alice", GitUserEmail: "alice@example.invalid"}, nil)
+	if err != nil {
+		t.Fatalf("command: %v (%s)", err, out)
+	}
+	for _, want := range []string{
+		"first=alice <alice@example.invalid> | alice <alice@example.invalid>",
+		"second=bob <bob@example.invalid> | bob <bob@example.invalid>",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("output lacks %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "leaked") {
+		t.Fatalf("the control plane's commit identity reached the workspace:\n%s", out)
+	}
+}

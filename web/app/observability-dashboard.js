@@ -76,11 +76,19 @@ function obsVibeSpec(){
   spec.empty=!points.some(p=>p.sessions||p.collaborativeSessions);spec.emptyText=lfT('暂无会话','No sessions');
   return spec;
 }
+// 部分执行无法计价时仍显示已识别金额并标注，一分钱都无法识别时才显示「未识别」。
+// 金额直接复用 costLabel 的格式（不足 ¥0.01 保留三位有效数字），与 KPI 和导出报告逐字一致。
+function obsDashboardCostText(view){
+  const known=!!view?.costKnown,text=obsPlain(costLabel(view?.cost,known));
+  if(known)return text;
+  if(Number(view?.cost||0)<=0)return lfT('未识别','Unknown');
+  return lfT(text,text.replace('（部分未识别）',' (partially unrecognized)'));
+}
 function obsSummaryCostCard(){
   const view=obsScopedView();
   const values=obsSummaryValues([
     ['tokens',lfT('Token 用量','Tokens'),formatTokens(view.tokens)],
-    ['cost',lfT('费用（人民币）','Cost (CNY)'),view.costKnown?'¥'+Number(view.cost||0).toFixed(2):lfT('未识别','Unknown')],
+    ['cost',lfT('费用（人民币）','Cost (CNY)'),obsDashboardCostText(view)],
   ]);
   const tabs=obsSeg('data-obs-token-view',[
     ['members',lfT('成员每日','Members by day')],['models',lfT('各模型','By model')],

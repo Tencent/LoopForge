@@ -83,7 +83,7 @@ export function replyText(message, steps) {
   return reply;
 }
 
-function ReplyHeading({ message, steps }) {
+function ReplyHeading({ message, steps, deferredActivity }) {
   return (
     <div className="reply-heading">
       <ActivityTrace
@@ -91,6 +91,7 @@ function ReplyHeading({ message, steps }) {
         startedAt={message.startedAt}
         finishedAt={message.createdAt}
         interrupted={!!message.unfinished}
+        deferredActivity={deferredActivity}
       />
     </div>
   );
@@ -98,6 +99,7 @@ function ReplyHeading({ message, steps }) {
 export function AssistantTurn({
   message,
   steps,
+  deferredActivity,
   assets,
   projectId,
   sessionId,
@@ -138,12 +140,17 @@ export function AssistantTurn({
           steps={steps}
           startedAt={message.startedAt}
           finishedAt={message.createdAt}
+          deferredActivity={deferredActivity}
           knowledgeReads={message.knowledgeReads}
           knowledgeSummary={knowledgeSummary}
           onCitationClick={handleCitationClick}
         />
       ) : (
-        <ReplyHeading message={message} steps={steps} />
+        <ReplyHeading
+          message={message}
+          steps={steps}
+          deferredActivity={deferredActivity}
+        />
       )}
       <div className="message-body">
         <RichContent

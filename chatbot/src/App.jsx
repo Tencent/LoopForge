@@ -22,7 +22,11 @@ import {
   api,
   write,
   attachmentURL,
+  attachmentThumbnailURL,
+  parseReply,
   collectArtifacts,
+  messageOffset,
+  visibleText,
   elapsedSeconds,
   formatElapsed,
   confirmationCaption,
@@ -101,6 +105,7 @@ const environmentVisibilityKey = "agentflow.native-chat.environmentVisibility.v1
 const sessionApprovalScope = ({ id, projectId }) => `approval.session:${JSON.stringify([id, projectId || ""])}`;
 const draftApprovalScope = (slot, projectId) =>
   slot.startsWith("issue:") ? `approval.${JSON.stringify([slot, projectId])}` : `approval.${slot}`;
+const maxMessageAttachments = 8;
 const draftSnapshot = ({ text, attachments, references }) => JSON.stringify({ text, attachments, references });
 const sidebarWidthKey = "agentflow.sidebarWidth";
 const sidebarLayoutKey = "agentflow.sidebarLayoutVersion";
@@ -333,8 +338,14 @@ export default function App() {
     draftOrigin = useRef(null),
     savingDraftApproval = useRef(null),
     previousArtifacts = useRef({ id: null, ids: new Set(), baselined: false }),
-    dialogInput = useRef(),
-    composerPreviews = useRef(new Map());
+    dialogInput = useRef();
+  const previews = useMemo(() => ({ uploaded: new Map(), pending: new Set() }), [chat.user?.id]);
+  useEffect(() => () => {
+    for (const url of previews.uploaded.values()) URL.revokeObjectURL(url);
+    for (const url of previews.pending) URL.revokeObjectURL(url);
+    previews.uploaded.clear();
+    previews.pending.clear();
+  }, [previews]);
   // A requirement handed over by the workbench drafts in its own slot so the
   // project's unsent new-conversation draft and attachments stay untouched.
   const newDraftSlot = issueDraft && issueDraft.projectId === chat.projectId ? "issue:" + issueDraft.issueId : "new:" + chat.projectId;
@@ -534,6 +545,14 @@ export default function App() {
     url.searchParams.delete("quickAccess");
     history.replaceState(history.state, "", url);
   }
+  // The workbench lifts its toasts over the composer only when the composer
+  // sits at the bottom (an open conversation). On the home page the composer
+  // is centred and grows downward, so a lifted toast would land on 发送.
+  const layout = chat.activeId ? "conversation" : "home";
+  useEffect(() => {
+    if (window.parent !== window)
+      window.parent.postMessage({ type: "agentflow-chat-layout", layout }, location.origin);
+  }, [layout]);
   useEffect(() => {
     const wide = sidebarViewport().matchMedia("(min-width:1001px)");
     const apply = () => setSidebarWidth(readSidebarWidth());
@@ -681,6 +700,10 @@ export default function App() {
       previousArtifacts.current = previous;
     }
     if (!chat.activeId || chat.session?.id !== chat.activeId) return;
+    // A view=recent tail is still part of restoring the conversation. The
+    // full transcript adds the artifacts of earlier turns, which are not new,
+    // so the first complete snapshot is the baseline, as for any other open.
+    if (chat.session.messagesPartial) return;
     const entries = [...sidebarArtifacts, ...conversationRuns];
     const addedEntries = previous.baselined
       ? entries.filter((entry) => !previous.ids.has(entry.id)) : [];
@@ -719,6 +742,7 @@ export default function App() {
   }, [
     chat.activeId,
     chat.session?.id,
+    chat.session?.messagesPartial,
     artifactList,
     conversationRuns,
     panel,
@@ -808,7 +832,7 @@ export default function App() {
     closeMenu();
   }
   async function submit() {
-    if (!hasComposerExecutor || uploading || composerLoading || draftReady.current !== draftKey ||
+    if (!chat.ready || !hasComposerExecutor || uploading || composerLoading || draftReady.current !== draftKey ||
         (!chat.activeId && savingDraftApproval.current)) return;
     follow.current = true;
     const snapshot = draftSnapshot({ text, attachments, references });
@@ -836,12 +860,10 @@ export default function App() {
     if (ok) {
       const clearedDraft = clearDraftIfUnchanged(draftKey, snapshot);
       if (clearedDraft && savedDraftKey) clearDraftApproval(draftApproval.scope, savedApprovalMode);
-      let clearedVisible = clearedDraft && visible.key === draftKey;
       if (copiedFrom?.snapshot === snapshot && /^(new|issue):/.test(copiedFrom.slot)) {
         const originKey = draftKeyPrefix + copiedFrom.slot;
         if (clearDraftIfUnchanged(originKey, snapshot)) {
           if (copiedFrom.approvalScope) clearDraftApproval(copiedFrom.approvalScope, copiedFrom.mode);
-          clearedVisible ||= visible.key === originKey;
         }
       }
       if (!clearedDraft && copiedFrom) {
@@ -855,10 +877,6 @@ export default function App() {
           const { text, attachments, references } = stored;
           persistDraft(draftKey, { text, attachments, references });
         }
-      }
-      for (const attachment of attachments) {
-        if (clearedVisible || !visible.attachments.some((current) => current.id === attachment.id))
-          releaseComposerPreview(attachment.id);
       }
     } else if (visible.key === savedDraftKey && draftReady.current === savedDraftKey &&
         !visible.text && !visible.attachments.length && !visible.references.length) {
@@ -891,23 +909,23 @@ export default function App() {
   }
   function composerPreviewURL(a) {
     return (
-      composerPreviews.current.get(a.id) ||
+      previews.uploaded.get(a.id) ||
       attachmentURL(a, chat.session?.id || chat.activeId || "")
     );
   }
-  function releaseComposerPreview(id) {
-    const url = composerPreviews.current.get(id);
+  function releaseUploadedPreview(id) {
+    const url = previews.uploaded.get(id);
     if (!url) return;
     URL.revokeObjectURL(url);
-    composerPreviews.current.delete(id);
+    previews.uploaded.delete(id);
   }
   function removeAttachment(a) {
-    releaseComposerPreview(a.id);
+    releaseUploadedPreview(a.id);
     setAttachments((old) => old.filter((x) => x.id !== a.id));
   }
   async function upload(files) {
     if (!files.length) return;
-    if (files.length + attachments.length > 8) {
+    if (files.length + attachments.length > maxMessageAttachments) {
       chat.setError("每轮最多上传 8 个文件。");
       return;
     }
@@ -931,7 +949,10 @@ export default function App() {
               previewURL,
             }
           : null;
-        if (slot) setPendingAttachments((old) => [...old, slot]);
+        if (slot) {
+          previews.pending.add(previewURL);
+          setPendingAttachments((old) => [...old, slot]);
+        }
         try {
           if (chat.local) {
             const localDataUrl = await new Promise((resolve, reject) => {
@@ -957,10 +978,18 @@ export default function App() {
             method: "POST",
             body,
           });
-          if (previewURL) composerPreviews.current.set(uploaded.id, previewURL);
+          if (previewURL) {
+            // A disposed view already revoked its pending URLs.
+            if (!previews.pending.delete(previewURL)) return;
+            // Keep a full turn of recent screenshots through optimistic sends
+            // and transcript refreshes, without persisting browser-local URLs.
+            if (previews.uploaded.size >= maxMessageAttachments)
+              releaseUploadedPreview(previews.uploaded.keys().next().value);
+            previews.uploaded.set(uploaded.id, previewURL);
+          }
           results.push(uploaded);
         } catch (err) {
-          if (previewURL) URL.revokeObjectURL(previewURL);
+          if (previews.pending.delete(previewURL)) URL.revokeObjectURL(previewURL);
           throw err;
         } finally {
           if (slot)
@@ -1138,6 +1167,8 @@ export default function App() {
     }));
   }, [chat.activeId, chat.projectId]);
   const messages = chat.session?.messages || [];
+  // Stored index of messages[0]; artifacts name messages by that index.
+  const messageBase = messageOffset(chat.session);
   const conversationStarted = Boolean(
     chat.activeId && chat.session?.id === chat.activeId &&
     (messages.length || chat.busy || sidebarArtifacts.length || conversationRuns.length),
@@ -2097,6 +2128,7 @@ export default function App() {
             scroll={scroll}
             follow={follow}
             loading={!chat.session && !chat.error}
+            earlier={!!chat.session?.messagesPartial}
             renderMessage={(message, index) =>
                 isProposalTimeout(message, messages[index - 1]) ? null : confirmationCaption(message, messages[index - 1]) ? (
                   <div
@@ -2116,6 +2148,10 @@ export default function App() {
                     {message.role === "assistant" ? (
                       <AssistantTurn
                         message={message}
+                        deferredActivity={message.activityRef ? {
+                          sessionId: chat.session.id, index: messageBase + index,
+                          activityRef: message.activityRef, loadActivity: chat.loadActivity,
+                        } : null}
                         steps={activityForReply(
                           message,
                           chat.generation,
@@ -2142,7 +2178,7 @@ export default function App() {
                             <>
                               <IconButton
                                 label="编辑消息"
-                                disabled={chat.busy}
+                                disabled={chat.busy || !!chat.session?.messagesPartial}
                                 onClick={() =>
                                   setDialog({
                                     type: "edit",
@@ -2156,7 +2192,7 @@ export default function App() {
                               </IconButton>
                               <IconButton
                                 label="从此处创建分支"
-                                disabled={chat.busy}
+                                disabled={chat.busy || !!chat.session?.messagesPartial}
                                 onClick={() =>
                                   setDialog({
                                     type: "edit",
@@ -2183,6 +2219,7 @@ export default function App() {
                           <Attachment
                             key={a.id}
                             attachment={a}
+                            localPreviewURL={previews.uploaded.get(a.id)}
                             sessionId={chat.session.id}
                             onOpen={openArtifact}
                           />
@@ -2193,7 +2230,7 @@ export default function App() {
                       <>
                         <div className="message-drafts">
                           {artifactList
-                            .filter((a) => a.draft && a.messageIndex === index)
+                            .filter((a) => a.draft && a.messageIndex === messageBase + index)
                             .map((a) => (
                               <DraftCard
                                 key={a.id}
@@ -2413,7 +2450,7 @@ export default function App() {
                                 setImagePreview({ src: url, name: a.name })
                               }
                             >
-                              <img src={url} alt={a.name} />
+                              <img src={attachmentThumbnailURL(url, a.mimeType)} alt={a.name} />
                             </button>
                             <button
                               type="button"
@@ -2623,6 +2660,7 @@ export default function App() {
                         title={chat.busy ? "当前回复结束后自动发送" : undefined}
                         disabled={
                           !chat.ready ||
+                          !!chat.session?.messagesPartial ||
                           !hasComposerExecutor ||
                           !!chat.missingServerCLI ||
                           chat.submitting ||
