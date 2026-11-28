@@ -23,25 +23,44 @@ func explicitNativeCLIPath(provider string) string {
 	return ""
 }
 
-// Pin host executables for platform-owned workflow runs. Docker sandboxes and
-// connected runners resolve the CLI on their own execution machines.
+// Pin host executables for workflow runs in native sandboxes. Docker
+// sandboxes install the CLI inside their container instead.
 func pinNativeExecutorCLI(ctx context.Context, driver, runID string, executor domain.ExecutorDefinition) (string, *managedcli.ClaimLease, error) {
 	switch driver {
 	case "local", "seatbelt", "bwrap":
 	default:
 		return "", nil, nil
 	}
-	root := strings.TrimSpace(os.Getenv("AGENTFLOW_MANAGED_CLI_ROOT"))
 	kind := strings.TrimSpace(executor.Kind)
-	if root == "" || !managedcli.Supports(kind) {
-		return "", nil, nil
-	}
 	if binary := strings.TrimSpace(executor.Binary); binary != "" && binary != conversationBinary(kind) {
 		return "", nil, nil
 	}
-	if path := explicitNativeCLIPath(kind); path != "" {
+	// Claude Code, Codex and CodeBuddy are agent CLIs too: Claude Code is not
+	// in the platform image and is installed on demand like the others.
+	hostCLI := managedcli.Supports(kind) || IsAgentCLI(kind)
+	root := strings.TrimSpace(os.Getenv("AGENTFLOW_MANAGED_CLI_ROOT"))
+	managed := root != "" && managedcli.Supports(kind)
+	if path := explicitNativeCLIPath(kind); path != "" && hostCLI {
 		return path, nil, nil
 	}
+	if managed {
+		binary, lease, err := pinManagedCLI(ctx, root, runID, kind)
+		if err != nil || binary != "" {
+			return binary, lease, err
+		}
+	}
+	// A CLI the managed root does not provide may still be installed on this
+	// machine, for example on demand from a chat. Run the executable a native
+	// conversation would, instead of a bare name PATH may not resolve.
+	if hostCLI {
+		if path, err := hostCLIPath(kind, conversationBinary(kind)); err == nil {
+			return path, nil, nil
+		}
+	}
+	return "", nil, nil
+}
+
+func pinManagedCLI(ctx context.Context, root, runID, kind string) (string, *managedcli.ClaimLease, error) {
 	lease, err := managedcli.BeginClaim(ctx, root)
 	if err != nil {
 		return "", nil, fmt.Errorf("managed CLI usage for %s: %w", kind, err)

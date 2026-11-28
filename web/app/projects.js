@@ -386,6 +386,15 @@ function renderProjectAdmin(opt={}){
   listView.hidden=detail;detailView.hidden=!detail;
   if(detail)renderProjectDetail(opt);else renderProjectList();
 }
+// Card and header counts read the requirement list, which only the requirement
+// views load. Fetch it here as well, so opening 项目配置 directly does not show
+// 0 requirements until the user has visited 需求列表.
+function refreshProjectAdminStats(){
+  return refreshIssues().then(()=>{
+    if(activeViewName()!=='projects')return;
+    if(state.projectAdminDetailId)renderProjectAdminHead();else renderProjectList();
+  });
+}
 function resetProjectAdminDetail(){
   state.projectAdminDetailId=null;state.projectAdminTab='basic';state.projectDraft=null;state.projectDraftFor='';state.projectDraftBase=null;state.projectIdentCustom=false;state.projectAdminErrors={};
   if(typeof closeRepoDrawer==='function')closeRepoDrawer();
