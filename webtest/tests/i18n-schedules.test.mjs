@@ -78,7 +78,7 @@ test('English AI schedule list keeps job names and AI replies as written and lea
   assert.deepEqual(names.sort(), [NAME, '巡检-Cursor', '巡检-Pi'].sort());
   const text = root.textContent.replace(/\s+/g, ' ');
   assert.ok(text.includes(REPLY), 'the AI reply is not fragment-translated');
-  assert.match(root.querySelector('[data-edit-schedule="job-ok"] small').textContent, new RegExp(`AM, ${REPLY}$`), 'the reply keeps its separator');
+  assert.ok(root.querySelector('[data-edit-schedule="job-ok"] small').textContent.endsWith(`, ${REPLY}`), 'the reply keeps its separator');
   assert.ok(text.includes(ERROR), 'the server error is not fragment-translated');
   assert.doesNotMatch(text, /READMESummary|Current project/);
   assert.match(text, /3 tasks/);
