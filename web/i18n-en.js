@@ -882,6 +882,11 @@ Object.assign(window.LF_I18N_EN, {
 });
 
 Object.assign(window.LF_I18N_EN, {
+  "会话审阅": "Conversation review",
+  "LOOP 会话审阅": "LOOP conversation review",
+});
+
+Object.assign(window.LF_I18N_EN, {
   "LOOP 运行评测": "LOOP run evaluation",
   "重试评测": "Retry evaluation",
   "评测中…": "Evaluating…",
@@ -1164,11 +1169,6 @@ Object.assign(window.LF_I18N_EN, {
   "在对话里澄清和改代码": "Clarify and change code in chat",
   "这条需求不使用 LOOP，在对话里澄清需求、直接改代码；定时任务不会自动认领它。": "This requirement uses no LOOP: clarify and change code in chat; scheduled jobs won't pick it up.",
 });
-Object.assign(window.LF_I18N_EN, {
-  "会话审阅": "Conversation review",
-  "LOOP 会话审阅": "LOOP conversation review",
-});
-
 // 执行机器 page: static copy in index.html. runners.js renders its dynamic copy with lfT.
 Object.assign(window.LF_I18N_EN, {
   "连接电脑或 CVM，可将机器共享给多个项目。": "Connect a computer or CVM and share it with multiple projects.",
