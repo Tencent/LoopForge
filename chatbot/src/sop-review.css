@@ -392,53 +392,175 @@
   padding: 8px 14px 12px;
 }
 
-.sop-inline-artifacts {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  margin: 12px 0 8px;
-  padding: 10px 12px;
+.sop-deliverables {
+  margin: 14px 0 6px;
   border: 1px solid var(--line);
   border-radius: 10px;
-  background: var(--subtle);
+  background: var(--surface);
+  overflow: hidden;
 }
 
-.sop-inline-artifacts-label {
-  font-size: 11px;
+.sop-deliverables.is-compact {
+  margin: 8px 0 4px;
+  border-radius: 8px;
+}
+
+.sop-deliverables-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 12px;
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 70%, transparent);
+  background: color-mix(in srgb, var(--subtle) 65%, var(--surface));
+  color: var(--muted);
+  font-size: 11.5px;
   font-weight: 600;
+}
+
+.sop-deliverables.is-compact .sop-deliverables-head {
+  padding: 5px 10px;
+  font-size: 11px;
+}
+
+.sop-deliverables-head > small {
+  margin-left: auto;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.sop-deliverables-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.sop-deliverables .artifact-row {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  text-decoration: none;
+  transition: background-color 140ms ease;
+}
+
+.sop-deliverables.is-compact .artifact-row {
+  padding: 7px 10px;
+  gap: 8px;
+}
+
+.sop-deliverables .artifact-row + .artifact-row {
+  border-top: 1px solid color-mix(in srgb, var(--line) 55%, transparent);
+}
+
+.sop-deliverables .artifact-row:hover {
+  background: var(--artifact-row-hover, var(--subtle));
+}
+
+.sop-deliverables .artifact-row.is-selected {
+  background: var(--artifact-row-active, color-mix(in srgb, var(--hui-accent) 9%, var(--surface)));
+  box-shadow: inset 2px 0 0 var(--hui-accent);
+}
+
+.sop-deliverables .artifact-file-icon {
+  display: inline-flex;
+  flex: none;
+  width: 22px;
+  height: 22px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  background: var(--subtle);
   color: var(--muted);
 }
 
-.sop-inline-artifacts-list {
+.sop-deliverables .artifact-file-copy {
   display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  gap: 1px;
 }
 
-.sop-artifact-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  max-width: 100%;
-  height: 28px;
-  padding: 0 9px;
-  border: 1px solid var(--line);
-  border-radius: 7px;
-  background: var(--surface);
-  color: var(--text);
-  font-size: 12px;
-  transition: background-color 140ms ease, border-color 140ms ease;
-}
-
-.sop-artifact-pill:hover {
-  background: var(--hover);
-  border-color: var(--hui-border-strong, var(--line));
-}
-
-.sop-artifact-pill > span {
+.sop-deliverables .artifact-file-copy strong {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-size: 12.5px;
+  font-weight: 550;
+  color: var(--text);
+}
+
+.sop-deliverables .artifact-file-copy small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.sop-deliverables .artifact-row-action {
+  flex: none;
+  color: var(--muted);
+  opacity: 0.65;
+}
+
+.sop-inline-artifact-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  padding: 1px 6px;
+  margin: 0 1px;
+  border: 1px solid color-mix(in srgb, var(--hui-accent) 28%, var(--line));
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--hui-accent) 7%, var(--surface));
+  color: var(--hui-accent);
+  font: inherit;
+  vertical-align: baseline;
+  cursor: pointer;
+  transition: background-color 140ms ease, border-color 140ms ease;
+}
+
+.sop-inline-artifact-link:hover {
+  background: color-mix(in srgb, var(--hui-accent) 13%, var(--surface));
+  border-color: var(--hui-accent);
+}
+
+.sop-inline-artifact-link > code {
+  background: transparent !important;
+  padding: 0 !important;
+  color: inherit !important;
+  font-size: 12px;
+}
+
+.execution-step-artifact {
+  flex: none;
+  margin-left: auto;
+  padding: 1px 7px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--hui-accent);
+  font-size: 10.5px;
+  font-weight: 550;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.execution-step-artifact:hover {
+  background: color-mix(in srgb, var(--hui-accent) 9%, var(--surface));
+  border-color: color-mix(in srgb, var(--hui-accent) 40%, var(--line));
 }
 
 .sop-collapsible-body {

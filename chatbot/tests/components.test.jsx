@@ -1310,4 +1310,99 @@ describe("content and panels", () => {
     expect(screen.getByText("流程B · 审批二")).toBeInTheDocument();
   });
 
+  test("renders Codex-style deliverables inline at generation sites, at the end of turn, and opens preview on click", async () => {
+    const user = userEvent.setup();
+    const fallbackApi = apiMock.getMockImplementation();
+    apiMock.mockImplementation(async (path) => {
+      if (path.includes("/telemetry")) {
+        return {
+          events: [
+            {
+              sequence: 1,
+              category: "tool",
+              tool: { name: "Write", callId: "c1" },
+              message: "Write specs/design.md",
+              request: "Write specs/design.md",
+              timestamp: "2026-11-28T10:00:00Z",
+              context: { attempt: 1 },
+            },
+            {
+              sequence: 2,
+              category: "artifact",
+              name: "artifact.published",
+              attributes: { artifactId: "a-design" },
+              context: { attempt: 1 },
+            },
+            {
+              sequence: 3,
+              category: "output",
+              message: "已完成方案，详见 `specs/design.md`。",
+              context: { attempt: 1 },
+            },
+          ],
+          nextAfter: 4,
+          hasMore: false,
+        };
+      }
+      return fallbackApi(path);
+    });
+    try {
+      const reviewRun = {
+        id: "r-codex-artifacts",
+        status: "waiting",
+        workflowSnapshot: {
+          name: "审阅流程",
+          nodes: [
+            { id: "n1", name: "方案", type: "agent" },
+            { id: "n2", name: "门禁", type: "approval", after: ["n1"] },
+          ],
+        },
+        nodes: {
+          n1: {
+            nodeId: "n1",
+            status: "succeeded",
+            attempt: 1,
+            output: "已完成方案，详见 `specs/design.md`。",
+          },
+          n2: { nodeId: "n2", status: "waiting_approval", attempt: 0 },
+        },
+        artifacts: [
+          {
+            id: "a-design",
+            nodeId: "n1",
+            path: "specs/design.md",
+            mediaType: "text/markdown",
+            content: "# 设计方案正文",
+            attempt: 1,
+            size: 120,
+          },
+        ],
+      };
+
+      const { unmount } = render(<SopRunPanel runs={[reviewRun]} onClose={vi.fn()} />);
+      await user.click(screen.getByText("方案"));
+
+      // Inline code link + end-of-turn deliverable summary are immediately visible
+      const inlineLink = await screen.findByTitle("在产物栏预览 specs/design.md");
+      expect(inlineLink).toBeInTheDocument();
+      expect(screen.getByLabelText("本节点产物")).toBeInTheDocument();
+
+      // Expanding the execution trace reveals the step's inline 查看产物 action
+      await user.click(screen.getByText(/已处理/));
+      expect(await screen.findByRole("button", { name: "查看产物" })).toBeInTheDocument();
+
+      // Clicking the inline code mention opens the artifact preview
+      await user.click(inlineLink);
+      expect(await screen.findByText("返回会话")).toBeInTheDocument();
+      unmount();
+
+      // Approval node shows handoff artifact right inside upstream output
+      render(<SopRunPanel runs={[reviewRun]} onClose={vi.fn()} />);
+      await user.click(screen.getByText("门禁"));
+      expect(screen.getByLabelText("产出产物")).toBeInTheDocument();
+    } finally {
+      apiMock.mockImplementation(fallbackApi);
+    }
+  });
+
 });

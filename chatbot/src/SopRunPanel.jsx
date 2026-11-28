@@ -18,6 +18,7 @@ import {
 import { IconButton, CredentialAction } from "./ui";
 import ActivityTrace from "./ActivityTrace";
 import ArtifactFileRow from "./ArtifactFileRow";
+import { ArtifactLinks } from "./artifact-links.js";
 import { UserTurn } from "./ChatTurns";
 import RunNodeActions from "./RunNodeActions";
 import SopNodeChat from "./SopNodeChat";
@@ -116,7 +117,7 @@ export function SopNodeList({
   );
 }
 
-function NodeFiles({ run, files, title, onPreview }) {
+function NodeFiles({ run, files, title, activeFileId, onPreview }) {
   if (!files.length) return null;
   return (
     <section className="artifact-section sop-file-group" aria-label={title}>
@@ -125,6 +126,7 @@ function NodeFiles({ run, files, title, onPreview }) {
         <ArtifactFileRow
           key={file.id}
           artifact={runArtifact(run, file)}
+          selected={file.id === activeFileId}
           onSelect={onPreview}
         />
       ))}
@@ -132,29 +134,36 @@ function NodeFiles({ run, files, title, onPreview }) {
   );
 }
 
-function NodeArtifactStrip({ run, files, onPreview, label = "本节点产物" }) {
+function NodeDeliverables({
+  run,
+  files,
+  title = "交付产物",
+  activeFileId = null,
+  onPreview,
+  compact = false,
+}) {
   if (!files.length) return null;
   return (
-    <div className="sop-inline-artifacts" aria-label={label}>
-      <span className="sop-inline-artifacts-label">{label}</span>
-      <div className="sop-inline-artifacts-list">
-        {files.map((file) => {
-          const artifact = runArtifact(run, file);
-          return (
-            <button
-              key={file.id}
-              type="button"
-              className="sop-artifact-pill"
-              title={artifact.name}
-              onClick={() => onPreview(artifact)}
-            >
-              <FileText size={13} />
-              <span>{artifact.name}</span>
-            </button>
-          );
-        })}
+    <section
+      className={`sop-deliverables${compact ? " is-compact" : ""}`}
+      aria-label={title}
+    >
+      <div className="sop-deliverables-head">
+        <FileText size={13} aria-hidden="true" />
+        <span>{title}</span>
+        <small>{files.length}</small>
       </div>
-    </div>
+      <div className="sop-deliverables-list">
+        {files.map((file) => (
+          <ArtifactFileRow
+            key={file.id}
+            artifact={runArtifact(run, file)}
+            selected={file.id === activeFileId}
+            onSelect={onPreview}
+          />
+        ))}
+      </div>
+    </section>
   );
 }
 
@@ -369,31 +378,11 @@ export function SopNodeDetail({
         definition={definition}
         attempt={attempt}
         historical={!latest}
+        files={files}
+        reviewFiles={reviewFiles}
+        activeFileId={preview?.id}
+        onPreview={openFileFromConversation}
       />
-      {!standalone && files.length ? (
-        <NodeArtifactStrip
-          run={run}
-          files={files}
-          label="本节点产物"
-          onPreview={openFileFromConversation}
-        />
-      ) : null}
-      {standalone && !artifactOpen && visibleFiles.length ? (
-        <NodeArtifactStrip
-          run={run}
-          files={visibleFiles}
-          label="可查看产物"
-          onPreview={openFileFromConversation}
-        />
-      ) : null}
-      {!standalone && waitingApproval ? (
-        <NodeFiles
-          run={run}
-          files={reviewFiles}
-          title="上游待审产物"
-          onPreview={openFileFromConversation}
-        />
-      ) : null}
     </SopNodeChat>
   );
   const toolbar = (
@@ -599,12 +588,14 @@ export function SopNodeDetail({
             run={run}
             files={files}
             title="本节点产物"
+            activeFileId={preview?.id}
             onPreview={setSelectedFile}
           />
           <NodeFiles
             run={run}
             files={reviewFiles}
             title="上游待审产物"
+            activeFileId={preview?.id}
             onPreview={setSelectedFile}
           />
           {!visibleFiles.length ? <p className="muted">暂无产物</p> : null}
@@ -807,7 +798,17 @@ const statusIcon = (status) =>
           ? Clock3
           : Circle;
 
-function NodeConversation({ run, node, definition, attempt, historical }) {
+function NodeConversation({
+  run,
+  node,
+  definition,
+  attempt,
+  historical,
+  files = [],
+  reviewFiles = [],
+  activeFileId = null,
+  onPreview,
+}) {
   const [events, setEvents] = useState([]),
     [more, setMore] = useState(false),
     [loading, setLoading] = useState(false),
@@ -876,10 +877,10 @@ function NodeConversation({ run, node, definition, attempt, historical }) {
     void loadRef.current?.();
   }, [node.status]);
   const matchesAttempt = (value) => (value ? value === attempt : !historical);
-  const items = groupNodeActivity(
+  const rawItems = groupNodeActivity(
     nodeConversationItems(
       events.filter((event) => matchesAttempt(event.context?.attempt)),
-      [],
+      files,
       historical ? { nodeId: node.nodeId } : node,
       {
         hasMore: more,
@@ -891,21 +892,65 @@ function NodeConversation({ run, node, definition, attempt, historical }) {
         ["running", "queued", "pending_input"].includes(node.status),
     },
   );
+  // Keep mid-stream artifact cards inline when followed by further work
+  // (more tool activity or multiple reply turns); aggregate final-turn
+  // deliverables cleanly in one card at the end of the turn.
+  const hasLaterWork = (index) => {
+    let seenReply = false;
+    for (let i = index + 1; i < rawItems.length; i++) {
+      if (rawItems[i].type === "trace") return true;
+      if (rawItems[i].type === "reply") {
+        if (seenReply) return true;
+        seenReply = true;
+      }
+    }
+    return false;
+  };
+  const inlineItems = [];
+  for (let i = 0; i < rawItems.length; i++) {
+    const item = rawItems[i];
+    if (item.type === "artifact") {
+      if (!hasLaterWork(i)) continue;
+      if (inlineItems.at(-1)?.type === "artifacts") {
+        inlineItems.at(-1).artifacts.push(item.artifact);
+      } else {
+        inlineItems.push({ type: "artifacts", key: item.key, artifacts: [item.artifact] });
+      }
+    } else {
+      inlineItems.push(item);
+    }
+  }
+  const summaryFiles = files;
+  const reviewFilesByNode = new Map();
+  for (const file of reviewFiles) {
+    if (!reviewFilesByNode.has(file.nodeId)) reviewFilesByNode.set(file.nodeId, []);
+    reviewFilesByNode.get(file.nodeId).push(file);
+  }
   const sourceIDs = new Set(
     historical ? [] : upstreamNodeIds(run.workflowSnapshot, node.nodeId),
   );
   const handoffs = (run.workflowSnapshot?.nodes || [])
     .filter(
-      (source) => sourceIDs.has(source.id) && run.nodes?.[source.id]?.output,
+      (source) =>
+        sourceIDs.has(source.id) &&
+        (run.nodes?.[source.id]?.output || reviewFilesByNode.has(source.id)),
     )
     .map((source) => ({
       ...source,
-      output: run.nodes[source.id].output,
+      output: run.nodes?.[source.id]?.output || "",
+      artifacts: reviewFilesByNode.get(source.id) || [],
       knowledgeReads: filterKnowledgeReadsForAttempt(
         run.nodes?.[source.id]?.knowledgeReads,
         run.nodes?.[source.id]?.attempt,
       ),
     }));
+  const artifactLinksValue = useMemo(
+    () => ({
+      artifacts: [...files, ...reviewFiles].map((file) => runArtifact(run, file)),
+      open: onPreview,
+    }),
+    [run, files, reviewFiles, onPreview],
+  );
   const [highlightedCite, setHighlightedCite] = useState(null);
   const sourcesRef = useRef(null);
   const highlightTimer = useRef(null);
@@ -931,7 +976,7 @@ function NodeConversation({ run, node, definition, attempt, historical }) {
   const nodeLive = !historical && ["running", "queued"].includes(node.status);
   const nodeOutput = historical ? "" : node.output || "";
   const nodeTexts = useMemo(() => {
-    const narrationTexts = items.flatMap((item) =>
+    const narrationTexts = rawItems.flatMap((item) =>
       Array.isArray(item.steps)
         ? item.steps.filter((s) => s.kind === "text" && s.text).map((s) => s.text)
         : [],
@@ -939,9 +984,9 @@ function NodeConversation({ run, node, definition, attempt, historical }) {
     return [
       nodeOutput,
       ...narrationTexts,
-      ...items.filter((i) => i.type === "reply").map((i) => i.message || ""),
+      ...rawItems.filter((i) => i.type === "reply").map((i) => i.message || ""),
     ];
-  }, [nodeOutput, items]);
+  }, [nodeOutput, rawItems]);
   const nodeSummary = useMemo(
     () =>
       nodeReads.length
@@ -953,155 +998,204 @@ function NodeConversation({ run, node, definition, attempt, historical }) {
   const opening = { content: run.input, createdAt: run.createdAt };
   const findings = historical ? [] : node.gateResult?.findings || [];
   return (
-    <div className="node-conversation">
-      {opening.content || handoffs.length || (!historical && node.feedback) ? (
-        <article className="message user" aria-label="收到的消息">
-          <UserTurn
-            message={opening}
-            messages={[opening]}
-            index={0}
-            author={{ name: "LOOP 运行" }}
-            body={
-              <>
-                {opening.content ? (
-                  <CollapsibleMessage text={opening.content}>
-                    <RichContent message={opening.content} />
-                  </CollapsibleMessage>
-                ) : null}
-                {!historical && node.feedback ? (
-                  <div className="node-handoff-message">
-                    <span className="node-message-sender">本次补充说明</span>
-                    <CollapsibleMessage text={node.feedback}>
-                      <RichContent message={node.feedback} />
+    <ArtifactLinks.Provider value={artifactLinksValue}>
+      <div className="node-conversation">
+        {opening.content || handoffs.length || (!historical && node.feedback) ? (
+          <article className="message user" aria-label="收到的消息">
+            <UserTurn
+              message={opening}
+              messages={[opening]}
+              index={0}
+              author={{ name: "LOOP 运行" }}
+              body={
+                <>
+                  {opening.content ? (
+                    <CollapsibleMessage text={opening.content}>
+                      <RichContent message={opening.content} />
                     </CollapsibleMessage>
-                  </div>
-                ) : null}
-                {handoffs.map((source) => (
-                  <div className="node-handoff-message" key={source.id}>
-                    <span className="node-message-sender">
-                      {source.name || source.id}
-                    </span>
-                    <CollapsibleMessage text={source.output}>
-                      <RichContent
-                        message={source.output}
-                        knowledgeReads={source.knowledgeReads}
-                      />
-                    </CollapsibleMessage>
-                  </div>
-                ))}
-              </>
-            }
-          />
-        </article>
-      ) : null}
-      {error ? (
-        <p className="error" role="alert">
-          {error}{" "}
+                  ) : null}
+                  {!historical && node.feedback ? (
+                    <div className="node-handoff-message">
+                      <span className="node-message-sender">本次补充说明</span>
+                      <CollapsibleMessage text={node.feedback}>
+                        <RichContent message={node.feedback} />
+                      </CollapsibleMessage>
+                    </div>
+                  ) : null}
+                  {handoffs.map((source) => (
+                    <div className="node-handoff-message" key={source.id}>
+                      <span className="node-message-sender">
+                        {source.name || source.id}
+                      </span>
+                      {source.output ? (
+                        <CollapsibleMessage text={source.output}>
+                          <RichContent
+                            message={source.output}
+                            knowledgeReads={source.knowledgeReads}
+                          />
+                        </CollapsibleMessage>
+                      ) : null}
+                      {source.artifacts.length ? (
+                        <NodeDeliverables
+                          run={run}
+                          files={source.artifacts}
+                          title="产出产物"
+                          activeFileId={activeFileId}
+                          onPreview={onPreview}
+                          compact
+                        />
+                      ) : null}
+                    </div>
+                  ))}
+                </>
+              }
+            />
+          </article>
+        ) : null}
+        {error ? (
+          <p className="error" role="alert">
+            {error}{" "}
+            <button
+              type="button"
+              className="quiet-button"
+              onClick={() => void loadRef.current?.()}
+            >
+              重试加载
+            </button>
+          </p>
+        ) : null}
+        {inlineItems.map((item) =>
+          item.type === "artifacts" ? (
+            <NodeDeliverables
+              key={item.key}
+              run={run}
+              files={item.artifacts}
+              title="产出产物"
+              activeFileId={activeFileId}
+              onPreview={onPreview}
+              compact
+            />
+          ) : item.type === "reply" ? (
+            <article
+              className="message assistant"
+              aria-label="节点回复"
+              key={item.key}
+            >
+              <div className="message-body">
+                <RichContent
+                  message={item.message}
+                  knowledgeReads={nodeReads}
+                  knowledgeSummary={nodeSummary}
+                  streaming={nodeLive}
+                  onCitationClick={handleCitationClick}
+                />
+              </div>
+            </article>
+          ) : (
+            <ActivityTrace
+              key={item.key}
+              steps={item.steps}
+              startedAt={item.startedAt}
+              finishedAt={item.finishedAt}
+              live={item.live}
+              citationProps={
+                nodeReads.length
+                  ? {
+                      knowledgeReads: nodeReads,
+                      knowledgeSummary: nodeSummary,
+                      streaming: nodeLive,
+                      onCitationClick: handleCitationClick,
+                    }
+                  : null
+              }
+            />
+          ),
+        )}
+        {more ? (
           <button
-            type="button"
             className="quiet-button"
+            disabled={loading}
             onClick={() => void loadRef.current?.()}
           >
-            重试加载
+            {loading ? "正在读取完整会话…" : "加载更多执行记录"}
           </button>
-        </p>
-      ) : null}
-      {items.map((item) =>
-        item.type === "reply" ? (
+        ) : null}
+        {!historical &&
+        definition?.type === "approval" &&
+        node.status !== "pending" &&
+        node.status !== "waiting_approval" ? (
           <article
-            className="message assistant"
-            aria-label="节点回复"
-            key={item.key}
+            className="message assistant node-approval-reason"
+            aria-label="人工门禁说明"
           >
-            <div className="message-body">
-              <RichContent
-                message={item.message}
-                knowledgeReads={nodeReads}
-                knowledgeSummary={nodeSummary}
-                streaming={nodeLive}
-                onCitationClick={handleCitationClick}
-              />
-            </div>
+            <strong>人工门禁</strong>
+            <p>{approvalWaitReason(run, node.nodeId || definition.id)}</p>
           </article>
-        ) : (
-          <ActivityTrace
-            key={item.key}
-            steps={item.steps}
-            startedAt={item.startedAt}
-            finishedAt={item.finishedAt}
-            live={item.live}
-            citationProps={
-              nodeReads.length
-                ? {
-                    knowledgeReads: nodeReads,
-                    knowledgeSummary: nodeSummary,
-                    streaming: nodeLive,
-                    onCitationClick: handleCitationClick,
-                  }
-                : null
-            }
+        ) : !rawItems.length &&
+          !files.length &&
+          !reviewFiles.length &&
+          !handoffs.length &&
+          !loading &&
+          (historical || node.status !== "waiting_approval") ? (
+          <p className="muted">
+            {node.status === "pending"
+              ? "节点尚未开始。"
+              : "暂无可读取的执行记录。"}
+          </p>
+        ) : null}
+        {findings.length ? (
+          <details className="sop-findings">
+            <summary>审核发现（{findings.length}）</summary>
+            <ul>
+              {findings.map((finding, index) => (
+                <li key={index}>
+                  <strong>{finding.title}</strong>
+                  {finding.evidence ? (
+                    <RichContent message={finding.evidence} />
+                  ) : null}
+                </li>
+              ))}
+            </ul>
+          </details>
+        ) : null}
+        {nodeReads.length > 0 ? (
+          <KnowledgeSources
+            knowledgeReads={nodeReads}
+            text={nodeKnowledgeText}
+            summary={nodeSummary}
+            highlightedIndex={highlightedCite}
+            containerRef={sourcesRef}
           />
-        ),
-      )}
-      {more ? (
-        <button
-          className="quiet-button"
-          disabled={loading}
-          onClick={() => void loadRef.current?.()}
-        >
-          {loading ? "正在读取完整会话…" : "加载更多执行记录"}
-        </button>
-      ) : null}
-      {!historical &&
-      definition?.type === "approval" &&
-      node.status !== "pending" &&
-      node.status !== "waiting_approval" ? (
-        <article
-          className="message assistant node-approval-reason"
-          aria-label="人工门禁说明"
-        >
-          <strong>人工门禁</strong>
-          <p>{approvalWaitReason(run, node.nodeId || definition.id)}</p>
-        </article>
-      ) : !items.length &&
-        !loading &&
-        (historical || node.status !== "waiting_approval") ? (
-        <p className="muted">
-          {node.status === "pending"
-            ? "节点尚未开始。"
-            : "暂无可读取的执行记录。"}
-        </p>
-      ) : null}
-      {findings.length ? (
-        <details className="sop-findings">
-          <summary>审核发现（{findings.length}）</summary>
-          <ul>
-            {findings.map((finding, index) => (
-              <li key={index}>
-                <strong>{finding.title}</strong>
-                {finding.evidence ? (
-                  <RichContent message={finding.evidence} />
-                ) : null}
-              </li>
-            ))}
-          </ul>
-        </details>
-      ) : null}
-      {nodeReads.length > 0 ? (
-        <KnowledgeSources
-          knowledgeReads={nodeReads}
-          text={nodeKnowledgeText}
-          summary={nodeSummary}
-          highlightedIndex={highlightedCite}
-          containerRef={sourcesRef}
-        />
-      ) : null}
-      {!historical && node.error ? (
-        <p className="error">
-          {node.error}
-          <CredentialAction text={node.error} />
-        </p>
-      ) : null}
-    </div>
+        ) : null}
+        {!historical && node.error ? (
+          <p className="error">
+            {node.error}
+            <CredentialAction text={node.error} />
+          </p>
+        ) : null}
+        {summaryFiles.length ? (
+          <NodeDeliverables
+            run={run}
+            files={summaryFiles}
+            title="本节点产物"
+            activeFileId={activeFileId}
+            onPreview={onPreview}
+          />
+        ) : null}
+        {reviewFiles.length &&
+        (handoffs.length !== 1 ||
+          handoffs[0]?.artifacts?.length !== reviewFiles.length) ? (
+          <NodeDeliverables
+            run={run}
+            files={reviewFiles}
+            title={
+              definition?.type === "approval" ? "待审交付产物" : "上游交接产物"
+            }
+            activeFileId={activeFileId}
+            onPreview={onPreview}
+          />
+        ) : null}
+      </div>
+    </ArtifactLinks.Provider>
   );
 }

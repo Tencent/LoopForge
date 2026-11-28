@@ -21,6 +21,7 @@ import {
   agentBrowserTarget,
   remarkWorkspaceLinks,
 } from "./agent-browser-links.js";
+import { ArtifactLinks, matchArtifactForPath } from "./artifact-links.js";
 import {
   buildKnowledgeSummary,
   collapseAdjacentDuplicateCitations,
@@ -302,6 +303,7 @@ const markdownComponents = {
   code: ({ className, children }) => {
     const { assets, projectId } = useContext(MarkdownAssets);
     const openInBrowser = useContext(AgentBrowserLinks);
+    const artifactLinks = useContext(ArtifactLinks);
     const insideLink = useContext(InsideLink);
     const source = String(children).replace(/\n$/, "");
     const language = /language-([^\s]+)/.exec(className || "")?.[1];
@@ -314,6 +316,24 @@ const markdownComponents = {
         <AgentBrowserLink target={browserTarget} open={openInBrowser}>
           <code>{source}</code>
         </AgentBrowserLink>
+      );
+    const linkedArtifact =
+      artifactLinks && !insideLink && !language && !source.includes("\n")
+        ? matchArtifactForPath(source, artifactLinks.artifacts)
+        : null;
+    if (linkedArtifact)
+      return (
+        <InsideLink.Provider value>
+          <button
+            type="button"
+            className="sop-inline-artifact-link"
+            title={`在产物栏预览 ${linkedArtifact.name}`}
+            onClick={() => artifactLinks.open?.(linkedArtifact)}
+          >
+            <FileText size={12} aria-hidden="true" />
+            <code>{source}</code>
+          </button>
+        </InsideLink.Provider>
       );
     const target =
       !language && !source.includes("\n")
@@ -348,6 +368,7 @@ const markdownComponents = {
       onCitationClick,
     } = useContext(MarkdownAssets);
     const openInBrowser = useContext(AgentBrowserLinks);
+    const artifactLinks = useContext(ArtifactLinks);
     if (citationsEnabled && String(href || "").startsWith(knowledgeCitePrefix)) {
       const citeId = href.slice(knowledgeCitePrefix.length);
       const hasReads = Array.isArray(knowledgeReads) && knowledgeReads.length > 0;
@@ -401,6 +422,24 @@ const markdownComponents = {
         <AgentBrowserLink target={target} open={openInBrowser}>
           {children}
         </AgentBrowserLink>
+      );
+    const linkedArtifact =
+      artifactLinks && !/^(https?:|mailto:)/i.test(String(href || ""))
+        ? matchArtifactForPath(href, artifactLinks.artifacts)
+        : null;
+    if (linkedArtifact)
+      return (
+        <InsideLink.Provider value>
+          <button
+            type="button"
+            className="sop-inline-artifact-link"
+            title={`在产物栏预览 ${linkedArtifact.name}`}
+            onClick={() => artifactLinks.open?.(linkedArtifact)}
+          >
+            <FileText size={12} aria-hidden="true" />
+            <span>{children}</span>
+          </button>
+        </InsideLink.Provider>
       );
     if (/^file:/i.test(href || "")) return <span>{children}</span>;
     return (
