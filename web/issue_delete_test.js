@@ -26,7 +26,7 @@ async function run({confirm=true, busy=false, fail=false, batch=false, force=fal
  const issue={id:'issue/1',title:'测试需求',source:'tapd',deletionAllowed:true,deletionRequiresForce:force};
  const calls=[];
  const state={data:{issues:[issue,{id:'other'}]},issueDetailData:{issue},selectedIssue:issue.id,issueBulkDeleting:batch,issueSelection:new Set([issue.id,'other'])};
- const context={state,issueCanDelete:()=>!busy,issueDeletionBlock:()=>({reason:'正在澄清'}),toast:()=>{},refreshRuns:async()=>{},refreshIssues:async()=>calls.push('refresh issues'),renderIssues:()=>calls.push('render'),closeIssueDrawer:()=>calls.push('close'),
+ const context={state,lfT:zh=>zh,issueCanDelete:()=>!busy,issueDeletionBlock:()=>({reason:'正在澄清'}),toast:()=>{},refreshRuns:async()=>{},refreshIssues:async()=>calls.push('refresh issues'),renderIssues:()=>calls.push('render'),closeIssueDrawer:()=>calls.push('close'),
   afConfirm:async opts=>{
    assert(opts.message.includes('后续同步可能重新导入'));
    assert.equal(opts.message.includes('任务、运行记录、日志、产物和执行工作区'),force);
