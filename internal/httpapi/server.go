@@ -867,6 +867,23 @@ func (s *Server) bootstrap(c *gin.Context) {
 			break
 		}
 	}
+	projects = s.filterVisibleProjects(c.Request, projects)
+	if allowedProjects, restricted := s.visibleProjectIDSet(c.Request); restricted {
+		visibleRepos := make([]domain.Repository, 0, len(repositories))
+		for _, r := range repositories {
+			if r.ProjectID == "" || allowedProjects[r.ProjectID] {
+				visibleRepos = append(visibleRepos, r)
+			}
+		}
+		repositories = visibleRepos
+		visibleWorkflows := make([]domain.WorkflowDefinition, 0, len(workflows))
+		for _, wf := range workflows {
+			if s.workflowVisible(wf, allowedProjects, true) {
+				visibleWorkflows = append(visibleWorkflows, wf)
+			}
+		}
+		workflows = visibleWorkflows
+	}
 	mcpServers = domain.PublicMCPServers(withMarketIcons(visibleMCPServersForUser(mcpServers, currentUserID)))
 	sharedModels := s.repo.SharedCodeBuddyModels()
 	sponsoredModel := ""

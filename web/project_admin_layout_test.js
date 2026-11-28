@@ -526,5 +526,28 @@ assert.equal(ctx.projectDraftDirty({...draft,tapdClear:true},base),true);
     ctx.state.data.projects=ctx.state.data.projects.filter(p=>p.id!==team.id);
     ctx.api=api;ctx.state.authRequired=false;ctx.platformAdmin=undefined;
   }
+
+  // Default filter shows joined projects for regular users and all for platform admins; restricted directory cards only allow applying.
+  {
+    ctx.state.authRequired=true;ctx.platformAdmin=false;ctx.state.currentUser={id:1};
+    assert.equal(ctx.defaultProjectAdminFilter(),"mine","logged-in users default to joined projects");
+    ctx.platformAdmin=true;
+    assert.equal(ctx.defaultProjectAdminFilter(),"all","platform admins default to all projects");
+    ctx.platformAdmin=false;
+    ctx.state.currentUser={id:0,isGuest:true};
+    assert.equal(ctx.defaultProjectAdminFilter(),"all","guests fall back to all");
+    ctx.state.currentUser={id:1};
+    const restricted={id:"secret",key:"SC",name:"Secret",description:"Secret desc",ownerId:2,restricted:true};
+    const openProj={id:"open-shared",key:"OP",name:"Open Shared",ownerId:0,members:[]};
+    const card=ctx.projectCardHTML(restricted,{repos:repositories,issues,workflowName:ctx.projectWorkflowName});
+    assert.doesNotMatch(card,/data-project-open=/,"restricted cards cannot open project detail");
+    assert.doesNotMatch(card,/Secret desc|需求|未绑定代码仓库/,"restricted cards hide description and internal project stats");
+    assert.match(card,/data-project-join="secret"[^>]*>申请加入/,"restricted cards still offer join request");
+    const sample=[projects[0],projects[1],projects[2],restricted,openProj];
+    same(ids(ctx.filterAdminProjects(sample,repositories,"","mine",1)),["agentflow","lonely"],"mine excludes restricted and ownerless open projects");
+    same(ids(ctx.filterAdminProjects(sample,repositories,"","setup",1)),["lonely","open-shared"],"setup excludes restricted projects");
+    same(ids(ctx.filterAdminProjects(sample,repositories,"","all",1)),["agentflow","web-console","lonely","secret","open-shared"],"all includes restricted and open directory projects");
+    ctx.state.authRequired=false;ctx.platformAdmin=undefined;
+  }
   console.log("project admin layout passed");
 })().catch(err=>{console.error(err);process.exitCode=1;});

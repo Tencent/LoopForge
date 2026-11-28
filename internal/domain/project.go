@@ -38,13 +38,16 @@ type Project struct {
 	CodeBuddyInternetEnvironment string    `json:"-"`
 	TAPDWorkspaceID              string    `json:"tapdWorkspaceId,omitempty"`
 	TAPDIterationID              string    `json:"tapdIterationId,omitempty"`
-	CreatedAt                    time.Time `json:"createdAt"`
-	UpdatedAt                    time.Time `json:"updatedAt"`
+	CreatedAt                    time.Time `json:"createdAt,omitzero"`
+	UpdatedAt                    time.Time `json:"updatedAt,omitzero"`
 	// ArchivedAt marks a deleted project. It is hidden from project lists and
 	// syncs but its requirements, runs and settings are kept so it can be
 	// restored; the id stays taken.
 	ArchivedAt *time.Time `json:"archivedAt,omitempty"`
 	ArchivedBy int64      `json:"archivedBy,omitempty"`
+	// Restricted is set only in directory/discovery listings (e.g. GET /api/projects?scope=all)
+	// for projects the caller has not joined yet; sensitive project details are stripped.
+	Restricted bool `json:"restricted,omitempty"`
 }
 
 func PublicProject(p Project) Project {
@@ -53,7 +56,22 @@ func PublicProject(p Project) Project {
 	p.CodeBuddyAPIKey = ""
 	p.CodeBuddyAPIKeyConfigured = false
 	p.SOPDetection = nil // RSI exposes only the public detection controls.
+	p.Restricted = false
 	return p
+}
+
+// PublicProjectSummary returns the minimal card fields needed to discover and
+// request to join a project without exposing description, members,
+// repositories, SOPs, or tracker configuration to non-members.
+func PublicProjectSummary(p Project) Project {
+	return Project{
+		ID:         p.ID,
+		Key:        p.Key,
+		Name:       p.Name,
+		Color:      p.Color,
+		OwnerID:    p.OwnerID,
+		Restricted: true,
+	}
 }
 
 func PublicProjects(items []Project) []Project {
@@ -86,6 +104,22 @@ func NormalizeProjectMemberRole(role string) (string, bool) {
 	default:
 		return r, false
 	}
+}
+
+// HasMember checks explicit project membership, including the owner and viewer role.
+func (p Project) HasMember(userID int64) bool {
+	if userID <= 0 {
+		return false
+	}
+	if p.OwnerID == userID {
+		return true
+	}
+	for _, member := range p.Members {
+		if member.UserID == userID {
+			return true
+		}
+	}
+	return false
 }
 
 // HasWritableMember checks explicit project membership, including the owner.

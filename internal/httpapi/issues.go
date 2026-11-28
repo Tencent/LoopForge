@@ -159,6 +159,15 @@ func (h issuesHandlers) issues(c *gin.Context) {
 			Q:         strings.TrimSpace(c.Query("q")),
 			Assignee:  strings.TrimSpace(c.Query("assignee")),
 		})
+		if allowedProjects, restricted := h.visibleProjectIDSet(r); restricted {
+			visible := make([]domain.Issue, 0, len(items))
+			for _, item := range items {
+				if item.ProjectID == "" || allowedProjects[item.ProjectID] {
+					visible = append(visible, item)
+				}
+			}
+			items = visible
+		}
 		if _, ok := c.GetQuery("limit"); !ok {
 			views, err := h.issueDeletionViews(items)
 			if err != nil {
@@ -484,7 +493,11 @@ func (h issuesHandlers) issue(c *gin.Context) {
 		http.NotFound(c.Writer, c.Request)
 		return
 	}
-	if c.Request.Method != http.MethodGet && !h.requireProjectWriter(c, issue.ProjectID) {
+	if c.Request.Method == http.MethodGet {
+		if !h.requireProjectReader(c, issue.ProjectID) {
+			return
+		}
+	} else if !h.requireProjectWriter(c, issue.ProjectID) {
 		return
 	}
 	if c.FullPath() == "/api/issues/:id" && c.Request.Method == http.MethodDelete {

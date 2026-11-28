@@ -60,6 +60,22 @@ func (h *runsHandlers) analytics(c *gin.Context) {
 		c.JSON(400, gin.H{"error": "origin 必须为 all、internal 或 external"})
 		return
 	}
+	if projectID := strings.TrimSpace(filter.ProjectID); projectID != "" {
+		if !h.requireProjectReader(c, projectID) {
+			return
+		}
+	} else if allowedProjects, restricted := h.visibleProjectIDSet(c.Request); restricted {
+		ids := make([]string, 0, len(allowedProjects))
+		for id := range allowedProjects {
+			ids = append(ids, id)
+		}
+		filter.ProjectIDs = ids
+	}
+	if wfID := strings.TrimSpace(filter.WorkflowID); wfID != "" {
+		if wf, ok := h.repo.Workflow(wfID); ok && !wf.Generic && !wf.Shared && !h.requireProjectReader(c, wf.ProjectID) {
+			return
+		}
+	}
 	snap := h.repo.Analytics(filter)
 	if len(snap.DataErrors) > 0 {
 		c.JSON(503, gin.H{"error": snap.DataErrors[0]})
@@ -69,7 +85,22 @@ func (h *runsHandlers) analytics(c *gin.Context) {
 }
 
 func (h *runsHandlers) workflowMetrics(c *gin.Context) {
-	c.JSON(200, h.repo.WorkflowMetricsFor(c.Query("projectId")))
+	projectID := strings.TrimSpace(c.Query("projectId"))
+	if projectID != "" && !h.requireProjectReader(c, projectID) {
+		return
+	}
+	metrics := h.repo.WorkflowMetricsFor(projectID)
+	if allowedProjects, restricted := h.visibleProjectIDSet(c.Request); restricted {
+		visible := make([]domain.WorkflowMetrics, 0, len(metrics))
+		for _, m := range metrics {
+			if wf, ok := h.repo.Workflow(m.WorkflowID); ok && !h.workflowVisible(wf, allowedProjects, true) {
+				continue
+			}
+			visible = append(visible, m)
+		}
+		metrics = visible
+	}
+	c.JSON(200, metrics)
 }
 
 func (h *runsHandlers) runs(c *gin.Context) {
@@ -90,10 +121,29 @@ func (h *runsHandlers) runs(c *gin.Context) {
 			return
 		}
 		user, authenticated := h.requestUser(r, true)
+		allowedProjects, restricted := h.visibleProjectIDSet(r)
+		var issueProjects map[string]string
+		if restricted {
+			issueProjects = map[string]string{}
+			for _, issue := range h.repo.Issues() {
+				issueProjects[issue.ID] = issue.ProjectID
+			}
+		}
 		visible := runs[:0]
 		for _, run := range runs {
-			if run.IsPersonalWorkspace() && (!authenticated || user.ID <= 0 || user.ID != run.ExecutionContext.ResponsibleUserID) {
-				continue
+			if run.IsPersonalWorkspace() {
+				if !authenticated || user.ID <= 0 || user.ID != run.ExecutionContext.ResponsibleUserID {
+					continue
+				}
+			} else if restricted {
+				projectID := domain.RunProjectID(run, issueProjects[run.ExecutionContext.IssueID])
+				if projectID == "" {
+					if !authenticated || user.ID <= 0 || run.ExecutionContext.ResponsibleUserID != user.ID {
+						continue
+					}
+				} else if !allowedProjects[projectID] {
+					continue
+				}
 			}
 			visible = append(visible, run)
 		}
