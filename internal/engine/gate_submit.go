@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"agentflow/internal/domain"
 )
@@ -49,6 +50,10 @@ func readGateResultFrom(outputs nodeOutputs, path string) (*domain.GateResult, e
 		}
 		return nil, err
 	}
+	return decodeGateResult(raw)
+}
+
+func decodeGateResult(raw []byte) (*domain.GateResult, error) {
 	var result domain.GateResult
 	if err := json.Unmarshal(raw, &result); err != nil {
 		return nil, fmt.Errorf("submit_gate_result payload is invalid: %w", err)
@@ -104,10 +109,33 @@ func applyGateResult(result *domain.GateResult, rejectTarget string) (error, str
 	}
 }
 
+func (e *Engine) waitForHumanGate(runID, nodeID string, generation, attempt int, output string, err error, artifacts []domain.Artifact) {
+	e.updateRun(runID, func(r *domain.Run) {
+		nr := r.Nodes[nodeID]
+		if !shouldCommitNodeOutcome(*r, nr, generation, attempt, false) || r.CancelRequested {
+			return
+		}
+		nr.Output, nr.Error, nr.Status, nr.Activity, nr.FinishedAt = output, err.Error(), "waiting_approval", "等待人工确认", time.Now().UTC()
+		markKnowledgeReadsCited(nr.KnowledgeReads, attempt, output, artifacts)
+		message := "Agent 请求人工确认"
+		if nr.GateResult != nil && strings.TrimSpace(nr.GateResult.ActionRequired) != "" {
+			message += "：" + nr.GateResult.ActionRequired
+		} else if detail := strings.TrimSpace(nr.Error); detail != "" {
+			message += "：" + clipHumanGateDetail(detail)
+		}
+		e.event(r, nodeID, "gate.waiting", message)
+	})
+	e.persistCitedKnowledgeReads(runID, nodeID, attempt)
+}
+
 func appendSubmitGateInstruction(prompt, rejectTarget string, retry bool) string {
 	if retry {
 		return "刚才没有收到有效的节点终态。不要重复执行任务，也不要只输出文字；请立刻调用 submit_gate_result，提交 pass、rework、fail 或 human 之一以及具体 reason。选择 human 时还必须填写 actionRequired，明确需要人工确认什么。只有工具调用成功才算完成本节点。"
 	}
+	return appendGateDecisionInstruction(prompt, rejectTarget, "调用 MCP 工具 submit_gate_result")
+}
+
+func appendGateDecisionInstruction(prompt, rejectTarget, submission string) string {
 	reworkInstruction := "- rework：存在应由上游节点返工的问题；平台会自动打回该节点；"
 	if strings.TrimSpace(rejectTarget) == "" {
 		reworkInstruction = "- rework：本节点没有配置返工目标，不可选择；需要直接终止时请选择 fail；"
@@ -118,11 +146,11 @@ func appendSubmitGateInstruction(prompt, rejectTarget string, retry bool) string
 
 # 必须提交节点终态
 
-完成任务后必须调用 MCP 工具 submit_gate_result，提交唯一终态：
+完成任务后必须%s，提交唯一终态：
 - pass：任务正常完成；平台会自动流转到下游节点；
 %s
 - fail：本节点无法完成或出现不可恢复错误；平台会直接标记失败，不打回上游；
 - human：无法可靠自动判断，或必须由人决策；平台会暂停并等待人工确认，此时 actionRequired 必填，必须明确说明需要人确认或决定什么。
 
-必须根据当前真实情况选择，不要把 fail 当成 rework，也不要用 human 掩盖明确失败。reason 必须解释作出该终态的事实依据；rework 可用 actionRequired 写清返工要求；可附带 findings 和 evidence。不要用报告文本或最终回复代替工具调用。若节点未配置自定义交付物文件且结论引用了知识库，请将含 [[knowledge:<id>]] 标记的完整结论作为最终回复输出，不要在提交终态后仅回复简短确认语覆盖前文。只有该工具调用成功，本节点才算完成。`, reworkInstruction)
+必须根据当前真实情况选择，不要把 fail 当成 rework，也不要用 human 掩盖明确失败。reason 必须解释作出该终态的事实依据；rework 可用 actionRequired 写清返工要求；可附带 findings 和 evidence。不要用报告文本或最终回复代替工具调用。若节点未配置自定义交付物文件且结论引用了知识库，请将含 [[knowledge:<id>]] 标记的完整结论作为最终回复输出，不要在提交终态后仅回复简短确认语覆盖前文。只有该工具调用成功，本节点才算完成。`, submission, reworkInstruction)
 }

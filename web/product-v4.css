@@ -3063,6 +3063,8 @@ html[data-theme="dark"] #runnersView .runner-runtime-icon:is(.codex,.claude-code
 #agentModal .agent-id-line code{margin:0 8px 0 4px;font:12px ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--hu-muted);background:none;padding:0}
 #agentModal .agent-field-error{color:var(--hu-danger);font-size:12px;font-weight:400}
 #agentModal .agent-runtime-grid{grid-template-columns:repeat(3,minmax(0,1fr))}
+#agentModal .agent-runtime-grid[data-workbuddy],#agentModal .agent-workbuddy-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+#agentModal #agentWorkBuddyFields[hidden],#agentModal #agentEffortField[hidden],#agentModal #agentShareField[hidden]{display:none}
 #agentModal .agent-review{margin:0;border:1px solid var(--hu-border);border-radius:var(--hu-r-lg)}
 #agentModal .agent-review>div{display:flex;gap:12px;padding:10px 14px;font-size:13px}
 #agentModal .agent-review>div+div{border-top:1px solid var(--hu-border)}
@@ -3149,7 +3151,7 @@ html[data-theme="dark"] #runnersView .runner-runtime-icon:is(.codex,.claude-code
 #agentModal .as-prompt-note{margin:8px 2px 0;color:var(--hu-faint);font-size:12px}
 @media (max-width:720px){
   #agentModal .modal-card.agent-studio-v2,#agentModal .modal-card.agent-studio-v2[data-agent-mode="create"]{width:100vw;height:96vh;border-radius:0}
-  #agentModal .agent-runtime-grid,#agentModal .as-name-row{grid-template-columns:1fr}
+  #agentModal .agent-runtime-grid,#agentModal .agent-runtime-grid[data-workbuddy],#agentModal .agent-workbuddy-grid,#agentModal .as-name-row{grid-template-columns:1fr}
 }
 
 /* 运行记录列表：一体化面板（Harness UI 中性灰，颜色只表达真实状态）。详情态规则见上方 detail-open。 */

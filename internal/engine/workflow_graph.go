@@ -192,6 +192,10 @@ func validate(wf domain.WorkflowDefinition) error {
 func validateNode(workflowID string, n domain.WorkflowNode) error {
 	switch n.Type {
 	case "agent", "approval":
+	case domain.WorkflowNodeWorkBuddy:
+		if err := n.ValidateWorkBuddy(); err != nil {
+			return err
+		}
 	case "sop":
 		if strings.TrimSpace(n.SOPWorkflowID) == "" {
 			return fmt.Errorf("node %s sopWorkflowId is required", n.ID)

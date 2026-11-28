@@ -1178,7 +1178,6 @@ function bind(){
   $('#runGenericTemplateDirect')&&($('#runGenericTemplateDirect').onclick=()=>{const id=state.genericTemplateId;$('#genericTemplateModal').classList.remove('open');if(!id)return toast('请先选择通用模板');openRunModal(id)});
   $('#confirmRun').onclick=startRun; $('#newAgent').onclick=()=>openAgentWizard();
   $('#agentForm').onsubmit=saveAgent;
-  $('#agentForm').elements.executorId?.addEventListener('change',e=>applyAgentModelUI(e.target.value,'','',true));
   bindAgentPicker('#agentModelPicker',renderAgentModelPicker);
   bindAgentPicker('#agentEffortPicker',renderAgentEffortPicker);
   $('#agentClone')&&($('#agentClone').onclick=()=>cloneAgent(state.selectedAgent));

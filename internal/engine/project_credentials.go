@@ -12,20 +12,29 @@ func (e *Engine) ResolveRunProjectCredentialEnv(ctx context.Context, run domain.
 	if len(wf.ProjectCredentialIDs) == 0 {
 		return nil, nil
 	}
+	projectID, err := e.runProjectCredentialProject(run)
+	if err != nil {
+		return nil, err
+	}
+	return e.repo.ResolveProjectCredentialEnv(ctx, projectID, wf.ProjectCredentialIDs)
+}
+
+func (e *Engine) runProjectCredentialProject(run domain.Run) (string, error) {
+	wf := run.WorkflowSnapshot
 	projectID := run.ExecutionContext.ProjectID
 	if wf.Generic || projectID == "" || projectID != wf.ProjectID {
-		return nil, fmt.Errorf("请将 LOOP 复制到当前项目后重新绑定凭据")
+		return "", fmt.Errorf("请将 LOOP 复制到当前项目后重新绑定凭据")
 	}
 	project, found := e.repo.Project(projectID)
 	user, signedIn := e.repo.User(run.ExecutionContext.ResponsibleUserID)
 	if !found || project.ID != projectID || !signedIn {
-		return nil, fmt.Errorf("运行责任人无权使用项目凭据")
+		return "", fmt.Errorf("运行责任人无权使用项目凭据")
 	}
 	use, _ := domain.ProjectCredentialAccess(project, user.ID, e.repo.IsPlatformAdmin(user.LoginName))
 	if !use {
-		return nil, fmt.Errorf("运行责任人无权使用项目凭据")
+		return "", fmt.Errorf("运行责任人无权使用项目凭据")
 	}
-	return e.repo.ResolveProjectCredentialEnv(ctx, projectID, wf.ProjectCredentialIDs)
+	return projectID, nil
 }
 
 func (e *Engine) requireProjectCredentialRunner(workflow domain.WorkflowDefinition, runnerID string) error {

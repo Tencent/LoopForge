@@ -194,7 +194,14 @@ func (e *Engine) startWorkflowDefinitionSeeded(ctx context.Context, wf domain.Wo
 		executionContext.ExecutionPinned = true
 		executionContext.ExecutionPool = ""
 	}
-	autoAssign := e.selectSOPExecutionTarget(&executionContext, !workspace)
+	onlyWorkBuddy := !workspace && executionContext.ParentRunID == "" && executionContext.WorkspaceRunID == "" && len(repositories) == 0 && e.workBuddyOnly(wf)
+	autoAssign := false
+	if onlyWorkBuddy {
+		executionContext.ExecutionRunnerID, executionContext.ExecutionPool, executionContext.RunnerWorkspaceLayout = "", "", ""
+		executionContext.ExecutionMode = domain.ExecutionModeCloud
+	} else {
+		autoAssign = e.selectSOPExecutionTarget(&executionContext, !workspace)
+	}
 	if len(wf.ProjectCredentialIDs) > 0 {
 		if _, err := e.ResolveRunProjectCredentialEnv(context.Background(), domain.Run{WorkflowSnapshot: wf, ExecutionContext: executionContext}); err != nil {
 			return domain.Run{}, err
@@ -208,7 +215,7 @@ func (e *Engine) startWorkflowDefinitionSeeded(ctx context.Context, wf domain.Wo
 		profile, err = e.repo.ConversationSandbox(executionContext.ProjectID, wf.SandboxProfileID)
 	case autoAssign:
 		candidates, profile, sandboxSelection, err = e.prepareAutoAssign(ctx, wf, executionContext, repositories, input)
-	case wf.AutoSelectSandbox:
+	case wf.AutoSelectSandbox && !onlyWorkBuddy:
 		profile, sandboxSelection, err = e.selectSOPSandbox(ctx, wf, &executionContext, repositories, input, workspaceSandboxID)
 	default:
 		var ok bool
