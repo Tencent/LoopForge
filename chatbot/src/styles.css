@@ -4188,6 +4188,7 @@ a.draft-title {
   inset: 0;
   z-index: 300;
   display: grid;
+  grid-template: minmax(0, 1fr) / minmax(0, 1fr);
   place-items: center;
   padding: 32px;
   background: rgba(15, 15, 15, 0.82);
