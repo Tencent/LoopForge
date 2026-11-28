@@ -24,11 +24,48 @@ jobs:
   release:
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    env:
+      # The Compose stack reaches the database of the service container
+      # through the Docker host gateway; scripts/configure.sh turns the
+      # loopback host into host.docker.internal for that DSN.
+      LOOPFORGE_PG_HOST: 127.0.0.1
+      LOOPFORGE_PG_PORT: '5432'
+      # The service container starts the bare postgres role. There is no
+      # Supavisor tenant segment here, so the role is "postgres" itself.
+      LOOPFORGE_PG_USER: postgres
+      LOOPFORGE_PG_DATABASE: loopforge
+      # CI-only password of the throwaway service container: it exists for the
+      # length of the job and dies with it.
+      LOOPFORGE_PG_PASSWORD: CI_ONLY_POSTGRES_PASSWORD
+    services:
+      postgres:
+        image: postgres:15.8
+        env:
+          POSTGRES_PASSWORD: CI_ONLY_POSTGRES_PASSWORD
+          POSTGRES_DB: loopforge
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - uses: actions/checkout@v7.0.1
         with:
           fetch-depth: 0
           ref: ${{ inputs.source_ref || github.ref }}
+
+      - name: Prepare the host for the Postgres service
+        run: |
+          # The runner image ships a PostgreSQL server this job does not use.
+          # Stopping it frees the port the service container publishes.
+          sudo systemctl stop postgresql.service 2>/dev/null || true
+          # The installer applies the schema with the client tools on the host.
+          command -v psql >/dev/null 2>&1 || {
+            sudo apt-get update
+            sudo apt-get install -y postgresql-client
+          }
 
       - name: Verify release tag
         id: release
