@@ -97,6 +97,38 @@ test("manual references omit unsupported types from mixed search results", async
   ).toBeInTheDocument();
 });
 
+test("a picker opened from the menu survives the select event replayed by a category click", async () => {
+  const fetch = mockReferences();
+  render(<ConversationInput />);
+  const input = screen.getByRole("textbox", { name: "消息" });
+  fireEvent.click(screen.getByRole("button", { name: "引用项目资产" }));
+  const category = screen.getByRole("option", { name: /技能/ });
+  // A real browser keeps the caret in the textarea while the option is
+  // pressed and React replays a select event before the click lands. Pair
+  // the mouse events: React tracks a global mouse-down state for onSelect.
+  fireEvent.mouseDown(category);
+  fireEvent.mouseUp(category);
+  fireEvent.select(input);
+  fireEvent.click(input);
+  fireEvent.click(category);
+  await waitFor(() =>
+    expect(
+      screen.getByRole("option", { name: /测试流程/ }),
+    ).toBeInTheDocument(),
+  );
+  const request = new URL(fetch.mock.calls[0][0], "http://localhost");
+  expect(request.searchParams.get("type")).toBe("skill");
+  fireEvent.click(screen.getByRole("option", { name: /测试流程/ }));
+  expect(input.value).toContain("@测试流程");
+  // Moving the caret or typing afterwards still follows the usual @ rules.
+  fireEvent.click(screen.getByRole("button", { name: "引用项目资产" }));
+  expect(screen.getByRole("option", { name: /技能/ })).toBeInTheDocument();
+  fireEvent.change(input, { target: { value: "继续", selectionStart: 2 } });
+  expect(
+    screen.queryByRole("option", { name: /技能/ }),
+  ).not.toBeInTheDocument();
+});
+
 test("Escape closes the picker without bubbling into the surrounding modal", async () => {
   mockReferences();
   render(<ConversationInput />);

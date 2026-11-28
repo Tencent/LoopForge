@@ -33,32 +33,41 @@ export default forwardRef(function ReferenceInput(
   const picker = useRef(null);
   const returnFocus = useRef(null),
     selection = useRef(null),
-    dismissedSelection = useRef(null);
+    dismissedSelection = useRef(null),
+    // A picker opened from the menu has no "@" before the caret, so the
+    // select event React replays when a picker option is clicked would find
+    // no mention and close it. Keep it open while the draft and caret stay put.
+    manualSelection = useRef(null);
   const range = (event) =>
     mentionAt(event.target.value, event.target.selectionStart, references);
-  const open = (trigger) => {
-    if (referencesReadOnly) return;
-    dismissedSelection.current = null;
-    returnFocus.current = trigger || editorRef.current;
-    const caret = editorRef.current?.selectionStart ?? text.length;
-    onMentionChange(
-      mentionAt(text, caret, references) || {
-        start: caret,
-        end: caret,
-        query: "",
-      },
-    );
-    editorRef.current?.focus();
-  };
-  const close = () => {
-    const editor = editorRef.current;
-    dismissedSelection.current = editor
+  const snapshot = (editor) =>
+    editor
       ? {
           value: editor.value,
           start: editor.selectionStart,
           end: editor.selectionEnd,
         }
       : null;
+  const unchanged = (saved, editor) =>
+    !!saved &&
+    !!editor &&
+    saved.value === editor.value &&
+    saved.start === editor.selectionStart &&
+    saved.end === editor.selectionEnd;
+  const open = (trigger) => {
+    if (referencesReadOnly) return;
+    dismissedSelection.current = null;
+    returnFocus.current = trigger || editorRef.current;
+    const caret = editorRef.current?.selectionStart ?? text.length;
+    const typed = mentionAt(text, caret, references);
+    manualSelection.current = typed ? null : snapshot(editorRef.current);
+    onMentionChange(typed || { start: caret, end: caret, query: "" });
+    editorRef.current?.focus();
+  };
+  const close = () => {
+    const editor = editorRef.current;
+    manualSelection.current = null;
+    dismissedSelection.current = snapshot(editor);
     onMentionChange(null);
   };
   useImperativeHandle(ref, () => ({
@@ -73,6 +82,7 @@ export default forwardRef(function ReferenceInput(
   });
   function choose(asset) {
     if (referencesReadOnly) return;
+    manualSelection.current = null;
     const exists = references.some(
       (item) => item.type === asset.type && item.id === asset.id,
     );
@@ -157,6 +167,7 @@ export default forwardRef(function ReferenceInput(
         aria-expanded={!!mention}
         onChange={(event) => {
           dismissedSelection.current = null;
+          manualSelection.current = null;
           returnFocus.current = editorRef.current;
           const value = event.target.value;
           onChange({
@@ -176,6 +187,8 @@ export default forwardRef(function ReferenceInput(
         onClick={(event) => {
           if (!referencesReadOnly) {
             dismissedSelection.current = null;
+            if (unchanged(manualSelection.current, event.target)) return;
+            manualSelection.current = null;
             onMentionChange(range(event));
           }
         }}
@@ -193,6 +206,8 @@ export default forwardRef(function ReferenceInput(
           )
             return;
           dismissedSelection.current = null;
+          if (unchanged(manualSelection.current, editor)) return;
+          manualSelection.current = null;
           onMentionChange(range(event));
         }}
         onKeyDown={(event) => {
