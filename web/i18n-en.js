@@ -823,7 +823,9 @@ Object.assign(window.LF_I18N_EN, {
   "请选择 2 至 12 位成员。": "Select 2 to 12 members.",
   "请先在角色定义中创建或共享至少两个项目角色。": "Create or share at least two project roles in Role definitions.",
   "每轮由当前成员选择下一位成员，目标达成即可结束。": "Each member can hand off to a teammate or finish when the goal is met.",
-  "请填写小队目标。": "Enter a goal for the squad."
+  "请填写小队目标。": "Enter a goal for the squad.",
+  "任务目标": "Goal",
+  "自动选择": "Auto select"
 });
 
 Object.assign(window.LF_I18N_EN, {

@@ -110,6 +110,20 @@ func TestSquadStopsWithoutDispatchingInvalidOrExhaustedTurns(t *testing.T) {
 	if err := (&Engine{}).commitSquadDecision(&r, r.WorkflowSnapshot.Nodes[0], `LOOPFORGE_SQUAD {"action":"finish","summary":"One turn is enough"}`); err != nil {
 		t.Fatal(err)
 	}
+	// A handoff over budget fails the turn but keeps the requested handoff,
+	// like a blocked decision, so the squad timeline shows why.
+	r = newSquadTestRun()
+	r.WorkflowSnapshot.Squad.MaxTurns = 1
+	first := r.WorkflowSnapshot.Nodes[0]
+	if err := (&Engine{}).commitSquadDecision(&r, first, `LOOPFORGE_SQUAD {"action":"handoff","to":"reviewer","summary":"Needs an independent check"}`); err == nil {
+		t.Fatal("handoff over the turn budget succeeded")
+	}
+	if d := r.Nodes[first.ID].SquadDecision; d == nil || d.Action != "handoff" || d.To != "reviewer" || d.Summary != "Needs an independent check" {
+		t.Fatalf("over-budget handoff decision = %+v", d)
+	}
+	if len(r.WorkflowSnapshot.Nodes) != 1 || len(r.Nodes) != 1 {
+		t.Fatalf("over-budget handoff added a turn: nodes=%d", len(r.WorkflowSnapshot.Nodes))
+	}
 }
 
 func TestSquadApproveBeforeHandoffReturnsToSpeaker(t *testing.T) {

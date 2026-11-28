@@ -215,3 +215,24 @@ func TestEmptyStoreDoesNotSeedWorkflowTemplates(t *testing.T) {
 		t.Fatalf("empty store seeded workflow templates: %#v", workflows)
 	}
 }
+
+// Squad runs all use domain.AgentSquadWorkflowID; a saved LOOP with that id
+// would absorb their run counts, health metrics and run-history filter.
+func TestPutWorkflowRejectsTheAgentSquadID(t *testing.T) {
+	s, err := OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.Close() })
+	for _, id := range []string{domain.AgentSquadWorkflowID, "Agent-Squad", " agent-squad "} {
+		if err := s.PutWorkflow(domain.WorkflowDefinition{ID: id, Name: "Squad lookalike", Status: "draft"}); err == nil {
+			t.Fatalf("PutWorkflow(%q) succeeded, want the reserved id rejected", id)
+		}
+	}
+	if _, ok := s.Workflow(domain.AgentSquadWorkflowID); ok {
+		t.Fatal("a LOOP was stored under the reserved squad id")
+	}
+	if err := s.PutWorkflow(domain.WorkflowDefinition{ID: "agent-squad-review", Name: "Ordinary LOOP", Status: "draft"}); err != nil {
+		t.Fatalf("an id that only starts with agent-squad must stay allowed: %v", err)
+	}
+}

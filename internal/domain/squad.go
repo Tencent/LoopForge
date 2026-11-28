@@ -1,5 +1,10 @@
 package domain
 
+// AgentSquadWorkflowID is the workflow id of every agent squad run. It is
+// reserved so a saved LOOP never shares run counts, health or filters with
+// squad runs.
+const AgentSquadWorkflowID = "agent-squad"
+
 // AgentSquad is frozen with the run. Members are the allowed roles, while
 // WorkflowSnapshot.Nodes contains only turns actually requested so far.
 type AgentSquad struct {

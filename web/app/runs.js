@@ -20,7 +20,7 @@ function bindSquadForm(){
       return label;
     }));
     const sandboxes=(state.data.sandboxes||[]).filter(box=>!box.projectId||visible(box));
-    $('#squadSandbox').replaceChildren(new Option('自动选择',''),...options(sandboxes));
+    $('#squadSandbox').replaceChildren(new Option(lfT('自动选择','Auto select'),''),...options(sandboxes));
     updateMembers();
     if(roles.length<2)hint.textContent='请先在角色定义中创建或共享至少两个项目角色。';
   }

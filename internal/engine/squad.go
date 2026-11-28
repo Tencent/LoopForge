@@ -48,7 +48,7 @@ func (e *Engine) StartSquad(ctx context.Context, req domain.StartSquadRequest, g
 		squad.Members = append(squad.Members, domain.SquadMember{ID: role.ID, Name: role.Name, Description: role.Description})
 	}
 	wf := domain.WorkflowDefinition{
-		ID: "agent-squad", Name: "Agent 协作小队", ProjectID: ec.ProjectID, Version: 1, Squad: squad,
+		ID: domain.AgentSquadWorkflowID, Name: "Agent 协作小队", ProjectID: ec.ProjectID, Version: 1, Squad: squad,
 		SandboxProfileID: strings.TrimSpace(req.SandboxProfileID),
 		Nodes:            []domain.WorkflowNode{squadTurn(1, squad.Members[0])},
 	}
@@ -135,6 +135,8 @@ func (e *Engine) commitSquadDecision(r *domain.Run, node domain.WorkflowNode, ou
 		e.event(r, node.ID, "squad.finish_requested", d.Summary)
 	case "handoff":
 		if len(wf.Nodes) >= wf.Squad.MaxTurns {
+			// Keep the requested handoff so the run shows why the turn failed.
+			r.Nodes[node.ID].SquadDecision = &d
 			return fmt.Errorf("小队已达 %d 轮上限，仍请求交给 %q：%s", wf.Squad.MaxTurns, d.To, d.Summary)
 		}
 		for _, member := range wf.Squad.Members {

@@ -124,6 +124,10 @@ func TestCatalogWorkflowBranches(t *testing.T) {
 		{http.MethodPut, "/api/workflows", map[string]any{"id": "wf-agent", "name": "Agent", "projectId": "cvb-wfp", "sandboxProfileId": "cvb-box", "nodes": []any{map[string]any{"id": "n", "type": "agent", "agentId": "missing"}}}, 400},
 		{http.MethodPut, "/api/workflows", map[string]any{"id": "wf-agent2", "name": "Agent", "projectId": "cvb-wfp", "sandboxProfileId": "cvb-box", "nodes": []any{map[string]any{"id": "n", "type": "agent", "agentId": "cvb-private-agent"}}}, 400},
 		{http.MethodPut, "/api/workflows", base, 200},
+		// Squad runs own the workflow id agent-squad; a LOOP must not take it.
+		{http.MethodPut, "/api/workflows", map[string]any{"id": domain.AgentSquadWorkflowID, "name": "Squad lookalike", "projectId": "cvb-wfp", "sandboxProfileId": "cvb-box"}, 400},
+		{http.MethodPost, "/api/workflows/cvb-flow/clone", map[string]any{"id": domain.AgentSquadWorkflowID, "name": "Clone", "projectId": "cvb-wfp"}, 400},
+		{http.MethodGet, "/api/workflows/" + domain.AgentSquadWorkflowID, nil, 404},
 		{http.MethodGet, "/api/workflows?q=flow&projectId=cvb-wfp", nil, 200},
 		{http.MethodGet, "/api/workflows/cvb-flow", nil, 200},
 		{http.MethodGet, "/api/workflows/cvb-flow/revisions", nil, 200},
