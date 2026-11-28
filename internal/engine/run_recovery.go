@@ -242,6 +242,11 @@ func (e *Engine) ResumeInterruptedRuns() []string {
 			_ = e.repo.ReleaseRunLease(r.ID, e.instanceID, acquired.Generation)
 			continue
 		}
+		// issue #1317: before resuming the run, cancel the old execution's
+		// runner tasks and discard its sandbox container. The stale Agent CLI
+		// in the Docker sandbox would otherwise keep writing to the shared
+		// workspace while the new execution starts on the same checkout.
+		_ = e.cancelRunnerTasksForRun(r.ID)
 		e.updateRun(r.ID, func(current *domain.Run) {
 			resetInFlightNodesForResume(current, "执行实例退出，等待恢复")
 			current.Status = "running"

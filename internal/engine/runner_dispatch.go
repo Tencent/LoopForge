@@ -64,6 +64,14 @@ func (e *Engine) cancelRunnerTasksForRun(runID string) error {
 	if err != nil {
 		return err
 	}
+	// issue #1317: canceling the runner task only stops the control plane
+	// from scheduling more work on the execution machine. The Docker
+	// sandbox container that hosts the old Agent CLI survives, and that
+	// CLI keeps writing to the shared workspace while the new execution
+	// (takeover, retry or resume) starts on the same checkout. Discard the
+	// old sandbox container so the stale CLI loses its mount and can no
+	// longer write to the workspace.
+	e.sandboxes.DiscardRunContainer(context.Background(), runID)
 	for _, id := range ids {
 		e.NotifyRunnerTaskChanged(id)
 		if task, ok := e.repo.RunnerTask(id); ok {
