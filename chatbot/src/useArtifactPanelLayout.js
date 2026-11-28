@@ -1,12 +1,11 @@
 import { useLayoutEffect, useRef, useState } from "react";
 import "./artifact-layout.css";
 
-const storageKey = "agentflow.artifactPanelWidth";
-const defaultWidth = 440;
 const sashWidth = 4;
 const snapDistance = 16;
+export const ARTIFACT_COMPACT_WIDTH = 800;
 
-function readWidth() {
+function readWidth(storageKey, defaultWidth) {
   try {
     const saved = localStorage.getItem(storageKey);
     const width = Number(saved);
@@ -40,8 +39,14 @@ function capturePassage(shell) {
 // Pane sizing and keyboard behavior adapted from Grasp (MIT).
 // See artifact-preview.css for the upstream license.
 /** Grasp's 440px pane, 4px sash and 800px conversation breakpoint. */
-export function useArtifactPanelLayout(root, onClose, nodeId = null, open = true) {
-  const [layout, setLayout] = useState(readWidth);
+export function useArtifactPanelLayout(
+  root,
+  onClose,
+  nodeId = null,
+  open = true,
+  { defaultWidth = 440, storageKey = "agentflow.artifactPanelWidth" } = {},
+) {
+  const [layout, setLayout] = useState(() => readWidth(storageKey, defaultWidth));
   const [available, setAvailable] = useState(0);
   const [dragging, setDragging] = useState(false);
   const shell = useRef(null);
@@ -53,7 +58,7 @@ export function useArtifactPanelLayout(root, onClose, nodeId = null, open = true
   const current = useRef(null);
   closeRef.current = onClose;
   openRef.current = open;
-  const compact = available > 0 && available < 800;
+  const compact = available > 0 && available < ARTIFACT_COMPACT_WIDTH;
   const maxWidth = available ? Math.max(0, Math.round(available - sashWidth)) : defaultWidth;
   const width = compact ? available : layout.covered ? maxWidth : Math.min(layout.preferred, maxWidth);
   current.current = { ...layout, width, compact, maxWidth };
@@ -223,7 +228,9 @@ export function useArtifactPanelLayout(root, onClose, nodeId = null, open = true
   useLayoutEffect(() => {
     if (!compact || !open) return;
     const frame = requestAnimationFrame(() => {
-      root.current?.querySelector('[aria-label="返回聊天"], button')?.focus({ preventScroll: true });
+      const panel = root.current;
+      const back = panel?.querySelector('[aria-label="返回聊天"]');
+      (back || panel?.querySelector("button"))?.focus({ preventScroll: true });
     });
     return () => cancelAnimationFrame(frame);
   }, [compact, open]);

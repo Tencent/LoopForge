@@ -18,8 +18,8 @@ func TestArtifactFileNameKeepsTheDeliverableExtension(t *testing.T) {
 		{domain.Artifact{Name: "notes", Path: "notes", MediaType: "text/plain"}, "notes.txt"},
 		{domain.Artifact{Name: "legacy", MediaType: "text/markdown"}, "legacy.md"},
 	} {
-		if got := artifactFileName(tc.artifact); got != tc.want {
-			t.Fatalf("artifactFileName(%q, %q) = %q, want %q", tc.artifact.Name, tc.artifact.Path, got, tc.want)
+		if got := runArtifactFilename(tc.artifact); got != tc.want {
+			t.Fatalf("runArtifactFilename(%q, %q) = %q, want %q", tc.artifact.Name, tc.artifact.Path, got, tc.want)
 		}
 	}
 }

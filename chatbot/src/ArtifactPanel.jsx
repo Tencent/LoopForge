@@ -2,8 +2,10 @@ import React, { useEffect, useRef, useState } from "react";
 import HarnessIcon from "./HarnessIcon";
 import { api, messageOffset } from "./api";
 import { ArtifactPreview, RichContent } from "./RichContent";
+import ArtifactFileRow from "./ArtifactFileRow";
 import { DraftCard } from "./SidePanel";
 import SopRunPanel, { runStatus } from "./SopRunPanel";
+import { nodeReviewArtifacts, openRunPage, runAttentionNode } from "./sop-review.js";
 import ChangesPanel from "./ChangesPanel";
 import AgentBrowser from "./AgentBrowser";
 import WorkspaceIDE from "./WorkspaceIDE";
@@ -15,14 +17,7 @@ import { definitionTarget, actionName } from "./platform.js";
 import { useArtifactPanelLayout } from "./useArtifactPanelLayout";
 import "./artifact-panel.css";
 
-const FileText = (props) => <HarnessIcon name="doc" {...props} />;
-const FileImage = (props) => <HarnessIcon name="image" {...props} />;
-const FileCode = (props) => <HarnessIcon name="stage-ide" {...props} />;
-const Presentation = (props) => <HarnessIcon name="monitor" {...props} />;
-const Globe = (props) => <HarnessIcon name="globe" {...props} />;
 const GitBranch = (props) => <HarnessIcon name="workflow" {...props} />;
-const MergeRequest = (props) => <HarnessIcon name="branch" {...props} />;
-const UserRound = (props) => <HarnessIcon name="user" {...props} />;
 const ChevronLeft = (props) => <HarnessIcon name="chevron-left" {...props} />;
 const ChevronRight = (props) => <HarnessIcon name="chevron-right" {...props} />;
 const X = (props) => <HarnessIcon name="close" {...props} />;
@@ -30,20 +25,6 @@ const ExternalLink = (props) => (
   <HarnessIcon name="preview-expand" {...props} />
 );
 
-export function artifactIcon(a) {
-  if (a.mimeType?.startsWith("image/")) return FileImage;
-  return (
-    {
-      html: Globe,
-      slides: Presentation,
-      ppt: Presentation,
-      sop: GitBranch,
-      "merge-request": MergeRequest,
-      role: UserRound,
-      code: FileCode,
-    }[a.kind] || FileText
-  );
-}
 function DefinitionPreview({ artifact }) {
   const [data, setData] = useState(null),
     [error, setError] = useState("");
@@ -180,8 +161,8 @@ function OperationPreview({ artifact, runs }) {
 }
 
 export default function ArtifactPanel({
-  artifacts,
-  runs,
+  artifacts = [],
+  runs = [],
   selected,
   setSelected,
   chat,
@@ -189,16 +170,21 @@ export default function ArtifactPanel({
   onClose,
   open = true,
   view = "artifacts",
+  filesOnly = false,
+  layoutOptions,
   onViewChange = () => {},
   workspaceChanges = null,
   workspaceRunId = "",
   browserRequest = null,
   onBrowserRequestHandled = () => {},
   onAddElement = null,
+  onRunChanged,
 }) {
   const root = useRef(null);
   const searchInput = useRef(null);
-  const [nodeId, setNodeId] = useState(selected?.nodeId || null);
+  const [nodeId, setNodeId] = useState(selected?.kind === "run" ? selected.nodeId || null : null);
+  const [runFileId, setRunFileId] = useState(selected?.kind === "run" ? selected.fileId || null : null);
+  const [fileOrigin, setFileOrigin] = useState(null);
   const [search, setSearch] = useState("");
   const browsing = view === "browser";
   const coding = view === "ide";
@@ -258,11 +244,13 @@ export default function ArtifactPanel({
       (browsing && workspaceRunId ? "agent-browser" : null) ||
       (coding && workspaceRunId ? "workspace-ide" : null),
     open,
+    layoutOptions,
   );
-  useEffect(
-    () => setNodeId(selected?.nodeId || null),
-    [selected?.id, selected?.nodeId],
-  );
+  useEffect(() => {
+    setNodeId(selected?.kind === "run" ? selected.nodeId || null : null);
+    setRunFileId(selected?.kind === "run" ? selected.fileId || null : null);
+    setFileOrigin(null);
+  }, [selected?.id, selected?.kind, selected?.nodeId, selected?.fileId]);
   useEffect(() => setSearch(""), [chat.session?.id]);
   const selectedRun =
     selected?.kind === "run"
@@ -276,7 +264,7 @@ export default function ArtifactPanel({
   useEffect(() => {
     const content = root.current?.querySelector(".artifact-panel-content");
     if (content) content.scrollTop = 0;
-  }, [selected?.id, nodeId]);
+  }, [selected?.id, nodeId, runFileId]);
   // External deliverables are listed under 合并请求 with their own section.
   const items = artifacts.filter(
     (artifact) => !artifact.draft && !artifact.asset && !artifact.external,
@@ -339,6 +327,7 @@ export default function ArtifactPanel({
         item.id,
         item.name,
       ]),
+      ...(run.artifacts || []).flatMap((item) => [item.name, item.path]),
       "LOOP 运行",
     ),
   );
@@ -362,50 +351,62 @@ export default function ArtifactPanel({
     visibleMergeRequests.length +
     visibleRuns.length +
     visibleSubagents.length;
-  const row = (artifact) => {
-    const Icon = artifactIcon(artifact);
-    const target = definitionTarget(artifact, projectId);
-    // External deliverables (a submitted pull request) live on the code host,
-    // so the row opens them in a new tab instead of opening a local preview.
-    const href = target?.href || (artifact.external ? artifact.url : "");
-    const Row = href ? "a" : "button";
-    const title = target
-      ? `${artifact.name} · ${target.label}`
-      : artifact.external
-        ? `${artifact.name} · 在代码仓库打开`
-        : artifact.name;
-    return (
-      <Row
-        className={`artifact-row artifact-file-row ${selected?.id === artifact.id ? "is-selected" : ""}`}
-        key={artifact.id}
-        title={title}
-        aria-current={selected?.id === artifact.id ? "true" : undefined}
-        {...(href
-          ? { href, target: "_blank", rel: "noopener noreferrer" }
-          : { type: "button", onClick: () => setSelected(artifact) })}
-      >
-        <span className="artifact-file-icon">
-          <Icon size={16} />
-        </span>
-        <span className="artifact-file-copy">
-          <strong>{artifact.name}</strong>
-          <small>
-            {target
-              ? `${artifact.kind === "sop" ? "LOOP" : "角色"} · ${artifact.asset?.status === "published" ? "已发布" : "已保存"}`
-              : artifact.source}
-            {artifact.size
-              ? ` · ${artifact.size < 1024 ? `${artifact.size} B` : `${Math.ceil(artifact.size / 1024)} KB`}`
-              : ""}
-          </small>
-        </span>
-        {href ? (
-          <ExternalLink className="artifact-row-action" size={13} />
-        ) : (
-          <ChevronRight className="artifact-row-action" size={13} />
-        )}
-      </Row>
+  const row = (artifact) => (
+    <ArtifactFileRow
+      key={artifact.id}
+      artifact={artifact}
+      projectId={projectId}
+      selected={selected?.id === artifact.id}
+      onSelect={setSelected}
+    />
+  );
+  const nodeFilesForNav = (() => {
+    if (!selectedRun || !runFileId) return [];
+    if (fileOrigin === "overview") return selectedRun.artifacts || [];
+    if (!nodeId) return [];
+    const { own, handoffs } = nodeReviewArtifacts(
+      selectedRun,
+      node || { nodeId, status: "pending" },
     );
+    const currentFile = [...own, ...handoffs].find((f) => f.id === runFileId);
+    const activeAttempt =
+      currentFile?.attempt ||
+      node?.attempt ||
+      own.reduce((max, f) => Math.max(max, f.attempt || 0), 0);
+    const ownForAttempt = own.filter((f) =>
+      f.attempt ? f.attempt === activeAttempt : true,
+    );
+    const reviewFiles = activeAttempt === (node?.attempt || activeAttempt) ? handoffs : [];
+    return [...ownForAttempt, ...reviewFiles];
+  })();
+  const navList = runFileId
+    ? nodeFilesForNav
+    : selected && selected.kind !== "run" && selected.kind !== "subagent"
+      ? visibleItems
+      : [];
+  const navCurrentId = runFileId || selected?.id;
+  const navIndex = navList.findIndex((item) => item.id === navCurrentId);
+  const canStepNav = navIndex >= 0 && navList.length > 1;
+  const stepNav = (delta) => {
+    const next = navList[navIndex + delta];
+    if (!next) return;
+    if (runFileId) {
+      setRunFileId(next.id);
+      if (fileOrigin === "overview" && next.nodeId) setNodeId(next.nodeId);
+    } else {
+      setSelected(next);
+    }
   };
+  const showWidthToggle =
+    !layout.compact &&
+    (Boolean(runFileId) ||
+      (selected && selected.kind !== "run" && selected.kind !== "subagent"));
+  const upstreamItems = filesOnly
+    ? visibleItems.filter((item) => item.source?.startsWith("上游待审"))
+    : [];
+  const ownItems = filesOnly
+    ? visibleItems.filter((item) => !item.source?.startsWith("上游待审"))
+    : visibleItems;
   return (
     <>
       {!layout.compact ? (
@@ -454,55 +455,59 @@ export default function ArtifactPanel({
               <span>产物</span>
               <small>{count}</small>
             </button>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={view === "changes"}
-              className={view === "changes" ? "is-active" : ""}
-              onClick={() => onViewChange("changes")}
-              disabled={!workspaceRunId}
-              title={
-                workspaceRunId
-                  ? "查看本次会话写入工作区的改动"
-                  : "本次会话还没有工作区"
-              }
-            >
-              <HarnessIcon name="edit" size={14} />
-              <span>改动</span>
-              <small>{workspaceChanges?.files?.length || 0}</small>
-            </button>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={browsing}
-              className={browsing ? "is-active" : ""}
-              onClick={() => onViewChange("browser")}
-              disabled={!workspaceRunId}
-              title={
-                workspaceRunId
-                  ? "实时查看并操作 Agent 正在用的浏览器"
-                  : "本次会话还没有工作区"
-              }
-            >
-              <HarnessIcon name="stage-browser" size={14} />
-              <span>浏览器</span>
-            </button>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={coding}
-              className={coding ? "is-active" : ""}
-              onClick={() => onViewChange("ide")}
-              disabled={!workspaceRunId}
-              title={
-                workspaceRunId
-                  ? "在 VS Code 里浏览、编辑本次会话的工作区"
-                  : "本次会话还没有工作区"
-              }
-            >
-              <HarnessIcon name="stage-ide" size={14} />
-              <span>IDE</span>
-            </button>
+            {!filesOnly ? (
+              <>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={view === "changes"}
+                  className={view === "changes" ? "is-active" : ""}
+                  onClick={() => onViewChange("changes")}
+                  disabled={!workspaceRunId}
+                  title={
+                    workspaceRunId
+                      ? "查看本次会话写入工作区的改动"
+                      : "本次会话还没有工作区"
+                  }
+                >
+                  <HarnessIcon name="edit" size={14} />
+                  <span>改动</span>
+                  <small>{workspaceChanges?.files?.length || 0}</small>
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={browsing}
+                  className={browsing ? "is-active" : ""}
+                  onClick={() => onViewChange("browser")}
+                  disabled={!workspaceRunId}
+                  title={
+                    workspaceRunId
+                      ? "实时查看并操作 Agent 正在用的浏览器"
+                      : "本次会话还没有工作区"
+                  }
+                >
+                  <HarnessIcon name="stage-browser" size={14} />
+                  <span>浏览器</span>
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={coding}
+                  className={coding ? "is-active" : ""}
+                  onClick={() => onViewChange("ide")}
+                  disabled={!workspaceRunId}
+                  title={
+                    workspaceRunId
+                      ? "在 VS Code 里浏览、编辑本次会话的工作区"
+                      : "本次会话还没有工作区"
+                  }
+                >
+                  <HarnessIcon name="stage-ide" size={14} />
+                  <span>IDE</span>
+                </button>
+              </>
+            ) : null}
           </div>
           <div className="artifact-panel-actions">
             {layout.compact ? (
@@ -527,12 +532,34 @@ export default function ArtifactPanel({
             <button
               type="button"
               className="artifact-preview-back"
-              onClick={() => (nodeId ? setNodeId(null) : setSelected(null))}
+              onClick={() => {
+                if (runFileId) {
+                  setRunFileId(null);
+                  if (fileOrigin === "overview") setNodeId(null);
+                  setFileOrigin(null);
+                  if (layout.covered) layout.toggleCovered();
+                } else if (nodeId) {
+                  setNodeId(null);
+                } else {
+                  setSelected(null);
+                  if (layout.covered) layout.toggleCovered();
+                }
+              }}
             >
               <ChevronLeft size={14} />
-              <span>{nodeId ? "返回流程节点" : "返回产物列表"}</span>
+              <span>
+                {runFileId
+                  ? fileOrigin === "overview"
+                    ? "返回运行概览"
+                    : "返回节点产物"
+                  : nodeId
+                    ? "返回流程节点"
+                    : "返回产物列表"}
+              </span>
             </button>
-            {nodeId ? <span className="artifact-node-title">{nodeDefinition?.name || nodeId}</span> : null}
+            {nodeId && !runFileId ? (
+              <span className="artifact-node-title">{nodeDefinition?.name || nodeId}</span>
+            ) : null}
             {selectedAgent ? (
               <>
                 <span className="artifact-node-title">{subagentName(selectedAgent)}</span>
@@ -541,7 +568,7 @@ export default function ArtifactPanel({
                 </small>
               </>
             ) : null}
-            {nodeId ? (
+            {nodeId && !runFileId ? (
               <small
                 className="node-header-meta"
                 title={[node?.model, runStatus[node?.status] || node?.status]
@@ -550,6 +577,40 @@ export default function ArtifactPanel({
               >
                 {node?.model || runStatus[node?.status]}
               </small>
+            ) : null}
+            {canStepNav || showWidthToggle ? (
+              <div className="artifact-preview-toolbar-right">
+                {canStepNav ? (
+                  <div className="artifact-preview-nav" role="group" aria-label="切换产物">
+                    <IconButton
+                      label="上一个产物"
+                      disabled={navIndex <= 0}
+                      onClick={() => stepNav(-1)}
+                    >
+                      <ChevronLeft size={14} />
+                    </IconButton>
+                    <span className="artifact-preview-counter">
+                      {navIndex + 1} / {navList.length}
+                    </span>
+                    <IconButton
+                      label="下一个产物"
+                      disabled={navIndex >= navList.length - 1}
+                      onClick={() => stepNav(1)}
+                    >
+                      <ChevronRight size={14} />
+                    </IconButton>
+                  </div>
+                ) : null}
+                {showWidthToggle ? (
+                  <IconButton
+                    label={layout.covered ? "恢复默认宽度" : "加宽预览"}
+                    title={layout.covered ? "恢复默认宽度" : "加宽预览"}
+                    onClick={layout.toggleCovered}
+                  >
+                    <HarnessIcon name={layout.covered ? "collapse" : "expand"} size={14} />
+                  </IconButton>
+                ) : null}
+              </div>
             ) : null}
           </div>
         ) : count ? (
@@ -645,7 +706,20 @@ export default function ArtifactPanel({
               runs={[selectedRun]}
               embedded
               selectedNodeId={nodeId}
-              onSelectNode={setNodeId}
+              onSelectNode={(nextNodeId) => {
+                setRunFileId(null);
+                setFileOrigin(null);
+                setNodeId(nextNodeId);
+              }}
+              selectedFileId={runFileId}
+              onSelectFileId={(fileId, overviewNodeId) => {
+                if (overviewNodeId) {
+                  setNodeId(overviewNodeId);
+                  setFileOrigin("overview");
+                }
+                setRunFileId(fileId);
+              }}
+              onChanged={onRunChanged}
               onClose={() => setSelected(null)}
             />
           ) : selectedAgent?.deferredActivity ? (
@@ -712,7 +786,22 @@ export default function ArtifactPanel({
                   {visibleMergeRequests.map(row)}
                 </section>
               ) : null}
-              {visibleItems.length ? (
+              {filesOnly ? (
+                <>
+                  {ownItems.length ? (
+                    <section className="artifact-section">
+                      <h3>本节点产物</h3>
+                      {ownItems.map(row)}
+                    </section>
+                  ) : null}
+                  {upstreamItems.length ? (
+                    <section className="artifact-section">
+                      <h3>上游待审产物</h3>
+                      {upstreamItems.map(row)}
+                    </section>
+                  ) : null}
+                </>
+              ) : visibleItems.length ? (
                 <section className="artifact-section">
                   <h3>文件</h3>
                   {visibleItems.map(row)}
@@ -727,11 +816,20 @@ export default function ArtifactPanel({
               {visibleRuns.length ? (
                 <section className="artifact-section">
                   <h3>LOOP 运行</h3>
-                  {visibleRuns.map((run) => (
+                  {visibleRuns.map((run) => {
+                    const attention = runAttentionNode(run);
+                    const doneCount = Object.values(run.nodes || {}).filter((item) =>
+                      ["succeeded", "skipped"].includes(item.status),
+                    ).length;
+                    const artifactCount = (run.artifacts || []).length;
+                    const summaryText = attention
+                      ? `${attention.status === "waiting_approval" ? "待审核" : "失败"} · ${attention.definition.name || attention.definition.id}`
+                      : `${runStatus[run.status] || run.status} · ${doneCount}/${run.workflowSnapshot?.nodes?.length || 0} 节点${artifactCount ? ` · ${artifactCount} 产物` : ""}`;
+                    return (
+                    <div className="sop-artifact-run" key={run.id}>
                     <button
                       type="button"
                       className="artifact-row artifact-run-row"
-                      key={run.id}
                       onClick={() =>
                         setSelected({
                           kind: "run",
@@ -750,20 +848,22 @@ export default function ArtifactPanel({
                         </strong>
                         <small>
                           <i
-                            className={`artifact-run-dot status-${run.status}`}
+                            className={`artifact-run-dot status-${run.pauseRequested ? "paused" : run.status}`}
                           />
-                          {runStatus[run.status] || run.status} ·{" "}
-                          {
-                            Object.values(run.nodes || {}).filter(
-                              (item) => item.status === "succeeded",
-                            ).length
-                          }
-                          /{run.workflowSnapshot?.nodes?.length || 0} 节点
+                          {summaryText}
                         </small>
                       </span>
                       <ChevronRight className="artifact-row-action" size={13} />
                     </button>
-                  ))}
+                    <IconButton className="sop-artifact-record"
+                      label={`查看运行记录：${run.workflowSnapshot?.name || run.id}`}
+                      onClick={() => openRunPage(run.id)}
+                    >
+                      <HarnessIcon name="runs" size={16} />
+                    </IconButton>
+                    </div>
+                    );
+                  })}
                 </section>
               ) : null}
               {visibleSubagents.length ? (

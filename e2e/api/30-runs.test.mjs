@@ -55,8 +55,19 @@ test('approval gate: reject reworks upstream in the same workspace, approve comp
     await api('POST', `/api/runs/${id}/approve`, { nodeId: 'prep' }, { expect: [400, 409, 500] });
   });
 
+  const prepBeforeRework = nodeOf(run, 'prep');
   await post(`/api/runs/${id}/reject`, { nodeId: 'gate', targetId: 'prep', reason: 'e2e 打回：再写一行' });
   run = await waitRun(id, r => nodeStatus(r, 'gate') === 'waiting_approval' && (nodeOf(r, 'prep').attempt >= 2 || nodeOf(r, 'prep').reworkCount >= 1), { label: 'rework back at gate' });
+
+  await test.test('a stale review cannot create a discussion for a reworked node', async () => {
+    const path = `/api/runs/${id}/nodes/prep/conversation`;
+    const expectation = ({ status, attempt = 0, reworkCount = 0 }) => ({ status, attempt, reworkCount });
+    const stale = await post(path, expectation(prepBeforeRework), { expect: 409 });
+    assert.match(stale.error, /节点状态或执行次数已变化/);
+
+    const current = new URLSearchParams(expectation(nodeOf(run, 'prep')));
+    await get(`${path}?${current}`, { expect: 204 });
+  });
 
   await post(`/api/runs/${id}/approve`, { nodeId: 'gate', context: 'e2e 批准' });
   run = await waitRun(id, r => r.status === 'succeeded', { label: 'succeeded' });

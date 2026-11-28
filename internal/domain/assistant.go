@@ -201,10 +201,11 @@ type AssistantSession struct {
 	ParticipantsVersion int                    `json:"participantsVersion,omitempty"`
 	UnknownParticipants bool                   `json:"unknownParticipants,omitempty"`
 
-	HistoryRevision  int    `json:"historyRevision,omitempty"`
-	ParentSessionID  string `json:"parentSessionId,omitempty"`
-	RootSessionID    string `json:"rootSessionId,omitempty"`
-	ForkMessageIndex int    `json:"forkMessageIndex,omitempty"`
+	HistoryRevision  int                     `json:"historyRevision,omitempty"`
+	ParentSessionID  string                  `json:"parentSessionId,omitempty"`
+	RootSessionID    string                  `json:"rootSessionId,omitempty"`
+	ForkMessageIndex int                     `json:"forkMessageIndex,omitempty"`
+	RunNodeReview    *AssistantRunNodeReview `json:"runNodeReview,omitempty"`
 
 	Shared           bool   `json:"shared,omitempty"`
 	GenerationStatus string `json:"generationStatus,omitempty"`
@@ -258,6 +259,13 @@ type AssistantProjectCredentialObservation struct {
 	UpdatedAt  time.Time                        `json:"updatedAt,omitzero"`
 	Status     AssistantProjectCredentialStatus `json:"status,omitempty"`
 	ObservedAt time.Time                        `json:"observedAt,omitzero"`
+}
+
+// AssistantRunNodeReview identifies the LOOP attempt that seeded a discussion.
+type AssistantRunNodeReview struct {
+	NodeID      string `json:"nodeId"`
+	Attempt     int    `json:"attempt"`
+	ReworkCount int    `json:"reworkCount"`
 }
 
 type AssistantTask struct {

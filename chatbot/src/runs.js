@@ -148,7 +148,7 @@ export function useConversationRuns(session, refreshKey = 0) {
   const key = ids.join(",");
   useEffect(() => {
     let current = true,
-      timer;
+      timer, loading = false;
     setState((old) => ({
       sessionId: session?.id,
       runs:
@@ -157,9 +157,13 @@ export function useConversationRuns(session, refreshKey = 0) {
           : [],
     }));
     const load = async () => {
+      if (!current || loading) return;
+      clearTimeout(timer);
+      loading = true;
       const rows = await Promise.allSettled(
         ids.map((id) => api(`/api/runs/${encodeURIComponent(id)}`)),
       );
+      loading = false;
       if (!current) return;
       const runs = rows
         .filter((r) => r.status === "fulfilled")
@@ -181,10 +185,14 @@ export function useConversationRuns(session, refreshKey = 0) {
       )
         timer = setTimeout(load, 2500);
     };
-    if (ids.length) void load();
+    if (ids.length) {
+      void load();
+      window.addEventListener("focus", load);
+    }
     return () => {
       current = false;
       clearTimeout(timer);
+      window.removeEventListener("focus", load);
     };
   }, [session?.id, session?.projectId, session?.updatedAt, key, refreshKey]);
   return state.sessionId === session?.id ? state.runs : [];

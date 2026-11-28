@@ -1,5 +1,5 @@
 import React from "react";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, test, vi } from "vitest";
 
@@ -280,6 +280,16 @@ describe("content and panels", () => {
     await user.click(screen.getByRole("tab", { name: "源码" }));
     expect(screen.getByText("<h1>Demo</h1>")).toBeInTheDocument();
     globalThis.fetch = originalFetch;
+  });
+
+  test("keeps quoted fields and omits trailing blank lines in a CSV preview", () => {
+    render(<ArtifactPreview artifact={{
+      id: "checks", name: "checks.csv", mimeType: "text/csv",
+      content: '检查项,结果\r\n回归,"通过, 42 项"\r\n\r\n',
+    }} />);
+    expect(screen.getByRole("table", { name: "checks.csv" })).toBeVisible();
+    expect(screen.getAllByRole("row")).toHaveLength(2);
+    expect(screen.getByRole("cell", { name: "通过, 42 项" })).toBeVisible();
   });
 
   test("exercises common UI primitives", async () => {
@@ -812,6 +822,114 @@ describe("content and panels", () => {
     expect(screen.getByText("返回节点产物")).toBeInTheDocument();
   });
 
+  test("shows the node composer under a finished script result", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn(async (url) => {
+      const path = String(url);
+      if (path.includes("/conversation?")) return new Response(null, { status: 204 });
+      const list = /^\/api\/(projects|users|sandboxes)(\?|$)/.test(path);
+      return new Response(list ? "[]" : "{}", { headers: { "Content-Type": "application/json" } });
+    });
+    try {
+      render(<SopRunPanel runs={[{
+        ...run, reviewAccess: { canDiscuss: true },
+        workflowSnapshot: { ...run.workflowSnapshot, nodes: [{ id: "n1", name: "收集证据", type: "script" }] },
+        nodes: { n1: { nodeId: "n1", status: "succeeded", output: "已收集检查证据" } },
+        artifacts: [],
+      }]} onClose={vi.fn()} />);
+      await userEvent.setup().click(screen.getByText("收集证据"));
+      await waitFor(() => expect(screen.getByRole("textbox", { name: "询问此节点" })).toBeEnabled());
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("lets a node discussion send when the default CLI is missing on the platform server", async () => {
+    // A node discussion runs in the run's environment, like the run
+    // conversation, so a CLI missing on the platform server must not
+    // silently disable sending.
+    const fallback = apiMock.getMockImplementation();
+    apiMock.mockImplementation(async (path) => {
+      if (path.includes("/conversation?")) return null;
+      if (path === "/api/auth/current") return { user: { id: 7, loginName: "member" } };
+      if (path.startsWith("/api/assistant/models")) return {
+        models: [], preferences: { executor: "cursor" },
+        engines: [{ id: "cursor", name: "Cursor", configured: true, serverMissing: true }],
+      };
+      return fallback(path);
+    });
+    try {
+      render(<SopRunPanel runs={[{
+        ...run, reviewAccess: { canDiscuss: true },
+        workflowSnapshot: { ...run.workflowSnapshot, nodes: [{ id: "n1", name: "收集证据", type: "script" }] },
+        nodes: { n1: { nodeId: "n1", status: "succeeded", output: "已收集检查证据" } },
+        artifacts: [],
+      }]} onClose={vi.fn()} />);
+      const user = userEvent.setup();
+      await user.click(screen.getByText("收集证据"));
+      const box = await screen.findByRole("textbox", { name: "询问此节点" });
+      await waitFor(() => expect(box).toBeEnabled());
+      await user.type(box, "这个节点做了什么？");
+      await waitFor(() => expect(screen.getByRole("button", { name: "发送节点消息" })).toBeEnabled());
+    } finally {
+      apiMock.mockImplementation(fallback);
+    }
+  });
+
+  test.each([
+    ["the failed reply carries the install action", true, 1],
+    ["no message keeps the failure", false, 1],
+  ])("shows one install button for a missing CLI when %s", async (_name, stored, count) => {
+    const failure = {
+      code: "CLI_NOT_INSTALLED",
+      message: "Codex（codex）没有安装在当前服务器上。安装后即可在对话里使用。",
+    };
+    const fallback = apiMock.getMockImplementation();
+    const generation = {
+      id: "g1", status: "failed", error: failure.message, failure,
+      startedAt: "2026-11-25T10:00:00Z", events: [],
+    };
+    apiMock.mockImplementation(async (path) => {
+      if (path.includes("/conversation?")) return { id: "s1" };
+      if (path.startsWith("/api/assistant/sessions/s1/generation")) return generation;
+      if (path.startsWith("/api/assistant/sessions/s1/messages")) return {};
+      if (path.startsWith("/api/assistant/sessions/s1"))
+        return {
+          id: "s1", runId: "r1", messages: [
+            { role: "user", content: "这个节点做了什么？", authorId: 7, startedAt: "2026-11-25T10:00:00Z" },
+            {
+              role: "assistant", content: "", generationId: "g1", unfinished: failure.message,
+              ...(stored ? { failure } : {}),
+            },
+          ],
+        };
+      if (path === "/api/auth/current") return { user: { id: 7, loginName: "member" } };
+      if (path.startsWith("/api/assistant/models")) return {
+        models: [], preferences: { executor: "codex" },
+        engines: [{ id: "codex", name: "Codex", configured: true, serverInstallable: true }],
+      };
+      return fallback(path);
+    });
+    vi.stubGlobal("fetch", vi.fn(async () => ({
+      ok: true, status: 200, json: async () => ({ engine: "codex", status: "missing" }),
+    })));
+    try {
+      render(<SopRunPanel runs={[{
+        ...run, reviewAccess: { canDiscuss: true },
+        workflowSnapshot: { ...run.workflowSnapshot, nodes: [{ id: "n1", name: "收集证据", type: "script" }] },
+        nodes: { n1: { nodeId: "n1", status: "succeeded", output: "已收集检查证据" } },
+        artifacts: [],
+      }]} onClose={vi.fn()} />);
+      await userEvent.setup().click(screen.getByText("收集证据"));
+      await waitFor(() => expect(screen.getAllByRole("button", { name: "安装 Codex" }).length).toBeGreaterThan(0));
+      await waitFor(() => expect(screen.queryAllByRole("button", { name: "安装 Codex" })).toHaveLength(count));
+      if (!stored) expect(screen.getByRole("alert")).toHaveTextContent(failure.message);
+    } finally {
+      apiMock.mockImplementation(fallback);
+      vi.unstubAllGlobals();
+    }
+  });
+
   test("switches among runs and renders mixed node statuses", async () => {
     const user = userEvent.setup();
     const mixed = {
@@ -840,7 +958,7 @@ describe("content and panels", () => {
     await user.click(screen.getByText("运行节点"));
     expect(await screen.findByText("执行混合流程")).toBeInTheDocument();
     await user.click(screen.getByRole("tab", { name: /产物/ }));
-    expect(screen.getByText("这个节点尚未生成产物。")).toBeInTheDocument();
+    expect(screen.getByText("暂无产物")).toBeInTheDocument();
   });
 
   test("shows and operates a failed run alert", async () => {
@@ -897,20 +1015,24 @@ describe("content and panels", () => {
     );
   });
 
-  test("renders a waiting approval alert", () => {
+  test("opens the waiting approval in the chat sidebar", async () => {
+    const onOpenNode = vi.fn();
+    const waiting = { ...run, status: "waiting", nodes: { n1: { nodeId: "n1", status: "waiting_approval" } } };
     render(
       <RunAlerts
-        runs={[{ ...run, status: "waiting", nodes: { n1: { nodeId: "n1", status: "waiting_approval" } } }]}
+        runs={[waiting]}
         user={{ id: 1 }}
         users={[]}
-        readOnly
-        onOpenNode={vi.fn()}
+        readOnly={false}
+        onOpenNode={onOpenNode}
         onAsk={vi.fn()}
         onChanged={vi.fn()}
       />,
     );
-    expect(screen.getAllByText(/等待人工确认/).length).toBeGreaterThan(0);
-    expect(screen.getByText("去确认")).toBeInTheDocument();
+    expect(screen.getByText("待审核")).toBeInTheDocument();
+    expect(screen.queryByText("人工门禁")).not.toBeInTheDocument();
+    await userEvent.setup().click(screen.getByRole("button", { name: "去审核" }));
+    expect(onOpenNode).toHaveBeenCalledWith(waiting, "n1");
   });
 
   test("lists a submitted merge request in the artifact panel and opens it on 工蜂", () => {
@@ -941,6 +1063,346 @@ describe("content and panels", () => {
     const link = screen.getByTitle("agent-flow !631 · 在代码仓库打开");
     expect(link.getAttribute("href")).toBe(mr.url);
     expect(link.getAttribute("target")).toBe("_blank");
+  });
+
+  test("lets failed agent retry with note and failed script pass after confirmation", async () => {
+    const user = userEvent.setup();
+    apiMock.mockClear();
+    const failedRun = {
+      ...run,
+      id: "r-fail-controls",
+      reviewAccess: { canOperate: true },
+      workflowSnapshot: {
+        name: "交付流程",
+        nodes: [
+          { id: "n1", name: "实现", type: "agent" },
+          { id: "n2", name: "测试脚本", type: "script" },
+        ],
+      },
+      nodes: {
+        n1: { nodeId: "n1", status: "failed", error: "构建超时" },
+        n2: { nodeId: "n2", status: "failed", error: "退出码 1" },
+      },
+      artifacts: [],
+    };
+    render(<SopRunPanel runs={[failedRun]} onClose={vi.fn()} />);
+    await user.click(screen.getByText("实现"));
+    await user.click(await screen.findByRole("button", { name: "补充信息或重跑" }));
+    await user.type(screen.getByLabelText("重跑说明（选填）"), "跳过缓存重跑");
+    await user.click(screen.getByRole("button", { name: "补充信息并重跑" }));
+    expect(apiMock).toHaveBeenCalledWith(
+      "/api/runs/r-fail-controls/retry",
+      expect.objectContaining({
+        method: "POST",
+        body: expect.stringContaining("跳过缓存重跑"),
+      }),
+    );
+
+    await user.click(screen.getByRole("button", { name: "全部流程节点" }));
+    await user.click(screen.getByText("测试脚本"));
+    await user.click(await screen.findByRole("button", { name: "手动通过，继续下游" }));
+    await user.click(screen.getByRole("button", { name: "确认通过，跳过不重跑" }));
+    expect(apiMock).toHaveBeenCalledWith(
+      "/api/runs/r-fail-controls/pass",
+      expect.objectContaining({
+        method: "POST",
+        body: expect.stringContaining('"nodeId":"n2"'),
+      }),
+    );
+  });
+
+  test("previews earlier node attempts from the run overview and its file navigation", async () => {
+    const user = userEvent.setup();
+    const reviewRun = {
+      ...run,
+      id: "r-replayed",
+      status: "succeeded",
+      nodes: { n1: { nodeId: "n1", status: "succeeded", attempt: 2 } },
+      artifacts: [
+        { id: "new", nodeId: "n1", path: "new.md", mediaType: "text/markdown", attempt: 2 },
+        { id: "old", nodeId: "n1", path: "old.md", mediaType: "text/markdown", attempt: 1 },
+      ],
+    };
+    const fileRead = vi.spyOn(globalThis, "fetch").mockImplementation(async (url) => ({
+      ok: true,
+      text: async () => `Body of ${String(url).split("/").pop()}`,
+    }));
+    try {
+      render(
+        <ArtifactPanel
+          artifacts={[]}
+          runs={[reviewRun]}
+          selected={{ kind: "run", id: "run-replayed", runId: reviewRun.id }}
+          setSelected={vi.fn()}
+          chat={chat}
+          onClose={vi.fn()}
+          open
+        />,
+      );
+      await user.click(screen.getByText("new.md"));
+      expect(await screen.findByText("Body of new")).toBeInTheDocument();
+      await user.click(screen.getByRole("button", { name: "下一个产物" }));
+      expect(await screen.findByText("Body of old")).toBeInTheDocument();
+      await user.click(screen.getByRole("button", { name: "上一个产物" }));
+      expect(await screen.findByText("Body of new")).toBeInTheDocument();
+      await user.click(screen.getByRole("button", { name: "返回运行概览" }));
+      await user.click(screen.getByText("old.md"));
+      expect(await screen.findByText("Body of old")).toBeInTheDocument();
+    } finally {
+      fileRead.mockRestore();
+    }
+  });
+
+  test("steps between node artifacts in a single back-toolbar and groups upstream review artifacts in filesOnly", async () => {
+    const user = userEvent.setup();
+    const reviewRun = {
+      id: "r-art-nav",
+      status: "waiting",
+      workflowSnapshot: {
+        name: "审阅流程",
+        nodes: [
+          { id: "n1", name: "方案", type: "agent" },
+          { id: "n2", name: "人工门禁", type: "approval", after: ["n1"] },
+        ],
+      },
+      nodes: {
+        n1: { nodeId: "n1", status: "succeeded", output: "ok" },
+        n2: { nodeId: "n2", status: "waiting_approval" },
+      },
+      artifacts: [
+        { id: "a1", nodeId: "n1", path: "plan.md", mediaType: "text/markdown", content: "# 方案" },
+        { id: "a2", nodeId: "n2", path: "check.md", mediaType: "text/markdown", content: "# 检查" },
+        { id: "a3", nodeId: "n2", path: "summary.md", mediaType: "text/markdown", content: "# 总结" },
+      ],
+    };
+
+    function StatefulArtifactDrawer() {
+      const [selected, setSelected] = React.useState(null);
+      return (
+        <div className="chat-shell">
+          <header className="conversation-header" />
+          <main className="conversation-main" />
+          <ArtifactPanel
+            artifacts={[]}
+            runs={[reviewRun]}
+            selected={selected}
+            setSelected={setSelected}
+            chat={chat}
+            onClose={vi.fn()}
+            open
+          />
+        </div>
+      );
+    }
+
+    const { unmount } = render(<StatefulArtifactDrawer />);
+    await user.click(screen.getByText(/审阅流程/));
+    await user.click(screen.getByText("人工门禁"));
+    const nodeTabs = screen.getByRole("tablist", { name: "节点详情" });
+    await user.click(within(nodeTabs).getByRole("tab", { name: /产物/ }));
+    await user.click(screen.getByText("check.md"));
+    expect(screen.getAllByRole("button", { name: "返回节点产物" })).toHaveLength(1);
+    expect(screen.getByText("1 / 3")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "下一个产物" }));
+    expect(screen.getByText("2 / 3")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "返回节点产物" }));
+    expect(screen.getByText("check.md")).toBeInTheDocument();
+    unmount();
+
+    render(
+      <ArtifactPanel
+        artifacts={[
+          { id: "cur", nodeId: "n2", path: "check.md", mediaType: "text/markdown" },
+          { id: "up", nodeId: "n1", path: "plan.md", mediaType: "text/markdown", source: "上游待审 · 方案" },
+        ]}
+        selected={null}
+        setSelected={vi.fn()}
+        chat={chat}
+        onClose={vi.fn()}
+        filesOnly
+        open
+      />,
+    );
+    expect(screen.getByText("本节点产物")).toBeInTheDocument();
+    expect(screen.getByText("上游待审产物")).toBeInTheDocument();
+  });
+
+  test("supports resuming paused runs, replaying succeeded nodes inline, and showing workflow names on multi-run alerts", async () => {
+    const user = userEvent.setup();
+    apiMock.mockClear();
+    const pausedRun = {
+      id: "r-paused",
+      status: "waiting",
+      pauseRequested: true,
+      reviewAccess: { canOperate: true },
+      workflowSnapshot: {
+        name: "发布流程",
+        nodes: [
+          { id: "n1", name: "构想", type: "agent" },
+          { id: "n2", name: "审核", type: "approval", after: ["n1"] },
+        ],
+      },
+      nodes: {
+        n1: { nodeId: "n1", status: "succeeded", output: "done" },
+        n2: { nodeId: "n2", status: "waiting_approval" },
+      },
+      artifacts: [],
+    };
+    const { unmount } = render(<SopRunPanel runs={[pausedRun]} onClose={vi.fn()} />);
+    await user.click(screen.getByText("审核"));
+    await user.click(await screen.findByRole("button", { name: "继续运行" }));
+    expect(apiMock).toHaveBeenCalledWith(
+      "/api/runs/r-paused/resume",
+      expect.objectContaining({
+        method: "POST",
+        body: expect.stringContaining('"nodeId":"n2"'),
+      }),
+    );
+    unmount();
+
+    const completedRun = {
+      ...pausedRun,
+      id: "r-done",
+      status: "succeeded",
+      pauseRequested: false,
+      nodes: {
+        n1: { nodeId: "n1", status: "succeeded", output: "done" },
+        n2: { nodeId: "n2", status: "succeeded", output: "approved" },
+      },
+    };
+    render(<SopRunPanel runs={[completedRun]} onClose={vi.fn()} />);
+    await user.click(screen.getByText("构想"));
+    await user.click(await screen.findByRole("button", { name: "从本节点重跑" }));
+    await user.type(screen.getByLabelText("补充说明（选填）"), "换用简洁文案");
+    await user.click(screen.getByRole("button", { name: "确认从本节点重跑" }));
+    expect(apiMock).toHaveBeenCalledWith(
+      "/api/runs/r-done/retry",
+      expect.objectContaining({
+        method: "POST",
+        body: expect.stringContaining("换用简洁文案"),
+      }),
+    );
+
+    const rA = {
+      id: "ra",
+      status: "waiting",
+      workflowSnapshot: { name: "流程A", nodes: [{ id: "n1", name: "审批一" }] },
+      nodes: { n1: { nodeId: "n1", status: "waiting_approval" } },
+    };
+    const rB = {
+      id: "rb",
+      status: "waiting",
+      workflowSnapshot: { name: "流程B", nodes: [{ id: "n1", name: "审批二" }] },
+      nodes: { n1: { nodeId: "n1", status: "waiting_approval" } },
+    };
+    render(
+      <RunAlerts
+        runs={[rA, rB]}
+        user={{ id: 1 }}
+        users={[]}
+        readOnly={false}
+        onOpenNode={vi.fn()}
+        onAsk={vi.fn()}
+        onChanged={vi.fn()}
+      />,
+    );
+    expect(screen.getByText("流程A · 审批一")).toBeInTheDocument();
+    expect(screen.getByText("流程B · 审批二")).toBeInTheDocument();
+  });
+
+  test("renders Codex-style deliverables inline at generation sites, at the end of turn, and opens preview on click", async () => {
+    const user = userEvent.setup();
+    const fallbackApi = apiMock.getMockImplementation();
+    apiMock.mockImplementation(async (path) => {
+      if (path.includes("/telemetry")) {
+        return {
+          events: [
+            {
+              sequence: 1,
+              category: "tool",
+              tool: { name: "Write", callId: "c1" },
+              message: "Write specs/design.md",
+              request: "Write specs/design.md",
+              timestamp: "2026-11-28T10:00:00Z",
+              context: { attempt: 1 },
+            },
+            {
+              sequence: 2,
+              category: "artifact",
+              name: "artifact.published",
+              attributes: { artifactId: "a-design" },
+              context: { attempt: 1 },
+            },
+            {
+              sequence: 3,
+              category: "output",
+              message: "已完成方案，详见 `specs/design.md`。",
+              context: { attempt: 1 },
+            },
+          ],
+          nextAfter: 4,
+          hasMore: false,
+        };
+      }
+      return fallbackApi(path);
+    });
+    try {
+      const reviewRun = {
+        id: "r-codex-artifacts",
+        status: "waiting",
+        workflowSnapshot: {
+          name: "审阅流程",
+          nodes: [
+            { id: "n1", name: "方案", type: "agent" },
+            { id: "n2", name: "门禁", type: "approval", after: ["n1"] },
+          ],
+        },
+        nodes: {
+          n1: {
+            nodeId: "n1",
+            status: "succeeded",
+            attempt: 1,
+            output: "已完成方案，详见 `specs/design.md`。",
+          },
+          n2: { nodeId: "n2", status: "waiting_approval", attempt: 0 },
+        },
+        artifacts: [
+          {
+            id: "a-design",
+            nodeId: "n1",
+            path: "specs/design.md",
+            mediaType: "text/markdown",
+            content: "# 设计方案正文",
+            attempt: 1,
+            size: 120,
+          },
+        ],
+      };
+
+      const { unmount } = render(<SopRunPanel runs={[reviewRun]} onClose={vi.fn()} />);
+      await user.click(screen.getByText("方案"));
+
+      // Inline code link + end-of-turn deliverable summary are immediately visible
+      const inlineLink = await screen.findByTitle("在产物栏预览 specs/design.md");
+      expect(inlineLink).toBeInTheDocument();
+      expect(screen.getByLabelText("本节点产物")).toBeInTheDocument();
+
+      // Expanding the execution trace reveals the step's inline 查看产物 action
+      await user.click(screen.getByText(/已处理/));
+      expect(await screen.findByRole("button", { name: "查看产物" })).toBeInTheDocument();
+
+      // Clicking the inline code mention opens the artifact preview
+      await user.click(inlineLink);
+      expect(await screen.findByText("返回会话")).toBeInTheDocument();
+      unmount();
+
+      // Approval node shows handoff artifact right inside upstream output
+      render(<SopRunPanel runs={[reviewRun]} onClose={vi.fn()} />);
+      await user.click(screen.getByText("门禁"));
+      expect(screen.getByLabelText("产出产物")).toBeInTheDocument();
+    } finally {
+      apiMock.mockImplementation(fallbackApi);
+    }
   });
 
 });

@@ -67,11 +67,13 @@ test('requirement composer: create, find and dispatch a requirement from its dra
   expect(run.workflowId).toBe(wf);
   expect(run.nodes.only.status).toBe('succeeded');
   await page.goto(`/?projectId=${encodeURIComponent(cfg.projectId)}#/runs/${encodeURIComponent(runId)}`);
-  const runHeader = page.locator('.run-header-main');
+  const runHeader = page.locator('.run-detail-header');
   await expect(runHeader.getByRole('heading', { level: 2 })).toHaveText(title);
-  await expect(runHeader.locator('.run-header-copy')).toHaveText(description);
-  await runHeader.getByText('展开全文', { exact: true }).click();
-  await expect(runHeader.getByText('收起全文', { exact: true })).toBeVisible();
+  const runInfo = runHeader.locator('.run-info');
+  await runInfo.locator(':scope > summary').click();
+  await expect(runInfo.locator('.run-header-copy')).toHaveText(description);
+  await runInfo.getByText('展开全文', { exact: true }).click();
+  await expect(runInfo.getByText('收起全文', { exact: true })).toBeVisible();
   expect(errors).toEqual([]);
 });
 
@@ -116,10 +118,51 @@ test('run detail: tabs render and a waiting approval is approved from the UI', a
 
   const errors = watchErrors(page);
   await page.goto(`/#/runs/${encodeURIComponent(id)}`);
-  const approve = page.locator('[data-approve="gate"]').first();
+  await expect(page.locator('[data-run-tab="review"]')).toHaveClass(/active/);
+  await expect(page.locator('#runReviewFrame')).toHaveAttribute('aria-label', 'LOOP 会话审阅');
+  await expect(page.locator('#runReviewFrame')).not.toHaveAttribute('title', /./);
+  // Review mode keeps the header compact: the run meta lives in the run-info
+  // panel, the title keeps a readable width, and the review frame starts
+  // inside the viewport.
+  await expect(page.locator('.run-detail-header > .run-header-meta')).toHaveCount(0);
+  await expect(page.locator('[data-run-tab="review"]')).toHaveAttribute('role', 'tab');
+  await expect(page.locator('[data-run-tab="review"]')).toHaveAttribute('aria-selected', 'true');
+  const titleBox = await page.locator('.run-detail-header h2').boundingBox();
+  expect(titleBox.width).toBeGreaterThan(120);
+  expect(titleBox.height).toBeLessThan(80);
+  const viewport = page.viewportSize();
+  expect((await page.locator('#runReviewFrame').boundingBox()).y).toBeLessThan(viewport.height);
+  const review = page.frameLocator('#runReviewFrame');
+  await expect(review.getByRole('region', { name: '人工审核' })).toBeVisible();
+  await expect(review.getByRole('separator', { name: '调整产物侧栏宽度' }))
+    .toHaveAttribute('aria-valuenow', '340');
+  const artifacts = review.getByRole('complementary', { name: '会话产物' });
+  const evidence = artifacts.getByRole('button', { name: /result\.md.*上游待审/ });
+  await evidence.click();
+  await expect(artifacts.getByRole('heading', { name: 'UI E2E' })).toBeVisible();
+  await expect(review.getByRole('textbox', { name: '询问此节点' })).toBeVisible();
+  await artifacts.getByRole('button', { name: '返回产物列表' }).click();
+  await expect(evidence).toBeVisible();
+  const detailTabs = page.locator('#runDetail .run-section-label');
+  const initialTabsTop = (await detailTabs.boundingBox()).y;
+  for (const tab of ['trace', 'logs']) {
+    await page.locator(`[data-run-tab="${tab}"]`).click();
+    const scope = page.locator(`[data-run-pane="${tab}"] [data-run-observation-scope]`);
+    await expect(scope).toHaveValue('all');
+    await expect(scope).toBeVisible();
+    expect((await page.locator(`[data-run-pane="${tab}"]`).boundingBox()).height).toBeGreaterThan(100);
+    expect(Math.abs((await detailTabs.boundingBox()).y - initialTabsTop)).toBeLessThan(3);
+    await expect(page.locator('.run-detail-main > .approval-callout')).toHaveCount(0);
+  }
+  await page.locator('[data-run-pane="logs"] [data-run-observation-scope]').selectOption('node');
+  await expect(page.locator('[data-run-pane="logs"] .empty-inline')).toContainText('人工审批节点没有 Worker 执行记录');
+  await page.locator('[data-run-tab="overview"]').click();
   const gate = page.locator('[data-run-node="gate"]');
   await gate.click();
-  await expect(approve).toBeVisible();
+  const approvalOptions = page.locator('[data-run-pane="overview"] .run-approval-options');
+  await expect(approvalOptions).toHaveJSProperty('open', false);
+  await approvalOptions.locator('summary').click();
+  await expect(approvalOptions.locator('[data-approve="gate"]')).toBeVisible();
   await expect(page.locator('.graph-legend')).toContainText('待确认');
   await expect(gate).toContainText('待确认');
   await expect(page.locator('.node-inspector-status')).toContainText('待确认');
@@ -140,10 +183,10 @@ test('run detail: tabs render and a waiting approval is approved from the UI', a
   await expect(dialog).toBeHidden();
   await expect(preview).toBeFocused();
 
-  for (const tab of ['trace', 'logs', 'workspace', 'eval', 'overview']) {
+  for (const tab of ['trace', 'logs', 'workspace', 'eval', 'review', 'overview']) {
     await page.locator(`[data-run-tab="${tab}"]`).click();
     const pane = page.locator(`[data-run-pane="${tab}"]`);
-    // These five panes are required by this fixture. Preview is optional
+    // These panes are required by this fixture. Preview is optional
     // and deliberately not part of this list.
     await expect(pane).toBeVisible();
     await expect(page.locator('#runDetail [data-run-tab].active')).toHaveAttribute('data-run-tab', tab);
@@ -152,8 +195,8 @@ test('run detail: tabs render and a waiting approval is approved from the UI', a
   await page.locator('[data-run-node="prep"]').click();
   await expect(page.locator('[data-artifact]').first()).toBeVisible();
 
-  await page.locator('[data-run-node="gate"]').click();
-  await page.locator('[data-approve="gate"]').first().click();
+  await page.locator('[data-run-review-approval="gate"]').click();
+  await review.getByRole('region', { name: '人工审核' }).getByRole('button', { name: '通过并继续' }).click();
   const run = await waitRun(id, r => r.status === 'succeeded', { label: 'succeeded after UI approval' });
   expect(run.nodes.finish.status).toBe('succeeded');
   await expect(page.locator('.run-status-wrap .status')).toContainText(/成功|完成|已完成|succeeded/, { timeout: 30_000 });

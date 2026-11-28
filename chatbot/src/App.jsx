@@ -10,17 +10,13 @@ import { useChat } from "./useChat";
 import NativeApprovalPanel from "./NativeApprovalPanel";
 import { useNativeApprovals } from "./useNativeApprovals";
 import { AgentBrowserLinks } from "./agent-browser-links.js";
-import ActivityTrace, { ReplyTimeline } from "./ActivityTrace";
+import { AssistantTurn, LiveMessage, MessageTime, UserTurn, replyText } from "./ChatTurns";
 import MessageInfo from "./MessageInfo";
 import MessageHistory from "./MessageHistory";
 import GenerationDiagnostics from "./GenerationDiagnostics";
-import { fullTime, messageSentAt, messageTimeLabel } from "./message-info.js";
 import {
   activityForReply,
-  finalReply,
   generationStored,
-  hasTextSegments,
-  streamingAnswerOpen,
 } from "./activity";
 import {
   api,
@@ -39,17 +35,11 @@ import {
   projectPickerOptions,
 } from "./api";
 import {
-  RichContent,
   CopyButton,
   Attachment,
   ArtifactPreview,
   ImageLightbox,
 } from "./RichContent";
-import KnowledgeSources from "./KnowledgeSources";
-import {
-  buildKnowledgeSummary,
-  formatTextForCopy,
-} from "./knowledge-citations.js";
 import { DraftCard } from "./SidePanel";
 import ArtifactPanel from "./ArtifactPanel";
 import { useWorkspaceChanges } from "./useWorkspaceChanges";
@@ -65,10 +55,9 @@ import { groupSessionHistory, scheduledSession, sessionProjectName } from "./ses
 import { runSessionState, sessionReplyStatus, sessionTooltip, sidebarReplyStatus } from "./session-status.js";
 import { unreadReply, useReadReplies } from "./session-unread.js";
 import ReferenceInput from "./ReferenceInput";
-import Participants, { Avatar, authorFor } from "./Participants";
+import Participants, { Avatar } from "./Participants";
 import IssueContext from "./IssueContext";
 import { insertMention } from "./mentions.js";
-import { elementTitle } from "./element-context.js";
 import HarnessIcon from "./HarnessIcon";
 import QueuedMessages from "./QueuedMessages";
 import "./message-queue.css";
@@ -211,179 +200,9 @@ const readJSON = (key, fallback) => {
     return fallback;
   }
 };
-function MessageTime({ messages, index }) {
-  const date = messageSentAt(messages, index);
-  if (!date) return null;
-  return (
-    <time
-      className="message-time"
-      dateTime={date.toISOString()}
-      title={fullTime(date)}
-    >
-      {messageTimeLabel(date)}
-    </time>
-  );
-}
 function copiedReply(message, generation, live) {
-  const steps = activityForReply(message, generation, live);
-  const text = parseReply(message).message;
-  const reply = hasTextSegments(steps) ? finalReply(text, steps) : text;
-  if (message?.knowledgeReads?.length > 0) {
-    const narrationTexts = steps
-      .filter((s) => s.kind === "text" && s.text)
-      .map((s) => s.text);
-    return formatTextForCopy(reply, message.knowledgeReads, [
-      ...narrationTexts,
-      reply,
-    ]);
-  }
-  return reply;
+  return replyText(message, activityForReply(message, generation, live));
 }
-function ReplyHeading({ message, steps, deferredActivity }) {
-  return (
-    <div className="reply-heading">
-      <ActivityTrace
-        steps={steps}
-        startedAt={message.startedAt}
-        finishedAt={message.createdAt}
-        interrupted={!!message.unfinished}
-        deferredActivity={deferredActivity}
-      />
-    </div>
-  );
-}
-function AssistantTurn({ message, steps, deferredActivity, assets, projectId, sessionId, local, readOnly, onCLIInstall }) {
-  const reply = parseReply(message);
-  const answer = hasTextSegments(steps)
-    ? finalReply(reply.message, steps)
-    : message;
-  const answerText = typeof answer === "string" ? answer : visibleText(answer);
-  const hasReads =
-    Array.isArray(message.knowledgeReads) && message.knowledgeReads.length > 0;
-  const knowledgeSummary = useMemo(() => {
-    if (!hasReads) return null;
-    const narrationTexts = steps
-      .filter((s) => s.kind === "text" && s.text)
-      .map((s) => s.text);
-    return buildKnowledgeSummary(message.knowledgeReads, [
-      ...narrationTexts,
-      answerText,
-    ]);
-  }, [hasReads, message.knowledgeReads, steps, answerText]);
-  const [highlightedCite, setHighlightedCite] = useState(null);
-  const sourcesRef = useRef(null);
-  const highlightTimer = useRef(null);
-  useEffect(() => () => window.clearTimeout(highlightTimer.current), []);
-  const handleCitationClick = useCallback((citeIndex) => {
-    setHighlightedCite(citeIndex);
-    window.clearTimeout(highlightTimer.current);
-    highlightTimer.current = window.setTimeout(() => setHighlightedCite(null), 2000);
-  }, []);
-  return (
-    <>
-      {hasTextSegments(steps) ? (
-        <ReplyTimeline
-          steps={steps}
-          startedAt={message.startedAt}
-          finishedAt={message.createdAt}
-          deferredActivity={deferredActivity}
-          knowledgeReads={message.knowledgeReads}
-          knowledgeSummary={knowledgeSummary}
-          onCitationClick={handleCitationClick}
-        />
-      ) : (
-        <ReplyHeading message={message} steps={steps} deferredActivity={deferredActivity} />
-      )}
-      <div className="message-body">
-        <RichContent
-          message={answer}
-          assets={assets}
-          projectId={projectId}
-          knowledgeReads={message.knowledgeReads}
-          knowledgeSummary={knowledgeSummary}
-          onCitationClick={handleCitationClick}
-        />
-      </div>
-      <KnowledgeSources
-        knowledgeReads={message.knowledgeReads}
-        text={answerText}
-        summary={knowledgeSummary}
-        highlightedIndex={highlightedCite}
-        containerRef={sourcesRef}
-      />
-      {message.failure && message.generationId && !local ? (
-        <GenerationDiagnostics sessionId={sessionId} generationId={message.generationId} failure={message.failure} onCLIInstall={onCLIInstall} readOnly={readOnly} />
-      ) : message.unfinished ? (
-        <p className="reply-stopped">本轮未完成 · {message.unfinished}</p>
-      ) : reply.stopped ? (
-        <p className="reply-stopped">已停止，以上是停止前的内容。</p>
-      ) : null}
-    </>
-  );
-}
-function LiveMessage({ live, generation, finished = false, local = false, readOnly = false, hasKnowledgeRefs = false, approvals = [] }) {
-  const steps = live.activity || [];
-  const textual = hasTextSegments(steps);
-  // A streamed paragraph followed by tool calls stays in the process above;
-  // only the paragraph still being written shows as the answer.
-  const answer =
-    live.draftMessage ||
-    (textual
-      ? finished || streamingAnswerOpen(steps)
-        ? finalReply(live.answer, steps)
-        : ""
-      : live.answer);
-  return (
-    <div
-      className={`message assistant ${finished ? "interrupted" : "live"}`}
-      aria-live="polite"
-    >
-      {textual ? (
-        <ReplyTimeline
-          steps={steps}
-          startedAt={generation?.startedAt}
-          finishedAt={generation?.updatedAt}
-          live={!finished}
-          interrupted={finished}
-          citationsEnabled={hasKnowledgeRefs}
-          streaming={!finished}
-          approvals={approvals}
-        />
-      ) : (
-        <div className="reply-heading">
-          <ActivityTrace
-            steps={steps}
-            startedAt={generation?.startedAt}
-            finishedAt={generation?.updatedAt}
-            live={!finished}
-            interrupted={finished}
-            citationProps={{
-              citationsEnabled: hasKnowledgeRefs,
-              streaming: !finished,
-            }}
-            approvals={approvals}
-          />
-        </div>
-      )}
-      {answer ? (
-        <RichContent
-          message={answer}
-          citationsEnabled={hasKnowledgeRefs}
-          streaming={!finished}
-        />
-      ) : null}
-      {!finished && !local && !readOnly && generation?.id ? <GenerationDiagnostics sessionId={generation.sessionId} generationId={generation.id} compact /> : null}
-      {finished ? (
-        <p className="reply-stopped">
-          {generation?.status === "failed" && generation?.error
-            ? generation.error
-            : "已停止，以上是停止前的内容。"}
-        </p>
-      ) : null}
-    </div>
-  );
-}
-
 function readIssueMention() {
   const params = new URLSearchParams(location.search);
   const issueId = params.get("mentionIssue") || "";
@@ -803,6 +622,10 @@ export default function App() {
         setQuickAccessOpen(true);
         return;
       }
+      if (event.data?.type === "agentflow-run-review-updated") {
+        setRunsRefresh((n) => n + 1);
+        return;
+      }
       if (event.data?.type !== "agentflow-chat-mention-issue") return;
       const issueId = String(event.data.issueId || "");
       const projectId = String(event.data.projectId || "");
@@ -988,6 +811,15 @@ export default function App() {
     setPanelView("artifacts");
     setPanel(true);
     setSelectedArtifact(a);
+  }
+  function openRunNode(run, nodeId) {
+    openArtifact({
+      kind: "run",
+      id: run.id,
+      runId: run.id,
+      name: run.workflowSnapshot?.name || "LOOP 运行",
+      nodeId,
+    });
   }
   function navigate(view, options = {}) {
     if (window.parent !== window)
@@ -1659,6 +1491,14 @@ export default function App() {
         <div className="header-actions">
           {chat.session ? (
             <>
+              {chat.session.runNodeReview && conversationRuns.some(({ id }) => id === chat.session.runId) ? (
+                <IconButton label="查看原 LOOP 节点" onClick={() => openRunNode(
+                  conversationRuns.find(({ id }) => id === chat.session.runId),
+                  chat.session.runNodeReview.nodeId,
+                )}>
+                  <HarnessIcon name="workflow" size={16} />
+                </IconButton>
+              ) : null}
               {conversationStarted ? <ExecutionMachinePicker chat={chat} onManage={() => navigate("runners")} /> : null}
               {projectName ? (
                 <div className="menu-anchor conversation-project-anchor">
@@ -2326,82 +2166,52 @@ export default function App() {
                       />
                     ) : null}
                     {message.role === "user" ? (
-                    <div className="message-body">
-                        <>
-                          <div className="message-author">
-                            <Avatar
-                              person={authorFor(
-                                message,
-                                chat.session,
-                                chat.users,
-                              )}
-                            />
-                            <span>
-                              {
-                                authorFor(message, chat.session, chat.users)
-                                  .name
-                              }
-                            </span>
-                            <MessageTime messages={messages} index={index} />
-                          </div>
-                          <div className="user-bubble">{message.content}</div>
-                          {message.references?.length ? (
-                            <div className="message-references">
-                              {message.references.map((ref) => (
-                                <span
-                                  key={ref.type + ref.id}
-                                  title={ref.type === "element" ? elementTitle(ref) : undefined}
-                                >
-                                  {ref.type === "element" ? (
-                                    <HarnessIcon name="crosshair" size={12} />
-                                  ) : (
-                                    "@"
-                                  )}
-                                  {ref.name || ref.id}
-                                </span>
-                              ))}
-                            </div>
+                      <UserTurn
+                        message={message}
+                        messages={messages}
+                        index={index}
+                        session={chat.session}
+                        users={chat.users}
+                      >
+                        <div className="user-actions">
+                          {!chat.readOnly ? (
+                            <>
+                              <IconButton
+                                label="编辑消息"
+                                disabled={chat.busy || !!chat.session?.messagesPartial}
+                                onClick={() =>
+                                  setDialog({
+                                    type: "edit",
+                                    index,
+                                    value: message.content,
+                                    fork: false,
+                                  })
+                                }
+                              >
+                                <HarnessIcon name="edit" size={14} />
+                              </IconButton>
+                              <IconButton
+                                label="从此处创建分支"
+                                disabled={chat.busy || !!chat.session?.messagesPartial}
+                                onClick={() =>
+                                  setDialog({
+                                    type: "edit",
+                                    index,
+                                    value: message.content,
+                                    fork: true,
+                                  })
+                                }
+                              >
+                                <HarnessIcon name="branch" size={14} />
+                              </IconButton>
+                            </>
                           ) : null}
-                          <div className="user-actions">
-                            {!chat.readOnly ? (
-                              <>
-                                <IconButton
-                                  label="编辑消息"
-                                  disabled={chat.busy || !!chat.session?.messagesPartial}
-                                  onClick={() =>
-                                    setDialog({
-                                      type: "edit",
-                                      index,
-                                      value: message.content,
-                                      fork: false,
-                                    })
-                                  }
-                                >
-                                  <HarnessIcon name="edit" size={14} />
-                                </IconButton>
-                                <IconButton
-                                  label="从此处创建分支"
-                                  disabled={chat.busy || !!chat.session?.messagesPartial}
-                                  onClick={() =>
-                                    setDialog({
-                                      type: "edit",
-                                      index,
-                                      value: message.content,
-                                      fork: true,
-                                    })
-                                  }
-                                >
-                                  <HarnessIcon name="branch" size={14} />
-                                </IconButton>
-                              </>
-                            ) : null}
-                            <CopyButton
-                              value={message.content}
-                              label="复制消息"
-                            />
-                          </div>
-                        </>
-                    </div>
+                          <CopyButton
+                            value={message.content}
+                            label="复制消息"
+                          />
+                        </div>
+                      </UserTurn>
                     ) : null}
                     {message.attachments?.length ? (
                       <div className="message-attachments">
@@ -2486,15 +2296,7 @@ export default function App() {
                 users={chat.users}
                 readOnly={chat.readOnly}
                 onChanged={() => setRunsRefresh((n) => n + 1)}
-                onOpenNode={(run, nodeId) =>
-                  openArtifact({
-                    kind: "run",
-                    id: run.id,
-                    runId: run.id,
-                    name: run.workflowSnapshot?.name || "LOOP 运行",
-                    nodeId,
-                  })
-                }
+                onOpenNode={openRunNode}
                 onAsk={(item) => {
                   setText(
                     `运行 ${item.runId} 的「${item.nodeName}」节点${item.kind === "failed" ? "失败了" : "在等待人工确认"}，帮我分析具体卡在哪里、原因是什么、需要谁做什么。`,
@@ -2937,6 +2739,7 @@ export default function App() {
           browserRequest={browserRequest}
           onBrowserRequestHandled={browserRequestHandled}
           onAddElement={chat.readOnly ? null : addElementReference}
+          onRunChanged={() => setRunsRefresh((n) => n + 1)}
           onClose={() => setPanel(false)}
         />
       ) : null}

@@ -882,6 +882,11 @@ Object.assign(window.LF_I18N_EN, {
 });
 
 Object.assign(window.LF_I18N_EN, {
+  "会话审阅": "Conversation review",
+  "LOOP 会话审阅": "LOOP conversation review",
+});
+
+Object.assign(window.LF_I18N_EN, {
   "LOOP 运行评测": "LOOP run evaluation",
   "重试评测": "Retry evaluation",
   "评测中…": "Evaluating…",

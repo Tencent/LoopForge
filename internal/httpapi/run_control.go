@@ -12,6 +12,37 @@ type assistantControlScope struct {
 	MessageIndex                   int
 }
 
+type runReviewAccess struct {
+	CanOperate  bool   `json:"canOperate"`
+	CanDiscuss  bool   `json:"canDiscuss"`
+	BlockReason string `json:"blockReason,omitempty"`
+}
+
+func (h *runsHandlers) reviewAccess(c *gin.Context, run domain.Run) runReviewAccess {
+	if run.IsWorkspace() || run.HistoricalGroup() {
+		return runReviewAccess{}
+	}
+	u, signedIn := h.requestUser(c.Request, true)
+	var userID int64
+	if signedIn {
+		userID = u.ID
+	}
+	var issue domain.Issue
+	if run.ExecutionContext.IssueID != "" {
+		issue, _ = h.repo.Issue(run.ExecutionContext.IssueID)
+	}
+	projectID := domain.RunProjectID(run, issue.ProjectID)
+	allowed := (!authRequired() || signedIn) && h.projectWriterAllowed(c, projectID, userID)
+	reason := issue.ExecutionBlockedReason()
+	access := assistantHandlers{deps: h.deps}
+	return runReviewAccess{
+		CanOperate: allowed && reason == "",
+		CanDiscuss: signedIn && run.ExecutionContext.ProjectID != "" && allowed &&
+			access.workbenchProjectAllowed(c, run.ExecutionContext.ProjectID, userID),
+		BlockReason: reason,
+	}
+}
+
 func assistantControlScopeFrom(ctx context.Context) assistantControlScope {
 	if ctx != nil {
 		scope, _ := ctx.Value(assistantControlScopeKey{}).(assistantControlScope)

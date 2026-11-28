@@ -1006,6 +1006,13 @@ async function boot(){
       return;
     }
     if(name==='settings'&&routePart(1)==='executors'){gotoCredential('executors');return}
+    if(name==='collaboration'&&routePart(1)){
+      const url=new URL(location.href);
+      url.searchParams.set('chatSession',routePart(1));
+      history.replaceState(history.state,'',url);
+      const frame=$('#chatNextFrame');
+      if(frame)frame.dataset.src='';
+    }
     if(activeViewName()!==name){
       if(name==='flow')await applyFlowRoute();
       if(name==='projects')syncProjectAdminRouteState();
@@ -1014,7 +1021,10 @@ async function boot(){
     }
     if(name==='runs'){
       const id=runRouteId();
-      if(id){if(state.selectedRun!==id)showRunDetail(id)}
+      if(id){
+        if(state.selectedRun!==id)showRunDetail(id);
+        else selectRunReviewNode(routePart(2));
+      }
       else if(state.selectedRun)showRunList();
       return;
     }
@@ -1023,10 +1033,7 @@ async function boot(){
     if(name==='agents')applyAgentRoute();
     if(isProjectSharedAsset(name))applyAssetRoute();
     if(name==='projects')applyProjectAdminRoute();
-    if(name==='collaboration'){
-      const id=routePart(1);
-      if(id){const url=new URL(location.href);url.searchParams.set('chatSession',id);history.replaceState({},'',url);const frame=$('#chatNextFrame');if(frame){frame.dataset.src='';mountNativeChat()}}
-    }
+    if(name==='collaboration')mountNativeChat();
   });
   const view=restoredView();
   if(view==='projects')syncProjectAdminRouteState();
@@ -1713,7 +1720,7 @@ function mountNativeChat(){
           gotoCredential(message.credential,message.sshRemote);
         }
         else if(message.view==='sandboxes'&&message.action==='create')createConversationSandbox(message.projectId).catch(error=>toast(error.message));
-        else if(message.view==='runs'&&/^run-[\w-]+$/.test(message.runId||''))location.hash='#/runs/'+encodeURIComponent(message.runId);
+        else if(message.view==='runs'&&/^run-[\w-]+$/.test(message.runId||''))location.hash=runViewHash(message.runId,typeof message.nodeId==='string'?message.nodeId:'');
         else if(message.view==='aiSchedules'){
           if(message.projectId&&state.projectFilter!==message.projectId&&(state.data.projects||[]).some(p=>p.id===message.projectId)){
             state.projectFilter=message.projectId;
@@ -2127,10 +2134,12 @@ async function applyFlowRoute(){
   renderWorkflowMeta();renderCanvas();renderProperties();
   refreshGenericWorkflowRoles();
 }
-function runViewHash(id){return id?`#/runs/${encodeURIComponent(id)}`:'#/runs'}
+function runViewHash(id,nodeId=''){
+  return id?`#/runs/${encodeURIComponent(id)}${nodeId?'/'+encodeURIComponent(nodeId):''}`:'#/runs';
+}
 function syncRunHash(id){
   if((state.currentView||activeViewName())!=='runs')return;
-  const next=runViewHash(id||'');
+  const next=runViewHash(id||'',state.runReviewNode||'');
   if(location.hash!==next)history.replaceState(null,'',next);
 }
 function persistView(name,push=false){
@@ -2139,7 +2148,7 @@ function persistView(name,push=false){
   if(name==='settings'&&location.hash===QUICK_ACCESS_EXECUTOR_SETTINGS)next=QUICK_ACCESS_EXECUTOR_SETTINGS;
   if(name==='runs'){
     const linked=runRouteId();
-    if(linked)next=runViewHash(linked);
+    if(linked)next=runViewHash(linked,routePart(2));
   }
   if(name==='flow')next=flowViewHash();
   if(name==='evolution'&&routePart(0)==='evolution')next=location.hash;

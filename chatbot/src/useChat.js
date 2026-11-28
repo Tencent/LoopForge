@@ -114,7 +114,8 @@ function withSessionTitle(session, source) {
   return { ...session, title, displayTitle, titleEdited, titleGenerated };
 }
 
-export function useChat() {
+export function useChat(embedded = null) {
+  const scoped = !!embedded;
   const stopRequestRef = useRef(null);
   const accountDefaultsRef = useRef(null);
   const draftExecutorPicked = useRef(false);
@@ -128,7 +129,7 @@ export function useChat() {
     [loadedWorkspace, setLoadedWorkspace] = useState(null),
     [users, setUsers] = useState([]),
     [draftIssueId, setDraftIssueId] = useState(
-      new URLSearchParams(location.search).get("issueId") || "",
+      !scoped ? new URLSearchParams(location.search).get("issueId") || "" : "",
     ),
     [models, setModels] = useState([]),
     [catalogEngines, setCatalogEngines] = useState([]),
@@ -137,12 +138,12 @@ export function useChat() {
     [sessions, setSessions] = useState([]),
     [session, setSession] = useState(null),
     [activeId, setActiveId] = useState(
-      new URLSearchParams(location.search).get("session") || null,
+      scoped ? embedded.sessionId : new URLSearchParams(location.search).get("session") || null,
     ),
     // The last conversation reached by opening it rather than by creating it;
     // the header reveals that conversation's title once it has loaded.
     [revealId, setRevealId] = useState(activeId),
-    [projectId, setProjectId] = useState(initialProject),
+    [projectId, setProjectId] = useState(embedded?.projectId ?? initialProject),
     [selection, setSelection] = useState(() => ({ executor: storedExecutor(), model: null, effort: null })),
     [codeBuddyDefault, setCodeBuddyDefault] = useState({ id: "default", name: "默认" }),
     [sponsoredModels, setSponsoredModels] = useState([]),
@@ -233,6 +234,7 @@ export function useChat() {
     return request;
   }, []);
   const refreshSessions = useCallback(async () => {
+    if (scoped) return;
     const titlesAtRequest = renamedTitles.current;
     const rows = (await api("/api/assistant/sessions") || [])
       .map((row) => mergeRenamedTitle(row, titlesAtRequest));
@@ -245,8 +247,9 @@ export function useChat() {
           : prev,
       );
     }
-  }, [mergeRenamedTitle]);
+  }, [mergeRenamedTitle, scoped]);
   const changeURL = useCallback((id) => {
+    if (scoped) return;
     const url = new URL(location.href);
     url.searchParams.delete("issueId");
     if (id) url.searchParams.set("session", id);
@@ -257,15 +260,16 @@ export function useChat() {
         { type: "agentflow-chat-session", sessionId: id || "" },
         location.origin,
       );
-  }, []);
+  }, [scoped]);
   const syncProject = useCallback((id) => {
     globalProject.current = id;
+    if (scoped) return;
     window.parent !== window &&
       window.parent.postMessage(
         { type: "agentflow-chat-project", projectId: id },
         location.origin,
       );
-  }, []);
+  }, [scoped]);
   const open = useCallback(
     (id) => {
       if (id === currentId.current && sessionRef.current?.id === id) return;
@@ -339,7 +343,7 @@ export function useChat() {
     setSponsoredModels(sponsoredModelList(catalog));
   }, []);
   useEffect(() => {
-    if (!user?.id || user.isGuest) {
+    if (scoped || !user?.id || user.isGuest) {
       setSteerOnSend(false);
       return;
     }
@@ -368,7 +372,7 @@ export function useChat() {
       document.removeEventListener("visibilitychange", onVisibilityChange);
       window.removeEventListener("message", onMessage);
     };
-  }, [user?.id, user?.isGuest]);
+  }, [scoped, user?.id, user?.isGuest]);
   useEffect(() => {
     let current = true,
       timer,
@@ -467,13 +471,13 @@ export function useChat() {
     };
   }, [activeId, identityKnown, readSession, syncProject]);
   useEffect(() => {
-    if (!ready) return;
+    if (!ready || scoped) return;
     const timer = setInterval(
       () => void refreshSessions().catch(() => {}),
       10000,
     );
     return () => clearInterval(timer);
-  }, [ready, refreshSessions]);
+  }, [ready, refreshSessions, scoped]);
   const titlePrompt = (session?.messages || []).find((message) => message.role === "user")?.content || "";
   useEffect(() => {
     if (!ready || !session?.id || session.titleEdited || session.titleGenerated) return;
@@ -737,6 +741,7 @@ export function useChat() {
     if (project && !canChatInProject(project, user)) setProjectId("");
   }, [ready, activeId, projectId, projects, user]);
   useEffect(() => {
+    if (scoped) return;
     const listener = (e) => {
       if (
         e.source !== window.parent ||
@@ -781,7 +786,7 @@ export function useChat() {
           location.origin,
         );
     return () => window.removeEventListener("message", listener);
-  }, [ready]);
+  }, [ready, scoped]);
   // The composer can restore this user's draft once their identity is known.
   // The chat already renders its own loading state for a pending transcript.
   useEffect(() => {
@@ -798,9 +803,11 @@ export function useChat() {
   }
   const runnerId = composerRunnerId(session);
   const runner = executionMachines.machines.find(machine => machine.id === runnerId && machine.ownerUserId === user?.id);
+  // Run conversations, including a node discussion that is not created yet,
+  // execute in the run's environment rather than on the platform server.
   const checkServerCLI = executionMachines.machinesReady && !runnerId &&
     !(session?.executionTarget?.pool === "cloud" && session.executionTarget.runnerId) &&
-    !session?.runId && session?.runtimeMode !== "workspace";
+    !session?.runId && !embedded?.runId && session?.runtimeMode !== "workspace";
   const availableExecutors = EXECUTORS.flatMap(item => {
     if (usesRunnerLogin(runner, item.id)) return [{ ...item, detail: "使用执行机器上的本机登录态。" }];
     const option = catalogEngines.find(engine => engine.id === item.id);
@@ -1260,7 +1267,7 @@ export function useChat() {
     }
     if (sandboxBusyRef.current) { setError("运行环境仍在保存，请稍后发送。"); return false; }
     if (executionMachines.machineSavingRef.current) { setError("执行机器仍在保存，请稍后发送。"); return false; }
-    if (!executionLocked(sessionRef.current) && !executionMachines.machinesReady) {
+    if (!scoped && !executionLocked(sessionRef.current) && !executionMachines.machinesReady) {
       setError(executionMachines.machineError || "执行机器仍在加载，请稍后发送。");
       return false;
     }
@@ -1300,7 +1307,7 @@ export function useChat() {
       const chosen = await modelForRequest({ executor, model, effort }, s, composerModel);
       if (!s) {
         const id = newId();
-        s = await write(
+        s = scoped ? await embedded.createSession() : await write(
           sessionPath(id),
           {
             id,

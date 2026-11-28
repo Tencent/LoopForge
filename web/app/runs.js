@@ -124,19 +124,38 @@ function startLiveRun(id){
   stream.onerror=()=>{stream.close();if(state.runStream!==stream)return;state.runStream=null;startPollingFallback(id)}
 }
 async function refreshRunPagesDelta(id){
-  const pg=state.activeRun?.id===id?runPageTarget(state.activeRun,state.selectedRunNode):{runId:id,nodeId:state.selectedRunNode||''};
+  const pg=state.activeRun?.id===id?runObservationTarget(state.activeRun):{runId:id,nodeId:state.selectedRunNode||''};
   id=pg.runId;
   const nodeId=pg.nodeId,jobs=[];
-  if(state.runLogs?.runId===id&&state.runLogs.nodeId===nodeId&&state.runLogs.loaded){
-    const params=new URLSearchParams({limit:'100',after:String(state.runLogs.maxSeq||0)});if(nodeId)params.set('nodeId',nodeId);
-    jobs.push(api(`/api/runs/${encodeURIComponent(id)}/logs?${params}`,{silent:true}).then(data=>{const incoming=data.logs||[];if(!incoming.length)return;state.runLogs.items=mergeSeqItems(state.runLogs.items,incoming,l=>l.sequence);state.runLogs.maxSeq=Math.max(state.runLogs.maxSeq||0,...incoming.map(l=>Number(l.sequence||0)))}));
+  const logs=state.runLogs;
+  if(logs?.runId===id&&logs.nodeId===nodeId&&logs.loaded){
+    const params=new URLSearchParams({limit:'100',after:String(logs.maxSeq||0)});if(nodeId)params.set('nodeId',nodeId);
+    jobs.push(api(`/api/runs/${encodeURIComponent(id)}/logs?${params}`,{silent:true}).then(data=>{
+      const incoming=data.logs||[];
+      if(state.runLogs!==logs||!incoming.length)return;
+      logs.items=mergeSeqItems(logs.items,incoming,l=>l.sequence);
+      logs.maxSeq=Math.max(logs.maxSeq||0,...incoming.map(l=>Number(l.sequence||0)));
+    }));
   }
   const adapter=state.runTelemetryAdapter||'live';
-  if(state.runTelemetry?.runId===id&&state.runTelemetry.nodeId===nodeId&&state.runTelemetry.adapter===adapter&&state.runTelemetry.loaded){
-    const params=new URLSearchParams({limit:'100',adapter,after:String(state.runTelemetry.maxSeq||0)});if(nodeId)params.set('nodeId',nodeId);
-    jobs.push(api(`/api/runs/${encodeURIComponent(id)}/telemetry?${params}`,{silent:true}).then(data=>{const incoming=data.events||[];if(!incoming.length)return;state.runTelemetry.items=mergeSeqItems(state.runTelemetry.items,incoming,e=>e.sequence);state.runTelemetry.maxSeq=Math.max(state.runTelemetry.maxSeq||0,...incoming.map(e=>Number(e.sequence||0)))}));
+  const telemetry=state.runTelemetry;
+  if(telemetry?.runId===id&&telemetry.nodeId===nodeId&&telemetry.adapter===adapter&&telemetry.loaded){
+    const params=new URLSearchParams({limit:'100',adapter,after:String(telemetry.maxSeq||0)});if(nodeId)params.set('nodeId',nodeId);
+    jobs.push(api(`/api/runs/${encodeURIComponent(id)}/telemetry?${params}`,{silent:true}).then(data=>{
+      const incoming=data.events||[];
+      if(state.runTelemetry!==telemetry||!incoming.length)return;
+      telemetry.items=mergeSeqItems(telemetry.items,incoming,e=>e.sequence);
+      telemetry.maxSeq=Math.max(telemetry.maxSeq||0,...incoming.map(e=>Number(e.sequence||0)));
+    }));
   }
-  if(jobs.length){await Promise.all(jobs);if(state.activeRun&&runPageTarget(state.activeRun,state.selectedRunNode).runId===id)patchRunLive(state.activeRun)}
+  if(!jobs.length)return;
+  await Promise.all(jobs);
+  const active=state.activeRun;
+  const host=$('#runDetail');
+  if(active&&host?.dataset.runId===active.id){
+    const target=runObservationTarget(active);
+    if(target.runId===id&&target.nodeId===nodeId)patchRunObservations(active,host);
+  }
 }
 function startPollingFallback(id){
   clearInterval(state.poll);
@@ -338,10 +357,17 @@ function renderRuns(){
   if(focusedRow){const row=list.querySelector(`[data-id="${CSS.escape(focusedRow.dataset.id)}"]`);(focusedPart?row?.querySelector(focusedPart):row)?.focus({preventScroll:true})}
   syncQueuedRunRefresh();
 }
-function showRunDetail(id){
+// tab opens a specific detail tab; otherwise a newly opened run starts on its default tab.
+function showRunDetail(id,{tab=''}={}){
   if(!id)return;
   stopQueuedRunRefresh();
-  if(state.selectedRun!==id){stopLiveRun();stopPreviewPoll();stopRunEvalStream();state.runWorkspace=null}
+  if(state.selectedRun!==id){
+    stopLiveRun();stopPreviewPoll();stopRunEvalStream();state.runWorkspace=null;
+    state.runDetailTab=tab;
+    state.runReviewNode=runRouteId()===id?routePart(2):'';
+    state.selectedRunNode=state.runReviewNode||null;
+    state.runObservationScope='';
+  }else if(tab)state.runDetailTab=tab;
   state.selectedRun=id;
   syncRunHash(id);
   $('#runsView')?.classList.add('detail-open');
@@ -367,6 +393,8 @@ function showRunList(){
   stopLiveRun();
   stopPreviewPoll();
   state.selectedRun=null;
+  state.runReviewNode='';
+  state.runObservationScope='';
   syncRunHash('');
   $('#runsView')?.classList.remove('detail-open');
   document.querySelector('#runsView .run-panel')?.removeAttribute('hidden');
@@ -418,6 +446,9 @@ async function syncRunControlState(runId){
   const relevant=state.selectedRun===runId||(state.drawerOpen&&state.issueDetailData?.run?.id===runId);
   if(relevant){if(['queued','running','waiting'].includes(run.status))startLiveRun(runId);else stopLiveRun()}
   paintRunControl(runId);
+  if(state.selectedRun===runId){
+    $('#runReviewFrame')?.contentWindow?.postMessage({type:'agentflow-run-review-refresh',runId},location.origin);
+  }
   return run;
 }
 function runDisplayStatus(r){return (r?.pauseRequested||r?.status==='paused')?'已暂停':r?.kind==='workspace'?'对话工作区':runStatus(r?.status)}
@@ -972,38 +1003,45 @@ function knowledgeArtifactCitations(event){
 }
 function telemetryItemHTML(e){const hook=isHookAdapter(e.source?.adapter),tag=hook?'Hook':isOTLPAdapter(e.source?.adapter)?'OTEL':'',title=hook?(e.attributes?.hookName||e.attributes?.hookId||e.name):e.name,repository=e.attributes?.repositoryName||e.attributes?.repositoryDir||e.attributes?.repositoryId||'';return `<article class="telemetry-event ${e.category}"><time>${new Date(e.timestamp).toLocaleTimeString()}</time><span class="telemetry-category">${telemetryLabel(e)}${tag?`<em class="adapter-tag">${tag}</em>`:''}</span><div><b>${escapeHTML(title)}</b><p>${escapeHTML(e.message||'')}</p>${knowledgeArtifactCitations(e)}${hook?hookTraceDetails(e):''}<small>${escapeHTML(e.nodeId||'run')}${repository?` · ${escapeHTML(repository)}`:''}${hook&&e.source?.provider?` · ${escapeHTML(e.source.provider)}`:''}${e.model?` · ${escapeHTML(e.model)}`:''}${e.toolCallId?` · ${escapeHTML(e.toolCallId)}`:''}</small></div></article>`}
 async function loadRunLogs(runId,nodeId,more=false){
-  if(!more&&state.runLogs?.runId===runId&&state.runLogs?.nodeId===nodeId&&state.runLogs.loading)return;
+  const current=state.runLogs;
+  const same=current&&current.runId===runId&&current.nodeId===nodeId;
+  if((more&&!same)||(!more&&same&&current.loading))return;
   const params=new URLSearchParams({limit:'100'});
   if(nodeId)params.set('nodeId',nodeId);
-  if(more&&state.runLogs?.runId===runId&&state.runLogs.nodeId===nodeId&&state.runLogs.nextBefore)params.set('before',String(state.runLogs.nextBefore));
-  const prev=(!more||state.runLogs?.runId!==runId||state.runLogs?.nodeId!==nodeId)?(state.runLogs?.runId===runId&&state.runLogs?.nodeId===nodeId?state.runLogs.items:[]):state.runLogs.items;
-  if(!more){state.runLogs={runId,nodeId,items:prev||[],loaded:!!(prev&&prev.length),loading:true,hasMore:!!state.runLogs?.hasMore,nextBefore:state.runLogs?.nextBefore||0,maxSeq:state.runLogs?.maxSeq||0}}
+  if(more&&current.nextBefore)params.set('before',String(current.nextBefore));
+  const prev=same?current.items||[]:[];
+  if(!more)state.runLogs={...(same?current:{runId,nodeId}),items:prev,loaded:!!prev.length,loading:true};
+  const request=state.runLogs;
   try{
     const data=await api(`/api/runs/${encodeURIComponent(runId)}/logs?${params}`,{silent:true});
+    if(state.runLogs!==request)return;
     const incoming=data.logs||[];
-    const items=more?mergeSeqItems(incoming, prev||[], l=>l.sequence):mergeSeqItems(prev||[], incoming, l=>l.sequence);
+    const items=more?mergeSeqItems(incoming,prev,l=>l.sequence):mergeSeqItems(prev,incoming,l=>l.sequence);
     const seqs=items.map(l=>Number(l.sequence||0));
     state.runLogs={runId,nodeId,items,loaded:true,loading:false,hasMore:!!data.hasMore||(!more&&incoming.length>=100),nextBefore:data.nextBefore||(seqs.length?Math.min(...seqs.filter(Boolean)):0),maxSeq:seqs.length?Math.max(...seqs):0};
-    if(state.activeRun&&runPageTarget(state.activeRun,state.selectedRunNode).runId===runId){const host=$('#runDetail');if(host?.dataset.runId===state.activeRun.id)patchRunLive(state.activeRun);else renderRunDetail(state.activeRun)}
-  }catch(e){if(state.runLogs?.runId===runId)state.runLogs.loading=false;toast(e.message,'err')}
+    if(state.activeRun&&runObservationTarget(state.activeRun).runId===runId){const host=$('#runDetail');if(host?.dataset.runId===state.activeRun.id)patchRunObservations(state.activeRun,host);else renderRunDetail(state.activeRun)}
+  }catch(e){if(state.runLogs===request){request.loading=false;toast(e.message,'err')}}
 }
 async function loadRunTelemetry(runId,nodeId,more=false){
   const adapter=state.runTelemetryAdapter||'live';
-  if(!more&&state.runTelemetry?.runId===runId&&state.runTelemetry?.nodeId===nodeId&&state.runTelemetry?.adapter===adapter&&state.runTelemetry.loading)return;
+  const current=state.runTelemetry;
+  const same=current&&current.runId===runId&&current.nodeId===nodeId&&current.adapter===adapter;
+  if((more&&!same)||(!more&&same&&current.loading))return;
   const params=new URLSearchParams({limit:'100',adapter});
   if(nodeId)params.set('nodeId',nodeId);
-  if(more&&state.runTelemetry?.runId===runId&&state.runTelemetry.nodeId===nodeId&&state.runTelemetry.adapter===adapter&&state.runTelemetry.nextBefore)params.set('before',String(state.runTelemetry.nextBefore));
-  const same=state.runTelemetry?.runId===runId&&state.runTelemetry?.nodeId===nodeId&&state.runTelemetry?.adapter===adapter;
-  const prev=(!more||!same)?(same?state.runTelemetry.items:[]):state.runTelemetry.items;
-  if(!more){state.runTelemetry={runId,nodeId,adapter,items:prev||[],loaded:!!(prev&&prev.length),loading:true,hasMore:!!state.runTelemetry?.hasMore,nextBefore:state.runTelemetry?.nextBefore||0,maxSeq:state.runTelemetry?.maxSeq||0}}
+  if(more&&current.nextBefore)params.set('before',String(current.nextBefore));
+  const prev=same?current.items||[]:[];
+  if(!more)state.runTelemetry={...(same?current:{runId,nodeId,adapter}),items:prev,loaded:!!prev.length,loading:true};
+  const request=state.runTelemetry;
   try{
     const data=await api(`/api/runs/${encodeURIComponent(runId)}/telemetry?${params}`,{silent:true});
+    if(state.runTelemetry!==request)return;
     const incoming=data.events||[];
-    const items=more?mergeSeqItems(incoming, prev||[], e=>e.sequence):mergeSeqItems(prev||[], incoming, e=>e.sequence);
+    const items=more?mergeSeqItems(incoming,prev,e=>e.sequence):mergeSeqItems(prev,incoming,e=>e.sequence);
     const seqs=items.map(e=>Number(e.sequence||0));
     state.runTelemetry={runId,nodeId,adapter,items,loaded:true,loading:false,hasMore:!!data.hasMore||(!more&&incoming.length>=100),nextBefore:data.nextBefore||(seqs.length?Math.min(...seqs.filter(Boolean)):0),maxSeq:seqs.length?Math.max(...seqs):0};
-    if(state.activeRun&&runPageTarget(state.activeRun,state.selectedRunNode).runId===runId){const host=$('#runDetail');if(host?.dataset.runId===state.activeRun.id)patchRunLive(state.activeRun);else renderRunDetail(state.activeRun)}
-  }catch(e){if(state.runTelemetry?.runId===runId)state.runTelemetry.loading=false;toast(e.message,'err')}
+    if(state.activeRun&&runObservationTarget(state.activeRun).runId===runId){const host=$('#runDetail');if(host?.dataset.runId===state.activeRun.id)patchRunObservations(state.activeRun,host);else renderRunDetail(state.activeRun)}
+  }catch(e){if(state.runTelemetry===request){request.loading=false;toast(e.message,'err')}}
 }
 function ensureRunPages(runId,nodeId){
   if(!runId)return;
@@ -1020,8 +1058,8 @@ function matchTelemetryAdapter(e,view){
   if(view==='live')return !isHookAdapter(a)&&!isOTLPAdapter(a);
   return a===view;
 }
-function telemetrySectionTitle(adapter){return ({live:'节点实时轨迹',hooks:'Hook 轨迹',otel:'OTEL 轨迹'})[adapter]||'节点轨迹'}
-function telemetryEmptyHint(adapter){return ({live:'该节点没有实时轨迹',hooks:'还没有 Hook 事件。角色级 Hook 在 Claude Code、Codex 或 CodeBuddy 触发后会写到这里。',otel:'还没有 OTEL span。请检查所用 CLI 的 OTLP 导出配置。'})[adapter]||'该节点没有轨迹'}
+function telemetrySectionTitle(adapter,all=false){return ({live:all?lfT('运行实时轨迹','Live run trace'):'节点实时轨迹',hooks:'Hook 轨迹',otel:'OTEL 轨迹'})[adapter]||'节点轨迹'}
+function telemetryEmptyHint(adapter,all=false){return ({live:all?lfT('本次运行没有实时轨迹','No live trace for this run'):'该节点没有实时轨迹',hooks:'还没有 Hook 事件。角色级 Hook 在 Claude Code、Codex 或 CodeBuddy 触发后会写到这里。',otel:'还没有 OTEL span。请检查所用 CLI 的 OTLP 导出配置。'})[adapter]||'该节点没有轨迹'}
 function telemetrySourceTabs(adapter,attr){
   return `<div class="trace-source-tabs">${[['live','实时'],['hooks','Hook'],['otel','OTEL']].map(([id,label])=>`<button type="button" class="${adapter===id?'active':''}" ${attr}="${id}">${label}</button>`).join('')}</div>`;
 }
@@ -1149,15 +1187,19 @@ function inspectorNeedsRefresh(host,r){
   const needsCallout=nr.status==='waiting_approval'||(nr.status==='failed'&&!!(nr.gateResult||nr.error));
   return needsCallout&&!hasCallout;
 }
-function selectRunNode(nodeId){
+function selectRunNode(nodeId,{scrollToDrill=true}={}){
   if(!nodeId)return;
   const same=state.selectedRunNode===nodeId;
+  if(same&&!scrollToDrill)return;
   state.selectedRunNode=nodeId;
-  if(!same){state.runLogs=null;state.runTelemetry=null}
+  if(!same){
+    state.runLogs=null;
+    state.runTelemetry=null;
+    state.runObservationScope='';
+  }
   const run=state.activeRun;if(!run)return;
-  state._scrollToDrill=true;
+  state._scrollToDrill=scrollToDrill;
   renderRunDetail(run);
-  if(!same){const pg=runPageTarget(run,nodeId);ensureRunPages(pg.runId,pg.nodeId)}
 }
 /** 仅为实际执行中的节点显示动效，排除暂停、取消与子流程待确认。 */
 function nodeInspectorIsRunning(run,nodeId){
@@ -1201,19 +1243,22 @@ function patchRunLive(r){
   const artifactTotal=host.querySelector('.run-context-grid > div:last-child b');
   if(artifactTotal)artifactTotal.textContent=`${(r.artifacts||[]).length} 个不可变快照`;
   const activity=host.querySelector('.node-activity-inline');if(activity){activity.classList.toggle('is-running',inspectorRunning);if(nr.activity){activity.hidden=false;const b=activity.querySelector('b');if(b&&b.textContent!==nr.activity)b.textContent=nr.activity}else{activity.hidden=true}}
+  patchRunObservations(r,host);
+  syncRunWorkspaceRestoreButton(r,host);
+  if(state.runDetailTab==='workspace'||runWorkspaceWasCleaned(r))loadRunWorkspace(r.id);
+}
+function patchRunObservations(r,host){
   const feed=host.querySelector('.worker-log-feed'),tel=host.querySelector('.telemetry-feed');
-  const pg=runPageTarget(r,selected);
+  const pg=runObservationTarget(r);
   const logPage=state.runLogs?.runId===pg.runId&&state.runLogs.nodeId===pg.nodeId&&state.runLogs.loaded?state.runLogs:null;
   const telAdapter=state.runTelemetryAdapter||'live';
   const telPage=state.runTelemetry?.runId===pg.runId&&state.runTelemetry.nodeId===pg.nodeId&&state.runTelemetry.adapter===telAdapter&&state.runTelemetry.loaded?state.runTelemetry:null;
-  if(feed&&logPage){const html=visibleWorkerLogs(logPage.items).map(logLineHTML).join('')||'<div class="empty-inline"><p>该节点没有日志</p></div>';if(feed.innerHTML!==html){feed.innerHTML=html;if(state.uiScroll.feedStick)feed.scrollTop=feed.scrollHeight;else feed.scrollTop=state.uiScroll.feedTop}}
-  if(tel&&telPage){const telemetry=compactTelemetry(telPage.items);const html=[...telemetry].reverse().map(telemetryItemHTML).join('')||`<div class="empty-inline"><p>${telemetryEmptyHint(telAdapter)}</p></div>`;if(tel.innerHTML!==html){tel.innerHTML=html;if(state.uiScroll.telStick)tel.scrollTop=0;else tel.scrollTop=state.uiScroll.telTop}}
-  const heading=host.querySelector('.trace-section h3');if(heading)heading.textContent=telemetrySectionTitle(telAdapter);
+  if(feed&&logPage){const html=visibleWorkerLogs(logPage.items).map(logLineHTML).join('')||`<div class="empty-inline"><p>${escapeHTML(runObservationEmptyHint(r,pg))}</p></div>`;if(feed.innerHTML!==html){feed.innerHTML=html;if(state.uiScroll.feedStick)feed.scrollTop=feed.scrollHeight;else feed.scrollTop=state.uiScroll.feedTop}}
+  if(tel&&telPage){const telemetry=compactTelemetry(telPage.items);const html=[...telemetry].reverse().map(telemetryItemHTML).join('')||`<div class="empty-inline"><p>${escapeHTML(runObservationEmptyHint(r,pg,telAdapter))}</p></div>`;if(tel.innerHTML!==html){tel.innerHTML=html;if(state.uiScroll.telStick)tel.scrollTop=0;else tel.scrollTop=state.uiScroll.telTop}}
+  const heading=host.querySelector('.trace-section h3');if(heading)heading.textContent=telemetrySectionTitle(telAdapter,!pg.nodeId);
   host.querySelectorAll('[data-tel-adapter]').forEach(b=>b.classList.toggle('active',b.dataset.telAdapter===telAdapter));
   syncHistoryButton(host.querySelector('.worker-log-section'),'data-logs-more','加载更早的 100 条',!!logPage?.hasMore,()=>loadRunLogs(pg.runId,pg.nodeId,true),logPage?`${visibleWorkerLogs(logPage.items).length} 条`:'');
   syncHistoryButton(host.querySelector('.trace-section'),'data-tel-more','加载更早的 100 条',!!telPage?.hasMore,()=>loadRunTelemetry(pg.runId,pg.nodeId,true),telPage?`${compactTelemetry(telPage.items).length} 条已加载`:'');
-  syncRunWorkspaceRestoreButton(r,host);
-  if(state.runDetailTab==='workspace'||runWorkspaceWasCleaned(r))loadRunWorkspace(r.id);
 }
 function syncHistoryButton(section,attr,label,hasMore,onClick,countText){
   if(!section)return;
@@ -1630,6 +1675,31 @@ function runPageTarget(r,nodeId){
   const child=r?.nodes?.[nodeId]?.childRunId||'';
   return child?{runId:child,nodeId:'',child:true}:{runId:r?.id||'',nodeId:nodeId||'',child:false};
 }
+function runReviewEnabled(run){
+  return run.kind!=='workspace'&&!runIsGroupMode(run)&&!['conversation-workspace','free-collaboration'].includes(run.workflowId);
+}
+function runObservationTarget(run,nodeId=state.selectedRunNode){
+  if(!runReviewEnabled(run))return runPageTarget(run,nodeId);
+  const approval=run.workflowSnapshot?.nodes?.some(node=>node.id===nodeId&&node.type==='approval');
+  const all=state.runObservationScope==='all'||(!state.runObservationScope&&approval);
+  return runPageTarget(run,all?'':nodeId);
+}
+function runObservationScopeHTML(selected,target){
+  const current=Boolean(target.nodeId||target.child);
+  const nodeLabel=selected?` · ${escapeHTML(selected.name||selected.id)}`:'';
+  return `<label class="run-observation-scope"><span>${lfT('范围','Scope')}</span><select data-run-observation-scope>
+    <option value="all"${current?'':' selected'}>${lfT('全部节点','All nodes')}</option>
+    <option value="node"${current?' selected':''}${selected?'':' disabled'} data-i18n-data>${lfT('当前节点','Current node')}${nodeLabel}</option>
+  </select></label>`;
+}
+function runObservationEmptyHint(run,target,adapter){
+  const approval=target.nodeId&&run.workflowSnapshot?.nodes?.some(node=>node.id===target.nodeId&&node.type==='approval');
+  if(runReviewEnabled(run)&&approval&&(!adapter||adapter==='live')){
+    return lfT('人工审批节点没有 Worker 执行记录。切换到「全部节点」可查看本次运行。','Manual approval has no worker activity. Choose All nodes to inspect this run.');
+  }
+  if(adapter)return telemetryEmptyHint(adapter,!target.nodeId);
+  return target.nodeId?lfT('该节点没有日志','No logs for this node'):lfT('本次运行没有 Worker 日志','No worker logs for this run');
+}
 function childRunState(id){return state.childRuns?.[id]?.run||null}
 /** 子流程控制标记变化也要刷新父节点，及时停止或恢复活动动效。 */
 function childRunSignature(run){return `${run?.status}:${Boolean(run?.pauseRequested)}:${Boolean(run?.cancelRequested)}|${Object.entries(run?.nodes||{}).map(([k,v])=>`${k}:${v?.status}`).sort().join(',')}`}
@@ -1706,7 +1776,7 @@ function watchChildRuns(r){
     if(activeViewName()!=='runs'||$('#runsDetailSection')?.hidden)return;
     if(!run||run.id!==r.id||state.selectedRun!==r.id||!['running','waiting'].includes(run.status)){clearInterval(state.childRunTimer);state.childRunTimer=null;return}
     refreshChildRuns(run);
-    if(runPageTarget(run,state.selectedRunNode).child)refreshRunPagesDelta(run.id);
+    if(runObservationTarget(run).child)refreshRunPagesDelta(run.id);
   },4000);
 }
 function childSOPPanelHTML(r,nodeId){
@@ -1770,19 +1840,42 @@ function runModeChipHTML(r,wf){if(r?.kind==='workspace')return '<span class="run
 }
 
 function bindRunDetailTabs(run,host){
+  const tabs=[...host.querySelectorAll('[data-run-tab]')];
   function selectTab(tab){
     if(state.selectedRun!==run.id)return;
     if((state.runDetailTab||'overview')===tab&&tab!=='workspace')return;
     state.runDetailTab=tab;
-    host.querySelectorAll('[data-run-tab]').forEach(button=>button.classList.toggle('active',button.dataset.runTab===tab));
+    tabs.forEach(button=>{
+      const active=button.dataset.runTab===tab;
+      button.classList.toggle('active',active);
+      button.setAttribute('aria-selected',String(active));
+      button.tabIndex=active?0:-1;
+    });
     host.querySelectorAll('[data-run-pane]').forEach(pane=>pane.hidden=pane.dataset.runPane!==tab);
+    if(runReviewEnabled(run)){
+      host.querySelector('.run-detail-main').scrollTop=0;
+      if(state.uiScroll)state.uiScroll.mainTop=0;
+      host.querySelector('.run-info')?.removeAttribute('open');
+    }
     paintRunActivationProgress(run.id);
     if(tab==='preview')return loadRunPreview(run.id);
     stopPreviewPoll();
     if(tab==='workspace')return loadRunWorkspace(run.id,{refresh:true,restore:true});
     if(tab==='eval')return loadRunEval(run.id);
   }
-  host.querySelectorAll('[data-run-tab]').forEach(button=>button.onclick=()=>selectTab(button.dataset.runTab));
+  tabs.forEach((button,index)=>{
+    button.tabIndex=button.classList.contains('active')?0:-1;
+    button.onclick=()=>selectTab(button.dataset.runTab);
+    button.onkeydown=event=>{
+      const offset={ArrowLeft:-1,ArrowRight:1}[event.key];
+      const next=event.key==='Home'?tabs[0]:event.key==='End'?tabs.at(-1):
+        offset?tabs[(index+offset+tabs.length)%tabs.length]:null;
+      if(!next)return;
+      event.preventDefault();
+      next.focus();
+      selectTab(next.dataset.runTab);
+    };
+  });
   const restoreButton=host.querySelector('[data-workspace-restore]');
   if(restoreButton)restoreButton.onclick=()=>selectTab('workspace');
   syncRunWorkspaceRestoreButton(run,host);
@@ -1792,6 +1885,66 @@ function runSandboxDetails(run){
   const decision=run.events?.find(event=>event.type==='sandbox.selected');
   return {id,title:decision?.message||run.sandboxId||id};
 }
+
+function syncRunReviewSelection(nodeId){
+  if(state.runReviewNode===nodeId)return;
+  state.runReviewNode=nodeId;
+  $('#runReviewFrame')?.contentWindow?.postMessage({
+    type:'agentflow-run-review-select',runId:state.selectedRun,nodeId
+  },location.origin);
+}
+
+function selectRunReviewNode(nodeId){
+  syncRunReviewSelection(nodeId);
+  if(nodeId){
+    syncRunHash(state.selectedRun);
+    selectRunNode(nodeId,{scrollToDrill:false});
+    $('#runDetail [data-run-tab="review"]')?.click();
+  }
+}
+
+let runReviewBridgeBound=false;
+function ensureRunReviewPane(workspacePane,run){
+  const old=workspacePane.parentElement.querySelector('[data-run-pane="review"]');
+  if(old?.dataset.runId===run.id)return old;
+  old?.remove();
+  const pane=document.createElement('div');
+  pane.className='run-pane run-review-pane';
+  pane.dataset.runPane='review';
+  pane.dataset.runId=run.id;
+  const frame=document.createElement('iframe');
+  frame.id='runReviewFrame';
+  frame.setAttribute('aria-label','LOOP 会话审阅');
+  const query=new URLSearchParams({surface:'run-review',runId:run.id});
+  if(state.runReviewNode)query.set('nodeId',state.runReviewNode);
+  frame.src='/chatbot/?'+query;
+  pane.append(frame);
+  workspacePane.after(pane);
+  if(!runReviewBridgeBound){
+    runReviewBridgeBound=true;
+    window.addEventListener('message',event=>{
+      const activeFrame=$('#runReviewFrame');
+      if(event.origin!==location.origin||event.source!==activeFrame?.contentWindow||activeViewName()!=='runs')return;
+      const message=event.data||{};
+      const id=state.selectedRun;
+      if(!id||activeFrame.parentElement.dataset.runId!==id)return;
+      if(message.type==='agentflow-run-review-node'&&message.runId===id&&typeof message.nodeId==='string'){
+        state.runReviewNode=message.nodeId;
+        syncRunHash(id);
+        selectRunNode(message.nodeId,{scrollToDrill:false});
+      }else if(message.type==='agentflow-run-review-updated'&&message.runId===id){
+        syncRunControlState(id).then(()=>refreshRuns(true,true)).catch(()=>{});
+        $('#chatNextFrame')?.contentWindow?.postMessage({type:'agentflow-run-review-updated'},location.origin);
+      }else if(message.type==='agentflow-chat-open-view'&&message.view==='runs'&&/^run-[\w-]+$/.test(message.runId||'')){
+        location.hash=runViewHash(message.runId,typeof message.nodeId==='string'?message.nodeId:'');
+      }else if(message.type==='agentflow-chat-open-view'&&message.view==='settings'&&message.credential==='executors'){
+        gotoCredential(message.credential);
+      }
+    });
+  }
+  return pane;
+}
+
 function renderRunDetail(r){
   const host=$('#runDetail');if(!r){host.innerHTML='<div class="empty-properties"><div>◷</div><b>选择一次运行</b><p>节点状态、产物和执行轨迹会显示在这里</p></div>';delete host.dataset.runId;delete host.dataset.nodeId;return}
   if(host.dataset.runId&&host.dataset.runId!==r.id){
@@ -1802,17 +1955,31 @@ function renderRunDetail(r){
   const keepPreview=!!(existingPreviewFrame&&host.dataset.runId===r.id&&existingPreviewFrame.getAttribute('data-run-id')===r.id&&state.runPreview?.session?.url&&existingPreviewFrame.getAttribute('src')===state.runPreview.session.url);
   const wf=r.workflowSnapshot?.id?r.workflowSnapshot:((state.data.workflows||[]).find(w=>w.id===r.workflowId)||state.workflow||{id:r.workflowId||'',name:r.workflowId||'流程',nodes:[],edges:[],version:1}),nodes=wf.nodes||[],graphNodes=runIsGroupMode(r)?runFrozenSopNodes(r,wf):nodes,progress=runProgress(r),ctx=runContext(r),usage=r.usage||{};
   const issueId=ctx.issue?.id||r.executionContext?.issueId||'';
-  const pickNodes=runIsGroupMode(r)?(graphNodes.length?graphNodes:nodes):nodes;if(!state.selectedRunNode||!pickNodes.some(n=>n.id===state.selectedRunNode)){state.selectedRunNode=pickNodes.find(n=>['running','waiting_approval','failed','cancelled'].includes(r.nodes?.[n.id]?.status))?.id||pickNodes.find(n=>r.nodes?.[n.id]?.status==='succeeded')?.id||pickNodes[0]?.id}const pg=runPageTarget(r,state.selectedRunNode);const selected=pickNodes.find(n=>n.id===state.selectedRunNode)||nodes.find(n=>n.id===state.selectedRunNode),nr=r.nodes?.[selected?.id]||{},nodeArtifacts=(r.artifacts||[]).filter(a=>a.nodeId===selected?.id),logPage=state.runLogs?.runId===pg.runId&&state.runLogs.nodeId===pg.nodeId&&state.runLogs.loaded?state.runLogs:null,telAdapter=state.runTelemetryAdapter||'live',telPage=state.runTelemetry?.runId===pg.runId&&state.runTelemetry.nodeId===pg.nodeId&&state.runTelemetry.adapter===telAdapter&&state.runTelemetry.loaded?state.runTelemetry:null,telemetry=compactTelemetry(telPage?.items||[]);
+  const pickNodes=runIsGroupMode(r)?(graphNodes.length?graphNodes:nodes):nodes;if(!state.selectedRunNode||!pickNodes.some(n=>n.id===state.selectedRunNode)){state.selectedRunNode=pickNodes.find(n=>['running','waiting_approval','failed','cancelled'].includes(r.nodes?.[n.id]?.status))?.id||pickNodes.find(n=>r.nodes?.[n.id]?.status==='succeeded')?.id||pickNodes[0]?.id}const pg=runObservationTarget(r);const selected=pickNodes.find(n=>n.id===state.selectedRunNode)||nodes.find(n=>n.id===state.selectedRunNode),nr=r.nodes?.[selected?.id]||{},nodeArtifacts=(r.artifacts||[]).filter(a=>a.nodeId===selected?.id),logPage=state.runLogs?.runId===pg.runId&&state.runLogs.nodeId===pg.nodeId&&state.runLogs.loaded?state.runLogs:null,telAdapter=state.runTelemetryAdapter||'live',telPage=state.runTelemetry?.runId===pg.runId&&state.runTelemetry.nodeId===pg.nodeId&&state.runTelemetry.adapter===telAdapter&&state.runTelemetry.loaded?state.runTelemetry:null,telemetry=compactTelemetry(telPage?.items||[]);
   /** 首次渲染与实时更新使用同一节点活动判断。 */
   const inspectorRunning=nodeInspectorIsRunning(r,selected?.id);
   const issueRef=ctx.issue?escapeHTML(issueKeyFor(ctx.issue,ctx.project)):'独立运行';
   const alignPanelHTML=r.workflowId==='scheduled-baseline-align'?alignConflictPanelHTML(r):'';
   const logBusy=state.runLogs?.runId===pg.runId&&state.runLogs.nodeId===pg.nodeId&&state.runLogs.loading&&!logPage;
   const previewEnabled=runPreviewDeclared(r);
+  const reviewEnabled=runReviewEnabled(r);
+  const observationScope=reviewEnabled?runObservationScopeHTML(selected,pg):'';
+  const waitId=waitingNodeId(r);
+  const failId=failedNodeId(r);
+  const reviewApproval=reviewEnabled&&!r.pauseRequested?nodes.find(n=>n.id===waitId):null;
+  const reviewFailure=reviewEnabled&&!reviewApproval&&r.status==='failed'?nodes.find(n=>n.id===failId):null;
+  const reviewTarget=reviewApproval||reviewFailure;
+  const statusBadge=`<span class="status ${runDisplayStatusClass(r)}">${runDisplayStatus(r)}</span>`;
+  const statusControl=reviewTarget?`<button type="button" class="run-approval-link" data-run-review-approval="${escapeHTML(reviewTarget.id)}" title="${escapeHTML(reviewTarget.name||reviewTarget.id)}">
+    ${statusBadge}<span class="run-approval-node" data-i18n-data>${escapeHTML(reviewTarget.name||reviewTarget.id)}</span>
+  </button>`:statusBadge;
   const allowedTabs=['overview','trace','logs','workspace','eval'];
+  if(reviewEnabled)allowedTabs.unshift('review');
   if(previewEnabled)allowedTabs.splice(4,0,'preview');
-  const runDetailTab=allowedTabs.includes(state.runDetailTab)?state.runDetailTab:'overview';
+  const runDetailTab=allowedTabs.includes(state.runDetailTab)?state.runDetailTab:allowedTabs[0];
+  state.runDetailTab=runDetailTab;
   const runTabs=['overview:概览','trace:实时轨迹','logs:Worker日志','workspace:工作区'];
+  if(reviewEnabled)runTabs.unshift('review:会话审阅');
   if(previewEnabled)runTabs.push('preview:前端预览');
   runTabs.push('eval:智能评测');
   const nodeOutputText=nr.output?displayNodeOutput(nr.output):'';
@@ -1825,17 +1992,26 @@ function renderRunDetail(r){
   const runDescription = ctx.issue?.description || r.input;
   const descriptionExpanded = host.dataset.runId === r.id &&
     host.querySelector('.run-header-description')?.open;
+  const description=runHeaderDescription(runDescription,ctx.issue?.title,descriptionExpanded);
+  const runMetaHTML=`<div class="run-header-meta"><span class="run-meta-chip run-id-chip" title="${escapeHTML(r.id)}">Run <code>${escapeHTML(r.id.slice(-12))}</code><button type="button" class="run-id-copy" data-copy-run title="复制完整 Run ID" aria-label="复制 Run ID"><svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M10.5 5.5V3.5A1.5 1.5 0 0 0 9 2H3.5A1.5 1.5 0 0 0 2 3.5V9A1.5 1.5 0 0 0 3.5 10.5H5.5"/></svg></button></span>${runModeChipHTML(r,wf)}${runExecutionChipHTML(r)}<span class="run-meta-chip"><svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-1px;margin-right:4px;"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>启动于 ${new Date(r.createdAt).toLocaleString()}</span><span class="run-meta-chip" title="${escapeHTML(runTimingTitle(r))}"><svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-1px;margin-right:4px;"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>执行 ${runElapsed(r)}${runWallNote(r)}</span></div>`;
+  const infoOpen=host.dataset.runId===r.id&&host.querySelector('.run-info')?.open;
+  const runInfo=reviewEnabled?`<details class="run-info"${infoOpen?' open':''}>
+    <summary>${lfT('运行信息','Run info')}</summary>
+    <div class="run-info-panel">${description}${runMetaHTML}</div>
+  </details>`:'';
   let workspacePane=host.querySelector('.run-detail-main > [data-run-pane="workspace"]');
   if(!workspacePane){
     host.innerHTML='<div class="run-detail-main"><div class="run-pane" data-run-pane="workspace" hidden></div></div>';
     workspacePane=host.querySelector('[data-run-pane="workspace"]');
   }
-  // Keep the pane and its parent connected to preserve the IDE's browsing context.
+  const reviewPane=reviewEnabled?ensureRunReviewPane(workspacePane,r):null;
+  if(reviewPane)reviewPane.hidden=runDetailTab!=='review';
+  // Keep both browsing contexts connected during live updates.
   for(const child of [...workspacePane.parentElement.children]){
-    if(child!==workspacePane)child.remove();
+    if(child!==workspacePane&&child!==reviewPane)child.remove();
   }
   workspacePane.hidden=runDetailTab!=='workspace';
-  workspacePane.insertAdjacentHTML('beforebegin',`<header class="run-detail-header"><div class="run-detail-topbar"><button class="button ghost small run-back-inline" data-run-back>← 返回运行列表</button><div class="run-breadcrumb"><span>${issueRef}</span><i>›</i><span>${escapeHTML(wf.name)}</span></div>${r.executionContext?.parentRunId?`<button class="button ghost small" data-open-parent-run="${escapeHTML(r.executionContext.parentRunId)}">↑ 返回父 LOOP 运行</button>`:''}<div class="run-header-actions">${issueId?`<button class="button primary small" data-open-issue="${escapeHTML(issueId)}">打开需求</button>`:''}${!r.pauseRequested?refreshRunSOPButtonHTML(r):''}<button class="button ghost small" data-open-flow>查看流程定义</button>${['queued','running','waiting'].includes(r.status)?'<button class="button danger-outline small" data-cancel-run>取消运行</button>':'<button class="button danger-outline small" data-delete-run>删除记录</button>'}</div></div><div class="run-header-main"><div><h2 data-i18n-data>${escapeHTML(runTitle)}</h2>${runHeaderDescription(runDescription,ctx.issue?.title,descriptionExpanded)}</div><div class="run-status-wrap">${workspaceRestoreButtonHTML()}<span class="status ${runDisplayStatusClass(r)}">${runDisplayStatus(r)}</span>${r.status==='failed'&&!gongfengIssueClosed(ctx.issue)?'<button class="button primary small" data-resume-run>↻ 重试运行</button>':''}${canManuallyPassFailedNode(r)&&!gongfengIssueClosed(ctx.issue)?`<button class="button ghost small" data-pass-node="${escapeHTML(r.id)}" data-node="${escapeHTML(failedNodeId(r))}">手动通过</button>`:''}</div></div><div class="run-header-meta"><span class="run-meta-chip run-id-chip" title="${escapeHTML(r.id)}">Run <code>${escapeHTML(r.id.slice(-12))}</code><button type="button" class="run-id-copy" data-copy-run title="复制完整 Run ID" aria-label="复制 Run ID"><svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M10.5 5.5V3.5A1.5 1.5 0 0 0 9 2H3.5A1.5 1.5 0 0 0 2 3.5V9A1.5 1.5 0 0 0 3.5 10.5H5.5"/></svg></button></span>${runModeChipHTML(r,wf)}${runExecutionChipHTML(r)}<span class="run-meta-chip"><svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-1px;margin-right:4px;"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>启动于 ${new Date(r.createdAt).toLocaleString()}</span><span class="run-meta-chip" title="${escapeHTML(runTimingTitle(r))}"><svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-1px;margin-right:4px;"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>执行 ${runElapsed(r)}${runWallNote(r)}</span></div></header><div class="run-section-label"><b>执行详情</b><div class="run-section-label-actions"><button class="button ghost small" data-export-logs title="下载本次运行全部节点的 Worker 日志">导出全部日志</button><div class="run-tabs" role="tablist">${runTabs.map(t=>{const[k,label]=t.split(':');return `<button class="run-tab ${runDetailTab===k?'active':''}" data-run-tab="${k}">${label}</button>`}).join('')}</div></div></div><div class="run-pane" data-run-pane="overview" ${runDetailTab==='overview'?'':'hidden'}><section class="run-context-grid">${runProgressCellHTML(r,wf,progress,graphNodes)}<div data-run-usage>${liveUsageHTML(r)}</div><div><span>交付物</span><b>${(r.artifacts||[]).length} 个不可变快照</b><small>按节点和尝试次数保留版本</small></div></section></section>${alignPanelHTML}${runIsGroupMode(r)?`<details class="run-sop-snapshot"><summary><div><b>已冷冻 LOOP 快照</b><span>历史协作 · ${graphNodes.length} 个节点可展开审计</span></div></summary>`:''}<section class="run-graph-section"><div class="section-heading"><div><h3>节点执行拓扑</h3><span>点击节点查看该节点的输出、产物和执行事件</span></div><div class="graph-legend"><span><i class="succeeded"></i>完成</span><span><i class="running"></i>运行中</span><span><i class="waiting_approval"></i>待确认</span><span><i></i>未开始</span></div></div><div class="run-graph">${graphNodes.map((n,index)=>{const gv=graphNodeView(r,n.id),meta=nodeMeta(n),arts=(r.artifacts||[]).filter(a=>a.nodeId===n.id).length;return `${index?'<span class="graph-arrow">→</span>':''}<button class="graph-node ${gv.cls} ${state.selectedRunNode===n.id?'selected':''}" data-run-node="${escapeHTML(n.id)}"><span class="node-icon ${meta.kind}">${runNodeIcon(meta.kind)}</span><div><b>${escapeHTML(n.name)}</b><small>${escapeHTML(gv.text)}</small></div>${arts?`<em>${arts} 产物</em>`:''}</button>`}).join('')}</div></section><div class="node-drilldown"><section class="node-inspector" data-kb-sig="${escapeHTML(nodeKBSig)}"><div class="section-heading"><div class="node-inspector-title"><h3>${escapeHTML(selected?.name||'节点详情')}</h3><span class="node-activity-inline${inspectorRunning?' is-running':''}" ${nr.activity?'':'hidden'}>当前活动：<b>${escapeHTML(nr.activity||'')}</b></span><span class="node-inspector-model">${escapeHTML(nr.provider||'未分配')}${nr.model?` · ${escapeHTML(nr.model)}`:''}</span></div><span class="status node-inspector-status ${nr.status||'pending'}${inspectorRunning?' is-running':''}">${statusText(nr.status)||'待执行'}</span></div><div class="node-facts"><div><span>执行次数</span><b>${nr.attempt||0}</b></div><div><span>返工</span><b>${nr.reworkCount||0}</b></div><div><span>Token</span><b>${formatTokens(nr.usage?.totalTokens)}</b></div><div><span>工具调用</span><b>${nr.toolCalls||0}</b></div></div>${childSOPPanelHTML(r,selected?.id)}${gateResultCardHTML(nr)}${nodeKBHTML}${canRerunFromHere(r,selected?.id)?`<div class="node-rerun-row"><button type="button" class="button ghost small" data-rerun-from-here="${escapeHTML(selected.id)}">从这里重跑</button><small>保留上游结果，从本节点及下游重跑</small></div>`:''}${nr.output?`<div class="node-output"><div><b>节点输出</b><button data-copy-output>复制</button></div><pre data-output-raw="${escapeHTML(nodeOutputText)}">${nodeOutputHTML}</pre></div>`:'<div class="node-output empty"><b>节点输出</b><p>节点完成后，结构化输出会显示在这里。</p></div>'}<div class="runtime-details"><span>Sandbox <code>${escapeHTML(nr.sandboxId||'—')}</code></span><span>Session <code>${escapeHTML(nr.sessionId||'—')}</code></span></div></section><section class="node-artifacts"><div class="section-heading"><div><h3>节点交付物</h3><span>${nodeArtifacts.length} 个版本</span></div></div><div class="node-artifact-list">${nodeArtifacts.map(a=>`<button class="node-artifact-card" data-artifact="${escapeHTML(a.id)}"><span class="artifact-file-icon">${a.mediaType==='application/json'?'{}':'MD'}</span><div class="node-artifact-info"><b>${escapeHTML(a.name)}</b><span>${escapeHTML(a.path)}</span><small>attempt ${a.attempt} · ${Math.max(1,Math.ceil((a.size||0)/1024))} KB · ${(a.sha256||'').slice(0,10)}</small></div><i>预览 ›</i></button>`).join('')||'<div class="empty-inline"><span>◇</span><p>此节点还没有登记交付物</p></div>'}</div></section></div>${runIsGroupMode(r)?'</details>':''}</div><div class="run-pane" data-run-pane="trace" ${runDetailTab==='trace'?'':'hidden'}><section class="trace-section"><div class="section-heading"><div><h3>${telemetrySectionTitle(telAdapter)}</h3><span>${telPage?`${telemetry.length} 条已加载`:'加载最近 100 条'}</span></div><div class="trace-heading-actions">${telemetrySourceTabs(telAdapter,'data-tel-adapter')}${telPage?.hasMore?`<button class="button ghost small" data-tel-more>加载更早的 100 条</button>`:''}</div></div><div class="telemetry-feed">${telPage?([...telemetry].reverse().map(telemetryItemHTML).join('')||`<div class="empty-inline"><p>${telemetryEmptyHint(telAdapter)}</p></div>`):'<div class="empty-inline"><p>正在加载轨迹…</p></div>'}</div></section></div><div class="run-pane" data-run-pane="logs" ${runDetailTab==='logs'?'':'hidden'}><section class="worker-log-section"><div class="section-heading"><div><h3>Worker 日志</h3><span>${logPage?`${visibleWorkerLogs(logPage.items).length} 条调用`:(logBusy?'正在接收…':'实时加载最近调用')}</span></div><div class="worker-log-heading-actions">${logPage?.hasMore?`<button class="button ghost small" data-logs-more>加载更早的 100 条</button>`:''}</div></div><div class="worker-log-feed">${logPage?(visibleWorkerLogs(logPage.items).map(logLineHTML).join('')||'<div class="empty-inline"><p>该节点没有日志</p></div>'):'<div class="empty-inline"><p>正在加载 Worker 实时日志…</p></div>'}</div></section></div>`);
+  workspacePane.insertAdjacentHTML('beforebegin',`<header class="run-detail-header"${ctx.issue?' data-linked-issue':''}><div class="run-detail-topbar"><button class="button ghost small run-back-inline" data-run-back aria-label="返回运行列表"><span aria-hidden="true">←</span><span class="run-back-label">返回运行列表</span></button><div class="run-breadcrumb"><span>${issueRef}</span><i>›</i><span>${escapeHTML(wf.name)}</span></div>${r.executionContext?.parentRunId?`<button class="button ghost small" data-open-parent-run="${escapeHTML(r.executionContext.parentRunId)}">↑ 返回父 LOOP 运行</button>`:''}<div class="run-header-actions">${issueId?`<button class="button primary small" data-open-issue="${escapeHTML(issueId)}">打开需求</button>`:''}${!r.pauseRequested?refreshRunSOPButtonHTML(r):''}<button class="button ghost small" data-open-flow>查看流程定义</button>${runInfo}${['queued','running','waiting'].includes(r.status)?'<button class="button danger-outline small" data-cancel-run>取消运行</button>':'<button class="button danger-outline small" data-delete-run>删除记录</button>'}</div></div><div class="run-header-main"><div><h2 data-i18n-data>${escapeHTML(runTitle)}</h2>${reviewEnabled?'':description}</div><div class="run-status-wrap">${workspaceRestoreButtonHTML()}${statusControl}${r.status==='failed'&&!gongfengIssueClosed(ctx.issue)?'<button class="button primary small" data-resume-run>↻ 重试运行</button>':''}${canManuallyPassFailedNode(r)&&!gongfengIssueClosed(ctx.issue)?`<button class="button ghost small" data-pass-node="${escapeHTML(r.id)}" data-node="${escapeHTML(failedNodeId(r))}">手动通过</button>`:''}</div></div>${reviewEnabled?'':runMetaHTML}</header><div class="run-section-label"><b>执行详情</b><div class="run-section-label-actions"><div class="run-tabs" role="tablist">${runTabs.map(t=>{const[k,label]=t.split(':');return `<button class="run-tab ${runDetailTab===k?'active':''}" data-run-tab="${k}" role="tab" aria-selected="${runDetailTab===k}">${label}</button>`}).join('')}</div><button class="button ghost small" data-export-logs title="下载本次运行全部节点的 Worker 日志">导出全部日志</button></div></div><div class="run-pane" data-run-pane="overview" ${runDetailTab==='overview'?'':'hidden'}><section class="run-context-grid">${runProgressCellHTML(r,wf,progress,graphNodes)}<div data-run-usage>${liveUsageHTML(r)}</div><div><span>交付物</span><b>${(r.artifacts||[]).length} 个不可变快照</b><small>按节点和尝试次数保留版本</small></div></section></section>${alignPanelHTML}${runIsGroupMode(r)?`<details class="run-sop-snapshot"><summary><div><b>已冷冻 LOOP 快照</b><span>历史协作 · ${graphNodes.length} 个节点可展开审计</span></div></summary>`:''}<section class="run-graph-section"><div class="section-heading"><div><h3>节点执行拓扑</h3><span>点击节点查看该节点的输出、产物和执行事件</span></div><div class="graph-legend"><span><i class="succeeded"></i>完成</span><span><i class="running"></i>运行中</span><span><i class="waiting_approval"></i>待确认</span><span><i></i>未开始</span></div></div><div class="run-graph">${graphNodes.map((n,index)=>{const gv=graphNodeView(r,n.id),meta=nodeMeta(n),arts=(r.artifacts||[]).filter(a=>a.nodeId===n.id).length;return `${index?'<span class="graph-arrow">→</span>':''}<button class="graph-node ${gv.cls} ${state.selectedRunNode===n.id?'selected':''}" data-run-node="${escapeHTML(n.id)}"><span class="node-icon ${meta.kind}">${runNodeIcon(meta.kind)}</span><div><b>${escapeHTML(n.name)}</b><small>${escapeHTML(gv.text)}</small></div>${arts?`<em>${arts} 产物</em>`:''}</button>`}).join('')}</div></section><div class="node-drilldown"><section class="node-inspector" data-kb-sig="${escapeHTML(nodeKBSig)}"><div class="section-heading"><div class="node-inspector-title"><h3>${escapeHTML(selected?.name||'节点详情')}</h3><span class="node-activity-inline${inspectorRunning?' is-running':''}" ${nr.activity?'':'hidden'}>当前活动：<b>${escapeHTML(nr.activity||'')}</b></span><span class="node-inspector-model">${escapeHTML(nr.provider||'未分配')}${nr.model?` · ${escapeHTML(nr.model)}`:''}</span></div><span class="status node-inspector-status ${nr.status||'pending'}${inspectorRunning?' is-running':''}">${statusText(nr.status)||'待执行'}</span></div><div class="node-facts"><div><span>执行次数</span><b>${nr.attempt||0}</b></div><div><span>返工</span><b>${nr.reworkCount||0}</b></div><div><span>Token</span><b>${formatTokens(nr.usage?.totalTokens)}</b></div><div><span>工具调用</span><b>${nr.toolCalls||0}</b></div></div>${childSOPPanelHTML(r,selected?.id)}${gateResultCardHTML(nr)}${nodeKBHTML}${canRerunFromHere(r,selected?.id)?`<div class="node-rerun-row"><button type="button" class="button ghost small" data-rerun-from-here="${escapeHTML(selected.id)}">从这里重跑</button><small>保留上游结果，从本节点及下游重跑</small></div>`:''}${nr.output?`<div class="node-output"><div><b>节点输出</b><button data-copy-output>复制</button></div><pre data-output-raw="${escapeHTML(nodeOutputText)}">${nodeOutputHTML}</pre></div>`:'<div class="node-output empty"><b>节点输出</b><p>节点完成后，结构化输出会显示在这里。</p></div>'}<div class="runtime-details"><span>Sandbox <code>${escapeHTML(nr.sandboxId||'—')}</code></span><span>Session <code>${escapeHTML(nr.sessionId||'—')}</code></span></div></section><section class="node-artifacts"><div class="section-heading"><div><h3>节点交付物</h3><span>${nodeArtifacts.length} 个版本</span></div></div><div class="node-artifact-list">${nodeArtifacts.map(a=>`<button class="node-artifact-card" data-artifact="${escapeHTML(a.id)}"><span class="artifact-file-icon">${a.mediaType==='application/json'?'{}':'MD'}</span><div class="node-artifact-info"><b>${escapeHTML(a.name)}</b><span>${escapeHTML(a.path)}</span><small>attempt ${a.attempt} · ${Math.max(1,Math.ceil((a.size||0)/1024))} KB · ${(a.sha256||'').slice(0,10)}</small></div><i>预览 ›</i></button>`).join('')||'<div class="empty-inline"><span>◇</span><p>此节点还没有登记交付物</p></div>'}</div></section></div>${runIsGroupMode(r)?'</details>':''}</div><div class="run-pane" data-run-pane="trace" ${runDetailTab==='trace'?'':'hidden'}><section class="trace-section"><div class="section-heading"><div><h3>${telemetrySectionTitle(telAdapter,!pg.nodeId)}</h3><span>${telPage?`${telemetry.length} 条已加载`:'加载最近 100 条'}</span></div><div class="trace-heading-actions">${observationScope}${telemetrySourceTabs(telAdapter,'data-tel-adapter')}${telPage?.hasMore?`<button class="button ghost small" data-tel-more>加载更早的 100 条</button>`:''}</div></div><div class="telemetry-feed">${telPage?([...telemetry].reverse().map(telemetryItemHTML).join('')||`<div class="empty-inline"><p>${escapeHTML(runObservationEmptyHint(r,pg,telAdapter))}</p></div>`):'<div class="empty-inline"><p>正在加载轨迹…</p></div>'}</div></section></div><div class="run-pane" data-run-pane="logs" ${runDetailTab==='logs'?'':'hidden'}><section class="worker-log-section"><div class="section-heading"><div><h3>Worker 日志</h3><span>${logPage?`${visibleWorkerLogs(logPage.items).length} 条调用`:(logBusy?'正在接收…':'实时加载最近调用')}</span></div><div class="worker-log-heading-actions">${observationScope}${logPage?.hasMore?`<button class="button ghost small" data-logs-more>加载更早的 100 条</button>`:''}</div></div><div class="worker-log-feed">${logPage?(visibleWorkerLogs(logPage.items).map(logLineHTML).join('')||`<div class="empty-inline"><p>${escapeHTML(runObservationEmptyHint(r,pg))}</p></div>`):'<div class="empty-inline"><p>正在加载 Worker 实时日志…</p></div>'}</div></section></div>`);
   workspacePane.insertAdjacentHTML('afterend',`${previewEnabled?`<div class="run-pane" data-run-pane="preview" ${runDetailTab==='preview'?'':'hidden'}>${previewPaneHTML(r)}</div>`:''}<div class="run-pane" data-run-pane="eval" ${runDetailTab==='eval'?'':'hidden'}>${runEvalPaneHTML(r)}</div>`);
   if(keepPreview){const fresh=host.querySelector('iframe[data-preview-frame]');if(fresh)fresh.replaceWith(existingPreviewFrame);}
   const headerActions=host.querySelector('.run-header-actions');if(r.status==='running'&&headerActions)headerActions.querySelector('[data-cancel-run]')?.insertAdjacentHTML('beforebegin','<button class="button ghost small" data-pause-run>暂停运行</button>');
@@ -1844,8 +2020,6 @@ function renderRunDetail(r){
     host.querySelectorAll('[data-open-flow],[data-pause-run],[data-resume-run],[data-refresh-run-sop],[data-rerun-from-here],[data-pass-node],[data-approve],[data-reject],[data-retry-node],[data-decline-retry]').forEach(el=>el.remove());
     if(runIsGroupMode(r))host.querySelector('[data-cancel-run]')?.remove();
   }
-  const waitId=waitingNodeId(r);
-  const failId=failedNodeId(r);
   const focusNode=waitId?nodes.find(n=>n.id===waitId):(r.status==='failed'&&failId?nodes.find(n=>n.id===failId):selected);
   const focusNr=focusNode?(r.nodes?.[focusNode.id]||{}):nr;
   if(r.status==='queued'){
@@ -1861,7 +2035,11 @@ function renderRunDetail(r){
   }else if(!nonSOP&&focusNode&&focusNr&&(focusNr.status==='waiting_approval'||(r.status==='failed'&&focusNr.status==='failed'&&focusNode.type!=='sop'))){
     const header=host.querySelector('.run-detail-header');
     const callout=focusNr.status==='waiting_approval'?approvalCalloutHTML(focusNode,focusNr,nodes,r):failedNodeRecoveryCalloutHTML(r.id,focusNode,focusNr);
-    header?.insertAdjacentHTML('afterend',callout);
+    if(reviewEnabled){
+      const overview=host.querySelector('[data-run-pane="overview"]');
+      const actions=lfT('更多审批操作','More approval actions');
+      overview?.insertAdjacentHTML('afterbegin',reviewApproval?`<details class="run-approval-options"><summary>${actions}</summary>${callout}</details>`:callout);
+    }else header?.insertAdjacentHTML('afterend',callout);
     host.querySelector('.node-inspector .approval-callout')?.remove();
   }
   const childCallout=r.status==='queued'?'':childSOPCalloutHTML(r);if(childCallout)host.querySelector('.run-detail-header')?.insertAdjacentHTML('afterend',childCallout);
@@ -1874,7 +2052,35 @@ function renderRunDetail(r){
   host.querySelector('[data-run-back]')?.addEventListener('click',()=>showRunList());
   bindRunDetailTabs(r,host);
   bindReviewArtifactActions(host,r);
-  host.querySelectorAll('[data-run-node]').forEach(b=>b.onclick=()=>selectRunNode(b.dataset.runNode));host.querySelectorAll('[data-tel-adapter]').forEach(b=>b.onclick=()=>{if((state.runTelemetryAdapter||'live')===b.dataset.telAdapter)return;state.runTelemetryAdapter=b.dataset.telAdapter;state.runTelemetry=null;renderRunDetail(state.activeRun||r)});host.querySelector('[data-logs-load]')?.addEventListener('click',()=>loadRunLogs(pg.runId,pg.nodeId,false));host.querySelector('[data-logs-more]')?.addEventListener('click',()=>loadRunLogs(pg.runId,pg.nodeId,true));host.querySelector('[data-tel-load]')?.addEventListener('click',()=>loadRunTelemetry(pg.runId,pg.nodeId,false));host.querySelector('[data-tel-more]')?.addEventListener('click',()=>loadRunTelemetry(pg.runId,pg.nodeId,true));host.querySelector('[data-open-issue]')?.addEventListener('click',ev=>{ev.preventDefault();ev.stopPropagation();openIssueDetail(ev.currentTarget.dataset.openIssue||issueId,'sop')});host.querySelectorAll('[data-rerun-from-here]').forEach(b=>b.onclick=()=>openRerunFromNode(state.activeRun||r,b.dataset.rerunFromHere));host.querySelector('[data-copy-run]')?.addEventListener('click',()=>copyText(r.id,'Run ID 已复制'));host.querySelector('[data-export-logs]')?.addEventListener('click',()=>downloadRunLogs(r.id));host.querySelector('[data-copy-output]')?.addEventListener('click',()=>copyText(nodeKBSummary?formatRunTextForCopy(displayNodeOutput(nr.output),nodeKBSummary,true):displayNodeOutput(nr.output),'节点输出已复制'));host.querySelector('[data-open-flow]')?.addEventListener('click',()=>{state.workflow=clone(state.data.workflows.find(w=>w.id===r.workflowId)||wf);state.selectedNode=selected?.id||null;switchView('flow');renderAll()});host.querySelector('[data-cancel-run]')?.addEventListener('click',async ()=>{if(await afConfirm({title:'取消运行确认',message:r.status==='queued'?'确定取消排队？此运行将不会启动，之后可删除记录。':'确定取消这次运行？正在执行的节点会被终止。',confirmText:r.status==='queued'?'取消排队':'确认取消',isDanger:true}))runAction(r.id,'cancel',{})});host.querySelector('[data-delete-run]')?.addEventListener('click',()=>deleteRun(r.id));host.querySelectorAll('[data-resume-run]').forEach(b=>b.addEventListener('click',ev=>resumeRun(b.dataset.resumeRun||r.id,ev.currentTarget)));host.querySelectorAll('[data-pass-node]').forEach(b=>b.onclick=()=>passFailedNode(b.dataset.passNode,b.dataset.node,b));host.querySelectorAll('[data-artifact]').forEach(b=>b.onclick=()=>previewArtifact(state.activeRun||r,b.dataset.artifact,b));host.querySelectorAll('[data-approve]').forEach(b=>b.onclick=()=>runAction(r.id,'approve',withHumanContext({nodeId:b.dataset.approve,context:readHumanContext(b)})));host.querySelectorAll('[data-reject]').forEach(b=>b.onclick=async ()=>{const reason=await afPrompt({title:'打回返工',message:'请输入打回原因：',defaultValue:'验证未通过，请修复后重新提交'});if(reason!==null&&reason!==undefined)runAction(r.id,'reject',withHumanContext({nodeId:b.dataset.reject,targetId:b.dataset.target,reason,context:readHumanContext(b)}))});host.querySelectorAll('[data-retry-node]').forEach(b=>b.onclick=()=>retryWaitingNode(r.id,b.dataset.retryNode,b));host.querySelectorAll('[data-decline-retry]').forEach(b=>b.onclick=()=>declineRetry(r.id,b.dataset.declineRetry));host.querySelectorAll('[data-realign-run]').forEach(b=>b.onclick=()=>realignBaseline(b.dataset.realignRun));
+  host.querySelectorAll('[data-run-node]').forEach(button=>button.onclick=()=>{
+    const nodeId=button.dataset.runNode;
+    if(reviewEnabled){
+      syncRunReviewSelection(nodeId);
+      syncRunHash(r.id);
+    }
+    selectRunNode(nodeId);
+  });
+  const approvalLink=host.querySelector('[data-run-review-approval]');
+  if(approvalLink)approvalLink.onclick=()=>selectRunReviewNode(approvalLink.dataset.runReviewApproval);
+  if(!window.__runInfoDismissBound&&typeof document!=='undefined'&&document.addEventListener){
+    window.__runInfoDismissBound=true;
+    document.addEventListener('pointerdown',event=>{
+      const openInfo=document.querySelector('#runDetail .run-info[open]');
+      if(openInfo&&!openInfo.contains(event.target))openInfo.removeAttribute('open');
+    });
+    document.addEventListener('keydown',event=>{
+      if(event.key==='Escape'){
+        const openInfo=document.querySelector('#runDetail .run-info[open]');
+        if(openInfo){openInfo.removeAttribute('open');openInfo.querySelector('summary')?.focus({preventScroll:true})}
+      }
+    });
+  }
+  host.querySelectorAll('[data-run-observation-scope]').forEach(select=>select.onchange=()=>{
+    state.runObservationScope=select.value;
+    renderRunDetail(state.activeRun||r);
+    host.querySelector('[data-run-pane]:not([hidden]) [data-run-observation-scope]')?.focus({preventScroll:true});
+  });
+  host.querySelectorAll('[data-tel-adapter]').forEach(b=>b.onclick=()=>{if((state.runTelemetryAdapter||'live')===b.dataset.telAdapter)return;state.runTelemetryAdapter=b.dataset.telAdapter;state.runTelemetry=null;renderRunDetail(state.activeRun||r)});host.querySelector('[data-logs-load]')?.addEventListener('click',()=>loadRunLogs(pg.runId,pg.nodeId,false));host.querySelector('[data-logs-more]')?.addEventListener('click',()=>loadRunLogs(pg.runId,pg.nodeId,true));host.querySelector('[data-tel-load]')?.addEventListener('click',()=>loadRunTelemetry(pg.runId,pg.nodeId,false));host.querySelector('[data-tel-more]')?.addEventListener('click',()=>loadRunTelemetry(pg.runId,pg.nodeId,true));host.querySelector('[data-open-issue]')?.addEventListener('click',ev=>{ev.preventDefault();ev.stopPropagation();openIssueDetail(ev.currentTarget.dataset.openIssue||issueId,'sop')});host.querySelectorAll('[data-rerun-from-here]').forEach(b=>b.onclick=()=>openRerunFromNode(state.activeRun||r,b.dataset.rerunFromHere));host.querySelector('[data-copy-run]')?.addEventListener('click',()=>copyText(r.id,'Run ID 已复制'));host.querySelector('[data-export-logs]')?.addEventListener('click',()=>downloadRunLogs(r.id));host.querySelector('[data-copy-output]')?.addEventListener('click',()=>copyText(nodeKBSummary?formatRunTextForCopy(displayNodeOutput(nr.output),nodeKBSummary,true):displayNodeOutput(nr.output),'节点输出已复制'));host.querySelector('[data-open-flow]')?.addEventListener('click',()=>{state.workflow=clone(state.data.workflows.find(w=>w.id===r.workflowId)||wf);state.selectedNode=selected?.id||null;switchView('flow');renderAll()});host.querySelector('[data-cancel-run]')?.addEventListener('click',async ()=>{if(await afConfirm({title:'取消运行确认',message:r.status==='queued'?'确定取消排队？此运行将不会启动，之后可删除记录。':'确定取消这次运行？正在执行的节点会被终止。',confirmText:r.status==='queued'?'取消排队':'确认取消',isDanger:true}))runAction(r.id,'cancel',{})});host.querySelector('[data-delete-run]')?.addEventListener('click',()=>deleteRun(r.id));host.querySelectorAll('[data-resume-run]').forEach(b=>b.addEventListener('click',ev=>resumeRun(b.dataset.resumeRun||r.id,ev.currentTarget)));host.querySelectorAll('[data-pass-node]').forEach(b=>b.onclick=()=>passFailedNode(b.dataset.passNode,b.dataset.node,b));host.querySelectorAll('[data-artifact]').forEach(b=>b.onclick=()=>previewArtifact(state.activeRun||r,b.dataset.artifact,b));host.querySelectorAll('[data-approve]').forEach(b=>b.onclick=()=>runAction(r.id,'approve',withHumanContext({nodeId:b.dataset.approve,context:readHumanContext(b)})));host.querySelectorAll('[data-reject]').forEach(b=>b.onclick=async ()=>{const reason=await afPrompt({title:'打回返工',message:'请输入打回原因：',defaultValue:'验证未通过，请修复后重新提交'});if(reason!==null&&reason!==undefined)runAction(r.id,'reject',withHumanContext({nodeId:b.dataset.reject,targetId:b.dataset.target,reason,context:readHumanContext(b)}))});host.querySelectorAll('[data-retry-node]').forEach(b=>b.onclick=()=>retryWaitingNode(r.id,b.dataset.retryNode,b));host.querySelectorAll('[data-decline-retry]').forEach(b=>b.onclick=()=>declineRetry(r.id,b.dataset.declineRetry));host.querySelectorAll('[data-realign-run]').forEach(b=>b.onclick=()=>realignBaseline(b.dataset.realignRun));
   host.querySelector('[data-pause-run]')?.addEventListener('click',()=>pauseRun(r.id));bindPausedResumeActions(host);host.querySelectorAll('[data-refresh-run-sop]').forEach(b=>b.onclick=()=>refreshRunSOP(b.dataset.refreshRunSop));
   if(typeof evoDecorateRunDetail==='function')evoDecorateRunDetail(host,r);
   host.dataset.runId=r.id;host.dataset.nodeId=state.selectedRunNode||'';host.dataset.controlSignature=runControlSignature(r);

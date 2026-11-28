@@ -140,7 +140,8 @@ func visibleAssistantConversations(candidates []assistantConversation, userID in
 	seen := map[string]bool{}
 	out := make([]assistantConversation, 0, len(candidates))
 	for _, item := range candidates {
-		if seen[item.ID] {
+		// Node conversations are shown in their run's transcript.
+		if seen[item.ID] || item.RunNodeReview != nil {
 			continue
 		}
 		seen[item.ID] = true

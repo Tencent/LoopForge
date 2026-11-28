@@ -846,6 +846,70 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+  /api/runs/{id}/nodes/{nodeId}/conversation:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: {type: string}
+      - name: nodeId
+        in: path
+        required: true
+        schema: {type: string}
+    get:
+      tags: [Assistant]
+      operationId: findRunNodeConversation
+      summary: Find the existing conversation for a LOOP node attempt
+      description: Requires write access to the run's project.
+      parameters:
+        - name: status
+          in: query
+          required: true
+          schema: {type: string}
+        - name: attempt
+          in: query
+          required: true
+          schema: {type: integer, minimum: 0}
+        - name: reworkCount
+          in: query
+          required: true
+          schema: {type: integer, minimum: 0}
+      responses:
+        "200":
+          description: Existing session id
+        "204":
+          description: The attempt has no conversation yet
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: The displayed node attempt is stale or has not reached a reviewable state.
+    post:
+      tags: [Assistant]
+      operationId: openRunNodeConversation
+      summary: Open the shared discussion for a LOOP node attempt
+      description: Requires write access to the run's project. The first open captures the node's input, handoffs and output. Repeating the request for the same attempt returns the same conversation.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status, attempt, reworkCount]
+              properties:
+                status: {type: string}
+                attempt: {type: integer, minimum: 0}
+                reworkCount: {type: integer, minimum: 0}
+      responses:
+        "200":
+          description: Session id and projectId
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: The displayed node attempt is stale or has not reached a reviewable state.
   /api/assistant/sessions/{id}:
     parameters:
       - name: id

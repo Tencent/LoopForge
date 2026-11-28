@@ -1,4 +1,5 @@
-import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
+import React, { useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { ArtifactLinks, matchArtifactForStep } from "./artifact-links.js";
 import HarnessIcon from "./HarnessIcon";
 import {
   activityFace,
@@ -79,8 +80,13 @@ export function matchApprovalSteps(steps = [], approvals = []) {
 }
 function Step({ step, live, interrupted, waitingItems = [] }) {
   const [expanded, setExpanded] = useState(false);
+  const artifactLinks = useContext(ArtifactLinks);
   const face = activityFace(step);
   const target = activityTarget(step);
+  const linkedArtifact =
+    artifactLinks && !step.failed && (step.finishedAt || !live)
+      ? matchArtifactForStep(step, artifactLinks.artifacts)
+      : null;
   const Icon = icons[face.kind];
   const pending = live && !step.finishedAt;
   const duration = elapsedSeconds(step.startedAt, step.finishedAt);
@@ -137,6 +143,20 @@ function Step({ step, live, interrupted, waitingItems = [] }) {
               >
                 {target}
               </span>
+            ) : null}
+            {linkedArtifact ? (
+              <button
+                type="button"
+                className="execution-step-artifact"
+                title={`预览产物 ${linkedArtifact.name}`}
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  artifactLinks.open?.(linkedArtifact);
+                }}
+              >
+                查看产物
+              </button>
             ) : null}
             {waiting ? (
               <span

@@ -96,11 +96,12 @@ test('real script artifacts survive UI approval and execution continues',async({
   const content=await page.request.get(`/api/runs/${run.id}/artifacts/${encodeURIComponent(artifact.id)}`);
   expect(await content.text()).toContain('LoopForge');
   await page.goto(`/#/runs/${encodeURIComponent(run.id)}`);
-  await page.locator('[data-run-node="approve"]').click();
-  const decision=page.locator('#runDetail .approval-callout.human');
+  const review=page.frameLocator('#runReviewFrame');
+  const decision=review.getByRole('region',{name:'人工审核'});
   await expect(decision).toBeVisible();
-  await decision.locator('[data-human-context]').fill('Verified the saved report');
-  await decision.locator('[data-approve="approve"]').click();
+  await decision.getByRole('button',{name:'补充意见'}).click();
+  await decision.getByRole('textbox',{name:'审核意见（选填）'}).fill('Verified the saved report');
+  await decision.getByRole('button',{name:'通过并继续'}).click();
   await expect.poll(async()=>(await read()).status,{timeout:30_000}).toBe('succeeded');
   detail=await read();expect(detail.nodes.finish.status).toBe('succeeded');
   expect(detail.humanContext).toBe('Verified the saved report');
