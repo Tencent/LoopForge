@@ -981,7 +981,17 @@ function activityPane(issue,data){
   for(const item of [task,data.deletionTask].filter((t,i,all)=>t&&all.findIndex(x=>x?.id===t.id)===i)){
     items.push({t:new Date(item.createdAt).getTime(),type:'task.created',label:item.id===data.deletionTask?.id?'阻止删除的任务':'创建任务',detail:`${taskStatusLabel(item.status)} · ${item.id}${item.agentId?' · '+item.agentId:''}`});
   }
-  for(const e of run?.events||[])items.push({t:new Date(e.timestamp).getTime(),type:e.type||'',label:activityEventLabel(e.type),detail:e.message||''});
+  const recordedSkips=new Set();
+  for(const e of run?.events||[]){
+    items.push({t:new Date(e.timestamp).getTime(),type:e.type||'',label:activityEventLabel(e.type),detail:e.message||''});
+    if(e.type==='node.skipped')recordedSkips.add(e.nodeId);
+  }
+  const nodeNames=new Map((run?.workflowSnapshot?.nodes||[]).map(node=>[node.id,node.name||node.id]));
+  for(const [id,node] of Object.entries(run?.nodes||{})){
+    if(node?.status!=='skipped'||!node.finishedAt||recordedSkips.has(id))continue;
+    const detail=[nodeNames.get(id)||id,node.skipReason].filter(Boolean).join(' · ');
+    items.push({t:new Date(node.finishedAt).getTime(),type:'node.skipped',label:activityEventLabel('node.skipped'),detail});
+  }
   items.sort((a,b)=>b.t-a.t);
   const rows=items.map(e=>{
     const fail=/fail|error/i.test(e.type);
