@@ -3551,9 +3551,13 @@ func TestSOPRunHandoffE2EWithExcludedDependencies(t *testing.T) {
 		t.Fatal("expected repository-patch artifact to be produced by node impl")
 	}
 
-	// Verify patch contains only business changes, zero dependency leakage
-	if strings.Contains(patchArtifact.Content, "implemented") || strings.Contains(patchArtifact.Content, "@@") {
-		t.Fatalf("handoff stored a full diff:\n%s", patchArtifact.Content)
+	// Verify the patch carries the actual business changes as a real diff
+	// while keeping excluded dependencies out of it.
+	if !strings.Contains(patchArtifact.Content, "@@") {
+		t.Fatalf("patch does not carry the real diff:\n%s", patchArtifact.Content)
+	}
+	if !strings.Contains(patchArtifact.Content, "implemented") {
+		t.Fatalf("patch missing the implemented change:\n%s", patchArtifact.Content)
 	}
 	if !strings.Contains(patchArtifact.Content, "main.go") {
 		t.Fatalf("patch missing main.go change:\n%s", patchArtifact.Content)
@@ -3586,8 +3590,9 @@ func TestSOPRunHandoffE2EWithExcludedDependencies(t *testing.T) {
 		t.Fatalf("shared handoff should list files and skip apply:\n%s", shared)
 	}
 
-	// A clean clone is not a production path (the run owns one workspace).
-	// Confirm we no longer paste a full diff onto it.
+	// A clean clone recovers the stored diff: this is the issue #717 fix —
+	// uncommitted changes survive workspace reclamation because the patch
+	// carries the real diff, not just a filename list.
 	ws2 := filepath.Join(t.TempDir(), "ws2")
 	if err := prepareRepository(ctx, ws2, rc); err != nil {
 		t.Fatal(err)
@@ -3596,21 +3601,23 @@ func TestSOPRunHandoffE2EWithExcludedDependencies(t *testing.T) {
 	if err != nil {
 		t.Fatalf("materializeInputs in ws2 failed: %v", err)
 	}
-	if strings.Contains(manifest, "Applied a legacy") {
-		t.Fatalf("new summary must not apply onto a clean clone:\n%s", manifest)
+	if !strings.Contains(manifest, "Applied the stored unified diff") {
+		t.Fatalf("clean clone should apply the stored diff:\n%s", manifest)
 	}
 	mainContent, err := os.ReadFile(filepath.Join(ws2, "main.go"))
-	if err != nil || strings.Contains(string(mainContent), "implemented") {
-		t.Fatalf("ws2 should stay at baseline, got %q err %v", mainContent, err)
+	if err != nil || !strings.Contains(string(mainContent), "implemented") {
+		t.Fatalf("ws2 should recover the edited main.go, got %q err %v", mainContent, err)
 	}
-	if _, err := os.Stat(filepath.Join(ws2, "handler_e2e_test.go")); !os.IsNotExist(err) {
-		t.Fatal("ws2 should not receive the untracked e2e file from a summary")
+	if _, err := os.Stat(filepath.Join(ws2, "handler_e2e_test.go")); err != nil {
+		t.Fatal("ws2 should receive the untracked e2e file from the stored diff")
 	}
 
-	// Delivery completeness still sees the new file from the summary.
+	// Delivery completeness checks committed state; the recovered file is on
+	// disk but untracked in a fresh clone, so the warning still applies until
+	// the delivery branch commits it (same as before the fix).
 	engine := &Engine{}
 	if warnings := engine.verifyDeliveryCompleteness(run, ws2); len(warnings) == 0 {
-		t.Fatal("expected a missing-file warning on the clean clone")
+		t.Fatal("expected a missing-file warning: the recovered file is untracked in the clone")
 	}
 
 	// 3. After the real workspace commits the new file, the warning clears.

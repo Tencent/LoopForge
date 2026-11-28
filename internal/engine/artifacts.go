@@ -48,10 +48,10 @@ func materializeInputs(workspace string, wf domain.WorkflowDefinition, node doma
 				if err := applyRepositoryPatch(repoWorkspace, body); err != nil {
 					return "", fmt.Errorf("apply repository-patch from %s (%s): %w", artifact.NodeID, artifact.RepositoryDir, err)
 				}
-				fmt.Fprintf(&manifest, "## %s / repository-patch (%s)\n\nApplied a legacy unified diff (sha %s).\n\n%s\n\n", artifact.NodeID, artifact.RepositoryDir, artifact.SHA256, summary)
+				fmt.Fprintf(&manifest, "## %s / repository-patch (%s)\n\nApplied the stored unified diff (sha %s).\n\n%s\n\n", artifact.NodeID, artifact.RepositoryDir, artifact.SHA256, summary)
 				continue
 			}
-			fmt.Fprintf(&manifest, "## %s / repository-patch (%s)\n\nNo full diff is stored. The run workspace is the source of truth.\n\n%s\n\n", artifact.NodeID, artifact.RepositoryDir, summary)
+			fmt.Fprintf(&manifest, "## %s / repository-patch (%s)\n\nThe stored artifact is an inventory summary (the full diff exceeded the size cap); read the workspace with git status / git diff.\n\n%s\n\n", artifact.NodeID, artifact.RepositoryDir, summary)
 			continue
 		}
 		rel := artifactInputRelPath(run, artifact)

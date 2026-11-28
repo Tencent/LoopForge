@@ -115,10 +115,14 @@ func resolveCommitSHA(ctx context.Context, workspace, ref string) (string, error
 
 // PatchInventory lists workspace changes against the nearest current
 // baseline (usually origin/integrate or origin/<base>). A run shares one git
-// workspace across nodes, so the next node reads the files there; the
-// inventory is only a filename list for the prompt. Executor-local secrets
-// and LOOP deliverable markdown are excluded. Untracked source files are
-// intent-added so they appear in the list. No recorded baseline yields nil.
+// workspace across nodes, so the next node reads the files there. The full
+// unified diff is returned whenever it fits the artifact size cap, so
+// uncommitted changes (including modified files) survive workspace
+// reclamation after a successful run; see issue #717. When the diff exceeds
+// the cap, the filename inventory is returned instead, as a prompt-facing
+// summary. Executor-local secrets and LOOP deliverable markdown are excluded.
+// Untracked source files are intent-added so they appear in the diff. No
+// recorded baseline yields nil.
 func PatchInventory(workspace string) ([]byte, error) {
 	// Parallel branches finishing together inventory the same checkout;
 	// StageUntracked's git add -N would race on .git/index.lock.
@@ -139,6 +143,21 @@ func PatchInventory(workspace string) ([]byte, error) {
 	if err := StageUntracked(workspace); err != nil {
 		return nil, err
 	}
+	// The full unified diff is the stored artifact. --binary keeps binary
+	// files applicable by git apply, and --no-ext-diff keeps the output
+	// deterministic instead of letting an external diff driver rewrite it.
+	diff, err := diffAgainstBaseline(workspace, sha, "--binary", "--no-ext-diff")
+	if err != nil {
+		return nil, err
+	}
+	if len(bytes.TrimSpace(diff)) == 0 {
+		return nil, nil
+	}
+	if len(diff) <= MaxPatchBytes {
+		return diff, nil
+	}
+	// Oversized diff: fall back to the filename inventory so the artifact
+	// still fits the cap and stays a readable summary.
 	nameStatus, err := diffAgainstBaseline(workspace, sha, "--name-status")
 	if err != nil {
 		return nil, err
