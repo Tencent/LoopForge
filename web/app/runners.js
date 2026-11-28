@@ -359,7 +359,7 @@ function renderRunnersView(){
     const canSetProjectDefault=projectLoaded&&projectId&&r.canUseInProject&&!isProjectDefault;
     const cliRows=discoveredCLIs.map(rt=>runnerRuntimeHTML(r,rt,shared)).join('');
     const localAgent=!shared&&(r.runtimes||[]).some(rt=>rt.provider==='a2a'&&rt.status!=='disabled');
-    const agentRow=localAgent?'<div class="runner-runtime-row"><span class="runner-runtime-name"><b>本机 A2A Agent</b></span><span class="runner-auth-fixed">'+lfT('本机服务','Local service')+'</span></div>':'';
+    const agentRow=localAgent?'<div class="runner-runtime-row"><span class="runner-runtime-name"><b>'+lfT('本机 A2A Agent','Local A2A Agent')+'</b></span><span class="runner-auth-fixed">'+lfT('本机服务','Local service')+'</span></div>':'';
     const cliSection=(cliRows+agentRow)||`<div class="runner-runtime-empty">${lfT('未发现支持的 Agent CLI','No supported Agent CLI found')}</div>`;
     const osLabel=runnerOSLabels[r.os]||r.os||'?';
     const defaultBlocker=runnerDefaultBlocker(r);
