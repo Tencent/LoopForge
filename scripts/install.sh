@@ -19,6 +19,15 @@ confirm() {
   [[ -z "$answer" || "$answer" =~ ^[Yy] ]]
 }
 
+# The DSN decides the dialect. AGENTFLOW_DATABASE_URL accepts a Postgres URL
+# and a MySQL DSN alike, so the presence of the variable is not enough.
+database_is_postgres() {
+  case "${AGENTFLOW_DATABASE_URL:-}" in
+    postgres://*|postgresql://*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 usable_python() {
   command -v python3 >/dev/null && python3 -c 'import sys; sys.exit(sys.version_info < (3, 6))' >/dev/null 2>&1
 }
@@ -165,16 +174,11 @@ if [[ "${COMPOSE_FILE:-}" != "$dev_compose" ]]; then
   pull_policy="${LOOPFORGE_PULL_POLICY:-missing}"
   if mirror_published_ghcr "$pull_policy"; then
     # The platform name is already local. Pull it with missing so Compose does
-    # not contact ghcr.io; MySQL keeps the requested policy.
-    if [[ "$pull_policy" == always ]]; then
-      docker_access compose --profile platform pull --policy missing platform
-      docker_access compose --profile platform pull --policy always mysql
-    else
-      docker_access compose --profile platform pull --policy "$pull_policy" platform mysql
-    fi
+    # not contact ghcr.io.
+    docker_access compose --profile platform pull --policy missing platform
   else
     step "Pulling the published LoopForge image ${LOOPFORGE_IMAGE:-pinned in compose.yaml}"
-    docker_access compose --profile platform pull --policy "$pull_policy" platform mysql
+    docker_access compose --profile platform pull --policy "$pull_policy" platform
   fi
   docker_access compose --profile platform up -d --no-build --wait --wait-timeout 180
 else
@@ -183,19 +187,24 @@ else
     LOOPFORGE_COMMIT="$(git rev-parse HEAD 2>/dev/null || true)"
     export LOOPFORGE_COMMIT
   fi
-  # Download MySQL while the platform image builds instead of afterwards.
-  docker_access compose pull --quiet --policy missing mysql >/dev/null 2>&1 &
-  mysql_pull=$!
   docker_access compose --profile platform build platform
-  wait "$mysql_pull" || true
   step 'Starting LoopForge'
   docker_access compose --profile platform up -d --no-build --wait --wait-timeout 180
 fi
 step 'Installing the schema extensions and the starter catalog'
-bash scripts/install-schema-extensions.sh
+if database_is_postgres; then
+  bash scripts/install-schema-extensions-pg.sh
+else
+  bash scripts/install-schema-extensions.sh
+fi
 
 python3 scripts/install-address.py "$port"
-users=$(docker_access compose exec -T mysql sh -c 'MYSQL_PWD="$MYSQL_PASSWORD" mysql -N -u loopforge loopforge -e "select count(*) from users"' 2>/dev/null || echo 0)
+users=0
+if database_is_postgres; then
+  # The database is the operator's own Postgres; the host client answers
+  # whether an administrator account exists already.
+  users=$(psql "$AGENTFLOW_DATABASE_URL" -tAc 'select count(*) from users' 2>/dev/null || echo 0)
+fi
 if [[ "${users//[^0-9]/}" == 0 ]]; then
   printf '  Open it in your browser and create the administrator account.\n'
 else

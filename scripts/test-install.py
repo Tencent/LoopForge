@@ -33,21 +33,15 @@ class InstallerTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         (self.root / 'scripts').mkdir()
-        (self.root / 'migrations/seed').mkdir(parents=True)
-        for name in ('install.sh', 'configure.sh', 'docker-access.sh', 'ghcr-mirror.sh', 'install-address.py', 'install-compose.py', 'install-observability-schema.sh', 'install-schema-extensions.sh'):
+        (self.root / 'migrations/seed/pg').mkdir(parents=True)
+        for name in ('install.sh', 'configure.sh', 'docker-access.sh', 'ghcr-mirror.sh', 'install-address.py', 'install-compose.py', 'install-schema-extensions-pg.sh'):
             shutil.copyfile(ROOT / 'scripts' / name, self.root / 'scripts' / name)
         shutil.copyfile(ROOT / 'start.sh', self.root / 'start.sh')
-        for name in (
-            '001_run_obs_generated_columns.sql',
-            '033_generic_sop_mr_node.sql',
-            '038_generic_sop_host_credentials.sql',
-            '041_native_sandbox_inline_assets.sql',
-            '043_loop_terminology.sql',
-        ):
-            (self.root / 'migrations' / name).write_text((ROOT / 'migrations' / name).read_text())
-        artifact_migration = '042_run_artifacts_content_mediumtext.sql'
-        shutil.copyfile(ROOT / 'migrations' / artifact_migration, self.root / 'migrations' / artifact_migration)
-        (self.root / 'migrations/seed/001_test.sql').write_text('INSERT IGNORE INTO agents (id) VALUES (1);\n')
+        (self.root / 'migrations/001_run_obs_generated_columns.pg.sql').write_text(
+            (ROOT / 'migrations/001_run_obs_generated_columns.pg.sql').read_text())
+        for name in ('001_public_catalog.sql', '002_welcome_project.sql'):
+            (self.root / 'migrations/seed/pg' / name).write_text(
+                (ROOT / 'migrations/seed/pg' / name).read_text())
         (self.root / 'mock').mkdir()
         self.executable('docker', '''#!/usr/bin/env bash
 printf '%s %s\\n' "${MOCK_PRIVILEGED:-0}" "$*" >> "$MOCK_LOG"
@@ -55,45 +49,32 @@ if [[ "$1" == info ]]; then
   [[ "${MOCK_USER:-0}" == 0 || "${MOCK_PRIVILEGED:-0}" == 1 || "${MOCK_DIRECT:-0}" == 1 ]]
   exit
 fi
-if [[ "$*" == 'compose --profile platform config --format json platform' ]]; then
-  printf '%s\\n' '{"services":{"mysql":{"image":"mysql:8.4"},"platform":{"image":"ghcr.io/example/target:next"}}}'
-  exit 0
-fi
-if [[ "$1" == image && "$2" == inspect && "$3" == --format ]]; then
-  [[ "$5" == ghcr.io/example/target:next ]] || exit 1
-  printf '%s\\n' "${MOCK_SANDBOX_CATALOG:-}"
-  exit 0
-fi
 if [[ "$1" == image && "$2" == inspect && "${MOCK_IMAGE_PRESENT:-0}" != 1 ]]; then exit 1; fi
 if [[ "$1" == pull && "${MOCK_PULL_FAIL:-0}" == 1 ]]; then exit 42; fi
 if [[ "$1" == tag && "${MOCK_TAG_FAIL:-0}" == 1 ]]; then exit 1; fi
 if [[ "$*" == 'compose version' && "${MOCK_COMPOSE_MISSING:-0}" == 1 && ! -f "$MOCK_COMPOSE_INSTALLED" ]]; then exit 1; fi
-if [[ "$*" == *'ps --all --status running --status restarting --status paused --services platform' ]]; then
-  case "${MOCK_MIGRATION_PLATFORM:-stopped}" in
-    running) echo platform ;;
-    error) exit 1 ;;
-  esac
-  exit 0
-fi
 if [[ "$*" == *'ps --status running'* ]]; then echo platform; fi
 if [[ "${MOCK_EXPIRE_AFTER_BUILD:-0}" == 1 && "$*" == *'build platform'* ]]; then touch "$MOCK_SUDO_EXPIRED_FILE"; fi
-if [[ "$*" == *'exec -T mysql'* ]]; then
-  if [[ "$*" == *'count(*) from users'* ]]; then echo 0; exit 0; fi
-  if [[ "$*" == *mysqldump* ]]; then
-    printf 'database backup\\n'
-    [[ "${MOCK_BACKUP_FAILURE:-0}" != 1 ]]
-    exit
-  fi
-  query=$(cat)
-  printf '%s\n' "$query" >> "$MOCK_SQL_LOG"
-  if [[ "$query" == *'information_schema.columns'* ]]; then printf '%s\n' "${MOCK_COLUMN_COUNT:-1}"; fi
-  if [[ "$query" == 'SELECT COUNT(*) FROM information_schema.tables'* ]]; then
-    printf '%s\\n' "${MOCK_LEGACY_SANDBOX_TABLES:-0}"
-  fi
-  if [[ "$query" == *'DROP TABLE IF EXISTS dockerfiles, environments;'* && "${MOCK_SANDBOX_MIGRATION_FAILURE:-0}" == 1 ]]; then
-    exit 1
-  fi
+''')
+        # The Postgres client the schema extension script and the installer use.
+        # The connection string is deliberately not written to the log.
+        self.executable('psql', '''#!/usr/bin/env bash
+file=""
+previous=""
+for argument in "$@"; do
+  if [[ "$previous" == '-f' ]]; then file="$argument"; fi
+  previous="$argument"
+done
+if [[ -z "$file" ]]; then
+  printf 'psql query\\n' >> "$MOCK_LOG"
+  printf 'query\\n' >> "$MOCK_PSQL_LOG"
+  if [[ "$*" == *'select count(*) from users'* ]]; then echo 0; exit 0; fi
+  exit 0
 fi
+printf 'psql %s\\n' "$file" >> "$MOCK_LOG"
+printf '%s\\n' "$file" >> "$MOCK_PSQL_LOG"
+if [[ -f "$file" ]]; then cat "$file" >> "$MOCK_SQL_LOG"; fi
+exit 0
 ''')
         self.executable('id', '#!/usr/bin/env bash\nif [[ "$1" == -u ]]; then echo "${MOCK_USER:-0}"; else /usr/bin/id "$@"; fi\n')
         self.executable('sudo', '''#!/usr/bin/env bash
@@ -103,14 +84,11 @@ fi
 export MOCK_PRIVILEGED=1
 exec "$@"
 ''')
-        self.environ = dict(os.environ, PATH=str(self.root / 'mock') + ':' + os.environ['PATH'], MOCK_LOG=str(self.root / 'docker.log'), MOCK_SQL_LOG=str(self.root / 'mysql.log'), AGENTFLOW_HTTP_PORT='18765', LOOPFORGE_PUBLIC_URL='https://team.example.test', LOOPFORGE_BIND='0.0.0.0')
-        for name in ('LOOPFORGE_DOCKER_USE_SUDO', 'LOOPFORGE_DATA_DIR', 'LOOPFORGE_IMAGE', 'COMPOSE_FILE', 'LOOPFORGE_BUILD_FROM_SOURCE', 'LOOPFORGE_PULL_POLICY', 'MIRROR', 'MOCK_USER', 'MOCK_DIRECT', 'MOCK_SUDO_DENIED', 'MOCK_IMAGE_PRESENT', 'MOCK_PULL_FAIL', 'MOCK_TAG_FAIL', 'MOCK_MIRROR_GHCR', 'MOCK_MIRROR_NJU', 'MOCK_CURL_LOG'):
+        self.environ = dict(os.environ, PATH=str(self.root / 'mock') + ':' + os.environ['PATH'], MOCK_LOG=str(self.root / 'docker.log'), MOCK_SQL_LOG=str(self.root / 'sql.log'), MOCK_PSQL_LOG=str(self.root / 'psql.log'), LOOPFORGE_PG_PASSWORD='fixture-password', AGENTFLOW_HTTP_PORT='18765', LOOPFORGE_PUBLIC_URL='https://team.example.test', LOOPFORGE_BIND='0.0.0.0')
+        # The developer's own database password never reaches the fixture.
+        for name in ('LOOPFORGE_DOCKER_USE_SUDO', 'LOOPFORGE_DATA_DIR', 'LOOPFORGE_IMAGE', 'COMPOSE_FILE', 'LOOPFORGE_BUILD_FROM_SOURCE', 'LOOPFORGE_PULL_POLICY', 'MIRROR', 'MOCK_USER', 'MOCK_DIRECT', 'MOCK_SUDO_DENIED', 'MOCK_IMAGE_PRESENT', 'MOCK_PULL_FAIL', 'MOCK_TAG_FAIL', 'MOCK_MIRROR_GHCR', 'MOCK_MIRROR_NJU', 'MOCK_CURL_LOG', 'POSTGRES_PASSWORD'):
             self.environ.pop(name, None)
-        self.environ.pop('MOCK_COLUMN_COUNT', None)
-        self.environ.pop('MOCK_MIGRATION_PLATFORM', None)
         self.environ.pop('AGENTFLOW_PROJECT_CREDENTIAL_KEY', None)
-        for name in ('MOCK_SANDBOX_CATALOG', 'MOCK_LEGACY_SANDBOX_TABLES', 'MOCK_BACKUP_FAILURE', 'MOCK_SANDBOX_MIGRATION_FAILURE'):
-            self.environ.pop(name, None)
 
     def executable(self, name, contents):
         target = self.root / 'mock' / name
@@ -142,9 +120,20 @@ exec "$@"
         return subprocess.run([shell or self.shell(), 'scripts/install.sh'], cwd=self.root, env=dict(self.environ, **values), text=True, capture_output=True, stdin=subprocess.DEVNULL, timeout=15)
 
     def pull(self, **values):
-        (self.root / '.env').touch()
+        if not (self.root / '.env').exists():
+            self.write_env()
         return subprocess.run([self.shell(), 'start.sh', 'pull'], cwd=self.root,
             env=dict(self.environ, **values), text=True, capture_output=True, stdin=subprocess.DEVNULL, timeout=15)
+
+    # The database the fixture points at. Placeholder host, user and password:
+    # the mock client never opens a connection.
+    DSN_LINES = ("AGENTFLOW_DATABASE_URL='postgres://postgres.fixture:fixture@127.0.0.1:5432/loopforge_fixture?sslmode=disable'\n"
+                 "LOOPFORGE_COMPOSE_DATABASE_URL='postgres://postgres.fixture:fixture@host.docker.internal:5432/loopforge_fixture?sslmode=disable'\n")
+
+    def write_env(self, text=''):
+        env = self.root / '.env'
+        env.write_text(text + self.DSN_LINES)
+        env.chmod(0o600)
 
     def assert_success(self, result):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -152,10 +141,10 @@ exec "$@"
         self.assertNotIn('running at http://127.0.0.1', result.stdout)
 
     def test_root_install_and_repeat_preserve_secrets(self):
-        self.assert_success(self.install(MOCK_SANDBOX_CATALOG='inline'))
-        sql = (self.root / 'mysql.log').read_text()
-        self.assertIn('INSERT IGNORE', sql)
-        self.assertNotIn('DROP TABLE IF EXISTS dockerfiles', sql)
+        self.assert_success(self.install())
+        sql = (self.root / 'sql.log').read_text()
+        self.assertIn('ALTER TABLE run_telemetry', sql)
+        self.assertIn('ON CONFLICT', sql)
         secrets = (self.root / '.env').read_text()
         self.assert_success(self.install())
         self.assertEqual((self.root / '.env').read_text(), secrets)
@@ -206,7 +195,7 @@ exec "$@"
         operations = [line for line in lines if 'compose' in line]
         self.assertTrue(operations)
         self.assertTrue(all(line.startswith('1 ') for line in operations), operations)
-        self.assertTrue(any('exec -T mysql' in line for line in operations))
+        self.assertTrue(any('compose --profile platform up -d --no-build' in line for line in operations))
 
     def test_non_root_with_direct_access_never_uses_sudo(self):
         self.assert_success(self.install(MOCK_USER='1000', MOCK_DIRECT='1', MOCK_SUDO_DENIED='1'))
@@ -235,7 +224,7 @@ exec "$@"
     def test_default_install_pulls_pinned_release(self):
         self.assert_success(self.install())
         log = (self.root / 'docker.log').read_text()
-        self.assertIn('pull --policy missing platform mysql', log)
+        self.assertIn('pull --policy missing platform', log)
         self.assertNotIn('build platform', log)
         self.assertNotIn('ghcr.nju.edu.cn', log)
         self.assertIn("LOOPFORGE_IMAGE=''", (self.root / '.env').read_text())
@@ -251,7 +240,7 @@ exec "$@"
                 self.assert_success(self.install(MIRROR=mirror_env))
                 log = (self.root / 'docker.log').read_text()
                 self.assertLess(log.index(f'pull {mirror}'), log.index(f'tag {mirror} {image}'))
-                self.assertLess(log.index(f'tag {mirror} {image}'), log.index('pull --policy missing platform mysql'))
+                self.assertLess(log.index(f'tag {mirror} {image}'), log.index('pull --policy missing platform'))
                 self.assertNotIn('MIRROR=', (self.root / '.env').read_text())
 
     def test_mirror_keeps_a_local_image(self):
@@ -260,7 +249,7 @@ exec "$@"
         self.assert_success(result)
         log = (self.root / 'docker.log').read_text()
         self.assertNotIn('ghcr.nju.edu.cn', log)
-        self.assertIn('pull --policy missing platform mysql', log)
+        self.assertIn('pull --policy missing platform', log)
         self.assertIn('Using local image', result.stdout)
 
     def test_mirror_always_refreshes_from_the_configured_host(self):
@@ -270,15 +259,15 @@ exec "$@"
         image = self.pinned_image()
         mirror = 'mirror.example.test/' + image[len('ghcr.io/'):]
         self.assertIn(f'pull {mirror}', log)
+        self.assertIn(f'tag {mirror} {image}', log)
         self.assertIn('pull --policy missing platform', log)
-        self.assertIn('pull --policy always mysql', log)
         self.assertNotIn('pull --policy always platform', log)
 
     def test_upstream_mirror_host_keeps_the_direct_pull(self):
         self.use_compose_file()
         self.assert_success(self.install(MIRROR='ghcr.io'))
         log = (self.root / 'docker.log').read_text()
-        self.assertIn('pull --policy missing platform mysql', log)
+        self.assertIn('pull --policy missing platform', log)
         self.assertNotIn(' tag ', log)
 
     def mirror_probe_curl(self):
@@ -390,7 +379,7 @@ esac
         result = self.install(**self.probe_env(self.timed(self.DIGEST, '0.10'), self.timed(self.DIGEST, '0.40')))
         self.assert_success(result)
         log = (self.root / 'docker.log').read_text()
-        self.assertIn('pull --policy missing platform mysql', log)
+        self.assertIn('pull --policy missing platform', log)
         self.assertNotIn('ghcr.nju.edu.cn', log)
         self.assertIn('Fastest registry is ghcr.io', result.stdout)
 
@@ -400,7 +389,7 @@ esac
         result = self.install(**self.probe_env(self.timed(self.DIGEST, '0.40'), self.timed(self.OTHER, '0.05')))
         self.assert_success(result)
         log = (self.root / 'docker.log').read_text()
-        self.assertIn('pull --policy missing platform mysql', log)
+        self.assertIn('pull --policy missing platform', log)
         self.assertNotIn('ghcr.nju.edu.cn', log)
         self.assertIn('Registry digests differ; using ghcr.io', result.stdout)
 
@@ -410,7 +399,7 @@ esac
         result = self.install(**self.probe_env('timeout', 'fail'))
         self.assert_success(result)
         log = (self.root / 'docker.log').read_text()
-        self.assertIn('pull --policy missing platform mysql', log)
+        self.assertIn('pull --policy missing platform', log)
         self.assertNotIn('ghcr.nju.edu.cn', log)
         self.assertIn('Could not verify the ghcr.io digest; using ghcr.io', result.stdout)
 
@@ -420,7 +409,7 @@ esac
         result = self.install(**self.probe_env('timeout', self.timed(self.DIGEST, '0.20')))
         self.assert_success(result)
         log = (self.root / 'docker.log').read_text()
-        self.assertIn('pull --policy missing platform mysql', log)
+        self.assertIn('pull --policy missing platform', log)
         self.assertNotIn('ghcr.nju.edu.cn', log)
         self.assertIn('Could not verify the ghcr.io digest', result.stdout)
 
@@ -439,7 +428,7 @@ esac
         self.assert_success(result)
         log = (self.root / 'docker.log').read_text()
         curl_log = (self.root / 'curl.log').read_text()
-        self.assertIn('pull --policy missing platform mysql', log)
+        self.assertIn('pull --policy missing platform', log)
         self.assertNotIn('ghcr.nju.edu.cn', log)
         self.assertIn('Fastest registry is ghcr.io', result.stdout)
         cdn = [line for line in curl_log.splitlines() if 'https://cdn.example.test/' in line]
@@ -455,7 +444,7 @@ esac
         log = (self.root / 'docker.log').read_text()
         self.assertIn('pull ghcr.nju.edu.cn/tencent/loopforge@' + self.DIGEST, log)
         self.assertNotIn(' tag ', log)
-        self.assertIn('pull --policy missing platform mysql', log)
+        self.assertIn('pull --policy missing platform', log)
         self.assertIn('Could not pull', result.stdout)
 
     def test_bash32_cold_install_continues_when_the_image_is_missing(self):
@@ -466,7 +455,7 @@ esac
         self.assert_success(result)
         log = (self.root / 'docker.log').read_text()
         self.assertIn('image inspect ', log)
-        self.assertIn('pull --policy missing platform mysql', log)
+        self.assertIn('pull --policy missing platform', log)
         self.assertNotIn('ghcr.nju.edu.cn', log)
 
     def test_bash32_auto_pull_failure_falls_back(self):
@@ -494,9 +483,17 @@ esac
         self.assert_success(result)
         self.assertFalse(curl_log.exists())
         log = (self.root / 'docker.log').read_text()
-        self.assertIn('pull --policy missing platform mysql', log)
+        self.assertIn('pull --policy missing platform', log)
         self.assertNotIn('ghcr.nju.edu.cn', log)
         self.assertNotIn('Fastest registry', result.stdout)
+
+    def test_start_pull_takes_the_upgrade_lock(self):
+        (self.root / '.local').mkdir()
+        with (self.root / '.local/compose-upgrade.lock').open('a') as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            result = self.pull()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('Could not lock the installation', result.stderr)
 
     def test_start_pull_uses_the_faster_nju_mirror(self):
         self.assert_success(self.install())
@@ -513,7 +510,6 @@ esac
         log = (self.root / 'docker.log').read_text()
         self.assertIn(f'pull {mirror}', log)
         self.assertIn(f'tag {mirror} {image}', log)
-        self.assertIn('pull --policy always mysql', log)
         self.assertNotIn('pull --ignore-buildable --policy always', log)
         self.assertIn('Fastest registry is ghcr.nju.edu.cn', result.stdout)
 
@@ -553,7 +549,7 @@ esac
         )
         for name, setting, override, expected in scenarios:
             with self.subTest(name=name):
-                env.write_text(legacy + setting)
+                env.write_text(legacy + setting + self.DSN_LINES)
                 env.chmod(0o600)
                 result = self.pull(MIRROR='ghcr.io', AGENTFLOW_PROJECT_CREDENTIAL_KEY=override)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -576,141 +572,28 @@ esac
     def test_start_pull_reapplies_schema_extensions_after_containers_are_up(self):
         self.assert_success(self.install())
         (self.root / 'docker.log').unlink()
-        result = subprocess.run([self.shell(), 'start.sh', 'pull'], cwd=self.root, env=dict(self.environ, MOCK_COLUMN_COUNT='0'), text=True, capture_output=True, stdin=subprocess.DEVNULL, timeout=15)
+        (self.root / 'sql.log').unlink()
+        result = subprocess.run([self.shell(), 'start.sh', 'pull'], cwd=self.root, env=dict(self.environ), text=True, capture_output=True, stdin=subprocess.DEVNULL, timeout=15)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         log = (self.root / 'docker.log').read_text()
-        sql = (self.root / 'mysql.log').read_text()
-        self.assertIn('Installed: run_telemetry.adapter', result.stdout)
-        self.assertIn('Installed: run_logs.level', result.stdout)
+        sql = (self.root / 'sql.log').read_text()
+        self.assertIn('Applying migrations/001_run_obs_generated_columns.pg.sql', result.stdout)
         self.assertIn('ALTER TABLE run_telemetry', sql)
         self.assertIn('ALTER TABLE run_logs', sql)
-        self.assertIn('INSERT IGNORE', sql)
-        self.assertNotIn('DROP TABLE IF EXISTS dockerfiles', sql)
-        # The 「发起 MR」 node of the code delivery LOOPs is replayed too, instead
-        # of waiting for an operator to run migration 033 by hand.
-        self.assertIn('JSON_ARRAY_APPEND', sql)
-        self.assertIn('git credential fill', sql)
-        self.assertLess(sql.index('JSON_ARRAY_APPEND'), sql.index('SET @new_mr_auth'))
-        self.assertLess(sql.index('SET @new_mr_auth'), sql.index('-- Align shipped template names'))
+        self.assertIn('ON CONFLICT', sql)
         # Recreated containers come first; the old volume then gets the columns.
-        self.assertLess(log.index('up -d --no-build --wait'), log.index('exec -T mysql'))
+        self.assertLess(log.index('up -d --no-build --wait --wait-timeout 180 --pull never'),
+                        log.index('psql migrations/001_run_obs_generated_columns.pg.sql'))
 
     def test_live_install_fixture_copies_every_replayed_migration(self):
         # test-install-live.sh runs install.sh from a trimmed copy of the repo,
         # so each migration the installer replays has to be in its copy list.
-        replayed = set()
-        for name in ('install-schema-extensions.sh', 'install-observability-schema.sh'):
-            replayed.update(re.findall(r'migrations/(\d{3}_[\w-]+\.sql)', (ROOT / 'scripts' / name).read_text()))
-        self.assertIn('043_loop_terminology.sql', replayed)
         live = (ROOT / 'scripts/test-install-live.sh').read_text()
-        copy = re.search(r'^\s*cp (migrations/\d{3}_.*?)"\$fixture/migrations/"', live, re.M | re.S)
-        self.assertIsNotNone(copy, 'test-install-live.sh no longer copies migrations into the fixture')
-        copied = set(re.findall(r'migrations/(\d{3}_[\w-]+\.sql)', copy.group(1)))
-        self.assertEqual(replayed - copied, set())
-
-    def test_start_pull_migrates_legacy_sandboxes_before_startup(self):
-        result = self.pull(MOCK_SANDBOX_CATALOG='inline', MOCK_LEGACY_SANDBOX_TABLES='2')
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        log = (self.root / 'docker.log').read_text()
-        steps = (
-            'pull --ignore-buildable',
-            'image inspect --format',
-            'up -d --no-build --no-recreate --wait --wait-timeout 180 --pull never mysql',
-            'stop platform',
-            'mysqldump',
-            'ps --all --status running',
-            'up -d --no-build --wait --wait-timeout 180 --pull never',
-        )
-        offsets = [log.index(step) for step in steps]
-        self.assertEqual(offsets, sorted(offsets))
-        migration_start = log.index('exec -T mysql', offsets[-2])
-        self.assertLess(migration_start, offsets[-1])
-        sql = (self.root / 'mysql.log').read_text()
-        self.assertLess(sql.index('FROM information_schema.tables'), sql.index('DROP TABLE IF EXISTS dockerfiles'))
-        self.assertLess(sql.index('DROP TABLE IF EXISTS dockerfiles'), sql.index('INSERT IGNORE'))
-        backup, = (self.root / '.local').glob('loopforge-before-041.*/loopforge.sql')
-        self.assertEqual(backup.read_text(), 'database backup\n')
-        self.assertEqual(backup.stat().st_mode & 0o777, 0o600)
-
-    def test_start_pull_skips_migration_for_legacy_images_and_current_schemas(self):
-        for target, legacy_tables in (('', '2'), ('inline', '0')):
-            with self.subTest(target=target, legacy_tables=legacy_tables):
-                (self.root / 'docker.log').unlink(missing_ok=True)
-                (self.root / 'mysql.log').unlink(missing_ok=True)
-                result = self.pull(MOCK_SANDBOX_CATALOG=target, MOCK_LEGACY_SANDBOX_TABLES=legacy_tables)
-                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-                log = (self.root / 'docker.log').read_text()
-                self.assertNotIn('stop platform', log)
-                self.assertNotIn('mysqldump', log)
-                sql = (self.root / 'mysql.log').read_text()
-                self.assertEqual('FROM information_schema.tables' in sql, target == 'inline')
-                self.assertNotIn('DROP TABLE IF EXISTS dockerfiles', sql)
-                self.assertIn('INSERT IGNORE', sql)
-
-    def test_start_pull_keeps_platform_stopped_on_backup_or_migration_failure(self):
-        for failure, message in (('MOCK_BACKUP_FAILURE', 'Database backup failed'), ('MOCK_SANDBOX_MIGRATION_FAILURE', 'Sandbox migration 041 failed')):
-            with self.subTest(failure=failure):
-                (self.root / 'docker.log').unlink(missing_ok=True)
-                (self.root / 'mysql.log').unlink(missing_ok=True)
-                result = self.pull(MOCK_SANDBOX_CATALOG='inline', MOCK_LEGACY_SANDBOX_TABLES='1', **{failure: '1'})
-                self.assertNotEqual(result.returncode, 0)
-                self.assertIn(message, result.stderr)
-                log = (self.root / 'docker.log').read_text()
-                self.assertIn('stop platform', log)
-                self.assertNotIn('up -d --no-build --wait', log)
-                sql = (self.root / 'mysql.log').read_text()
-                self.assertNotIn('INSERT IGNORE', sql)
-                has_backup = any((self.root / '.local').glob('loopforge-before-041.*'))
-                self.assertEqual(has_backup, failure == 'MOCK_SANDBOX_MIGRATION_FAILURE')
-
-        result = self.pull(MOCK_SANDBOX_CATALOG='inline', MOCK_LEGACY_SANDBOX_TABLES='1')
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn('Applied sandbox migration 041', result.stdout)
-        self.assertEqual(len(list((self.root / '.local').glob('loopforge-before-041.*/loopforge.sql'))), 2)
-
-    def test_start_pull_and_manual_sandbox_migration_share_an_upgrade_lock(self):
-        (self.root / '.local').mkdir()
-        with (self.root / '.local/compose-upgrade.lock').open('a') as lock:
-            fcntl.flock(lock, fcntl.LOCK_EX)
-            pull = self.pull(MOCK_SANDBOX_CATALOG='inline', MOCK_LEGACY_SANDBOX_TABLES='2')
-            migrate = subprocess.run([self.shell(), 'start.sh', 'migrate-sandboxes'], cwd=self.root,
-                env=self.environ, text=True, capture_output=True, stdin=subprocess.DEVNULL, timeout=15)
-        for result in (pull, migrate):
-            self.assertNotEqual(result.returncode, 0)
-            self.assertIn('Could not lock the installation', result.stderr)
-        self.assertFalse((self.root / 'mysql.log').exists())
-
-    def test_migrate_sandboxes_requires_a_stopped_platform(self):
-        (self.root / '.env').touch()
-        command = [self.shell(), 'start.sh', 'migrate-sandboxes']
-        for state in ('running', 'error'):
-            with self.subTest(platform=state):
-                result = subprocess.run(command, cwd=self.root,
-                    env=dict(self.environ, MOCK_MIGRATION_PLATFORM=state),
-                    text=True, capture_output=True, stdin=subprocess.DEVNULL, timeout=15)
-                self.assertNotEqual(result.returncode, 0)
-                if state == 'running':
-                    self.assertIn('stop platform', result.stderr)
-                self.assertFalse((self.root / 'mysql.log').exists())
-
-        result = subprocess.run([self.shell(), 'start.sh', 'stop', 'platform'],
-            cwd=self.root, env=self.environ, text=True, capture_output=True,
-            stdin=subprocess.DEVNULL, timeout=15)
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn('compose --profile platform stop platform', (self.root / 'docker.log').read_text())
-
-        result = subprocess.run(command, cwd=self.root, env=self.environ,
-            text=True, capture_output=True, stdin=subprocess.DEVNULL, timeout=15)
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        migration = self.root / 'migrations/041_native_sandbox_inline_assets.sql'
-        self.assertEqual((self.root / 'mysql.log').read_text(), migration.read_text())
-
-    def test_start_pull_names_the_migration_when_columns_cannot_be_checked(self):
-        self.assert_success(self.install())
-        result = subprocess.run([self.shell(), 'start.sh', 'pull'], cwd=self.root, env=dict(self.environ, MOCK_COLUMN_COUNT='?'), text=True, capture_output=True, stdin=subprocess.DEVNULL, timeout=15)
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn('Could not inspect run_telemetry.adapter', result.stderr)
-        self.assertIn('migrations/001_run_obs_generated_columns.sql', result.stderr)
+        for script in ('install-schema-extensions.sh', 'install-observability-schema.sh', 'install-schema-extensions-pg.sh'):
+            replayed = set(re.findall(r'migrations/([\w/.-]+\.sql)', (ROOT / 'scripts' / script).read_text()))
+            self.assertTrue(replayed, script)
+            for name in replayed:
+                self.assertIn(name, live, name)
 
     def test_start_pull_with_nju_mirror_does_not_contact_ghcr_for_platform(self):
         self.assert_success(self.install())
@@ -723,7 +606,6 @@ esac
         log = (self.root / 'docker.log').read_text()
         self.assertIn(f'pull {mirror}', log)
         self.assertIn(f'tag {mirror} {image}', log)
-        self.assertIn('pull --policy always mysql', log)
         self.assertNotIn('pull --ignore-buildable --policy always', log)
 
     def test_mirror_uses_the_last_image_assignment_in_env(self):
@@ -799,7 +681,7 @@ esac
         self.assert_success(result)
         self.assertNotIn('COMPOSE_FILE=', (self.root / '.env').read_text())
         log = (self.root / 'docker.log').read_text()
-        self.assertIn('pull --policy missing platform mysql', log)
+        self.assertIn('pull --policy missing platform', log)
         self.assertNotIn('build platform', log)
 
     def test_start_refuses_local_build(self):
@@ -810,7 +692,7 @@ esac
     def test_prebuilt_image_skips_build(self):
         self.assert_success(self.install(LOOPFORGE_IMAGE='registry.example.test/loopforge:tested'))
         log = (self.root / 'docker.log').read_text()
-        self.assertIn('pull --policy missing platform mysql', log)
+        self.assertIn('pull --policy missing platform', log)
         self.assertNotIn('build platform', log)
         self.assertIn('--no-build --wait --wait-timeout 180', log)
 

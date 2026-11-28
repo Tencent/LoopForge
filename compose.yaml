@@ -1,41 +1,5 @@
 name: loopforge
 services:
-  mysql:
-    image: mysql:8.4
-    environment:
-      MYSQL_DATABASE: loopforge
-      MYSQL_USER: loopforge
-      MYSQL_PASSWORD: ${LOOPFORGE_DB_PASSWORD:?Run scripts/configure.sh first}
-      MYSQL_ROOT_PASSWORD: ${LOOPFORGE_DB_ROOT_PASSWORD:?Run scripts/configure.sh first}
-    command: ["--character-set-server=utf8mb4", "--collation-server=utf8mb4_unicode_ci"]
-    ports:
-      - "127.0.0.1:${LOOPFORGE_MYSQL_PORT:-33315}:3306"
-    volumes:
-      - mysql-data:/var/lib/mysql
-    healthcheck:
-      test: ["CMD-SHELL", "MYSQL_PWD=$$MYSQL_PASSWORD mysqladmin ping -h 127.0.0.1 -u loopforge --silent"]
-      interval: 2s
-      timeout: 3s
-      retries: 60
-  artifact-migration:
-    profiles: [platform]
-    # Upgrade existing volumes before the platform starts. Fresh schemas are created by the platform.
-    image: mysql:8.4
-    entrypoint: ["sh", "-ec"]
-    command:
-      - exec mysql -h mysql -u loopforge loopforge < /migrations/042_run_artifacts_content_mediumtext.sql
-    environment:
-      MYSQL_PWD: ${LOOPFORGE_DB_PASSWORD:?Run scripts/configure.sh first}
-    volumes:
-      - type: bind
-        source: ./migrations/042_run_artifacts_content_mediumtext.sql
-        target: /migrations/042_run_artifacts_content_mediumtext.sql
-        read_only: true
-        bind:
-          create_host_path: false
-    depends_on:
-      mysql:
-        condition: service_healthy
   platform:
     profiles: [platform]
     # Published release stack: never builds. Bump the pinned tag (here and in
@@ -47,7 +11,12 @@ services:
       - "host.docker.internal:host-gateway"
     environment:
       AGENTFLOW_HTTP_PORT: 8080
-      AGENTFLOW_MYSQL_DSN: loopforge:${LOOPFORGE_DB_PASSWORD}@tcp(mysql:3306)/loopforge
+      # The database is the operator's own Postgres (Supabase on this machine).
+      # A container reaches it through the Docker host gateway, so the DSN in
+      # .env carries host.docker.internal instead of 127.0.0.1.
+      # scripts/configure.sh writes LOOPFORGE_COMPOSE_DATABASE_URL; without it
+      # the platform refuses to start instead of guessing a database.
+      AGENTFLOW_DATABASE_URL: ${LOOPFORGE_COMPOSE_DATABASE_URL:-}
       AGENTFLOW_SESSION_SECRET: ${AGENTFLOW_SESSION_SECRET:?Run scripts/configure.sh first}
       AGENTFLOW_PROJECT_CREDENTIAL_KEY: ${AGENTFLOW_PROJECT_CREDENTIAL_KEY:-}
       AGENTFLOW_AUTH_REQUIRED: "true"
@@ -94,11 +63,6 @@ services:
       # directory keeps the same absolute path inside the container.
       - ${LOOPFORGE_DATA_DIR}:${LOOPFORGE_DATA_DIR}
       - ${LOOPFORGE_DOCKER_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock
-    depends_on:
-      mysql:
-        condition: service_healthy
-      artifact-migration:
-        condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/api/health', timeout=2).close()"]
       interval: 3s
@@ -107,5 +71,4 @@ services:
       start_period: 10s
     restart: unless-stopped
 volumes:
-  mysql-data:
   platform-data:

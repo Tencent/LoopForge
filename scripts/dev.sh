@@ -7,19 +7,42 @@ set -a
 source .env
 set +a
 mkdir -p .local/bin .local/workspaces
-docker compose up -d --wait mysql
-docker compose --profile platform run --rm --no-deps artifact-migration
+# The DSN decides the dialect. AGENTFLOW_DATABASE_URL accepts a Postgres URL
+# and a MySQL DSN alike, so the presence of the variable is not enough.
+database_is_postgres() {
+  case "${AGENTFLOW_DATABASE_URL:-}" in
+    postgres://*|postgresql://*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+if ! database_is_postgres; then
+  # Upstream default path: the database is a service of the Compose stack.
+  # This fork's compose.yaml defines no mysql service, so an installation
+  # against an own MySQL server seeds its catalog by hand.
+  compose_mysql=0
+  if docker compose config --services 2>/dev/null | grep -qx mysql; then
+    compose_mysql=1
+    docker compose up -d --wait mysql
+    docker compose --profile platform run --rm --no-deps artifact-migration
+  fi
+fi
 bash scripts/build-binaries.sh
 if [[ ! -f .local/admin-password ]]; then
   (umask 077; python3 -c 'import secrets; print(secrets.token_urlsafe(18))' > .local/admin-password)
 fi
+# The account command opens the store, so the tables exist before the
+# schema extensions and the catalog are installed.
 .local/bin/loopforge-account -user admin -admin < .local/admin-password
-if [[ -n "${AGENTFLOW_DATABASE_URL:-}" ]]; then
+if database_is_postgres; then
   bash scripts/install-schema-extensions-pg.sh
 else
   bash scripts/install-observability-schema.sh
-  docker compose exec -T mysql sh -c 'MYSQL_PWD="$MYSQL_PASSWORD" mysql -u loopforge loopforge' < migrations/seed/001_public_catalog.sql
-  docker compose exec -T mysql sh -c 'MYSQL_PWD="$MYSQL_PASSWORD" mysql -u loopforge loopforge' < migrations/seed/002_welcome_project.sql
+  if [[ "${compose_mysql:-0}" == 1 ]]; then
+    docker compose exec -T mysql sh -c 'MYSQL_PWD="$MYSQL_PASSWORD" mysql -u loopforge loopforge' < migrations/seed/001_public_catalog.sql
+    docker compose exec -T mysql sh -c 'MYSQL_PWD="$MYSQL_PASSWORD" mysql -u loopforge loopforge' < migrations/seed/002_welcome_project.sql
+  else
+    printf 'Apply migrations/seed/001_public_catalog.sql and migrations/seed/002_welcome_project.sql to your MySQL server.\n'
+  fi
 fi
 printf 'Open http://localhost:%s — account: admin — password: .local/admin-password\n' "$AGENTFLOW_HTTP_PORT"
 export AGENTFLOW_RUNNER_BINARY="$PWD/.local/bin/agentflow-runner-{os}-{arch}"

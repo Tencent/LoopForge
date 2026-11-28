@@ -2,7 +2,9 @@
 
 ## Native development
 
-`bash scripts/dev.sh` explicitly configures local secrets, starts only this checkout's MySQL service, builds the platform, provisions the `admin` account, installs the missing observability generated columns through an explicit script, applies `migrations/seed/*.sql`, and starts the server on port 8090. Existing catalog definitions are preserved by `INSERT IGNORE`. Keep `.env`, `.local/` and database volumes outside version control.
+`bash scripts/dev.sh` explicitly configures local secrets, builds the platform, provisions the `admin` account, installs the missing observability generated columns and the starter catalog through an explicit script, and starts the server on port 8090. It connects to the operator's own Postgres and starts no database container; see [Postgres deployment](#postgres-deployment-this-fork). Existing catalog definitions are preserved by the seed's `ON CONFLICT DO NOTHING`. Keep `.env`, `.local/` and database volumes outside version control.
+
+Without `AGENTFLOW_DATABASE_URL` in `.env` the script keeps upstream's MySQL behaviour: it applies the MySQL observability columns and seeds them with `migrations/seed/*.sql`, and it starts the Compose `mysql` service when the Compose stack defines one. That path needs a Compose stack that ships the `mysql` service; this fork's `compose.yaml` deploys to Postgres instead, so on this fork the MySQL path seeds an external MySQL server by hand. The scripts pick the dialect from the DSN itself, not from the variable's name: `AGENTFLOW_DATABASE_URL` accepts a MySQL DSN (`user:pw@tcp(host:port)/db`) as well as a Postgres URL, and a MySQL DSN there selects the MySQL schema scripts.
 
 For a native installation, use Node.js 22+ on the API host and install the CLI you plan to use. Example with Codex:
 
@@ -29,9 +31,84 @@ The updater keeps observations of Cursor and Antigravity releases across daily c
 
 A conversation workspace on a custom Dockerfile without Node.js, npm or Python 3 uses the platform's own copies. On first use the platform copies its Node.js, npm and a relocatable Python into `$LOOPFORGE_DATA_DIR/cli/toolchain/<build>/`, plus each bundled CLI (CodeBuddy, Codex, DeepSeek Harness) the first time a sandbox needs it, and mounts the directory read-only at the end of the sandbox `PATH`. Tools the image ships take precedence. Only glibc images of the platform's architecture use it; Alpine (musl) images need their own Node.js, npm and Python 3. A new platform build creates a new directory and leaves the previous ones in place: after an upgrade, delete the other `cli/toolchain/<build>/` directories (about 200 MB each plus the CLIs copied into them).
 
-Stop the foreground service with Ctrl-C. Start it again with the same command. MySQL data stays in its Compose volume. `docker compose stop mysql` stops the database without deleting it.
+Stop the foreground service with Ctrl-C. Start it again with the same command. The data stays in the database the DSN points at.
 
-Use `AGENTFLOW_MYSQL_DSN` for your own MySQL deployment. A fresh account command or server connection creates missing schema objects. Apply existing-installation data migrations individually after reviewing their prerequisites; do not blindly replay all historical migrations against a new database.
+Use `AGENTFLOW_DATABASE_URL` for your own Postgres deployment (see below) and `AGENTFLOW_MYSQL_DSN` for an external MySQL server, which stays the platform's default dialect. A fresh account command or server connection creates missing schema objects. Apply existing-installation data migrations individually after reviewing their prerequisites; do not blindly replay all historical migrations against a new database.
+
+## Postgres deployment (this fork)
+
+This fork runs the platform against the operator's own Postgres — a local Supabase instance — instead of starting a MySQL container. MySQL stays the platform's default dialect and the upstream MySQL deployment paths are unchanged; only this fork's deployment scripts point at Postgres.
+
+### Prerequisites
+
+- The Postgres client tools (`psql`). The native path and the installer run the schema extensions with the host `psql`; `brew install libpq` installs it on macOS.
+- A database for the platform and one for the integration tests:
+
+```bash
+psql "$SUPABASE_DB_URL" -c 'CREATE DATABASE loopforge;'
+psql "$SUPABASE_DB_URL" -c 'CREATE DATABASE loopforge_test;'
+```
+
+`loopforge_test` is the scratch database the Postgres integration tests use. It is created separately, and it is emptied before each run.
+
+### The connection string
+
+The platform reads `AGENTFLOW_DATABASE_URL`. The form of this fork's Supabase connection string is:
+
+```
+postgres://postgres.cesar:<POSTGRES_PASSWORD>@127.0.0.1:5432/loopforge?sslmode=disable
+```
+
+The tenant segment of the role (`cesar` in `postgres.cesar`) must match the Supabase project's pooler tenant; Supavisor routes on `user.tenant`. The pool size stays at 10 connections, because Supavisor's session mode gives every client connection its own backend.
+
+`scripts/configure.sh` writes the DSN into `.env` (mode 0600, git-ignored) from the password it finds: `LOOPFORGE_PG_PASSWORD` first, `POSTGRES_PASSWORD` — the name your Supabase `.env` already uses — as a fallback. Export the password before the first run, or put it in `.env`:
+
+```bash
+export POSTGRES_PASSWORD='...'
+bash scripts/configure.sh
+```
+
+The password never leaves `.env`. It is written single-quoted, so `set -a; . ./.env` keeps a password containing `&` or `#` literal.
+
+`scripts/configure.sh` assembles the DSN from `LOOPFORGE_PG_HOST` (`127.0.0.1`), `LOOPFORGE_PG_PORT` (`5432`), `LOOPFORGE_PG_USER` (`postgres.cesar`) and `LOOPFORGE_PG_DATABASE` (`loopforge`) when those are set in the environment.
+
+### The native and the Compose host differ
+
+A native platform process reaches the database on this machine through `127.0.0.1`. A container reaches the same database through the Docker host gateway, so the Compose stack needs `host.docker.internal` instead. `scripts/configure.sh` therefore writes two DSNs:
+
+| Variable | Used by | Host |
+| --- | --- | --- |
+| `AGENTFLOW_DATABASE_URL` | the native platform process, the host `psql` | `127.0.0.1` |
+| `LOOPFORGE_COMPOSE_DATABASE_URL` | the `platform` container in `compose.yaml` | `host.docker.internal` |
+
+Both point at the same database; only the host differs. `compose.yaml` reads `LOOPFORGE_COMPOSE_DATABASE_URL` and passes it to the container as `AGENTFLOW_DATABASE_URL`. Set `LOOPFORGE_PG_COMPOSE_HOST` before running `scripts/configure.sh` when the database is not on this machine.
+
+### Install
+
+```bash
+export POSTGRES_PASSWORD='...'   # or LOOPFORGE_PG_PASSWORD
+bash scripts/dev.sh               # native: build, account, schema extensions, run
+./start.sh                        # container installation
+```
+
+`scripts/dev.sh` runs the `loopforge-account` command before the schema extensions, because that command opens the store and creates the tables; the generated columns are added to existing tables afterwards. `scripts/install-schema-extensions-pg.sh` applies `migrations/001_run_obs_generated_columns.pg.sql` and the two seed files under `migrations/seed/pg/`. It is idempotent: run it as often as you like. The deployment scripts select the Postgres scripts when the DSN is a `postgres://` URL and keep the MySQL scripts for a MySQL DSN, so an external MySQL server still works through the same variable.
+
+### What the Postgres path does not port
+
+- **Migrations 033, 038 and 043 are not ported.** Their MySQL syntax (`JSON_TABLE`, `JSON_SET` with computed paths, user variables, `SHA2`, `BINARY` comparison) has no Postgres counterpart here, and the seed files already encode their end state: the 「发起 MR」 node of the built-in code delivery LOOPs, the `git credential fill` credential instructions and the built-in template names are all in `migrations/seed/pg/001_public_catalog.sql`. An existing Postgres installation does not pick up their effects when the seed is updated; re-import the seed or apply the statements by hand.
+- **No `run_artifacts.content` migration.** The MySQL path widens the column from `TEXT` to `MEDIUMTEXT` before the platform starts (`migrations/042_run_artifacts_content_mediumtext.sql`). On Postgres the column is created as unbounded `text` from the start, so the 1 MiB inline artifact contract needs no equivalent migration and the Compose stack has no migration service.
+- **The MySQL data migrations are unchanged and stay MySQL-only.** `009`, `016`, `021`, `036`, `037` and `041` are written for MySQL. The sections below that run them with `docker compose exec -T mysql` describe the upstream MySQL path; port them by hand before relying on them in a Postgres installation.
+
+### Known dialect differences (已知方言差异)
+
+Two differences between the dialects remain, both deliberate and both narrow. You see them only in rows that the platform did not write itself — a hand-edited row, or a row left behind by an older release.
+
+- **A JSON null reads as SQL NULL instead of the text `null`.** Postgres's `payload::jsonb #>> '{path}'` maps a JSON null to SQL NULL; MySQL's `JSON_UNQUOTE(JSON_EXTRACT(...))` maps it to the text `null`. The only place the difference is observable is the project filter in `internal/repo/runs_sop_detection.go`: a run whose `execution_context.projectId` is explicitly JSON null counts as "no project" on Postgres and as "has a project" on MySQL. The platform writes a project ID or omits the key, so this only affects hand-edited or legacy rows.
+- **`=` is case-sensitive on Postgres.** MySQL's `utf8mb4_unicode_ci` collation makes `=` case-insensitive for every string column, so `id = ?` and `quota_bucket = ?` matched regardless of case. Postgres compares exactly. The platform only writes canonical lowercase values for those keys, and the one user-typed field — the login name — already goes through `internal/repo/users.go`'s `UserByLoginName`, which compares with `LOWER(u.login_name) = LOWER(?)` on both dialects. No user-facing behaviour differs today. A hand-edited row whose key is not in canonical case matches on MySQL and does not match on Postgres; the stricter comparison yields a distinct row instead of silently merging two records into one account.
+
+### Known limitation: the upstream CI workflows do not pass on this branch
+
+`.github/workflows/platform.yml` (the `browser` and `first-run` jobs) and `.github/workflows/release.yml` drive the deployment through `./start.sh dev` and `./start.sh -d`. Those paths install a Compose stack, and this fork's stack has no MySQL service: they need an `AGENTFLOW_DATABASE_URL` that reaches a Postgres, and a GitHub Actions runner has no Supabase instance. The workflows are unchanged in this fork, so they do not pass while the deployment targets a local Supabase. Supply a Postgres service to the runner, or point the workflows at an external database, before relying on them here.
 
 ## Choosing an executor
 
@@ -59,13 +136,13 @@ MIRROR=ghcr.nju.edu.cn ./start.sh # force that host instead of the speed test
 ./start.sh release                # switch a source build back to the published image
 ```
 
-The installer checks Docker, Compose, Python 3 and curl. It offers to install missing Python/curl packages using apt, dnf or yum on Linux (Homebrew on macOS), Docker using its official installer, and the missing Linux x86_64/arm64 Compose plugin using the pinned official release with SHA-256 verification. A plugin is installed for the active Docker user, or system-wide when Docker requires sudo. macOS Compose comes from Docker Desktop. Set `LOOPFORGE_YES=1` to accept installation prompts; internet access and package-manager/administrator permissions are still required. The installer generates `.env` with unique secrets, pulls and starts the containers, installs the observability columns and applies `migrations/seed/*.sql`. It is safe to re-run. Set `AGENTFLOW_HTTP_PORT` or `LOOPFORGE_MYSQL_PORT` in the environment before the first run (or edit `.env` later) when the default ports are taken.
+The installer checks Docker, Compose, Python 3 and curl. It offers to install missing Python/curl packages using apt, dnf or yum on Linux (Homebrew on macOS), Docker using its official installer, and the missing Linux x86_64/arm64 Compose plugin using the pinned official release with SHA-256 verification. A plugin is installed for the active Docker user, or system-wide when Docker requires sudo. macOS Compose comes from Docker Desktop. Set `LOOPFORGE_YES=1` to accept installation prompts; internet access and package-manager/administrator permissions are still required. The installer generates `.env` with unique secrets, pulls and starts the containers, installs the observability columns and applies the starter catalog. It is safe to re-run. This fork's installer connects to the operator's own Postgres instead of starting a MySQL container, so it needs the Postgres client tools on the host and an `AGENTFLOW_DATABASE_URL`; see [Postgres deployment](#postgres-deployment-this-fork). Set `AGENTFLOW_HTTP_PORT` in the environment before the first run (or edit `.env` later) when the default port is taken.
 
 Run it as the installation owner, including an ordinary Linux user. If that user cannot access Docker directly, the installer validates sudo and uses `sudo -n docker` consistently for Compose, schema installation and seeds. Before each operation it checks whether sudo credentials expired during a long build, prompting again in a terminal or failing with instructions in unattended mode. It does not require adding the user to the Docker group or logging out. For unattended installations run `sudo -v` first; `LOOPFORGE_YES=1` accepts installation prompts but does not bypass operating-system permissions. Without sudo or Docker access it fails immediately with instructions. Rootless Docker uses its active context's Unix socket; remote Docker contexts need a separately configured deployment because sandbox workspaces are local bind mounts.
 
 `compose.yaml` is the published-image stack and never builds: `./start.sh`, `scripts/install.sh` and a plain `docker compose --profile platform up` all pull the GHCR release pinned there (currently `ghcr.io/tencent/loopforge:0.4.3`). The pin matches the checkout's migrations and seeds, so check out a release tag when you install. Set `LOOPFORGE_IMAGE` (for example to an `@sha256:` digest) only to override it; a value saved in `.env` takes precedence over later pin changes.
 
-To upgrade, update the checkout first, apply any manual migrations required by the release, then refresh the containers. The Compose upgrade applies sandbox migration 041 before starting the platform when needed. See [Migrating existing sandboxes to inline assets](#migrating-existing-sandboxes-to-inline-assets).
+To upgrade, update the checkout first, apply any manual migrations required by the release, then refresh the containers. The MySQL Compose upgrade applies sandbox migration 041 before starting the platform when needed; a Postgres installation has no legacy MySQL volume and no such upgrade. See [Migrating existing sandboxes to inline assets](#migrating-existing-sandboxes-to-inline-assets).
 
 ```bash
 git fetch --tags && git checkout vX.Y.Z
@@ -266,7 +343,9 @@ After upgrading, the machine owner can resume a conversation already bound to th
 
 ## Observability schema
 
-After the base tables have been created, run `bash scripts/install-schema-extensions.sh` for the Compose database. It installs absent `run_telemetry.adapter` and `run_logs.level` columns and their indexes from upstream migration `001_run_obs_generated_columns.sql`, then replays the `INSERT IGNORE` starter catalog and the built-in catalog updates in `033_generic_sop_mr_node.sql`, `038_generic_sop_host_credentials.sql` and `043_loop_terminology.sql`, in that order. The rewrites are repeatable and apply only to matching defaults. The installer runs it before printing the address, and `./start.sh pull` runs it again after recreating containers, so an older data volume upgraded to a newer image picks up the columns the new code reads and the built-in LOOP graphs the new code ships. Application startup does not run data migrations.
+After the base tables have been created, run `bash scripts/install-schema-extensions.sh` for the MySQL Compose database. It installs absent `run_telemetry.adapter` and `run_logs.level` columns and their indexes from upstream migration `001_run_obs_generated_columns.sql`, then replays the `INSERT IGNORE` starter catalog and the built-in catalog updates in `033_generic_sop_mr_node.sql`, `038_generic_sop_host_credentials.sql` and `043_loop_terminology.sql`, in that order. The rewrites are repeatable and apply only to matching defaults. The installer runs it before printing the address, and `./start.sh pull` runs it again after recreating containers, so an older data volume upgraded to a newer image picks up the columns the new code reads and the built-in LOOP graphs the new code ships. Application startup does not run data migrations.
+
+A Postgres installation runs `bash scripts/install-schema-extensions-pg.sh` instead. It applies the Postgres generated columns from `migrations/001_run_obs_generated_columns.pg.sql` and the two seed files under `migrations/seed/pg/`, in that order, and it does not replay migrations 033, 038 and 043 — the seed already carries their end state. See [What the Postgres path does not port](#what-the-postgres-path-does-not-port).
 
 For an external MySQL deployment, review that migration and check column existence before applying its corresponding statements. Stored generated columns can rebuild large existing tables; schedule the operation accordingly.
 
@@ -276,12 +355,12 @@ For an external MySQL deployment, review that migration and check column existen
 
 | Kind | Example | What an operator does |
 | --- | --- | --- |
-| Already applied by the installer and `./start.sh pull` | `001_run_obs_generated_columns.sql`, `migrations/seed/*.sql`, `033_generic_sop_mr_node.sql`, `038_generic_sop_host_credentials.sql` | Nothing; the script above covers it |
-| Applied before startup by `./start.sh pull` for an existing Compose database | `041_native_sandbox_inline_assets.sql` | See [Migrating existing sandboxes to inline assets](#migrating-existing-sandboxes-to-inline-assets) |
+| Already applied by the installer and `./start.sh pull` | `001_run_obs_generated_columns.sql`, `migrations/seed/*.sql`, `033_generic_sop_mr_node.sql`, `038_generic_sop_host_credentials.sql` | Nothing; the script above covers it. On Postgres: `migrations/001_run_obs_generated_columns.pg.sql` and `migrations/seed/pg/*.sql`, without 033, 038 and 043 |
+| Applied before startup by `./start.sh pull` for an existing Compose database (upstream MySQL path; this fork's pull does not run it) | `041_native_sandbox_inline_assets.sql` | See [Migrating existing sandboxes to inline assets](#migrating-existing-sandboxes-to-inline-assets) |
 | Required manual upgrade migrations | `009_bot_interactions_utf8mb4.sql`, `036_git_http_credentials.sql` | Follow each migration's timing and prerequisites. [Migrating existing GitHub credentials](#migrating-existing-github-credentials) |
 | Optional backfills and rewrites of existing rows | `016_public_optional_repositories.sql`, `021_assistant_session_sources.sql` | Run them if the installation needs the converted rows |
 
-Compose runs `migrations/042_run_artifacts_content_mediumtext.sql` before the
+The MySQL Compose stack runs `migrations/042_run_artifacts_content_mediumtext.sql` before the
 platform starts, including during `./start.sh pull`. The native development
 script runs the same migration against its Compose database. It widens an existing
 `run_artifacts.content` column from `TEXT` to `MEDIUMTEXT` for inline artifacts
@@ -291,8 +370,12 @@ For a deployment using an external MySQL server and no Compose startup, run this
 SQL file in the deployment's database upgrade step before starting the new binary.
 If the Compose migration fails, review `docker compose --profile platform logs
 artifact-migration`, resolve the database error and rerun the upgrade.
+Postgres needs no equivalent: `run_artifacts.content` is created as unbounded
+`text` from the start, so there is no migration service in the Postgres stack.
 
 ### Migrating existing sandboxes to inline assets
+
+This is the MySQL upgrade path: it migrates a legacy MySQL volume, and `./start.sh pull` in this fork no longer runs it. A Postgres installation has no legacy MySQL volume and no legacy asset tables to convert.
 
 For a published Compose release, check out the target release and run `./start.sh pull`. If other API or worker processes share the Compose database, stop them first. After pulling the images, the command checks that the target image supports inline Dockerfiles and that the database still has a legacy asset table. When both conditions hold, it stops the platform, saves a database dump in `.local/loopforge-before-041.*/loopforge.sql`, and runs 041 before starting the new platform. An empty database or one whose legacy tables are already gone skips 041.
 
@@ -310,6 +393,8 @@ For external MySQL deployments, stop the platform processes, back up the databas
 The migration copies Dockerfiles into sandboxes, converts local sandboxes to native, drops the legacy Dockerfile and environment tables and includes the built-in Dockerfile fix from `031_generic_backend_openssh.sql`. Fresh installations seed the new sandbox format directly.
 
 ## Updating existing public LOOPs
+
+The SQL below is MySQL. A Postgres installation receives the same catalog state from `migrations/seed/pg/001_public_catalog.sql`, which the schema extension script applies; see [What the Postgres path does not port](#what-the-postgres-path-does-not-port).
 
 Repository binding is optional for all built-in generic LOOPs. To update the original catalog instructions on an existing installation, explicitly apply:
 
@@ -346,6 +431,8 @@ Git commits created by the platform use the responsible local account name and a
 
 ### Migrating existing GitHub credentials
 
+This migration is MySQL. A Postgres installation stores the same credentials in the same columns; port the statements by hand when an upgrade needs them.
+
 When upgrading from v0.4.0 to a version that reads HTTPS credentials by host, stop the old API and workers and keep MySQL running. Apply the target release's `036_git_http_credentials.sql` manually before starting the upgraded platform or running `./start.sh pull`. For Compose, use:
 
 ```bash
@@ -377,3 +464,5 @@ Asset evolution adds optional manual DDL and a separately applied product-templa
 Run `python3 scripts/test-install.py -v` for installer regression tests covering sudo selection, direct Docker access, unattended permission failures, repeated installation, image mode and access URLs. With a locally built platform image, `LOOPFORGE_INSTALL_TEST_IMAGE=your-image bash scripts/test-install-live.sh` verifies real root and UID 65534 installations, non-loopback HTTP access, first-account creation and repeated installation in isolated Compose projects on random ports. This live test requires a Linux root test runner to drop privileges; it removes its own containers and volumes afterwards. To also exercise real sudo inside a disposable UID 1000 installer container, build `scripts/testdata/install-sudo.Dockerfile` with `--build-arg LOOPFORGE_TEST_BASE=your-image`, then pass that test image as `LOOPFORGE_INSTALL_SUDO_TEST_IMAGE`. The production installer itself does not require root.
 
 From the repository root, run `bash scripts/test-container.sh` after installing `e2e/` dependencies and Chromium. It builds the production image, creates an isolated Compose project and database on ports 8093/33317, provisions test accounts, explicitly applies the observability baseline and public catalog, checks bundled CLIs and cross-platform runner/gate binaries, and runs the public browser suite. Its containers and volumes are removed afterwards. Override `LOOPFORGE_CONTAINER_TEST_PORT` and `LOOPFORGE_CONTAINER_MYSQL_PORT` when those ports are in use. Model calls are disabled for this clean-install check.
+
+`scripts/test-install-live.sh` and `scripts/test-container.sh` are upstream's MySQL acceptance harnesses: they drive the Compose stack's own `mysql` service, which this fork's `compose.yaml` no longer defines. They are kept as they are — the upstream default path is not deleted — and they do not run against this fork's Postgres deployment. The mocked installer suite (`python3 scripts/test-install.py -v`) covers the deployment scripts here; it drives the installer, the Compose wiring and the Postgres schema extension script without a database.

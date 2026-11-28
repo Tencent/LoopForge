@@ -3,6 +3,13 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 root="$PWD"
 image="${LOOPFORGE_INSTALL_TEST_IMAGE:?Set LOOPFORGE_INSTALL_TEST_IMAGE to the locally built platform image}"
+if ! docker compose -f "$root/compose.yaml" config --services 2>/dev/null | grep -qx mysql; then
+  # The upstream live harness drives the Compose stack's own database service.
+  # This fork's stack deploys to Postgres and defines no mysql service, so the
+  # harness cannot run here.
+  printf 'This harness needs the Compose stack to define the mysql service (the upstream default path). This fork deploys to Postgres; use scripts/test-install.py for the installer checks.\n' >&2
+  exit 1
+fi
 task_dir=$(mktemp -d /tmp/loopforge-install-live.XXXXXX)
 chmod 755 "$task_dir"
 docker_socket="${LOOPFORGE_DOCKER_SOCKET:-/var/run/docker.sock}"
@@ -21,13 +28,17 @@ actors=(root nonroot without-compose)
 for actor in "${actors[@]}"; do
   fixture="$task_dir/$actor"
   mkdir -p "$fixture/scripts" "$fixture/migrations/seed" "$fixture/user-home"
-  cp scripts/{install.sh,configure.sh,docker-access.sh,ghcr-mirror.sh,install-address.py,install-compose.py,install-observability-schema.sh,install-schema-extensions.sh} "$fixture/scripts/"
+  cp scripts/{install.sh,configure.sh,docker-access.sh,ghcr-mirror.sh,install-address.py,install-compose.py,install-observability-schema.sh,install-schema-extensions.sh,install-schema-extensions-pg.sh} "$fixture/scripts/"
   cp migrations/001_run_obs_generated_columns.sql \
+    migrations/001_run_obs_generated_columns.pg.sql \
     migrations/033_generic_sop_mr_node.sql \
     migrations/038_generic_sop_host_credentials.sql \
     migrations/042_run_artifacts_content_mediumtext.sql \
     migrations/043_loop_terminology.sql "$fixture/migrations/"
   cp migrations/seed/*.sql "$fixture/migrations/seed/"
+  mkdir -p "$fixture/migrations/seed/pg"
+  cp migrations/seed/pg/001_public_catalog.sql \
+    migrations/seed/pg/002_welcome_project.sql "$fixture/migrations/seed/pg/"
   cp compose.yaml "$fixture/"
   read -r http_port mysql_port < <(python3 - <<'PY'
 import socket
