@@ -1654,7 +1654,7 @@ func TestIsolateClaudeFlagsUsesHostUserSettings(t *testing.T) {
 }
 
 func TestCodexInDockerUsesTheContainerAsItsSandbox(t *testing.T) {
-	for driver, want := range map[string]string{"docker": "danger-full-access", "bwrap": "danger-full-access", "local": "workspace-write"} {
+	for driver, want := range map[string]string{"docker": "danger-full-access", "bwrap": "danger-full-access", "seatbelt": "danger-full-access", "local": "workspace-write"} {
 		ex := domain.ExecutorDefinition{Kind: "codex", Binary: "codex", Args: []string{"exec", "--json", "--sandbox", "workspace-write", "--skip-git-repo-check"}}
 		command, err := PrepareProviderCommand(ex, "probe", driver, InvocationOptions{ResumeSessionID: "thread-1"})
 		if err != nil {
