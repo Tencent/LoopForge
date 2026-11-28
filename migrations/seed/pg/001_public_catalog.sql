@@ -6,8 +6,9 @@
 -- - 字符串字面量一律写成 E'...'：MySQL 的普通字符串把 `\\` 解成一个反斜杠，Postgres
 --   的标准字符串（standard_conforming_strings=on）保留反斜杠；E 字符串的解码规则与
 --   MySQL 逐字节一致，所以字面量内容一个字都没改（只加了 E 前缀）。
--- - 冲突处理改成 INSERT ... ON CONFLICT DO NOTHING：保留运维改过的定义。
--- - MySQL 版的字符集与事务控制语句已删除：psql 以 ON_ERROR_STOP=1 单事务执行。
+-- - 冲突处理改用 Postgres 的 ON CONFLICT 子句（DO NOTHING）：保留运维改过的定义。
+-- - MySQL 版的字符集与事务控制语句已删除：改由 psql 的 --single-transaction 把整个
+--   文件放进一个事务，语义与 MySQL 版种子文件的显式事务一致。
 -- - UTC_TIMESTAMP() -> now()。
 INSERT INTO sandboxes ("id","name","payload") VALUES (E'generic-docker',E'Docker 隔离沙箱',E'{"id":"generic-docker","name":"Docker 隔离沙箱","shared":true,"driver":"docker","readOnlyRootFS":false,"dockerfile":{"content":"FROM node:22-bookworm\\nRUN apt-get update && apt-get install -y --no-install-recommends git openssh-client python3 ripgrep ca-certificates curl && rm -rf /var/lib/apt/lists/*\\nRUN npm install -g @openai/codex @anthropic-ai/claude-code @tencent-ai/codebuddy-code\\nWORKDIR /workspace\\n"}}') ON CONFLICT DO NOTHING;
 INSERT INTO rules ("id","name","payload") VALUES (E'public-engineering',E'工程与验证约束',E'{"version":1,"updatedAt":"2026-10-15T00:00:00Z","id":"public-engineering","name":"工程与验证约束","shared":true,"priority":100,"content":"先阅读仓库约束并明确范围；只修改任务所需文件。不得泄露凭据，不得伪造测试或交付证据。使用项目现有构建与测试命令，报告真实结果与限制。发布 PR 前检查 diff；未经任务授权不得合并主分支。"}') ON CONFLICT DO NOTHING;

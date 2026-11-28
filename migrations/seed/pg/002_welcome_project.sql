@@ -13,8 +13,9 @@
 --   JSON_ARRAY() -> '[]'::jsonb；
 --   JSON_ARRAY(JSON_OBJECT(...)) -> jsonb_build_array(jsonb_build_object(...))。
 -- - FROM DUAL 删除：Postgres 的 SELECT 不带 FROM 时恒返回一行。
--- - 冲突处理改成 ON CONFLICT DO NOTHING；UTC_TIMESTAMP() -> now()。
--- - MySQL 版的字符集与事务控制语句已删除：psql 以 ON_ERROR_STOP=1 单事务执行。
+-- - 冲突处理改用 Postgres 的 ON CONFLICT 子句（DO NOTHING）；UTC_TIMESTAMP() -> now()。
+-- - MySQL 版的字符集与事务控制语句已删除：改由 psql 的 --single-transaction 把整个
+--   文件放进一个事务，语义与 MySQL 版种子文件的显式事务一致。
 
 INSERT INTO projects (id, project_key, name, owner_user_id, payload, created_at, updated_at)
 SELECT 'welcome',

@@ -5,6 +5,12 @@
 #
 # This script is idempotent: run it as many times as you like.
 #
+# Precondition: the platform tables must already exist. They are created by
+# gorm AutoMigrate when the platform opens the store — scripts/dev.sh runs the
+# loopforge-account step before this script for exactly that reason. Running
+# this against an empty database fails with 'relation "run_telemetry" does not
+# exist'.
+#
 # Limitation: the MySQL counterpart (scripts/install-schema-extensions.sh) also
 # replays migrations 033/038/043. The Postgres side does not port them — the
 # seed files already encode their end state — so an existing Postgres
@@ -32,7 +38,7 @@ fi
 apply_sql() {
   local file="$1"
   printf 'Applying %s\n' "$file"
-  if ! psql "$dsn" -v ON_ERROR_STOP=1 -f "$file"; then
+  if ! psql "$dsn" -v ON_ERROR_STOP=1 --single-transaction -f "$file"; then
     printf 'Failed to apply %s\n' "$file" >&2
     exit 1
   fi
