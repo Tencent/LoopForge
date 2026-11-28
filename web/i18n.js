@@ -109,6 +109,7 @@
     [/(\d{4})年(\d{1,2})月/g, (_, y, m) => `${MONTHS[m - 1] || m} ${y}`],
     [/(^|[^\d])(\d{1,2})月(?![\u3400-\u9fff])/g, (_, pre, m) => pre + (MONTHS[m - 1] || m)],
     [/共\s*(\d+)\s*(?=[A-Za-z])/g, '$1 '],
+    [/共\s*(\d+)\s*(条|个|项)/g, (_, n) => `${n} ${Number(n) === 1 ? 'item' : 'items'}`],
     [/(\d{4}-\d{2}-\d{2})\s*至\s*(\d{4}-\d{2}-\d{2})/g, '$1 – $2'],
     [/(\d+(?:\.\d+)?)\s*(次|步|个|台|条|篇)(?![\u3400-\u9fff])/g, (_, n, u) => {
       const word = UNITS[u][Number(n) === 1 ? 0 : 1];
@@ -122,14 +123,17 @@
     return trimmed && Object.prototype.hasOwnProperty.call(dict, trimmed) ? text.replace(trimmed, dict[trimmed]) : text;
   }
 
-  function translate(text) {
+  function translate(text, exactOnly) {
     if (!text || !HAN.test(text)) return text;
-    const hit = cache.get(text);
+    const cacheKey = exactOnly ? '=' + text : text;
+    const hit = cache.get(cacheKey);
     if (hit !== undefined) return hit;
     const trimmed = text.trim();
     let out;
     if (Object.prototype.hasOwnProperty.call(dict, trimmed)) {
       out = text.replace(trimmed, dict[trimmed]);
+    } else if (exactOnly) {
+      return text;
     } else {
       out = fragmentRE ? text.replace(fragmentRE, m => dict[m]) : text;
       if (sentenceRE && HAN.test(out)) out = out.replace(sentenceRE, m => dict[m]);
@@ -142,7 +146,7 @@
       if (/\s$/.test(text) === false) out = out.replace(/\s+$/, '');
     }
     if (cache.size > 20000) cache.clear();
-    cache.set(text, out);
+    cache.set(cacheKey, out);
     return out;
   }
   window.lfTranslate = translate;
@@ -150,10 +154,10 @@
   function skipped(el) {
     return !el || SKIP.has(el.tagName) || (el.closest && el.closest(SKIP_SEL));
   }
-  function translateText(node) {
+  function translateText(node, partial) {
     const parent = node.parentElement;
     if (skipped(parent)) return;
-    const next = parent.closest(DATA_SEL) ? translateExact(node.nodeValue) : translate(node.nodeValue);
+    const next = parent.closest(DATA_SEL) ? translateExact(node.nodeValue) : translate(node.nodeValue, partial);
     if (next !== node.nodeValue) node.nodeValue = next;
   }
   function translateAttrs(el) {
@@ -167,23 +171,95 @@
     }
     if (el.tagName === 'INPUT' && /^(button|submit|reset)$/i.test(el.type) && HAN.test(el.value)) el.value = translate(el.value);
   }
+  // Copy such as "<strong>平台所有项目共用执行名额</strong>，默认 10 条…" arrives
+  // split over several text nodes by inline markup, so a dictionary key for the
+  // whole sentence can never match a single node. Collect runs of text nodes and
+  // plain inline wrappers inside one block and match dictionary keys across them,
+  // replacing the run with the translation only when keys cover all of it.
+  const INLINE = new Set(['A', 'B', 'BR', 'CITE', 'CODE', 'EM', 'I', 'MARK', 'SMALL', 'SPAN', 'STRONG', 'TIME', 'U']);
+  const byInitial = new Map();
+  for (const key of fragments) {
+    const first = key[0];
+    if (!byInitial.has(first)) byInitial.set(first, []);
+    byInitial.get(first).push(key);
+  }
+  const KEEP_ATTRS = new Set(['class', 'style', 'title', 'aria-label', 'aria-hidden', 'role', 'lang', 'dir', 'data-i18n-skip']);
+  function inlineOnly(el) {
+    if (!INLINE.has(el.tagName) || !el.childNodes.length) return false;
+    for (const attr of el.attributes) if (!KEEP_ATTRS.has(attr.name) && !attr.name.startsWith('data-i18n')) return false;
+    for (const child of el.childNodes) {
+      if (child.nodeType === 3) continue;
+      if (child.nodeType !== 1 || !INLINE.has(child.tagName) || !inlineOnly(child)) return false;
+    }
+    return !el.closest(SKIP_SEL) && !el.closest(DATA_SEL);
+  }
+  function flatten(nodes) {
+    return nodes.map(node => {
+      if (node.nodeType === 3) return node.nodeValue;
+      return node.childNodes.length ? flatten([...node.childNodes]) : (node.textContent || '');
+    }).join('');
+  }
+  function matchRun(text) {
+    const out = [];
+    let i = 0;
+    let covered = 0;
+    let leftover = '';
+    while (i < text.length) {
+      const keys = byInitial.get(text[i]);
+      let best = null;
+      if (keys) for (const key of keys) if (text.startsWith(key, i)) { best = key; break; }
+      if (best) {
+        out.push(dict[best]);
+        covered += best.length;
+        i += best.length;
+      } else {
+        out.push(text[i]);
+        leftover += text[i];
+        i += 1;
+      }
+    }
+    // Only merge when the dictionary covers the whole run; a partial match would
+    // flatten markup around copy that still needs its own translation.
+    return covered && !leftover.trim() ? out.join('') : null;
+  }
+  function mergeRuns(el) {
+    // Never rewrite rendered controls or observable subtrees: app code binds to
+    // their ids and the run replacement would drop those elements. Only text
+    // nodes and plain inline wrappers are safe to merge.
+    if (el.closest(SKIP_SEL) || el.closest(DATA_SEL) || el.querySelector('[id],input,select,textarea,button,img,svg,iframe,[onclick],[onchange],[oninput]')) return;
+    const runs = [];
+    let run = null;
+    for (const child of el.childNodes) {
+      if (child.nodeType === 3 || (child.nodeType === 1 && inlineOnly(child))) {
+        if (!run) { run = []; runs.push(run); }
+        run.push(child);
+      } else {
+        run = null;
+      }
+    }
+    for (const nodes of runs) {
+      if (nodes.length < 2) continue;
+      const text = flatten(nodes);
+      if (!HAN.test(text)) continue;
+      const hit = matchRun(text);
+      if (!hit) continue;
+      let anchor = nodes[0];
+      if (anchor.nodeType === 1) {
+        anchor = document.createTextNode('');
+        nodes[0].replaceWith(anchor);
+        nodes[0] = anchor;
+      }
+      anchor.nodeValue = translate(hit);
+      for (const node of nodes.slice(1)) node.remove();
+    }
+  }
   function walk(node) {
     if (node.nodeType === 3) return translateText(node);
     if (node.nodeType !== 1) return;
     if (skipped(node)) { if (node.tagName === 'TEXTAREA') translateAttrs(node); return; }
     translateAttrs(node);
-    const tw = document.createTreeWalker(node, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT, {
-      acceptNode: n => {
-      if (n.nodeType !== 1 || !skipped(n)) return NodeFilter.FILTER_ACCEPT;
-      if (n.tagName === 'TEXTAREA') translateAttrs(n);
-      return NodeFilter.FILTER_REJECT;
-    },
-    });
-    let n;
-    while ((n = tw.nextNode())) {
-      if (n.nodeType === 3) translateText(n);
-      else translateAttrs(n);
-    }
+    mergeRuns(node);
+    for (const child of [...node.childNodes]) walk(child);
   }
   function translateTitle() {
     const next = translate(document.title);
