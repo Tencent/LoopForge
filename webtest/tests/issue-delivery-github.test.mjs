@@ -86,3 +86,18 @@ test('Gongfeng merge requests keep the MR !N wording', async (t) => {
   assert.ok(out.facts.includes('交付 MR=!9 ↗'), out.facts.join(' | '));
   assert.equal(out.button, '打开 MR ↗');
 });
+
+test('legacy GitHub Enterprise delivery URLs keep their PR number', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  const refs = structuredClone(app.evaluate(`(() => {
+    const url = 'https://code.example.test/acme/api/pull/17/files?tab=changes';
+    const first = issue => deliveryMRList(issue)[0];
+    const legacy = first({deliveryMrUrl:url});
+    const listed = first({deliveryMrs:[{url}]});
+    const stored = first({deliveryMrs:[{url, project:'enterprise/acme/api', iid:23}]});
+    const unrelated = first({deliveryMrUrl:'https://code.example.test/issues/2?next=/pull/30'});
+    return [deliveryMRRef(legacy), deliveryMRRef(listed), stored.project, deliveryMRRef(stored), unrelated.iid];
+  })()`));
+  assert.deepEqual(refs, ['#17', '#17', 'enterprise/acme/api', '#23', 0]);
+});

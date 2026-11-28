@@ -363,7 +363,15 @@ function issueBoundRepositories(i,project){
 // 多仓库交付每个仓库一个 MR；旧数据只有 deliveryMrUrl。
 function deliveryMRList(i){
   // GitHub PR 的仓库键与后端一致写成 github:owner/repo（domain.ParseGongfengMRs）。
-  const withRef=m=>{const url=String(m.url),hit=url.match(/^https?:\/\/[^/]+\/(.+?)(?:\/-)?\/merge_requests\/(\d+)/),pull=url.match(/^https?:\/\/github\.com\/([^/]+\/[^/]+)\/pull\/(\d+)/i);return{...m,project:m.project||hit?.[1]||(pull?`github:${pull[1]}`:''),iid:m.iid||Number(hit?.[2]||pull?.[2])||0}};
+  const withRef=m=>{
+    let url;
+    try{url=new URL(m.url)}catch{return {...m,project:m.project||'',iid:m.iid||0}}
+    if(!['http:','https:'].includes(url.protocol))return {...m,project:m.project||'',iid:m.iid||0};
+    const mr=url.pathname.match(/^\/(.+?)(?:\/-)?\/merge_requests\/(\d+)(?:\/|$)/);
+    const pr=url.pathname.match(/^\/(.+?)\/pull\/(\d+)(?:\/|$)/i);
+    const project=mr?.[1]||(pr&&url.hostname==='github.com'?`github:${pr[1]}`:'');
+    return {...m,project:m.project||project,iid:m.iid||Number(mr?.[2]||pr?.[2])||0};
+  };
   const list=(i?.deliveryMrs||[]).filter(m=>String(m?.url||'').trim());
   if(list.length)return list.map(withRef);
   const url=String(i?.deliveryMrUrl||'').trim();
