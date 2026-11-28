@@ -88,7 +88,7 @@ func TestDispatchStartFailureReleasesReservation(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := dispatchIssue(d, dispatchRequest{IssueID: "start-fail"}); err == nil {
-		t.Fatal("dispatch succeeded with a missing sandbox profile")
+		t.Fatal("dispatch succeeded while the engine rejects runs")
 	}
 	stored, _ := f.s.Issue("start-fail")
 	if stored.Status != "todo" || stored.LatestTaskID != "" {
