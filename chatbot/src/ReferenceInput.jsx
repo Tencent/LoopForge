@@ -36,21 +36,24 @@ export default forwardRef(function ReferenceInput(
     dismissedSelection = useRef(null);
   const range = (event) =>
     mentionAt(event.target.value, event.target.selectionStart, references);
+  const explicit = useRef(false);
+  const reselect = (event) => {
+    const next = range(event);
+    if (next) explicit.current = false;
+    onMentionChange(next || (explicit.current ? mention : null));
+  };
   const open = (trigger) => {
     if (referencesReadOnly) return;
     dismissedSelection.current = null;
     returnFocus.current = trigger || editorRef.current;
     const caret = editorRef.current?.selectionStart ?? text.length;
-    onMentionChange(
-      mentionAt(text, caret, references) || {
-        start: caret,
-        end: caret,
-        query: "",
-      },
-    );
+    const active = mentionAt(text, caret, references);
+    explicit.current = !active;
+    onMentionChange(active || { start: caret, end: caret, query: "" });
     editorRef.current?.focus();
   };
   const close = () => {
+    explicit.current = false;
     const editor = editorRef.current;
     dismissedSelection.current = editor
       ? {
@@ -88,6 +91,7 @@ export default forwardRef(function ReferenceInput(
       text: next.text,
       references: exists ? references : [...references, asset],
     });
+    explicit.current = false;
     onMentionChange(null);
     if (textareaProps.readOnly)
       editorRef.current?.focus({ preventScroll: true });
@@ -157,6 +161,7 @@ export default forwardRef(function ReferenceInput(
         aria-expanded={!!mention}
         onChange={(event) => {
           dismissedSelection.current = null;
+          explicit.current = false;
           returnFocus.current = editorRef.current;
           const value = event.target.value;
           onChange({
@@ -176,7 +181,7 @@ export default forwardRef(function ReferenceInput(
         onClick={(event) => {
           if (!referencesReadOnly) {
             dismissedSelection.current = null;
-            onMentionChange(range(event));
+            reselect(event);
           }
         }}
         onSelect={(event) => {
@@ -193,7 +198,7 @@ export default forwardRef(function ReferenceInput(
           )
             return;
           dismissedSelection.current = null;
-          onMentionChange(range(event));
+          reselect(event);
         }}
         onKeyDown={(event) => {
           if (mention && picker.current?.keyDown(event)) return;
