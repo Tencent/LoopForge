@@ -206,7 +206,7 @@ func replyCompact(text string) string {
 // Quoted literals are single-line: a lone apostrophe in a comment (# don't …) or
 // contraction inside a code block must not absorb the rest of the block up to the
 // next matching quote on a later line.
-var replyContentTokens = regexp.MustCompile(`(?m:^[ \t]{0,3}` + "`{3,}" + `)|"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'|` + "`[^`]*`" + `|[\pL\pN_]+`)
+var replyContentTokens = regexp.MustCompile("`{3,}" + `|"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'|` + "`[^`]*`" + `|[\pL\pN_]+`)
 
 func replyRicher(streamed, final string) string {
 	if len(final) >= len(streamed) || !replySameContent(streamed, final) {

@@ -577,3 +577,26 @@ func TestAssistantVisibleReplyPreservesIndentationWhenQuoteSpansLines(t *testing
 		}
 	}
 }
+
+// A real Cursor turn: the CLI result glued the phases together, so the fence
+// that opened the code block ended up mid-sentence. The streamed layout,
+// with the fence on its own line, is the copy to keep.
+func TestAssistantVisibleReplyKeepsFenceWhenCLIGluesPhases(t *testing.T) {
+	const code = "```python\ndef keep_value(value):\n    return value\n```"
+	events := []domain.AssistantActivityEvent{
+		{Kind: "text", Text: "先看看目录。"},
+		{Kind: "tool", ID: "ls"},
+		{Kind: "text", Text: "接着读代码。"},
+		{Kind: "tool", ID: "read"},
+		{Kind: "text", Text: code},
+	}
+	const want = "先看看目录。\n\n接着读代码。\n\n" + code
+	for name, final := range map[string]string{
+		"glued":           "先看看目录。接着读代码。" + code,
+		"glued flattened": "先看看目录。接着读代码。```python\ndef keep_value(value):\nreturn value\n```",
+	} {
+		if got := assistantVisibleReply(final, events); got != want {
+			t.Errorf("%s: stored %q\nwant %q", name, got, want)
+		}
+	}
+}
