@@ -7,7 +7,6 @@ import (
 	"sync"
 	"time"
 	"unicode"
-	"unicode/utf8"
 )
 
 // Coalesce token deltas while retaining the order of thinking, tools and status.
@@ -222,12 +221,12 @@ func replyParagraphs(text string) []string {
 func dropRepeatedReply(text string) string {
 	parts := replyParagraphs(text)
 	originalCount := len(parts)
-	for len(parts) >= 2 && replyCompact(parts[len(parts)-1]) == replyCompact(parts[len(parts)-2]) {
+	for len(parts) >= 2 && parts[len(parts)-1] == parts[len(parts)-2] {
 		parts = parts[:len(parts)-1]
 	}
 	if len(parts) >= 2 && len(parts)%2 == 0 {
 		mid := len(parts) / 2
-		if replyCompact(strings.Join(parts[:mid], "\n\n")) == replyCompact(strings.Join(parts[mid:], "\n\n")) {
+		if strings.Join(parts[:mid], "\n\n") == strings.Join(parts[mid:], "\n\n") {
 			parts = parts[:mid]
 		}
 	}
@@ -263,7 +262,10 @@ func assistantVisibleReply(final string, events []domain.AssistantActivityEvent)
 		return joined
 	}
 	if compactFinal == compactJoined {
-		return replyRicher(joined, final)
+		if rest, ok := cutReplyPhase(final, parts); ok && rest == "" {
+			return joined
+		}
+		return final
 	}
 	if strings.Contains(final, joined) || strings.HasPrefix(compactFinal, compactJoined) {
 		repeated := dropRepeatedReply(final)
@@ -277,10 +279,10 @@ func assistantVisibleReply(final string, events []domain.AssistantActivityEvent)
 	// paragraph and append just the new tail.
 	last := parts[len(parts)-1]
 	if replyCompact(final) == replyCompact(last) {
-		if len(final) > len(last) && strings.HasSuffix(joined, last) {
-			return strings.TrimSuffix(joined, last) + final
+		if rest, ok := cutReplyPhase(final, []string{last}); ok && rest == "" {
+			return joined
 		}
-		return joined
+		return strings.TrimSuffix(joined, last) + final
 	}
 	if strings.HasPrefix(final, last) {
 		suffix := trimAssistantReplyText(strings.TrimPrefix(final, last))
@@ -296,7 +298,7 @@ func assistantVisibleReply(final string, events []domain.AssistantActivityEvent)
 	// down to the last segment alone: one segment can hold several
 	// paragraphs that the result glues together.
 	for i := 1; i < len(parts); i++ {
-		rest, ok := cutCompactPrefix(final, replyCompact(strings.Join(parts[i:], "")))
+		rest, ok := cutReplyPhase(final, parts[i:])
 		if !ok {
 			continue
 		}
@@ -308,26 +310,24 @@ func assistantVisibleReply(final string, events []domain.AssistantActivityEvent)
 	return dropRepeatedReply(joined + "\n\n" + final)
 }
 
-// cutCompactPrefix removes prefix, a replyCompact string, from the start of
-// text while ignoring whitespace in text, and returns what follows it.
-func cutCompactPrefix(text, prefix string) (string, bool) {
-	if prefix == "" {
-		return "", false
+// A CLI may glue paragraphs together at a phase boundary. Within a
+// paragraph, whitespace is part of the reply (including literals and code).
+func cutReplyPhase(text string, parts []string) (string, bool) {
+	matched := false
+	for _, part := range parts {
+		for _, paragraph := range replyParagraphs(part) {
+			if matched {
+				text = strings.TrimLeft(text, "\r\n")
+			}
+			var ok bool
+			text, ok = strings.CutPrefix(text, paragraph)
+			if !ok {
+				return "", false
+			}
+			matched = true
+		}
 	}
-	for i, r := range text {
-		if prefix == "" {
-			return text[i:], true
-		}
-		if unicode.IsSpace(r) {
-			continue
-		}
-		head, size := utf8.DecodeRuneInString(prefix)
-		if head != r {
-			return "", false
-		}
-		prefix = prefix[size:]
-	}
-	return "", prefix == ""
+	return text, matched
 }
 
 // stripAssistantCLINotices drops the CLI's "Tool ... does not exist" lines

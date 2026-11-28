@@ -444,3 +444,20 @@ func TestAssistantVisibleReplyDropsTheLastPhaseResult(t *testing.T) {
 		t.Fatalf("different result dropped: %q", got)
 	}
 }
+
+func TestAssistantVisibleReplyKeepsWhitespaceCorrections(t *testing.T) {
+	const earlier = "I checked both setting names."
+	const streamed = "The configured value is \"read only\"."
+	const corrected = "The configured value is \"readonly\"."
+	events := []domain.AssistantActivityEvent{
+		{Kind: "text", Text: earlier},
+		{Kind: "tool", ID: "lookup"},
+		{Kind: "text", Text: streamed},
+	}
+	for _, final := range []string{corrected, corrected + " Keep the default."} {
+		got := assistantVisibleReply(final, events)
+		if !strings.HasPrefix(got, earlier) || !strings.HasSuffix(got, final) {
+			t.Fatalf("stored %q, want the earlier phase and final %q", got, final)
+		}
+	}
+}
