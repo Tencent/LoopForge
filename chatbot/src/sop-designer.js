@@ -75,7 +75,9 @@ export function replyDraft(message) {
 }
 
 export function draftSummary(draft) {
-  if (draft.tool === "agents_save") return "角色草稿 · " + draft.body.name;
+  if (draft.tool === "agents_save") {
+    return (draft.body.changes ? "角色修改 · " : "角色草稿 · ") + draft.body.name;
+  }
   const nodes = Array.isArray(draft?.body?.nodes) ? draft.body.nodes.length : 0;
   const edges = Array.isArray(draft?.body?.edges) ? draft.body.edges.length : 0;
   return `${draft?.body?.name || "LOOP 草稿"} · ${nodes} 个节点 · ${edges} 条连线`;

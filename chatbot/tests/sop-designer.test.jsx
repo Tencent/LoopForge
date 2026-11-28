@@ -198,6 +198,25 @@ describe("SopDesigner", () => {
     expect(send).not.toHaveBeenCalled();
   });
 
+  test("shows the role changes and sends them to the canvas for confirmation", async () => {
+    const role = { id: "reviewer", name: "改动评审", changes: { prompt: "验证边界条件", description: "" } };
+    stored = {
+      id: "chat-role-edit", projectId: "p1", workflowId: "sop-a",
+      messages: [{ role: "assistant", content: JSON.stringify({
+        message: "已起草角色修改", drafts: [{ tool: "agents_save", body: role }],
+      }) }],
+    };
+    generation = { id: "g-role-edit", status: "completed", events: [] };
+    render(<SopDesigner search="?surface=sop-designer&projectId=p1&workflowId=sop-a" canvas={canvas} />);
+    const review = await screen.findByRole("button", { name: "审阅并保存修改" });
+    expect(screen.getByText("验证边界条件")).toBeVisible();
+    expect(screen.getByText("清空")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "配置并创建角色" })).toBeNull();
+    fireEvent.click(review);
+    expect(posted.at(-1)).toEqual({ type: CONFIGURE_ROLE, projectId: "p1", workflowId: "sop-a", role });
+    expect(send).not.toHaveBeenCalled();
+  });
+
   test("a deleted conversation starts fresh and can accept another turn", async () => {
     stored = { id: "chat-deleted", projectId: "p1", workflowId: "sop-a", messages: [{ role: "user", content: "上一轮" }] };
     send.mockImplementation(async (_path, body) => {

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"agentflow/internal/apperr"
 	"agentflow/internal/domain"
 
 	"gorm.io/gorm"
@@ -167,6 +168,47 @@ func (r *CatalogRepo) PutAgent(v domain.AgentDefinition) error {
 	return upsert(r.DB, "agents", map[string]any{
 		"id": v.ID, "name": v.Name, "payload": mustJSON(v), "updated_at": timePtr(v.UpdatedAt),
 	})
+}
+
+// EditAgentContent updates a reviewed role while holding its row lock. The
+// role revision and the edit commit together.
+func (r *CatalogRepo) EditAgentContent(expected domain.AgentDefinition, changes domain.AgentContentChanges) (domain.AgentDefinition, error) {
+	var updated domain.AgentDefinition
+	if err := changes.Validate(); err != nil {
+		return updated, err
+	}
+	err := r.DB.Transaction(func(tx *gorm.DB) error {
+		var row payloadRow
+		query := r.locking(tx.Table("agents").Where("id = ?", expected.ID))
+		if err := query.Take(&row).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return apperr.New(apperr.NotFound, "角色已删除")
+			}
+			return err
+		}
+		var current domain.AgentDefinition
+		if err := json.Unmarshal(row.Payload, &current); err != nil {
+			return err
+		}
+		if current.ProjectID != expected.ProjectID || !current.UpdatedAt.Equal(expected.UpdatedAt) {
+			return apperr.New(apperr.Conflict, "角色已更新，请重新审阅修改")
+		}
+		updated = current
+		changes.Apply(&updated)
+		if updated.Name == current.Name && updated.Description == current.Description && updated.Prompt == current.Prompt {
+			return nil
+		}
+		updated.Version++
+		updated.UpdatedAt = time.Now().UTC()
+		catalog := CatalogRepo{deps: &deps{DB: tx}}
+		if err := catalog.snapshotRevision("agent", current.ID, current.Name, current.Version, 0, current); err != nil {
+			return err
+		}
+		return tx.Table("agents").Where("id = ?", current.ID).UpdateColumns(map[string]any{
+			"name": updated.Name, "payload": mustJSON(updated), "updated_at": timePtr(updated.UpdatedAt),
+		}).Error
+	})
+	return updated, err
 }
 
 // ---------- Rules / Skills / MCP servers ----------

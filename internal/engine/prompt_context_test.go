@@ -6,9 +6,8 @@ import (
 	"testing"
 )
 
-// A role node's brief comes from the role prompt alone: the node's taskPrompt
-// (an approval node's 「需要确认什么」) never reaches it, while the run input
-// and upstream output always do, exactly once.
+// Approval instructions stay with approval nodes. The run input and upstream
+// output reach the agent exactly once.
 func TestRunContextReachesRolesAndNodeTaskPromptDoesNot(t *testing.T) {
 	t.Parallel()
 	wf := domain.WorkflowDefinition{Edges: []domain.WorkflowEdge{{Source: "source", Target: "report"}}}

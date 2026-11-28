@@ -118,6 +118,9 @@ type AgentToolSession struct {
 	// the transcript, so the turn stores these as attachments of its reply.
 	replyFiles    []agentReplyFile
 	screenshotSeq int
+	// designerRoleReads holds the role revision each agents_get returned in
+	// a designer turn; a role edit draft is saved against that revision.
+	designerRoleReads map[string]time.Time
 	// dispatches are the Agent calls still running this turn. A subagent
 	// works in the bound workspace, so it is not switched under it.
 	// The value is the subagent id once the stream reports it.
@@ -570,4 +573,29 @@ func (s *AgentToolSession) diagnostics() *assistantDiagnosticsCollector {
 // workflows_save draft, no workspace, browser or external MCP.
 func (s *AgentToolSession) sopDesigner() bool {
 	return s != nil && s.Surface == assistantSurfaceSOPDesigner
+}
+
+// noteDesignerRoleRead records the revision of a role the designer model
+// read with agents_get. The latest read is what its edit is based on.
+func (s *AgentToolSession) noteDesignerRoleRead(result string) {
+	var role struct {
+		ID        string    `json:"id"`
+		UpdatedAt time.Time `json:"updatedAt"`
+	}
+	if json.Unmarshal([]byte(result), &role) != nil || role.ID == "" || role.UpdatedAt.IsZero() {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.designerRoleReads == nil {
+		s.designerRoleReads = map[string]time.Time{}
+	}
+	s.designerRoleReads[role.ID] = role.UpdatedAt
+}
+
+func (s *AgentToolSession) designerRoleRead(id string) (time.Time, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	at, ok := s.designerRoleReads[id]
+	return at, ok
 }

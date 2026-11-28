@@ -96,6 +96,36 @@ type AgentDefinition struct {
 	UpdatedAt       time.Time                `json:"updatedAt"`
 }
 
+// AgentContentChanges holds the fields that can be edited independently of
+// the role's runtime settings. A nil field leaves its stored value in place.
+type AgentContentChanges struct {
+	Name        *string `json:"name,omitempty"`
+	Description *string `json:"description,omitempty"`
+	Prompt      *string `json:"prompt,omitempty"`
+}
+
+func (c AgentContentChanges) Validate() error {
+	if c.Name == nil && c.Description == nil && c.Prompt == nil {
+		return errors.New("请指定要修改的角色内容")
+	}
+	if c.Name != nil && strings.TrimSpace(*c.Name) == "" {
+		return errors.New("角色名称不能为空")
+	}
+	return nil
+}
+
+func (c AgentContentChanges) Apply(v *AgentDefinition) {
+	if c.Name != nil {
+		v.Name = strings.TrimSpace(*c.Name)
+	}
+	if c.Description != nil {
+		v.Description = *c.Description
+	}
+	if c.Prompt != nil {
+		v.Prompt = *c.Prompt
+	}
+}
+
 // AgentHook is a role-scoped lifecycle script. The runtime compiles the common
 // subset into the native hook configuration of Claude Code, Codex, or CodeBuddy
 // only for invocations of this Agent.

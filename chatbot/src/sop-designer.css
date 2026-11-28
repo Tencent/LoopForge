@@ -97,6 +97,24 @@
   gap: 6px;
   font-weight: 500;
 }
+.sop-designer-role-changes {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  max-height: 200px;
+  overflow: auto;
+}
+
+.sop-designer-role-changes dt {
+  font-weight: 600;
+}
+
+.sop-designer-role-changes dd {
+  margin: 2px 0 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .sop-designer-warnings {
   margin: 8px 0 0;
   padding-left: 18px;

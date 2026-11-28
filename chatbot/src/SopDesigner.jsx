@@ -44,7 +44,10 @@ function modelsFor(catalog, engine) {
   return engine === defaultEngine ? models.filter((m) => !m.engine || m.engine === defaultEngine) : engineModels(models, engine);
 }
 
+const roleFieldLabels = { name: "名称", description: "职责", prompt: "任务说明" };
+
 function DraftNote({ draft, onPlace, onConfigureRole }) {
+  const changes = draft.tool === "agents_save" ? draft.body.changes : null;
   return (
     <div className="sop-designer-draft">
       <div className="sop-designer-draft-title">
@@ -56,9 +59,16 @@ function DraftNote({ draft, onPlace, onConfigureRole }) {
           {draft.warnings.map((warning) => <li key={warning}>{warning}</li>)}
         </ul>
       ) : null}
+      {changes ? (
+        <dl className="sop-designer-role-changes" aria-label="拟修改的角色内容">
+          {Object.entries(roleFieldLabels).filter(([key]) => typeof changes[key] === "string").map(([key, label]) => (
+            <div key={key}><dt>{label}</dt><dd>{changes[key] || "清空"}</dd></div>
+          ))}
+        </dl>
+      ) : null}
       {onConfigureRole ? (
         <button type="button" className="sop-designer-place" onClick={() => onConfigureRole(draft)}>
-          配置并创建角色
+          {changes ? "审阅并保存修改" : "配置并创建角色"}
         </button>
       ) : null}
       {onPlace ? (

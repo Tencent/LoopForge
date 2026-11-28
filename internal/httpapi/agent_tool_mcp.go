@@ -405,6 +405,10 @@ func (h *agentToolGateway) callTerminal(session *AgentToolSession, name string, 
 				logAgentToolEvent("terminal-invalid", "mode="+string(session.Mode), "tool="+name, "err="+truncateRunes(err.Error(), 160))
 				return mcpToolTextResult("草稿未提交，本轮继续："+err.Error(), true), nil
 			}
+			if err := h.stampSOPDesignerRoleEdits(session, &reply); err != nil {
+				logAgentToolEvent("terminal-invalid", "mode="+string(session.Mode), "tool="+name, "err="+truncateRunes(err.Error(), 160))
+				return mcpToolTextResult("草稿未提交，本轮继续："+err.Error(), true), nil
+			}
 		}
 		if h.deps != nil && h.repo != nil {
 			if err := h.assistant().vetProposalDrafts(session, &reply); err != nil {
@@ -504,6 +508,10 @@ func (h *agentToolGateway) dispatch(ctx context.Context, session *AgentToolSessi
 		text, err := asst.callAssistantPlatform(ctx, session.User, session.ProjectID, call)
 		if err != nil {
 			return "", err
+		}
+		if session.sopDesigner() && tool.UpstreamName == "agents_get" {
+			// The model sees Beijing-time stamps; keep the exact revision.
+			session.noteDesignerRoleRead(text)
 		}
 		return assistantPlatformResultForModel(tool.UpstreamName, redactAgentToolResult(text, session.User)), nil
 	}

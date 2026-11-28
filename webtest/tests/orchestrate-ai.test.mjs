@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { loadApp } from '../lib/load-app.mjs';
+import { loadApp, settle } from '../lib/load-app.mjs';
 
 // Values from the page's realm compare by content, not by prototype.
 const plain = (value) => JSON.parse(JSON.stringify(value));
@@ -15,9 +15,10 @@ test('orchestrator normalizes graphs and parses streamed drafts and operations',
     const encoded=JSON.stringify({body:JSON.stringify({name:'Quoted',nodes:[{id:'q',name:'Q'}],edges:[]})});
     const parsed=parseStreamingWorkflow(encoded);
     const ops=parseStreamingOperations('{"message":"x","drafts":[{"tool":"workflows_save","body":{"operations":[{"op":"add_node","node":{"id":"r","name":"Review"}},{"op":"update_node","id":"a","set":{}},{"op":"add_edge","source":"a","target":"r"},{"op":"add_node","node":{"id":"half"');
-    const merged=mergeAIEdit({name:'Old',nodes:[{id:'old',name:'Build',script:'keep',position:{x:1,y:2}}],edges:[]},
+    const merged=mergeAIEdit({name:'Old',nodes:[{id:'old',name:'Build',prompt:'keep me',script:'keep',position:{x:1,y:2}}],edges:[]},
       {name:'New',nodes:[{id:'old',name:'Build v2',type:'script'},{id:'new',name:'Build',type:'approval'}],edges:[{source:'old',target:'new'}]});
-    return {graph,escaped,parsed,ops,merged};
+    const cleared=mergeAIEdit({nodes:[{id:'a',name:'Plan',prompt:'clear me'}],edges:[]},{nodes:[{id:'a',name:'Plan',prompt:''}],edges:[]});
+    return {graph,escaped,parsed,ops,merged,cleared};
   })()`);
   const plainResult = plain(result);
   assert.equal(result.graph.edges.length, 1);
@@ -31,6 +32,9 @@ test('orchestrator normalizes graphs and parses streamed drafts and operations',
   assert.deepEqual(plainResult.merged.nodes.map((n) => n.id), ['old', 'new']);
   assert.equal(result.merged.nodes[0].name, 'Build v2');
   assert.equal(result.merged.nodes[0].script, 'keep');
+  // A draft that leaves out a node prompt keeps it; an empty prompt clears it.
+  assert.equal(result.merged.nodes[0].prompt, 'keep me');
+  assert.equal(result.cleared.nodes[0].prompt, '');
   assert.equal(result.merged.nodes[0].position.x, 1);
   assert.equal(result.merged.edges.length, 1);
 });
@@ -108,11 +112,18 @@ test('an edit keeps the canvas, applies the expanded draft, and a failed turn re
   const last = original.nodes.at(-1).id;
   await send({ type: 'agentflow-sop-designer-draft', buffer: `{"drafts":[{"tool":"workflows_save","body":{"operations":[{"op":"add_node","node":{"id":"final","name":"Final approval","type":"approval"}}` });
   assert.ok(app.evaluate(`state.workflow.nodes.some(n=>n.id==='final')`), 'an added node appears while the edit streams');
-  const body = { ...original, nodes: [...original.nodes, { id: 'final', name: 'Final approval', type: 'approval' }], edges: [...original.edges, { id: 'edge-final', source: last, target: 'final', when: 'success' }] };
+  const existingNodes = original.nodes.map((node, index) => index === 0 ? { ...node, prompt: 'Verify the edge cases' } : node);
+  const body = { ...original, nodes: [...existingNodes, { id: 'final', name: 'Final approval', type: 'approval' }], edges: [...original.edges, { id: 'edge-final', source: last, target: 'final', when: 'success' }] };
   await send({ type: 'agentflow-sop-designer-reply', draft: { body } });
   assert.equal(app.evaluate('state.workflow.nodes.length'), original.nodes.length + 1);
   assert.equal(app.evaluate(`state.workflow.nodes.find(n=>n.id===${JSON.stringify(original.nodes[0].id)}).position.x`), original.nodes[0].position.x);
   assert.ok(app.evaluate(`Number.isFinite(state.workflow.nodes.find(n=>n.id==='final').position.x)`));
+  app.evaluate('state.selectedNode=state.workflow.nodes[0].id;renderProperties()');
+  assert.equal(app.document.querySelector('#workflowNodePrompt').value, 'Verify the edge cases');
+  app.router.put('/api/workflows', (call) => call.body);
+  await app.evaluate('saveWorkflow()');
+  const saved = app.router.calls.find((call) => call.method === 'PUT' && call.path === '/api/workflows');
+  assert.equal(saved.body.nodes[0].prompt, 'Verify the edge cases');
 
   const edited = app.evaluate('structuredClone(state.workflow)');
   await send({ type: 'agentflow-sop-designer-begin', requestId: 'e2' });
@@ -165,4 +176,93 @@ test('orchestration refreshes project roles and restores the canvas for an unava
   assert.equal(app.evaluate('state.workflow.nodes.length'), 0);
   assert.equal(app.evaluate('state.workflowDirty'), false);
   assert.match(app.document.querySelector('#aiBuildStatus').textContent, /Review（private）/);
+});
+
+test('an existing role draft requires confirmation and saves only its proposed fields', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  app.evaluate("switchView('flow');renderAll()");
+  app.document.querySelector('#openAIOrchestrator').click();
+  const { send } = bridge(app);
+  const role = {
+    id: 'agent-1', name: 'Developer', projectId: 'project-1',
+    prompt: 'Original prompt', updatedAt: '2026-11-28T10:00:00Z', version: 2,
+  };
+  app.router.get('/api/agents/agent-1', role);
+  app.router.get('/api/agents/foreign', { ...role, id: 'foreign', projectId: 'project-2' });
+  app.router.put('/api/agents', (call) => ({ ...role, ...call.body.changes, version: 3 }));
+  const draft = { id: role.id, name: role.name, updatedAt: role.updatedAt, changes: { prompt: 'Verify the evidence' } };
+  const saveCalls = () => app.router.calls.filter((call) => call.method === 'PUT' && call.path === '/api/agents');
+  const review = (body) => send({
+    type: 'agentflow-sop-designer-role', projectId: role.projectId, workflowId: 'flow-1', role: body,
+  });
+
+  await review({ ...draft, id: 'foreign' });
+  assert.equal(saveCalls().length, 0);
+  assert.match(app.document.body.textContent, /请在角色所属的项目修改该角色/);
+
+  const canceled = review(draft);
+  await settle();
+  assert.equal(app.document.querySelector('#confirmTitle').textContent, '保存角色修改');
+  assert.equal(saveCalls().length, 0);
+  app.document.querySelector('#confirmCancelBtn').click();
+  await canceled;
+  assert.equal(saveCalls().length, 0);
+
+  const confirmed = review(draft);
+  await settle();
+  app.document.querySelector('#confirmOkBtn').click();
+  await confirmed;
+  assert.equal(saveCalls().length, 1);
+  assert.deepEqual(plain(saveCalls()[0].body), {
+    id: role.id, projectId: role.projectId, updatedAt: role.updatedAt, changes: draft.changes,
+  });
+  assert.equal(app.evaluate("state.data.agents.find(role => role.id==='agent-1').prompt"), draft.changes.prompt);
+
+  await review({ id: 'fresh-role', name: 'Fresh role', prompt: 'New instructions' });
+  assert.equal(app.evaluate('state.agentModalMode'), 'create');
+  assert.equal(app.evaluate("$('#agentForm').elements.id.value"), 'fresh-role');
+});
+
+test('a role edit saves against the revision the assistant read', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  app.evaluate("switchView('flow');renderAll()");
+  app.document.querySelector('#openAIOrchestrator').click();
+  const { send } = bridge(app);
+  const read = '2026-11-28T10:00:00.123456789Z';
+  let stored = { id: 'agent-1', name: 'Developer', projectId: 'project-1', prompt: 'Original prompt', updatedAt: read };
+  app.router.get('/api/agents/agent-1', () => stored);
+  app.router.put('/api/agents', (call) => call.body.updatedAt === stored.updatedAt
+    ? { ...stored, ...call.body.changes, updatedAt: '2026-11-28T11:00:00Z' }
+    : { status: 409, body: { error: '角色已更新，请重新审阅修改' } });
+  const calls = (method, path) => app.router.calls.filter((call) => call.method === method && call.path === path);
+  const review = (role) => send({ type: 'agentflow-sop-designer-role', projectId: 'project-1', workflowId: 'flow-1', role });
+  const changes = { prompt: 'Verify the evidence' };
+
+  // Without the revision it read there is nothing safe to save against.
+  await review({ id: 'agent-1', name: 'Developer', changes });
+  assert.equal(calls('GET', '/api/agents/agent-1').length, 0);
+  assert.match(app.document.body.textContent, /缺少读取时的角色版本/);
+
+  // Someone saved the role after the assistant read it: no dialog, no save.
+  stored = { ...stored, prompt: 'Saved by someone else', updatedAt: '2026-11-28T10:30:00Z' };
+  await review({ id: 'agent-1', name: 'Developer', updatedAt: read, changes });
+  assert.equal(app.document.querySelector('#confirmModal')?.open ?? false, false);
+  assert.equal(calls('PUT', '/api/agents').length, 0);
+  assert.match(app.document.body.textContent, /在 AI 起草后已被修改/);
+
+  // A changes-only draft (no name) still opens the review, and the save
+  // carries the revision from the draft, not one read at click time.
+  const fresh = stored.updatedAt;
+  const pending = review({ id: 'agent-1', updatedAt: fresh, changes });
+  await settle();
+  assert.equal(app.document.querySelector('#confirmTitle').textContent, '保存角色修改');
+  stored = { ...stored, prompt: 'Saved during review', updatedAt: '2026-11-28T10:45:00Z' };
+  app.document.querySelector('#confirmOkBtn').click();
+  await pending;
+  assert.equal(calls('PUT', '/api/agents').length, 1);
+  assert.equal(calls('PUT', '/api/agents')[0].body.updatedAt, fresh);
+  assert.match(app.document.body.textContent, /角色已更新，请重新审阅修改/);
+  assert.notEqual(app.evaluate("state.data.agents.find(role => role.id==='agent-1')?.prompt"), changes.prompt);
 });

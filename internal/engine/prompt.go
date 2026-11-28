@@ -23,12 +23,11 @@ func renderPromptWithStore(st *repo.Store, wf domain.WorkflowDefinition, node do
 }
 
 func applyPromptPlaceholders(st *repo.Store, wf domain.WorkflowDefinition, node domain.WorkflowNode, role *domain.AgentDefinition, run domain.Run) string {
-	prompt := ""
-	if role != nil && strings.TrimSpace(role.Prompt) != "" {
-		prompt = compileTaskPrompt(node, role.Name, role.Prompt, role.Verification)
+	if role == nil {
+		role = &domain.AgentDefinition{}
 	}
-	// A role prompt may not reference {{input}}; never silently drop the run
-	// input.
+	prompt := compileTaskPrompt(node, role.Name, role.Prompt, role.Verification)
+	// Include the run input when neither prompt references it.
 	if strings.TrimSpace(run.Input) != "" && !strings.Contains(prompt, "{{input}}") {
 		prompt += "\n\n## 本次运行输入\n\n{{input}}"
 	}
@@ -230,10 +229,19 @@ func latestNamedArtifact(run domain.Run, nodeID, name string) (domain.Artifact, 
 }
 
 func compileTaskPrompt(node domain.WorkflowNode, roleName, rolePrompt string, gates []domain.VerificationGate) string {
+	rolePrompt = strings.TrimSpace(rolePrompt)
+	nodePrompt := ""
+	if node.Type == "agent" {
+		nodePrompt = strings.TrimSpace(node.Prompt)
+	}
+	if rolePrompt == "" && nodePrompt == "" {
+		return ""
+	}
 	var b strings.Builder
 	b.WriteString("# 节点任务书\n\n")
 	writePromptSection(&b, "执行角色", roleName)
-	writePromptSection(&b, "任务说明", strings.TrimSpace(rolePrompt))
+	writePromptSection(&b, "任务说明", rolePrompt)
+	writePromptSection(&b, "本节点任务", nodePrompt)
 	var deliverables []string
 	for _, artifact := range node.ArtifactOutputs {
 		deliverables = append(deliverables, artifact.Name+"：在工作区创建 `"+artifact.Path+"`")
