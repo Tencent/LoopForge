@@ -155,6 +155,16 @@ func bindCommand(ctx context.Context, sandbox Sandbox, workspace string, command
 			if bound.environment["ANTHROPIC_API_KEY"] == "" {
 				return CommandSpec{}, fmt.Errorf("需求责任人未配置 Claude Code API Key，请在个人配置中配置")
 			}
+			// Custom Anthropic-compatible gateways commonly authenticate with
+			// Authorization: Bearer (ANTHROPIC_AUTH_TOKEN), which Claude Code
+			// prefers over x-api-key. The workspace resolves `claude` from
+			// PATH instead of the host-configured AGENTFLOW_CLAUDE_BIN, so a
+			// host-side wrapper mapping the key to Bearer no longer covers
+			// this phase (#1130). The official endpoint (no Base URL) keeps
+			// its x-api-key-only behavior.
+			if strings.TrimSpace(credentials.ClaudeCode.BaseURL) != "" {
+				bound.environment["ANTHROPIC_AUTH_TOKEN"] = bound.environment["ANTHROPIC_API_KEY"]
+			}
 			BindClaudeCodeEndpoint(bound.environment, credentials.ClaudeCode.BaseURL)
 		case BindAgentCLI:
 			var home AgentCLIHome
