@@ -455,7 +455,14 @@ func (h *scheduleHandlers) dispatchScheduled(job domain.ScheduleJob, issue domai
 // dispatchScheduledRun is dispatchScheduled reporting the started run ID for
 // the execution record.
 func (h *scheduleHandlers) dispatchScheduledRun(job domain.ScheduleJob, issue domain.Issue, triggerOrigin string) (string, error) {
-	task, err := dispatchIssue(h.deps, dispatchRequest{IssueID: issue.ID, WorkflowID: job.ResolveWorkflow(issue), ScheduleJobID: job.ID, TriggerOrigin: triggerOrigin})
+	// The claimed execution's trace is the only source of attribution. An empty
+	// trace (a direct dispatch without a claimed execution) never fabricates an
+	// "sjx-" ID.
+	scheduleExecutionID := ""
+	if strings.TrimSpace(job.LastTraceID) != "" {
+		scheduleExecutionID = domain.ScheduleJobExecutionID(job.LastTraceID)
+	}
+	task, err := dispatchIssue(h.deps, dispatchRequest{IssueID: issue.ID, WorkflowID: job.ResolveWorkflow(issue), ScheduleJobID: job.ID, TriggerOrigin: triggerOrigin, ScheduleExecutionID: scheduleExecutionID})
 	return task.RunID, err
 }
 

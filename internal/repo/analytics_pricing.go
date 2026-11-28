@@ -89,7 +89,7 @@ func applyAnalyticsCNY(out *domain.AnalyticsSnapshot) {
 	for i := range out.WeekHour {
 		out.WeekHour[i].CostCNY = out.WeekHour[i].CostUSD * fx
 	}
-	for _, list := range [][]domain.AnalyticsBreakdown{out.Workflows, out.Agents, out.Executors, out.Models, out.Nodes, out.IssueSources, out.Categories} {
+	for _, list := range [][]domain.AnalyticsBreakdown{out.Workflows, out.Agents, out.Executors, out.Models, out.Nodes, out.IssueSources, out.Categories, out.ScheduleJobs} {
 		for i := range list {
 			list[i].CostCNY = list[i].CostUSD * fx
 		}

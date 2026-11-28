@@ -5873,6 +5873,10 @@ components:
           enum: [primary, scheduled, rerun]
         scheduleJobId:
           type: string
+        scheduleExecutionId:
+          type: string
+          readOnly: true
+          description: Schedule execution identifier ("sjx-<trace>") the server assigned when a scheduled job dispatched this task; inherited by the run and its child SOPs. Empty for manual dispatch and legacy records. Read-only and never accepted from request payloads.
         triggerOrigin:
           type: string
         repository:
@@ -6811,6 +6815,13 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/OpenObject"
+          description: Each trace may carry read-only scheduleJobId/scheduleExecutionId from the persisted run context; empty for manual and legacy runs.
+        scheduleJobs:
+          type: array
+          readOnly: true
+          items:
+            $ref: "#/components/schemas/OpenObject"
+          description: Breakdown of scheduled runs by scheduleJobId. Runs without a scheduleJobId are excluded, so this breakdown never inflates the summary/trend totals. Share fields are left unset for this atomic subset.
     Bootstrap:
       type: object
       additionalProperties: true
