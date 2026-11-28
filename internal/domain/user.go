@@ -80,8 +80,14 @@ type GitSSHKey struct {
 const (
 	GitPlatformGitHub = "github"
 	GitPlatformGitLab = "gitlab"
+	GitPlatformCodeup = "codeup"
 	GitPlatformOther  = "other"
 )
+
+// CodeupAPIBase is the central-station OpenAPI root of Aliyun Yunxiao Codeup.
+// It is independent of the Git host (codeup.aliyun.com): the REST API lives on
+// openapi-rdc.aliyuncs.com and authenticates with the x-yunxiao-token header.
+const CodeupAPIBase = "https://openapi-rdc.aliyuncs.com"
 
 // GitTokenHTTPUser is the Basic-auth user when a credential names none; the
 // GitHub and Gitea families accept any user with a token password.
@@ -124,6 +130,8 @@ func (c GitHTTPCredential) APIBase() string {
 		return "https://" + c.Host + "/api/v3"
 	case GitPlatformGitLab:
 		return "https://" + c.Host + "/api/v4"
+	case GitPlatformCodeup:
+		return CodeupAPIBase
 	default:
 		return ""
 	}
@@ -133,6 +141,9 @@ func (c GitHTTPCredential) APIBase() string {
 // a bearer token for GitHub and GitLab OAuth tokens, PRIVATE-TOKEN for other
 // GitLab tokens.
 func (c GitHTTPCredentialSecret) APIAuthHeader() (string, string) {
+	if c.Platform == GitPlatformCodeup {
+		return "x-yunxiao-token", c.Token
+	}
 	if c.Platform == GitPlatformGitLab && c.Username != "oauth2" {
 		return "PRIVATE-TOKEN", c.Token
 	}
@@ -157,10 +168,10 @@ type GitHTTPExecutionCredential struct {
 	ExpiresAt time.Time `json:"expiresAt,omitempty"`
 }
 
-// NormalizeGitPlatform reports ok=false for a platform outside the three kinds.
+// NormalizeGitPlatform reports ok=false for a platform outside the supported kinds.
 func NormalizeGitPlatform(raw string) (string, bool) {
 	switch p := strings.ToLower(strings.TrimSpace(raw)); p {
-	case GitPlatformGitHub, GitPlatformGitLab, GitPlatformOther:
+	case GitPlatformGitHub, GitPlatformGitLab, GitPlatformCodeup, GitPlatformOther:
 		return p, true
 	default:
 		return "", false

@@ -99,7 +99,7 @@ func respondGitHTTPCredentialError(c *gin.Context, err error) {
 }
 
 // gitHTTPCredentialFromInput validates the form. The platform defaults to
-// GitHub for github.com and "other" elsewhere.
+// GitHub for github.com, Codeup for codeup.aliyun.com and "other" elsewhere.
 func (h *usersHandlers) gitHTTPCredentialFromInput(ctx context.Context, userID int64, input gitHTTPCredentialInput) (domain.GitHTTPCredentialSecret, error) {
 	endpoint, err := domain.ParseGitHTTPEndpoint(input.Host)
 	if err != nil {
@@ -114,10 +114,13 @@ func (h *usersHandlers) gitHTTPCredentialFromInput(ctx context.Context, userID i
 	if host == "github.com" {
 		platform = domain.GitPlatformGitHub
 	}
+	if host == domain.CodeupRepoHost {
+		platform = domain.GitPlatformCodeup
+	}
 	if endpoint.Scheme != "http" && strings.TrimSpace(input.Platform) != "" {
 		var ok bool
 		if platform, ok = domain.NormalizeGitPlatform(input.Platform); !ok {
-			return domain.GitHTTPCredentialSecret{}, errors.New("平台只能是 github、gitlab 或 other")
+			return domain.GitHTTPCredentialSecret{}, errors.New("平台只能是 github、gitlab、codeup 或 other")
 		}
 	}
 	username := strings.TrimSpace(input.Username)
@@ -195,6 +198,9 @@ func (h *usersHandlers) verifyPlainGitRepository(ctx context.Context, cred domai
 func verifyGitHTTPToken(ctx context.Context, cred domain.GitHTTPCredentialSecret, client *http.Client) gitTokenVerifyResult {
 	if cred.Managed {
 		return verifyGongfengToken(ctx, cred.Token)
+	}
+	if cred.Platform == domain.GitPlatformCodeup {
+		return verifyCodeupToken(ctx, cred, client)
 	}
 	base := cred.APIBase()
 	if base == "" {

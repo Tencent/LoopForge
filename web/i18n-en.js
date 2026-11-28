@@ -52,7 +52,8 @@ Object.assign(window.LF_I18N_EN,{
 "AI 对话的 Kimi Code 模型与以 Kimi Code 运行的 LOOP 节点":"Kimi Code models in AI chat, and LOOP steps that run on Kimi Code",
 "AI 对话的 Pi 模型与以 Pi 运行的 LOOP 节点":"Pi models in AI chat, and LOOP steps that run on Pi",
 "AI 对话的 DeepSeek Harness 模型与以 DeepSeek Harness 运行的 LOOP 节点":"DeepSeek Harness models in AI chat, and LOOP steps that run on DeepSeek Harness",
-"AI 对话的 ZCode 模型与以 ZCode 运行的 LOOP 节点":"ZCode models in AI chat, and LOOP steps that run on ZCode"
+"AI 对话的 ZCode 模型与以 ZCode 运行的 LOOP 节点":"ZCode models in AI chat, and LOOP steps that run on ZCode",
+"AI 对话的 Qoder CN 模型与以 Qoder CN 运行的 LOOP 节点":"Qoder CN models in AI chat, and LOOP steps that run on Qoder CN"
 });
 Object.assign(window.LF_I18N_EN,{
 "继续回答关键问题，进度已经保存；不影响直接触发 LOOP":"Keep answering the key questions. Progress is saved and does not block starting the LOOP",
@@ -814,7 +815,16 @@ Object.assign(window.LF_I18N_EN,{
   "Claude Code、Codex 和 Antigravity 可以使用运行 Runner 的系统账号在这台机器上的已有登录，对话与 LOOP 的 native、Docker 沙箱均可复用。共享对话中，只有机器所有者发言时会使用此登录。":"Claude Code, Codex and Antigravity can reuse the login of the system user running the Runner, in both native and Docker sandboxes for chats and LOOPs. In a shared chat, that login applies to messages from the machine owner.",
   "API Key 说明":"API Key help",
   "GLM Coding Plan 的 API Key 配合套餐专用地址可使用订阅额度，请在「个人配置」中填写。Start Plan 额度需要登录 ZCode 账号，无法通过 API Key 使用。":"Enter the GLM Coding Plan API key and its dedicated endpoint in Personal Settings to use your subscription allowance. Start Plan allowance requires signing in to ZCode.",
+  "Qoder CN 使用个人访问令牌（PAT），请在「个人配置」中填写。模型可选，未选择时使用 CLI 默认模型。":"Qoder CN uses a personal access token (PAT). Enter it in Personal Settings. Choosing a model is optional; the CLI default model is used otherwise.",
   "该 CLI 支持 API Key。使用服务商订阅套餐提供的 Key，执行用量会计入对应的套餐额度。请在「个人配置」中填写 API Key。":"This CLI supports API keys. With a key included in your provider's subscription, usage counts toward that plan's allowance. Enter the API key in Personal Settings."
+});
+Object.assign(window.LF_I18N_EN,{
+  "AI 对话切换到 Qoder CN 后可选用它的模型，LOOP 在执行机器上以 Qoder CN 运行的节点也使用它。使用个人访问令牌（PAT）认证；模型可选，未选择时使用 CLI 默认模型。":"Switch AI chat to Qoder CN to pick its models; LOOP steps that run on Qoder CN on a runner use the same token. It authenticates with a personal access token (PAT). Choosing a model is optional; the CLI default model is used otherwise.",
+  "使用个人访问令牌（PAT）认证；模型可选，未选择时使用 CLI 默认模型。":"Authenticates with a personal access token (PAT). Choosing a model is optional; the CLI default model is used otherwise.",
+  "在 Qoder CN 的个人设置中创建个人访问令牌（PAT）":"Create a personal access token (PAT) in your Qoder CN personal settings",
+  "复制令牌粘贴到下方保存":"Copy the token, paste it below, and save",
+  "请输入 Qoder CN 个人访问令牌（PAT）":"Enter your Qoder CN personal access token (PAT)",
+  "AI 对话将不能再切换到 Qoder CN，以 Qoder CN 运行的 LOOP 节点将无法执行。":"AI chat can no longer switch to Qoder CN, and LOOP steps that run on Qoder CN will fail."
 });
 Object.assign(window.LF_I18N_EN,{"查看其他项目共享的技能；共享技能只读，会自动装入平台上所有对话和定时任务，也可绑定到本项目角色。": "Skills shared by other projects. Shared Skills are read-only, are installed automatically into every conversation and scheduled task on the platform, and can be bound to Roles in this project.", "共享后，这个技能会自动装入平台上所有用户的对话和定时任务（包括其他项目和无项目的对话），模型可以直接调用。继续？": "Once shared, this Skill is installed automatically into every user's conversations and scheduled tasks on the platform (including other projects and conversations without a project), and the model can call it directly. Continue?", "共享这个角色会同时共享它绑定的技能：": "Sharing this Role also shares the Skills bound to it: ", "已共享，所有对话和定时任务会自动装入": "Shared. Every conversation and scheduled task will install it automatically", "其他项目可在「共享角色」里选用；绑定的本项目技能会一起共享，并自动装入所有对话": "Other projects can pick it under Shared roles; the project Skills bound to it are shared too and installed into every conversation automatically", "共享技能": "Share Skill"});
 Object.assign(window.LF_I18N_EN, {
@@ -823,6 +833,74 @@ Object.assign(window.LF_I18N_EN, {
   "执行超时必须为 1–240 分钟": "Execution timeout must be between 1 and 240 minutes",
   "定时任务执行超时": "Scheduled task timed out"
 });
+Object.assign(window.LF_I18N_EN,{
+  "云效 Codeup":"Yunxiao Codeup",
+  "云效仓库授权":"Codeup repository access",
+  "云效 Codeup 仓库授权":"Yunxiao Codeup repository access",
+  "克隆云效私有仓库、创建任务分支、推送交付产物":"Clone private Codeup repositories, create task branches, push deliverables",
+  "用于克隆云效 Codeup 私有仓库、创建任务分支及推送交付产物，使用个人访问令牌（PAT）与 HTTPS 克隆账号认证。":"Clones private Yunxiao Codeup repositories, creates task branches and pushes deliverables. Authenticates with a personal access token (PAT) plus the HTTPS clone account.",
+  "打开云效 Codeup「个人设置 → 个人访问令牌」，新建令牌并授予代码读写权限":"In Yunxiao Codeup, open Personal Settings → Personal Access Tokens and create a token with code read/write access",
+  "查看云效认证设置说明":"Read the Codeup authentication guide",
+  "在「个人设置 → HTTPS 密码」查看 HTTPS 克隆账号":"Find the HTTPS clone account under Personal Settings → HTTPS Password",
+  "填写克隆账号并粘贴令牌，保存前会自动校验":"Enter the clone account and paste the token; it is verified before saving",
+  "请输入云效个人访问令牌（PAT）":"Enter your Codeup personal access token (PAT)",
+  "依赖云效私有仓库的 LOOP 将无法克隆或推送仓库。":"LOOPs that depend on private Codeup repositories will not be able to clone or push.",
+  "HTTPS 克隆账号":"HTTPS clone account",
+  "云效「HTTPS 密码」页的克隆账号":"The clone account from the Codeup HTTPS Password page",
+  "请填写 HTTPS 克隆账号":"Enter the HTTPS clone account",
+  "个人访问令牌（PAT）":"Personal access token (PAT)",
+  "个人访问令牌 PAT":"Personal access token (PAT)",
+  "保存后显示":"Shown after saving",
+  "云效「个人设置 → HTTPS 密码」中的克隆账号":"The clone account from Codeup Personal Settings → HTTPS Password",
+  "与令牌一起用于 HTTPS 认证":"Used together with the token for HTTPS authentication",
+  "新的个人访问令牌（PAT）":"New personal access token (PAT)",
+  "粘贴云效个人访问令牌（PAT）":"Paste the Codeup personal access token (PAT)",
+  "请填写云效":"Enter a Yunxiao Codeup",
+  "并授予代码读写权限；令牌权限不足会导致克隆 / 推送仓库失败。":"with code read/write access; insufficient scopes make repository clone/push fail.",
+  "云效令牌校验通过":"Codeup token verified",
+  "云效令牌校验通过，已保存":"Codeup token verified and saved",
+  "云效令牌校验未通过":"Codeup token verification failed",
+  "GitHub 和 GitLab 支持 gh / glab 认证和 PR/MR 合并状态同步。云效 Codeup 使用个人访问令牌（PAT）与 HTTPS 克隆账号。其他平台也可由 Agent 创建 PR/MR，合并状态请到托管平台查看。":"GitHub and GitLab support gh / glab authentication and automatic PR/MR merge status updates. Yunxiao Codeup uses a personal access token (PAT) plus the HTTPS clone account. Agents can also create PRs/MRs on other platforms, where you can check their merge status.",
+  "请填写云效 HTTPS 克隆账号":"Enter the Codeup HTTPS clone account",
+  "已配置云效仓库授权":"Codeup repository access configured",
+  "仓库可以先保存，代码任务还需要云效授权":"The repository can be saved now; code tasks still need Codeup access",
+  "请确认令牌已获得目标仓库的读写权限。LOOP 使用需求责任人的令牌，未指定时使用项目 Owner 的令牌。":"Confirm the token can read and write the target repository. LOOPs use the assignee's token, or the project owner's token when no assignee is set.",
+  "使用云效仓库进行需求分析、访问私有代码或提交合并请求前，请先配置云效仓库授权（个人访问令牌 PAT + HTTPS 克隆账号）。LOOP 使用需求责任人的凭据，未指定时使用项目 Owner 的凭据。":"Configure Codeup repository access (personal access token PAT + HTTPS clone account) before analyzing a Codeup repository, accessing private code or opening merge requests. LOOPs use the assignee's credentials, or the project owner's when no assignee is set.",
+  "配置云效仓库授权":"Configure Codeup repository access",
+  "绑定 GitHub / 云效仓库":"Bind GitHub / Codeup repositories",
+  "GitHub / 云效链接或 Git 仓库地址":"GitHub / Codeup link or Git repository address",
+  "请输入有效的 Git HTTP(S) 链接或 Git SSH 地址。云效 Codeup 仓库请粘贴 HTTPS 链接。":"Enter a valid Git HTTP(S) link or Git SSH address. Paste the HTTPS link for Yunxiao Codeup repositories.",
+  "请先粘贴 GitHub、云效 Codeup 链接或 Git SSH 地址":"Paste a GitHub or Yunxiao Codeup link, or a Git SSH address",
+  "请输入 Git HTTP(S)、云效 Codeup 链接或 Git SSH 地址":"Enter a Git HTTP(S) or Yunxiao Codeup link, or a Git SSH address",
+  "例如 https://github.com/owner/repo、https://codeup.aliyun.com/组织ID/仓库.git 或 git clone http://git.example.org/team/repo.git":"For example https://github.com/owner/repo, https://codeup.aliyun.com/orgId/repo.git or git clone http://git.example.org/team/repo.git",
+  "识别为云效 Codeup":"Recognized as Yunxiao Codeup",
+  "。克隆与推送使用个人配置中的云效仓库授权（PAT + HTTPS 克隆账号）。":". Clone and push use the Codeup repository access (PAT + HTTPS clone account) from Personal settings.",
+  "请输入有效的 Git HTTP(S)、云效 Codeup 链接或 Git SSH 克隆地址。":"Enter a valid Git HTTP(S) or Yunxiao Codeup link, or a Git SSH clone address.",
+  "使用云效 Codeup 的个人访问令牌（PAT）与 HTTPS 克隆账号连接，即可选择组织内的仓库。令牌在「个人设置 → 个人访问令牌」创建，克隆账号在「个人设置 → HTTPS 密码」查看。":"Connect with your Yunxiao Codeup personal access token (PAT) and HTTPS clone account to pick repositories in your organization. Create the token under Personal Settings → Personal Access Tokens; find the clone account under Personal Settings → HTTPS Password.",
+  "云效 HTTPS 克隆账号":"Codeup HTTPS clone account",
+  "粘贴云效个人访问令牌":"Paste the Codeup personal access token",
+  "校验并连接":"Verify and connect",
+  "组织":"Organization",
+  "请选择组织":"Select an organization",
+  "选择云效仓库":"Pick a Codeup repository",
+  "连接后可选择组织内的仓库；也可以直接粘贴 https://codeup.aliyun.com/组织ID/仓库.git 地址。":"Once connected you can pick repositories in the organization, or paste a https://codeup.aliyun.com/orgId/repo.git address directly.",
+  "仓库名 / 分组名":"Repository / group name",
+  "未找到仓库，可手动填写地址；请确认令牌有组织内仓库的读取权限。":"No repositories found; you can enter the address manually. Check that the token can read repositories in this organization.",
+  "正在读取组织…":"Loading organizations…",
+  "没有可用的组织":"No organizations available",
+  "组织 ID":"Organization ID",
+  "组织管理后台 → 基本信息中的组织 ID":"The organization ID from Organization Admin → Basic Information",
+  "加载仓库":"Load repositories",
+  "请填写组织 ID":"Enter the organization ID",
+  "请填写 HTTPS 克隆账号和个人访问令牌":"Enter the HTTPS clone account and the personal access token",
+  "正在校验令牌…":"Verifying token…",
+  "云效 Codeup 授权已保存":"Codeup access saved",
+  "组织列表暂不可用":"Organization list is unavailable",
+  "可手动填写组织 ID":"you can enter the organization ID manually",
+  "搜索已加载的仓库":"Search loaded repositories",
+  "加载更多仓库":"Load more repositories",
+  "请选择仓库":"Select a repository",
+  "选择仓库":"Select repository"
 
 Object.assign(window.LF_I18N_EN, {
   "展开设置导航": "Expand settings navigation",

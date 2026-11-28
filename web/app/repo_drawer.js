@@ -120,6 +120,11 @@ function openRepoDrawer(repoId=''){
     f.elements.defaultBranch.value=repository.default_branch||'main';
     syncRepoDrawerDetect();
   });
+  if(typeof mountCodeupRepoPicker==='function')mountCodeupRepoPicker(drawer.querySelector('[data-codeup-repositories]'),repository=>{
+    f.elements.repoUrl.value=repository.html_url||repository.clone_url;
+    f.elements.defaultBranch.value=repository.default_branch||'main';
+    syncRepoDrawerDetect();
+  });
   setTimeout(()=>f.elements.repoUrl.focus(),120);
 }
 function closeRepoDrawer(opt){

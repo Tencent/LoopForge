@@ -38,6 +38,29 @@ globalThis.LoopForgeGitSSH = function parseSSHRepository(raw) {
   return { provider: 'ssh', host: endpoint, project: `${host.toLowerCase()}${port === '22' ? '' : ':' + port}/${segments.join('/')}`, name, cloneUrl, webUrl: '' };
 };
 
+// Yunxiao Codeup keeps the organization in the first path segment:
+// https://codeup.aliyun.com/{orgId}/{group}/{repo}.git. Mirrors the server's
+// parseCodeupRepositoryURL: the codeup: shorthand and git@/ssh:// clone forms
+// normalize to the HTTPS identity, authenticated with the per-host Codeup
+// PAT + clone account.
+globalThis.LoopForgeCodeupRepo = function parseCodeupRepository(raw) {
+  let s = String(raw || '').trim().replace(/^git\s+clone\s+/i, '').trim().replace(/^['"]+|['"]+$/g, '');
+  if (!s) return null;
+  if (/^codeup:/i.test(s)) s = 'https://codeup.aliyun.com/' + s.slice('codeup:'.length);
+  s = s.replace(/^(?:git@codeup\.aliyun\.com:|ssh:\/\/git@codeup\.aliyun\.com(?::22)?\/)/i, 'https://codeup.aliyun.com/');
+  if (/^codeup\.aliyun\.com\//i.test(s)) s = 'https://' + s;
+  let u;
+  try { u = new URL(s); } catch { return null; }
+  if (u.hostname.toLowerCase() !== 'codeup.aliyun.com' || u.username || u.password || !['https:', 'http:'].includes(u.protocol)) return null;
+  const parts = u.pathname.replace(/^\/+|\/+$/g, '').split('/');
+  if (parts.length < 3) return null;
+  parts[parts.length - 1] = parts[parts.length - 1].replace(/\.git$/i, '');
+  const path = parts.join('/');
+  if (!/^[A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+){2,}$/.test(path) || parts.some(seg => seg === '.' || seg === '..')) return null;
+  const name = parts[parts.length - 1];
+  return { provider: 'codeup', host: 'codeup.aliyun.com', organizationId: parts[0], project: 'codeup:' + path, name, webUrl: 'https://codeup.aliyun.com/' + path, cloneUrl: 'https://codeup.aliyun.com/' + path + '.git' };
+};
+
 // Use the URL parser to compress IPv6 and omit the HTTPS default port.
 globalThis.LoopForgeGitHTTPSHost = function normalizeHTTPSHost(raw) {
   const input = String(raw || '').trim().toLowerCase();
@@ -79,6 +102,8 @@ globalThis.LoopForgeGitHTTPRepository = function parseHTTPRepository(raw) {
   try{
     const u=new URL(address),plain=u.protocol==='http:';
     if(u.username||u.password||u.search||u.hash||u.port==='0')return null;
+    // Codeup URLs always route to LoopForgeCodeupRepo (hosting identity + PAT).
+    if(u.hostname.toLowerCase()==='codeup.aliyun.com')return null;
     if(!plain&&['github.com','git.example.com'].includes(u.hostname))return null;
     const rawAuthority=address.replace(/^https?:\/\//i,'').split('/')[0];
     const ipv4=/^\d+(?:\.\d+){3}$/.test(u.hostname);

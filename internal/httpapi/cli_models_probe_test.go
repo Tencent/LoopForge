@@ -168,3 +168,32 @@ gemini-4-argon-high - Gemini 4 Argon High
 		t.Fatalf("families:\n got %v\nwant %v", got, want)
 	}
 }
+
+// Qoder CN only reaches its official endpoint with a PAT and publishes no
+// model list, so the probe returns the built-in CLI default and never calls a
+// Base URL; a custom Base URL is rejected.
+func TestProbeCLIModelsQoderCNOfficialOnly(t *testing.T) {
+	h, owner := workbenchFixture(t)
+	original := assistantEngineDiscover
+	t.Cleanup(func() { assistantEngineDiscover = original })
+	assistantEngineDiscover = func(context.Context, bool, string, string) ([]assistantDiscoveredModel, error) {
+		t.Fatal("qodercn must not probe a model endpoint")
+		return nil, nil
+	}
+	handlers := &usersHandlers{deps: h.deps}
+	probe := func(body string) string {
+		c, w := workbenchContext(owner, http.MethodPost, "/", bytes.NewBufferString(body))
+		c.Params = gin.Params{{Key: "id", Value: strconv.FormatInt(owner.ID, 10)}}
+		handlers.probeCLIModels(c)
+		if w.Code != http.StatusOK {
+			t.Fatalf("code %d: %s", w.Code, w.Body.String())
+		}
+		return w.Body.String()
+	}
+	if out := probe(`{"engine":"qodercn","apiKey":"pat","baseUrl":""}`); !strings.Contains(out, `"source":"official"`) || !strings.Contains(out, `"id":"default"`) {
+		t.Fatalf("official catalog: %s", out)
+	}
+	if out := probe(`{"engine":"qodercn","apiKey":"pat","baseUrl":"https://gw.example"}`); !strings.Contains(out, "官方端点") {
+		t.Fatalf("custom Base URL must be rejected: %s", out)
+	}
+}

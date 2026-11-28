@@ -30,6 +30,7 @@ const modelBrands = [
   [/^(?:doubao|seed|seedream|bytedance)(?:$|[-_.\s:\d])/i, "doubao"],
   [/^(?:ernie|wenxin|baidu|qianfan)(?:$|[-_.\s:\d])/i, "qianfan"],
   [/^(?:zai|z\.ai)(?:$|[-_.\s:\d])/i, "zai"],
+  [/^qoder(?:cn)?(?:$|[-_.\s:\d])/i, "qoder"],
 ];
 const fallbackBrands = new Set([
   "codebuddy", "cursor", "opencode", "openrouter", "siliconflow", "trae",

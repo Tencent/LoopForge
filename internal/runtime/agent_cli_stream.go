@@ -177,6 +177,20 @@ func NewAgentCLITranslator(kind string) func(string) []string {
 		translate = (&dshStream{}).translate
 	case AgentCLIZCode:
 		translate = (&zcodeStream{}).translate
+	case AgentCLIQoderCN:
+		// Qoder CN already prints Claude-Code-compatible stream-json NDJSON, so
+		// every well-formed line passes through unchanged.
+		return func(line string) []string {
+			line = strings.TrimSpace(line)
+			if line == "" || line[0] != '{' {
+				return nil
+			}
+			var raw map[string]any
+			if json.Unmarshal([]byte(line), &raw) != nil {
+				return nil
+			}
+			return []string{line}
+		}
 	default:
 		return nil
 	}

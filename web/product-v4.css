@@ -2378,7 +2378,7 @@ html[data-theme="dark"] #runnersView{--rv-term:#0a0a0b;--rv-codex:#3f3f46}
 #runnersView .runner-runtime-label input{flex:none;margin:0;cursor:pointer}
 #runnersView .runner-runtime-icon{flex:none;display:grid;place-items:center;width:26px;height:26px;border-radius:7px;background:var(--rv-fill);transition:opacity .16s}
 #runnersView .runner-runtime-icon img{display:block;width:17px;height:17px;object-fit:contain}
-html[data-theme="dark"] #runnersView .runner-runtime-icon:is(.codex,.claude-code,.cursor,.opencode,.pi) img{filter:invert(1)}
+html[data-theme="dark"] #runnersView .runner-runtime-icon:is(.codex,.claude-code,.cursor,.opencode,.pi,.qodercn) img{filter:invert(1)}
 #runnersView .runner-runtime-name{min-width:0;display:grid;gap:3px;transition:opacity .16s}
 #runnersView .runner-runtime-name :is(b,small){display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #runnersView .runner-runtime-name b{font-size:13px;font-weight:600;line-height:1.15}

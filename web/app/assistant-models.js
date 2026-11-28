@@ -28,7 +28,7 @@
   const CLI_ICON = {
     codebuddy:'codebuddy.svg', codex:'codex.svg', 'claude-code':'claude.svg',
     opencode:'opencode.svg', cursor:'cursor.svg', agy:'antigravity.svg',
-    kimi:'kimi-code.png', pi:'pi.svg', dsh:'deepseek.svg', zcode:'glm.svg'
+    kimi:'kimi-code.png', pi:'pi.svg', dsh:'deepseek.svg', zcode:'glm.svg', qodercn:'qoder.svg'
   };
   let catalog = {
     default: DEFAULT_MODEL,

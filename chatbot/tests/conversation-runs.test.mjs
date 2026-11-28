@@ -1,6 +1,6 @@
 import { test } from "vitest";
 import assert from "node:assert/strict";
-import { branchCompareUrl, githubRepoPath, gongfengProjectPath } from "../src/changes.js";
+import { branchCompareUrl, codeupRepoPath, githubRepoPath, gongfengProjectPath } from "../src/changes.js";
 import { isConversationWorkspaceRun } from "../src/runs.js";
 
 // 自由协作 runs and chat workspaces are not LOOPs; listing them showed
@@ -33,6 +33,27 @@ test("branchCompareUrl points at the work branch on GitHub", () => {
   assert.equal(githubRepoPath("https://github.com/o/r"), "o/r");
   assert.equal(githubRepoPath("https://github.com/o/r/tree/main"), "");
   assert.equal(githubRepoPath("https://gitlab.com/o/r.git"), "");
+});
+
+test("branchCompareUrl points at the work branch on Codeup", () => {
+  const repository = {
+    cloneUrl: "https://codeup.aliyun.com/org123/ai/loopforge.git",
+    baseBranch: "main",
+    workBranch: "feature/fix-1",
+  };
+  // Codeup links to the work branch tree; the compare page URL is not stable.
+  assert.equal(
+    branchCompareUrl(repository),
+    "https://codeup.aliyun.com/org123/ai/loopforge/tree/feature/fix-1",
+  );
+  assert.equal(
+    branchCompareUrl({ ...repository, cloneUrl: "git@codeup.aliyun.com:org123/ai/loopforge.git", baseBranch: "" }),
+    "https://codeup.aliyun.com/org123/ai/loopforge/tree/feature/fix-1",
+  );
+  assert.equal(codeupRepoPath("https://codeup.aliyun.com/org123/ai/loopforge"), "org123/ai/loopforge");
+  assert.equal(codeupRepoPath("git@codeup.aliyun.com:org123/ai/loopforge.git"), "org123/ai/loopforge");
+  assert.equal(codeupRepoPath("https://codeup.aliyun.com/org123"), "");
+  assert.equal(codeupRepoPath("https://github.com/o/r.git"), "");
 });
 
 test("branchCompareUrl points at the work branch on a legacy host", () => {

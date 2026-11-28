@@ -40,6 +40,8 @@ Antigravity 的账号登录读取运行 Runner 的系统账号已有的凭据库
 
 ZCode 可通过 GLM Coding Plan 的 API Key 和套餐专用端点使用订阅额度。Start Plan 的额度需要登录 ZCode 账号，无法通过 API Key 使用。详见 [ZCode 模型配置](https://zcode.z.ai/cn/docs/configuration)。
 
+Qoder CN 使用个人配置中保存的个人访问令牌（PAT），运行时经 `QODERCN_PERSONAL_ACCESS_TOKEN` 注入私有 HOME，配置目录隔离在 `QODERCN_CONFIG_DIR`；仅支持官方端点，不支持自定义 Base URL，本机 `/login` 登录态不被沙箱复用。模型可留空（CLI 默认）或指定后经 `QODERCN_MODEL` 传入。详见 [Qoder CN CLI 认证](https://docs.qoder.cn/cli/authentication)。
+
 原生会话的工具回调在执行机器上中继。宿主进程使用 Docker host gateway；通过 docker.sock 管理工作区的容器进程自动识别自身容器网络，工作区加入相同网络并访问该地址。自定义路由可通过 `AGENTFLOW_CONVERSATION_RELAY_HOST` 和 `AGENTFLOW_CONVERSATION_DOCKER_NETWORK` 显式指定工作区能访问的执行进程地址与 Docker 网络。会话目录会以相同路径挂进工作区，而 docker.sock 背后的 Docker 守护进程按自己所在主机解析挂载源，因此容器内的平台进程须把 `AGENTFLOW_CONVERSATION_DIR` 设在与宿主机同路径挂载的目录中；`compose.yaml` 将其设为 `${LOOPFORGE_DATA_DIR}/conversations`。Runner 不读该变量，原生会话目录固定在其工作区根目录的 `.conversations` 下，容器内运行 Runner 时须同路径挂载该工作区目录。未设置时会话目录位于 `AGENTFLOW_ASSISTANT_SESSION_DIR` 下，该目录在命名卷里时打开工作区会报 `mkdirat ... read-only file system`。附件等按用户保存的助手数据仍在 `AGENTFLOW_ASSISTANT_SESSION_DIR`，不挂进工作区。Docker 工作区直接在主容器中运行 LOOP 脚本和 CLI。历史容器存在指令遮蔽挂载时，工作区下次取得执行权后会重建容器并保留工作区文件。标记为重建时运行的准备脚本随后在新容器补跑。
 
 模式交接时，交接工具要求模型只回复一句「好的。」再结束旧阶段，交接之后的展示由平台隐藏；不要求“不输出任何内容”，否则模型可能只产出推理、没有正文的回合，该回合写入原生日志后，续接时会被模型服务拒绝（如 `the conversation must end with a user message`）。交接工具成功后，旧阶段即使未输出 `type=result` 或异常退出，也继续完成交接。续接原生会话时，如果原生日志缺失，或模型服务在本阶段产生任何输出或工具调用之前就拒绝了续接（400/422、会话结构无效、无结果退出），平台用完整对话上下文新建一次原生会话重试；已有输出或工具调用的中断，以及鉴权、限流、额度、网络、执行机器不可用等原因，仍续接原会话或直接报错，不重复执行副作用。

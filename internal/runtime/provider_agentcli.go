@@ -326,6 +326,24 @@ func agentCLICommand(kind string, o AgentCLICommandOptions, input *AgentCLIConve
 			argv = append(argv, "--attach", path)
 		}
 		argv = append(argv, extra...)
+	case AgentCLIQoderCN:
+		disallowed := qoderCNSOPDisallowedTools
+		if readOnly {
+			disallowed = qoderCNChatDisallowedTools
+		}
+		argv = []string{binary, "-p", prompt, "--output-format", "stream-json", "--disallowed-tools", disallowed}
+		if !readOnly {
+			// SOP and workspace turns bypass permissions; AI 对话 keeps the
+			// native approval hook and denies the chat tool set instead.
+			argv = append(argv, "--yolo")
+		}
+		if resume != "" {
+			argv = append(argv, "--resume", resume)
+		}
+		if options.Effort != "" {
+			argv = append(argv, "--reasoning-effort", options.Effort)
+		}
+		argv = append(argv, extra...)
 	}
 	return CommandSpec{Argv: argv, Stdin: stdin, Provider: kind, AgentCLI: options}, nil
 }

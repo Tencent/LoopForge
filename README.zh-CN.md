@@ -36,7 +36,7 @@ https://github.com/user-attachments/assets/10b8ae2e-d7e7-4b78-8876-c45818d4a08f
 
 **LoopForge** 是一个可自主部署的团队工作台，让你和编程 Agent 一起交付软件。在对话里把需求告诉 **Main Bot**：它会按需打开 Docker 沙箱、检出项目仓库、把任务分派给项目角色，最后提交 PR。某种做法被验证有效后，把它存成 **LOOP**（由 Agent、脚本和人工关口组成的可复用交付流程），下一个需求就按同样的方式交付，评审和验收都在流程里。
 
-干活的是编程 Agent CLI：CodeBuddy、Codex、Claude Code、OpenCode、Cursor CLI、Antigravity、Kimi Code、Pi、DeepSeek Harness 和 ZCode；LoopForge 负责它们外面的角色、沙箱、检查点和留痕，全部运行在你自己的环境里，MIT 开源。
+干活的是编程 Agent CLI：CodeBuddy、Codex、Claude Code、OpenCode、Cursor CLI、Antigravity、Kimi Code、Pi、DeepSeek Harness、ZCode 和 Qoder CN；LoopForge 负责它们外面的角色、沙箱、检查点和留痕，全部运行在你自己的环境里，MIT 开源。
 
 ## 两种工作方式
 
@@ -66,7 +66,7 @@ https://github.com/user-attachments/assets/10b8ae2e-d7e7-4b78-8876-c45818d4a08f
 - **角色分离。** 方案、实现、评审、测试各有独立的角色提示词、执行器、模型、规则、Skills 和 MCP 工具；同一个角色既能做 LOOP 节点，也能在对话中作为子 Agent 调用。
 - **人在回路之上。** Agent 自主运行，你负责监督：随时暂停、引导或接管；需要人拍板的地方由人工关口拦下，看完报告再放行，或打回到指定环节返工。
 - **可观测、可续跑。** 节点状态、工具轨迹、日志和产物集中呈现；支持暂停、重试失败步骤、从任意节点重跑。
-- **技术栈和服务器都是你的。** 执行器支持 10 种编程 Agent CLI，从 CodeBuddy、Codex、Claude Code 到 OpenCode、Cursor CLI 等；工具接入 GitHub、Skills、MCP；运行环境可选 Docker 沙箱或你自己的机器。
+- **技术栈和服务器都是你的。** 执行器支持 11 种编程 Agent CLI，从 CodeBuddy、Codex、Claude Code 到 OpenCode、Cursor CLI 等；工具接入 GitHub、Skills、MCP；运行环境可选 Docker 沙箱或你自己的机器。
 
 ## 快速开始
 
@@ -124,6 +124,7 @@ GitLab、Gitea、Gogs 等托管可[配置 Git SSH](docs/deployment.md#git-reposi
   | **DeepSeek Harness** | 仅个人 Key | Docker 镜像内置 |
   | **Cursor CLI · Antigravity** | 仅个人 Key | 首次在对话中使用时通过厂商安装脚本安装；不会装进 LOOP 沙箱 |
   | **ZCode** | 仅个人 Key | 未内置，需安装到服务或执行机器的 PATH 中 |
+  | **Qoder CN** | 个人访问令牌（PAT） | npm `@qodercn-ai/qoderclicn` 或官方安装脚本 |
 
   Claude Code 之后的 7 种 Agent CLI 每次运行都在私有 HOME 目录里生成模型和 MCP 配置，因此始终使用需求责任人在个人设置中填写的 Key 和 Base URL，即使在已连接的执行机器上也一样。团队推广时，每位成员需要各自配置凭据。首次安装需要能访问 npm 或对应厂商；[原生部署](docs/deployment.md#workers-and-runners)需安装所选执行器的 CLI。
 - **企业微信通知。** 从本 Dockerfile 构建的平台镜像内置 `wecom-cli`，发布镜像将在下个版本包含它；原生部署需要另行安装，详见[部署指南](docs/deployment.md#native-development)。

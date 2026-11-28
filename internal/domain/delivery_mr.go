@@ -48,6 +48,9 @@ func GongfengMRURL(project string, iid int) string {
 	if strings.HasPrefix(project, "github:") {
 		return fmt.Sprintf("https://github.com/%s/pull/%d", strings.TrimPrefix(project, "github:"), iid)
 	}
+	if strings.HasPrefix(project, "codeup:") {
+		return fmt.Sprintf("https://%s/%s/change/%d", CodeupRepoHost, strings.TrimPrefix(project, "codeup:"), iid)
+	}
 	if platform, host, path, ok := ExternalMRProject(project); ok {
 		if platform == GitPlatformGitHub {
 			return fmt.Sprintf("https://%s/%s/pull/%d", host, path, iid)

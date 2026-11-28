@@ -11,3 +11,8 @@ respective owners.
 artwork as in `chatbot/src/assets/provider-logos/`.
 The [provider-logo README](../../../chatbot/src/assets/provider-logos/README.md)
 records the upstream sources and notices.
+
+`codeup.svg` is an original LoopForge monochrome placeholder glyph (cloud with
+code brackets) for the Yunxiao Codeup credential card, mirroring
+`chatbot/src/assets/provider-logos/codeup.svg`. It is not an official Alibaba
+Cloud or Codeup mark.

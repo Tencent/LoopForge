@@ -179,6 +179,32 @@ func executorModelCatalogs(kimiBaseURL string, codebuddy assistantModelCatalog) 
 		"pi":    {CustomModel: true, Efforts: effortOptions(domain.ExecutorEffortLevels["pi"])},
 		"dsh":   {CustomModel: true, Efforts: effortOptions(domain.ExecutorEffortLevels["dsh"])},
 		"zcode": {CustomModel: true, Efforts: effortOptions(domain.ExecutorEffortLevels["zcode"])},
+		// Qoder CN picks its own model on the official endpoint; "default"
+		// keeps that choice, and a custom ID is passed through QODERCN_MODEL.
+		"qodercn": {
+			CustomModel: true,
+			// Live account model set from `qodercn --list-models`; Auto is the
+			// CLI's smart-routing default. CustomModel lets users add ids the
+			// server-side list does not cover yet.
+			Models: []executorModelInfo{
+				{ID: "Auto", Name: "Auto 智能路由"},
+				{ID: "Fast", Name: "Fast"},
+				{ID: "Qwen4-Max", Name: "Qwen4-Max"},
+				{ID: "Qwen4-Max-Preview", Name: "Qwen4-Max-Preview"},
+				{ID: "Qwen3.8-Max", Name: "Qwen3.8-Max"},
+				{ID: "Qwen3.8-Flash", Name: "Qwen3.8-Flash"},
+				{ID: "DeepSeek-V4-Pro", Name: "DeepSeek-V4-Pro"},
+				{ID: "DeepSeek-Flash", Name: "DeepSeek-Flash"},
+				{ID: "GLM-5.3", Name: "GLM-5.3"},
+				{ID: "GLM-5.3-Flash", Name: "GLM-5.3-Flash"},
+				{ID: "Kimi-K3.1-Pro", Name: "Kimi-K3.1-Pro"},
+				{ID: "Kimi-K2.8-Preview", Name: "Kimi-K2.8-Preview"},
+				{ID: "Step-5-Preview", Name: "Step-5-Preview"},
+				{ID: "MiniMax-M3.1-Flash", Name: "MiniMax-M3.1-Flash"},
+				{ID: "Qwen-4.0-Max", Name: "Qwen-4.0-Max"},
+			},
+			Efforts: effortOptions(domain.ExecutorEffortLevels["qodercn"]),
+		},
 	}
 	for engine, catalog := range catalogs {
 		modelEngine := engine

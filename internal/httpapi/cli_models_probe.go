@@ -124,6 +124,18 @@ func (h *usersHandlers) probeCLIModels(c *gin.Context) {
 		h.probeCursorModels(c, apiKey)
 		return
 	}
+	if engine == runtime.AgentCLIQoderCN {
+		// Qoder CN only reaches its official endpoint with a personal access
+		// token and publishes no model list, so the CLI default is the catalog.
+		if baseURL != "" {
+			c.JSON(http.StatusOK, cliModelProbeResult{Error: "Qoder CN 仅支持官方端点（个人访问令牌），不支持自定义 Base URL"})
+			return
+		}
+		if apiKey != "" {
+			c.JSON(http.StatusOK, cliModelProbeResult{Models: cliModelsOf(assistantEngineBuiltinModels(engine)), Source: "official"})
+			return
+		}
+	}
 	if baseURL == "" && apiKey == "" {
 		c.JSON(http.StatusOK, cliModelProbeResult{Models: cliModelsWithEfforts(engine, cliModelsOf(assistantEngineBuiltinModels(engine)), ""), Source: "builtin"})
 		return

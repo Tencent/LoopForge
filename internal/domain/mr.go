@@ -13,6 +13,10 @@ import (
 // project below before treating any link in free text as delivery evidence.
 var hostedReviewURL = regexp.MustCompile(`https?://([^/\s"'<>#]+)/([^\s"'<>#]+)/(pull|merge_requests)/(\d+)`)
 
+// codeupMRURL matches a Codeup change-request detailUrl/webUrl:
+// https://codeup.aliyun.com/{orgId}/{group}/{repo}/change/{localId}.
+var codeupMRURL = regexp.MustCompile(`https?://codeup\.aliyun\.com/([A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+){2,})/change/(\d+)`)
+
 var githubPRLink = regexp.MustCompile(`^https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/pull/\d+/?$`)
 
 // IsGitHubPRURL reports whether text is exactly one GitHub pull request link.
@@ -136,6 +140,21 @@ func ParseGongfengMRs(text string) []GongfengMRRef {
 		}
 		iid, _ := strconv.Atoi(match[4])
 		if project == "" || iid <= 0 {
+			continue
+		}
+		key := gongfengMRKey(project, iid)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, GongfengMRRef{Project: project, IID: iid, URL: GongfengMRURL(project, iid)})
+	}
+	// Codeup change requests use /change/{localId} instead of pull or
+	// merge_requests, so hostedReviewURL never matches them; scan separately.
+	for _, match := range codeupMRURL.FindAllStringSubmatch(text, -1) {
+		project := "codeup:" + match[1]
+		iid, _ := strconv.Atoi(match[2])
+		if iid <= 0 {
 			continue
 		}
 		key := gongfengMRKey(project, iid)

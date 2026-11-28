@@ -110,6 +110,11 @@ const RepositoryProviderSSH = "ssh"
 // RepositoryProviderHTTPS uses Git transport without a hosting API adapter.
 const RepositoryProviderHTTPS = "https"
 
+// RepositoryProviderCodeup is Aliyun Yunxiao Codeup hosting. Like GitHub it
+// carries its identity in GongfengProjectID ("codeup:{orgId}/{group}/{repo}")
+// and has a hosting API adapter for MR delivery; it is not git-only.
+const RepositoryProviderCodeup = "codeup"
+
 // RepositoryProviderHTTP uses plaintext Git transport without a hosting API adapter.
 const RepositoryProviderHTTP = "http"
 

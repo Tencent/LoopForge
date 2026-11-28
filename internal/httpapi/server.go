@@ -73,6 +73,7 @@ type Server struct {
 	*deps
 	auth            *authHandlers // auth.go
 	github          *githubHandlers
+	codeup          *codeupHandlers // codeup_auth.go
 	users           *usersHandlers // users.go
 	sshHostTrust    *sshHostTrustHandlers
 	httpsHostTrust  *httpsHostTrustHandlers
@@ -167,6 +168,7 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 		notifications:   &notificationHandlers{deps: d, service: notifications},
 		auth:            &authHandlers{deps: d},
 		github:          newGitHubHandlers(d),
+		codeup:          newCodeupHandlers(d),
 		users:           &usersHandlers{deps: d},
 		sshHostTrust:    &sshHostTrustHandlers{deps: d, hosts: s.SSHHostTrustRepo, runnerControls: runnerControls},
 		httpsHostTrust:  &httpsHostTrustHandlers{deps: d, hosts: s.HTTPSHostTrustRepo, lookupIP: net.DefaultResolver.LookupNetIP},
@@ -269,6 +271,8 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.POST("/api/auth/github/device", api.github.start)
 	g.POST("/api/auth/github/poll", api.github.poll)
 	g.GET("/api/auth/github/repositories", api.github.repositories)
+	g.GET("/api/auth/codeup/organizations", api.codeup.organizations)
+	g.GET("/api/auth/codeup/repositories", api.codeup.repositories)
 	g.GET("/api/auth/exchange", api.auth.authExchange)
 	g.POST("/api/auth/exchange", api.auth.authExchange)
 	g.POST("/api/auth/logout", api.auth.authLogout)
