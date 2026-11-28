@@ -8,6 +8,7 @@ const { createDOM } = require('./hui_fake_dom');
   w.state={projectFilter:'p'};
   w.escapeHTML=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   w.kbBadge=(text,tone)=>`<span class="badge ${tone}">${text}</span>`;
+  w.lfT=zh=>zh;
   for(const name of ['evolution.js','app/evolution-simple.js','app/evolution-review.js','app/evolution-story.js'])dom.load(path.join(__dirname,name));
   const api=dom.run('({evo,evoStoryLogEvidence,evoStorySampleSummary,evoStoryRenderBehavior,evoStoryProblemText,evoStoryArtifactPairs,evoStoryReadArtifact,evoStoryLoadArtifacts,evoStoryProblemsHTML,evoStoryReplayTable,evoStoryValidationHTML,evoStoryEffectHTML,evoStoryNodePickerHTML,evoGroupFacts})');
   const lines=['ERROR exited 1','--- FAIL: TestOutput','<img src=x onerror=alert(1)>'];

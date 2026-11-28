@@ -38,7 +38,7 @@ const COPY = {
     '当前项目还没有 AI 定时任务，点击右上角「新建 AI 定时任务」。',
   ],
   observability: ['总览'],
-  evolution: ['监测中', '优化中', '灰度中', 'LOOP 与最近分析', '优化偏好 · 周期', '近批指标（Token / 工具 / 评分）', '自动进化', '省 Token', '省工具',
+  evolution: ['当前项目暂无 LOOP', '创建并运行 LOOP 后，这里会按 LOOP 持续统计核心消耗与评分，并按偏好自动沉淀优化建议。', '监测中', '优化中', '灰度中', 'LOOP 与最近分析', '优化偏好 · 周期', '近批指标（Token / 工具 / 评分）', '自动进化', '省 Token', '省工具',
     '最近 1 次 · 一次成功，未发现异常', '最近 1 次 · 节点打回返工、评测得分偏低'],
   projects: [
     '项目是需求、仓库、团队和默认 LOOP 的统一边界。点击项目进入详情配置。',
@@ -68,7 +68,7 @@ test('English mode translates the copy on knowledge, bots, schedules, evolution,
     }
   }
   assert.equal(window.lfTranslate('总览'), 'Overview');
-  assert.equal(window.lfTranslate('还没有接入个人知识库连接器'), 'No personal knowledge connector yet');
+  assert.equal(window.lfTranslate('还没有接入个人知识库连接器'), 'No personal knowledge connectors yet');
   assert.equal(window.lfTranslate('已配置 · 留空则不改'), 'Configured · leave blank to keep');
   assert.equal(window.lfTranslate('最近 1 次 · 一次成功，未发现异常'), 'Last run · all succeeded, no anomalies');
   assert.equal(window.lfTranslate('最近 1 次 · 节点打回返工、评测得分偏低'), 'Last run · Node rework, Low evaluation score');
@@ -84,4 +84,8 @@ test('English mode pluralises the counts these pages render', async (t) => {
   assert.equal(window.lfTranslate('3 个自定义模型'), '3 custom models');
   assert.equal(window.lfTranslate('每 10 次'), 'Every 10 runs');
   assert.equal(window.lfTranslate('每 1 次'), 'Every 1 run');
+  // The "共 N 个" rule must not eat the counter: the noun keeps its own plural.
+  assert.equal(window.lfTranslate('共 3 个任务'), '3 tasks');
+  assert.equal(window.lfTranslate('共 1 个任务'), '1 task');
+  assert.equal(window.lfTranslate('共 2 个模型'), '2 models');
 });
