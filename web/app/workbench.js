@@ -360,7 +360,7 @@ function credentialCatalogProbeHTML(catalog,kind){
   }).join('');
   const protocol=catalog.closest('.credential-editor-form')?.querySelector('select[name="protocol"]')?.value||catalog.dataset.catalogProtocol;
   const sources={builtin:'CLI 内置模型',official:'来自官方服务',runner:'来自这台机器的账号登录'};
-  const source=sources[probe.source]||`来自 Base URL 的 ${escapeHTML(credentialModelsEndpoint(kind,protocol))}`;
+  const source=kind?.models?.engine==='codebuddy'&&probe.source==='official'?'来自 CodeBuddy CLI':sources[probe.source]||`来自 Base URL 的 ${escapeHTML(credentialModelsEndpoint(kind,protocol))}`;
   return `<div class="credential-catalog-probe-top"><span class="credential-input is-plain is-search">${credentialGlyph('search',14)}<input data-catalog-search placeholder="搜索模型" aria-label="搜索模型" autocomplete="off" spellcheck="false"></span><span class="credential-catalog-picked" data-catalog-picked></span><button type="button" class="credential-btn link credential-ink" data-catalog-act="toggle-all">全选</button></div>
     <div class="credential-catalog-probe-list" role="group" aria-label="可用模型">${items}</div>
     <div class="credential-catalog-probe-foot"><small>${source} · 勾选的模型会加入目录，取消勾选会移出</small><div><button type="button" class="credential-btn ghost credential-ink" data-catalog-act="probe-close">取消</button><button type="button" class="credential-btn primary credential-ink" data-catalog-act="probe-apply">更新列表</button></div></div>`;
@@ -384,6 +384,9 @@ async function probeCredentialCatalog(row,catalog,button,connectOnly=false){
   const extra=form?.querySelector('input[name="baseUrl"], input[name="extra"]'),secret=form?.querySelector('[name="secret"]')?.value.trim()||'',protocol=form?.querySelector('select[name="protocol"]')?.value,environment=form?.querySelector('select[name="extra"]')?.value;
   const extraError=extra?(extra.name==='baseUrl'?credentialBaseURLError(extra.value):credentialExtraError(kind,extra.value,protocol)):'';
   if(extraError){toast(extraError,'err');extra.focus();return}
+  const engine=kind?.models?.engine,baseUrl=extra?.value.trim();
+  const liveCodeBuddyCheck=connectOnly&&engine==='codebuddy'&&!baseUrl;
+  const model=liveCodeBuddyCheck?readCredentialCatalog(catalog)[0]?.id:undefined;
   const token=(catalog.probeToken||0)+1;catalog.probeToken=token;catalog.probe=null;
   panel.hidden=false;
   panel.innerHTML=`<p class="credential-vline is-info" role="status">${credentialSpinner(13)}${connectOnly?'正在测试连接…':'正在获取可用模型…'}</p>`;
@@ -393,7 +396,7 @@ async function probeCredentialCatalog(row,catalog,button,connectOnly=false){
   let result;
   try{
     result=catalog.probeModels?await catalog.probeModels():await api(`/api/users/${state.currentUser.id}/cli-models/probe`,{method:'POST',body:JSON.stringify({
-      engine:kind.models.engine,apiKey:secret,baseUrl:extra?.value.trim(),protocol,environment
+      engine,apiKey:secret,baseUrl,protocol,environment,connectOnly:liveCodeBuddyCheck||undefined,model
     }),silent:true});
   }
   catch(err){result={error:err.message}}
