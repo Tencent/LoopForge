@@ -26,7 +26,7 @@ EDITION_SPECS: Dict[str, dict] = {
             "cursor": "/devflow",
             "claude": "/devflow",
             "pi": "/skill:devflow",
-            "dsh": "/devflow",
+            "dsh": "devflow",  # Skill name; DSH invokes it through its skill tool/catalog.
             "hermes": "/devflow",
         },
     },

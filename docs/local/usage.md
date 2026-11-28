@@ -23,7 +23,7 @@ Requires Node.js 20+ and Python 3.8+. Replace `X.Y.Z` in the commands below with
 | Codex | `npx -y loopforge-cli@X.Y.Z install codex` | `$devflow-codex "<request>"` |
 | Cursor | `npx -y loopforge-cli@X.Y.Z install cursor` | `/start-devflow "<request>"` |
 | Claude Code | `npx -y loopforge-cli@X.Y.Z install claude` | `/start-devflow "<request>"` |
-| DeepSeek Harness | `npx -y loopforge-cli@X.Y.Z skills install dsh` | `/devflow "<request>"` |
+| DeepSeek Harness | `npx -y loopforge-cli@X.Y.Z skills install dsh` | Ask DSH to use the `devflow` Skill with your request |
 | Hermes Agent | `npx -y loopforge-cli@X.Y.Z skills install hermes` then `hermes skills trust .` | `/devflow "<request>"` |
 
 For example, with Claude Code:
@@ -149,7 +149,7 @@ Use the Portable Edition for the portable Agent Skills workflow. To prevent one 
 | Cursor | `npx -y loopforge-cli@X.Y.Z skills install cursor` | `/devflow "<request>"` |
 | Claude Code | `npx -y loopforge-cli@X.Y.Z skills install claude` | `/devflow "<request>"` |
 | Pi | `npx -y loopforge-cli@X.Y.Z skills install pi`, then `pi install npm:pi-subagents` | `/skill:devflow "<request>"` |
-| DeepSeek Harness | `npx -y loopforge-cli@X.Y.Z skills install dsh` | `/devflow "<request>"` |
+| DeepSeek Harness | `npx -y loopforge-cli@X.Y.Z skills install dsh` | Ask DSH to use the `devflow` Skill with your request |
 | Hermes Agent | `npx -y loopforge-cli@X.Y.Z skills install hermes`, then `hermes skills trust .` | `/devflow "<request>"` (optional plugin: `/loopforge`) |
 
 See [Edition selection](editions.md) for the complete boundaries and directory layout.

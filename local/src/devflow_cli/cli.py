@@ -81,6 +81,15 @@ def parser() -> argparse.ArgumentParser:
     return result
 
 
+def _print_next_entrypoint(host: str, edition: str) -> None:
+    entry = entrypoint_for(edition, host)
+    if host == "dsh" and edition == "portable":
+        action = f"ask it to use the {entry} Skill for <你的需求>"
+    else:
+        action = f"run {entry} <你的需求>"
+    print(f"Next: reopen {host_label(host)} and {action}")
+
+
 def main(argv=None) -> int:
     args = parser().parse_args(argv)
     try:
@@ -140,10 +149,7 @@ def main(argv=None) -> int:
                 f"OK: {args.command} edition={args.edition} host={args.host} "
                 f"project={project_root} written={installed} unchanged={unchanged}"
             )
-            print(
-                f"Next: reopen {host_label(args.host)} and run "
-                f"{entrypoint_for(args.edition, args.host)} <你的需求>"
-            )
+            _print_next_entrypoint(args.host, args.edition)
             if args.host == "pi" and args.edition == "portable":
                 print("Note: Pi isolated mode also needs the public extension: pi install npm:pi-subagents")
             if args.host == "hermes" and args.edition == "portable":
@@ -164,10 +170,7 @@ def main(argv=None) -> int:
                     f"OK: skills {args.skills_command} host={args.host} "
                     f"project={project_root} written={installed} unchanged={unchanged}"
                 )
-                print(
-                    f"Next: reopen {host_label(args.host)} and run "
-                    f"{entrypoint_for('portable', args.host)} <你的需求>"
-                )
+                _print_next_entrypoint(args.host, "portable")
                 if args.host == "pi":
                     print("Note: Pi isolated mode also needs the public extension: pi install npm:pi-subagents")
                 if args.host == "hermes":
