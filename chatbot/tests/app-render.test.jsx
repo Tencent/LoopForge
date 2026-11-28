@@ -440,6 +440,26 @@ describe("App", () => {
       Object.assign(chat, original);
     }
   });
+  test("refuses to edit or branch a message while the transcript is still partial", () => {
+    const original = { activeId: chat.activeId, session: chat.session };
+    const message = { role: "user", content: "你好", createdAt: new Date().toISOString() };
+    try {
+      Object.assign(chat, {
+        activeId: "s1",
+        session: { id: "s1", title: "加载中", messages: [message], messagesPartial: true },
+      });
+      const view = render(<App />);
+      expect(screen.getByLabelText("编辑消息")).toBeDisabled();
+      expect(screen.getByLabelText("从此处创建分支")).toBeDisabled();
+      Object.assign(chat, { session: { ...chat.session, messagesPartial: false } });
+      view.rerender(<App />);
+      expect(screen.getByLabelText("编辑消息")).toBeEnabled();
+      expect(screen.getByLabelText("从此处创建分支")).toBeEnabled();
+      view.unmount();
+    } finally {
+      Object.assign(chat, original);
+    }
+  });
   test("regenerates an edited shared branch with the returned main conversation's approval mode", async () => {
     const original = { activeId: chat.activeId, session: chat.session };
     const user = userEvent.setup();

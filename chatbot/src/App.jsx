@@ -2178,7 +2178,7 @@ export default function App() {
                             <>
                               <IconButton
                                 label="编辑消息"
-                                disabled={chat.busy}
+                                disabled={chat.busy || !!chat.session?.messagesPartial}
                                 onClick={() =>
                                   setDialog({
                                     type: "edit",
@@ -2192,7 +2192,7 @@ export default function App() {
                               </IconButton>
                               <IconButton
                                 label="从此处创建分支"
-                                disabled={chat.busy}
+                                disabled={chat.busy || !!chat.session?.messagesPartial}
                                 onClick={() =>
                                   setDialog({
                                     type: "edit",

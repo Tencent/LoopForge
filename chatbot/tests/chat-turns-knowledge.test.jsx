@@ -1,6 +1,7 @@
 import React from "react";
-import { fireEvent, render } from "@testing-library/react";
-import { describe, expect, test } from "vitest";
+import { fireEvent, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { describe, expect, test, vi } from "vitest";
 import { AssistantTurn, replyText } from "../src/ChatTurns.jsx";
 import { runArtifact } from "../src/sop-review.js";
 
@@ -71,5 +72,32 @@ describe("run review artifacts", () => {
     });
     expect(artifact.knowledgeReads).toBe(reads);
     expect(runArtifact({ id: "run-1", nodes: {} }, { id: "a", nodeId: "x", path: "a.csv" }).knowledgeReads).toEqual([]);
+  });
+});
+
+describe("assistant turns keep deferred activity", () => {
+  test("AssistantTurn forwards deferredActivity to the trace and to the timeline", async () => {
+    const user = userEvent.setup();
+    const loadActivity = vi.fn().mockResolvedValue([]);
+    const deferredActivity = {
+      sessionId: "session-9", index: 12, activityRef: "saved-turn", loadActivity,
+    };
+    const heading = render(
+      <AssistantTurn message={reply("灰度比例 5%。")} steps={[]}
+        deferredActivity={deferredActivity} sessionId="session-9" />,
+    );
+    await user.click(heading.container.querySelector("summary"));
+    expect(loadActivity).toHaveBeenCalledWith("session-9", 12, "saved-turn");
+    heading.unmount();
+
+    const timeline = render(
+      <AssistantTurn message={reply("灰度比例 5%。")}
+        steps={[{ kind: "text", text: "灰度比例 5%。" }]}
+        deferredActivity={deferredActivity} sessionId="session-9" />,
+    );
+    await user.click(timeline.container.querySelector("summary"));
+    expect(loadActivity).toHaveBeenCalledTimes(2);
+    expect(loadActivity).toHaveBeenLastCalledWith("session-9", 12, "saved-turn");
+    expect(screen.getAllByText("灰度比例 5%。").length).toBeGreaterThan(0);
   });
 });
